@@ -386,9 +386,12 @@ class DualMode43Adapter(ProtocolAdapter):
         报文序号(32)+转发报文长度(16)；转发报文内容为分钟级数据：前导字段(1)+
         源MAC(6)+任务号(1)+协议类型/电表类型/响应结果(1)+冻结时刻(6)+
         报文条数(1)+数据长度(16)+数据内容。
+
+        并发抄读格式（格式一，启动位=0）业务布局不同且无转发报文长度，本期
+        仅展示原始业务报文并扫描内嵌帧（见下方 start_flag 分支）。
         """
-        if len(business) < 8:
-            frame.warnings.append("业务报文过短，无法解析分钟采集上报（需≥8字节）")
+        if len(business) < 2:
+            frame.warnings.append("业务报文过短，无法读取分钟采集上报头（需≥2字节）")
             if business:
                 frame.items.append(DataField(
                     name="业务报文(原始)", value=business.hex(), hex=business.hex(),
@@ -403,11 +406,21 @@ class DualMode43Adapter(ProtocolAdapter):
 
         if start_flag != 1:
             # 并发抄读格式（格式一）业务布局不同且无转发报文长度，切帧仍按
-            # 内嵌帧扫描（与 try_extract 一致）；本期仅展示通用头并尽力递归。
+            # 内嵌帧扫描（与 try_extract 一致）；本期仅展示原始业务报文并
+            # 扫描内嵌帧，不展开业务字段。
             frame.warnings.append(
-                "并发抄读格式（启动位=0）本期仅展示通用头，未展开业务字段"
+                "并发抄读格式（启动位=0）本期仅展示原始业务报文并扫描内嵌帧"
             )
             self._parse_generic_business(frame, business)
+            return
+
+        if len(business) < 8:
+            frame.warnings.append("业务报文过短，无法解析主动上报头（需≥8字节）")
+            if business:
+                frame.items.append(DataField(
+                    name="业务报文(原始)", value=business.hex(), hex=business.hex(),
+                    raw=business.hex(), desc="双模4-3分钟采集上报业务报文",
+                ))
             return
 
         sequence = int.from_bytes(business[2:6], "little")

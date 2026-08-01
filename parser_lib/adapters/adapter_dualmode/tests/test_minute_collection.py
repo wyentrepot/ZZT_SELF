@@ -98,3 +98,24 @@ def test_try_extract_consumes_full_e4_envelope_not_first_nested_frame():
     assert result is not None
     assert result.consumed == len(bytes.fromhex(E4_APP_HEX)) == 106
     assert result.raw == bytes.fromhex(E4_APP_HEX)
+
+
+def test_concurrent_read_format_start_flag_zero_is_not_expanded():
+    """并发抄读格式（启动位=0，无转发报文长度）本期不展开业务字段。
+
+    与 try_extract 的切帧行为一致：decode 走原始业务报文 + 内嵌帧扫描，
+    并给出 warning，不产生伪「报文序号/转发报文长度」字段。
+    """
+    # 通用头 + 并发抄读头（版本1、方向位0、启动位0）
+    business = bytes([0x01, 0x08])
+    business += bytes.fromhex("03000000")  # 报文序号
+    business += bytes([0x20])  # 协议类型2、电表类型0
+    raw = bytes.fromhex("11E40000") + business
+
+    frame = DualMode43Adapter().decode(raw)
+
+    assert _field(frame, "报文ID").raw == 0x00E4
+    assert _field(frame, "报文序号") is None
+    assert _field(frame, "转发报文长度") is None
+    assert any("并发抄读格式" in warning for warning in frame.warnings)
+    assert any(item.name == "业务报文(原始)" for item in frame.items)
