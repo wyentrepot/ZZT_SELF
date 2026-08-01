@@ -1,0 +1,1468 @@
+{
+  "000B0000": {
+    "name": "当前结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000B0000）"
+  },
+  "000B0001": {
+    "name": "上1结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000B0001）"
+  },
+  "000C0000": {
+    "name": "当前月度组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000C0000）"
+  },
+  "000C0001": {
+    "name": "上1月度组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000C0001）"
+  },
+  "000D0000": {
+    "name": "当前日期时间当前年结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 44,
+    "unit": "年月日时kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000D0000）"
+  },
+  "000D0001": {
+    "name": "上1次年结算日结算时间上1年结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 44,
+    "unit": "年月日时kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000D0001）"
+  },
+  "000D0002": {
+    "name": "上2次年结算日结算时间上2年结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 44,
+    "unit": "年月日时kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000D0002）"
+  },
+  "000D0003": {
+    "name": "上3次年结算日结算时间上3年结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 44,
+    "unit": "年月日时kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000D0003）"
+  },
+  "000D0004": {
+    "name": "上4次年结算日结算时间上4年结算周期组合有功总累计用电量",
+    "data_type": "bcd_compact",
+    "length": 44,
+    "unit": "年月日时kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=000D0004）"
+  },
+  "00FE0001": {
+    "name": "上1次月结算日结算时间",
+    "data_type": "bcd_datetime",
+    "length": 4,
+    "unit": "年月日时",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=00FE0001）"
+  },
+  "00FE0002": {
+    "name": "上2次月结算日结算时间",
+    "data_type": "bcd_datetime",
+    "length": 4,
+    "unit": "年月日时",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=00FE0002）"
+  },
+  "00FE000C": {
+    "name": "上12次月结算日结算时间",
+    "data_type": "bcd_datetime",
+    "length": 4,
+    "unit": "年月日时",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=00FE000C）"
+  },
+  "00FE00FF": {
+    "name": "上1-12次月结算日结算时间数据块",
+    "data_type": "bcd_datetime",
+    "length": null,
+    "unit": "年月日时",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=00FE00FF）"
+  },
+  "0280000B": {
+    "name": "零线有功功率---南网",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "kW",
+    "scale": 4,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=0280000B）"
+  },
+  "0280000C": {
+    "name": "零线功率因数---南网",
+    "data_type": "bcd_compact",
+    "length": 2,
+    "unit": null,
+    "scale": 3,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=0280000C）"
+  },
+  "0280000E": {
+    "name": "火线电流---南网",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=0280000E）"
+  },
+  "0280000F": {
+    "name": "火线有功功率---南网",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "kW",
+    "scale": 4,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=0280000F）"
+  },
+  "02800010": {
+    "name": "火线功率因数---南网",
+    "data_type": "bcd_compact",
+    "length": 2,
+    "unit": null,
+    "scale": 3,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=02800010）"
+  },
+  "02800020": {
+    "name": "当前电价",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "元/kWh",
+    "scale": 4,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=02800020）"
+  },
+  "02800021": {
+    "name": "当前费率电价",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "元/kWh",
+    "scale": 4,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=02800021）"
+  },
+  "02800022": {
+    "name": "身份认证时效剩余时间",
+    "data_type": "bcd_compact",
+    "length": 2,
+    "unit": "分钟",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=02800022）"
+  },
+  "02800023": {
+    "name": "红外认证时效剩余时间",
+    "data_type": "bcd_compact",
+    "length": 1,
+    "unit": "分钟",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=02800023）"
+  },
+  "02800024": {
+    "name": "本月总电压合格时间",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=02800024）"
+  },
+  "03010000": {
+    "name": "A相失压总次数，总累计时间B相失压总次数，总累计时间C相失压总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03010000）"
+  },
+  "03010101": {
+    "name": "(上1次)A相失压记录：发生时刻结束时刻失压期间正向有功总电能增量失压期间反向有功总电能增量失压期间组合无功1总电能增量失压期间组合无功2总电能增量失压期间A相正向有功电能增量失压期间A相反向有功电能增量失压期间A相组合无功1电能增量失压期间A相组合无功2电能增量失压时刻A相电压失压时刻A相电流失压时刻A相有功功率失压时刻A相无功功率失压时刻A相功率因数失压期间B相正向有功电能增量失压期间B相反向有功电能增量失压期间B相组合无功1电能增量失压期间B相组合无功2电能增量失压时刻B相电压失压时刻B相电流失压时刻B相有功功率失压时刻B相无功功率失压时刻B相功率因数失压期间C相正向有功电能增量失压期间C相反向有功电能增量失压期间C相组合无功1电能增量失压期间C相组合无功2电能增量失压时刻C相电压失压时刻C相电流失压时刻C相有功功率失压时刻C相无功功率失压时刻C相功率因数失压期间总安时数失压期间A相安时数失压期间B相安时数失压期间C相安时数",
+    "data_type": "bcd_compact",
+    "length": 6644444444233324444233324444233324444,
+    "unit": "kWhkWhkvarhkvarhkWhkWhkvarhkvarhVAkWkvarkWhkWhkvarhkvarhVAkWkvarkWhkWhkvarhkvarhVAkWkvarAhAhAhAh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03010101）"
+  },
+  "03020000": {
+    "name": "A相欠压总次数，总累计时间B相欠压总次数，总累计时间C相欠压总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03020000）"
+  },
+  "03030000": {
+    "name": "A相过压总次数，总累计时间B相过压总次数，总累计时间C相过压总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03030000）"
+  },
+  "03040000": {
+    "name": "A相断相总次数，总累计时间B相断相总次数，总累计时间C相断相总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03040000）"
+  },
+  "03050000": {
+    "name": "全失压总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 6,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03050000）"
+  },
+  "03060000": {
+    "name": "辅助电源失电总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 6,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03060000）"
+  },
+  "03070000": {
+    "name": "电压逆相序总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 6,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03070000）"
+  },
+  "03070001": {
+    "name": "(上1次)电压逆相序记录内容：发生时刻结束时刻电压逆相序期间正向有功总电能增量电压逆相序期间反向有功总电能增量电压逆相序期间组合无功1总电能增量电压逆相序期间组合无功2总电能增量电压逆相序期间A相正向有功电能增量电压逆相序期间A相反向有功电能增量电压逆相序期间A相组合无功1电能增量电压逆相序期间A相组合无功2电能增量电压逆相序期间B相正向有功电能增量电压逆相序期间B相反向有功电能增量电压逆相序期间B相组合无功1电能增量电压逆相序期间B相组合无功2电能增量电压逆相序期间C相正向有功电能增量电压逆相序期间C相反向有功电能增量电压逆相序期间C相组合无功1电能增量电压逆相序期间C相组合无功2电能增量",
+    "data_type": "bcd_compact",
+    "length": 664444444444444444,
+    "unit": "kWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03070001）"
+  },
+  "03080000": {
+    "name": "电流逆相序总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 6,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03080000）"
+  },
+  "03090000": {
+    "name": "电压不平衡总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 6,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03090000）"
+  },
+  "03090001": {
+    "name": "(上1次)电压不平衡记录内容：发生时刻结束时刻最大不平衡率电压不平衡期间正向有功总电能增量电压不平衡期间反向有功总电能增量电压不平衡期间组合无功1总电能增量电压不平衡期间组合无功2总电能增量电压不平衡期间A相正向有功电能增量电压不平衡期间A相反向有功电能增量电压不平衡期间A相组合无功1电能增量电压不平衡期间A相组合无功2电能增量电压不平衡期间B相正向有功电能增量电压不平衡期间B相反向有功电能增量电压不平衡期间B相组合无功1电能增量电压不平衡期间B相组合无功2电能增量电压不平衡期间C相正向有功电能增量电压不平衡期间C相反向有功电能增量电压不平衡期间C相组合无功1电能增量电压不平衡期间C相组合无功2电能增量",
+    "data_type": "bcd_compact",
+    "length": 6624444444444444444,
+    "unit": "%kWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03090001）"
+  },
+  "030A0000": {
+    "name": "电流不平衡总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 6,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030A0000）"
+  },
+  "030B0000": {
+    "name": "A相失流总次数，总累计时间B相失流总次数，总累计时间C相失流总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030B0000）"
+  },
+  "030B0101": {
+    "name": "(上1次)A相失流记录内容：发生时刻结束时刻失流期间正向有功总电能增量失流期间反向有功总电能增量失流期间组合无功1总电能增量失流期间组合无功2总电能增量失流期间A相正向有功电能增量失流期间A相反向有功电能增量失流期间A相组合无功1电能增量失流期间A相组合无功2电能增量失流时刻A相电压失流时刻A相电流失流时刻A相有功功率失流时刻A相无功功率失流时刻A相功率因数失流期间B相正向有功电能增量失流期间B相反向有功电能增量失流期间B相组合无功1电能增量失流期间B相组合无功2电能增量失流时刻B相电压失流时刻B相电流失流时刻B相有功功率失流时刻B相无功功率失流时刻B相功率因数失流期间C相正向有功电能增量失流期间C相反向有功电能增量失流期间C相组合无功1电能增量失流期间C相组合无功2电能增量失流时刻C相电压失流时刻C相电流失流时刻C相有功功率失流时刻C相无功功率失流时刻C相功率因数",
+    "data_type": "bcd_compact",
+    "length": 664444444423332444423332444423332,
+    "unit": "kWhkWhkvarhkvarhkWhkWhkvarhkvarhVAkWkvarkWhkWhkvarhkvarhVAkWkvarkWhkWhkvarhkvarhVAkWkvar",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030B0101）"
+  },
+  "030C0000": {
+    "name": "A相过流总次数，总累计时间B相过流总次数，总累计时间C相过流总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030C0000）"
+  },
+  "030D0000": {
+    "name": "A相断流总次数，总累计时间B相断流总次数，总累计时间C相断流总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030D0000）"
+  },
+  "030E0000": {
+    "name": "A相潮流反向总次数，总累计时间B相潮流反向总次数，总累计时间C相潮流反向总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030E0000）"
+  },
+  "030E0101": {
+    "name": "(上1次)A相潮流反向记录内容：发生时刻结束时刻潮流反向期间正向有功总电能增量潮流反向期间反向有功总电能增量潮流反向期间组合无功1总电能增量潮流反向期间组合无功2总电能增量潮流反向期间A相正向有功电能增量潮流反向期间A相反向有功电能增量潮流反向期间A相组合无功1电能增量潮流反向期间A相组合无功2电能增量潮流反向期间B相正向有功电能增量潮流反向期间B相反向有功电能增量潮流反向期间B相组合无功1电能增量潮流反向期间B相组合无功2电能增量潮流反向期间C相正向有功电能增量潮流反向期间C相反向有功电能增量潮流反向期间C相组合无功1电能增量潮流反向期间C相组合无功2电能增量",
+    "data_type": "bcd_compact",
+    "length": 664444444444444444,
+    "unit": "kWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030E0101）"
+  },
+  "030F0000": {
+    "name": "A相过载总次数，总累计时间B相过载总次数，总累计时间C相过载总次数，总累计时间",
+    "data_type": "bcd_compact",
+    "length": 666,
+    "unit": "次,分",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=030F0000）"
+  },
+  "03100000": {
+    "name": "本月电压合格率总统计数据：电压监测时间电压合格率电压超限率电压超上限时间电压超下限时间最高电压最高电压出现时间最低电压最低电压出现时间",
+    "data_type": "bcd_compact",
+    "length": 333332424,
+    "unit": "分%%分分VV",
+    "scale": 6,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03100000）"
+  },
+  "03100100": {
+    "name": "A相本月电压合格率统计数据：A相电压监测时间A相电压合格率A相电压超限率A相电压超上限时间A相电压超下限时间A相最高电压A相最高电压出现时间A相最低电压A相最低电压出现时间",
+    "data_type": "bcd_compact",
+    "length": 333332424,
+    "unit": "分%%分分VV",
+    "scale": 6,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03100100）"
+  },
+  "03110000": {
+    "name": "掉电总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03110000）"
+  },
+  "03120000": {
+    "name": "正向有功需量超限总次数反向有功需量超限总次数第一象限无功需量超限总次数第二象限无功需量超限总次数第三象限无功需量超限总次数第四象限无功需量超限总次数",
+    "data_type": "bcd_compact",
+    "length": 333333,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03120000）"
+  },
+  "03120101": {
+    "name": "(上一次)正向有功需量超限记录发生时刻结束时刻需量超限期间正向有功最大需量及发生时间",
+    "data_type": "bcd_compact",
+    "length": 6635,
+    "unit": "kvar",
+    "scale": 14,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03120101）"
+  },
+  "03300000": {
+    "name": "编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300000）"
+  },
+  "03300001": {
+    "name": "(上1次)次编程记录内容：发生时刻操作者代码编程的前10个数据标识码(不足补FFFFFFFFH)",
+    "data_type": "bcd_datetime",
+    "length": null,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300001）"
+  },
+  "03300100": {
+    "name": "电表清零总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300100）"
+  },
+  "03300101": {
+    "name": "(上1次)电表清零记录内容：发生时刻操作者代码电表清零前正向有功总电能电表清零前反向有功总电能电表清零前第一象限无功总电能电表清零前第二象限无功总电能电表清零前第三象限无功总电能电表清零前第四象限无功总电能电表清零前A相正向有功电能电表清零前A相反向有功电能电表清零前A相第一象限无功电能电表清零前A相第二象限无功电能电表清零前A相第三象限无功电能电表清零前A相第四象限无功电能电表清零前B相正向有功电能电表清零前B相反向有功电能电表清零前B相第一象限无功电能电表清零前B相第二象限无功电能电表清零前B相第三象限无功电能电表清零前B相第四象限无功电能电表清零前C相正向有功电能电表清零前C相反向有功电能电表清零前C相第一象限无功电能电表清零前C相第二象限无功电能电表清零前C相第三象限无功电能电表清零前C相第四象限无功电能",
+    "data_type": "bcd_compact",
+    "length": 64444444444444444444444444,
+    "unit": "kWhkWhkvarhkvarhkvarhkvarhkWhkWhkvarhkvarhkvarhkvarhkWhkWhkvarhkvarhkvarhkvarhkWhkWhkvarhkvarhkvarhkvarh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300101）"
+  },
+  "03300200": {
+    "name": "需量清零总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300200）"
+  },
+  "03300201": {
+    "name": "(上1次)需量清零记录内容：发生时刻操作者代码需量清零前正向有功总最大需量及发生时间需量清零前反向有功总最大需量及发生时间需量清零前第一象限无功总最大需量及发生时间需量清零前第二象限无功总最大需量及发生时间需量清零前第三象限无功总最大需量及发生时间需量清零前第四象限无功总最大需量及发生时间需量清零前A相正向有功最大需量及发生时间需量清零前A相反向有功最大需量及发生时间需量清零前A相第一象限无功最大需量及发生时间需量清零前A相第二象限无功最大需量及发生时间需量清零前A相第三象限无功最大需量及发生时间需量清零前A相第四象限无功最大需量及发生时间需量清零前B相正向有功最大需量及发生时间需量清零前B相反向有功最大需量及发生时间需量清零前B相第一象限无功最大需量及发生时间需量清零前B相第二象限无功最大需量及发生时间需量清零前B相第三象限无功最大需量及发生时间需量清零前B相第四象限无功最大需量及发生时间需量清零前C相正向有功最大需量及发生时间需量清零前C相反向有功最大需量及发生时间需量清零前C相第一象限无功最大需量及发生时间需量清零前C相第二象限无功最大需量及发生时间需量清零前C相第三象限无功最大需量及发生时间需量清零前C相第四象限无功最大需量及发生时间",
+    "data_type": "bcd_compact",
+    "length": 643535353535353535353535353535353535353535353535,
+    "unit": "kWkWkvarkvarkvarkvarkWkWkvarkvarkvarkvarkWkWkvarkvarkvarkvarkWkWkvarkvarkvarkvar",
+    "scale": 16,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300201）"
+  },
+  "03300300": {
+    "name": "事件清零总次数(包括总清及分项清)",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300300）"
+  },
+  "03300301": {
+    "name": "(上1次)事件清零记录内容：发生时刻操作者代码事件清零数据标识码",
+    "data_type": "bcd_datetime",
+    "length": 644,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300301）"
+  },
+  "03300400": {
+    "name": "校时总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300400）"
+  },
+  "03300401": {
+    "name": "(上1次)校时记录内容：操作者代码校时前时间校时后时间",
+    "data_type": "bcd_datetime",
+    "length": 466,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300401）"
+  },
+  "03300500": {
+    "name": "时段表编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300500）"
+  },
+  "03300501": {
+    "name": "(上1次)时段表编程记录内容：发生时刻操作者代码时段表编程前第一套第1日时段表数据…时段表编程前第一套第8日时段表数据时段表编程前第二套第1日时段表数据…时段表编程前第二套第8日时段表数据",
+    "data_type": "bcd_datetime",
+    "length": null,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300501）"
+  },
+  "03300600": {
+    "name": "时区表编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300600）"
+  },
+  "03300601": {
+    "name": "(上1次)时区表编程记录内容：发生时刻操作者代码时区表编程前第一套第1时区表数据…时区表编程前第一套第14时区表数据时区表编程前第二套第1时区表数据…时区表编程前第二套第14时区表数据",
+    "data_type": "bcd_datetime",
+    "length": null,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300601）"
+  },
+  "03300700": {
+    "name": "周休日编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300700）"
+  },
+  "03300701": {
+    "name": "(上1次)周休日编程记录内容：发生时刻操作者代码周休日编程前采用的时段表",
+    "data_type": "bcd_datetime",
+    "length": 641,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300701）"
+  },
+  "03300800": {
+    "name": "节假日编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300800）"
+  },
+  "03300801": {
+    "name": "(上1次)节假日编程记录内容：发生时刻操作者代码节假日编程前第1节假日数据…节假日编程前第254节假日数据",
+    "data_type": "bcd_datetime",
+    "length": null,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300801）"
+  },
+  "03300900": {
+    "name": "有功组合方式编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300900）"
+  },
+  "03300901": {
+    "name": "(上1次)有功组合方式编程记录:发生时刻操作者代码有功组合方式编程前的有功组合方式特征字",
+    "data_type": "bcd_datetime",
+    "length": 641,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300901）"
+  },
+  "03300A00": {
+    "name": "无功组合方式1编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300A00）"
+  },
+  "03300B00": {
+    "name": "无功组合方式2编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300B00）"
+  },
+  "03300C00": {
+    "name": "结算日编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300C00）"
+  },
+  "03300C01": {
+    "name": "(上1次)结算日编程记录内容：发生时刻操作者代码结算日编程前每月第1结算日数据结算日编程前每月第2结算日数据结算日编程前每月第3结算日数据",
+    "data_type": "bcd_datetime",
+    "length": 64222,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300C01）"
+  },
+  "03300D00": {
+    "name": "开表盖总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300D00）"
+  },
+  "03300D01": {
+    "name": "(上1次)开表盖记录：发生时刻结束时刻开表盖前正向有功总电能开表盖前反向有功总电能开表盖前第一象限无功总电能开表盖前第二象限无功总电能开表盖前第三象限无功总电能开表盖前第四象限无功总电能开表盖后正向有功总电能开表盖后反向有功总电能开表盖后第一象限无功总电能开表盖后第二象限无功总电能开表盖后第三象限无功总电能开表盖后第四象限无功总电能",
+    "data_type": "bcd_compact",
+    "length": 66444444444444,
+    "unit": "kWhkWhkvarhkvarhkvarhkvarhkWhkWhkvarhkvarhkvarhkvarh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300D01）"
+  },
+  "03300E00": {
+    "name": "开端钮盒总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300E00）"
+  },
+  "03300F00": {
+    "name": "费率参数表编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300F00）"
+  },
+  "03300F01": {
+    "name": "(上1次)费率参数表编程记录内容：发生时刻操作者代码费率参数表编程前当前套费率1…费率参数表编程前当前套费率N（N\\u0026lt;=32）费率参数表编程前备用套费率1…费率参数表编程前备用套费率N（N\\u0026lt;=32）",
+    "data_type": "bcd_compact",
+    "length": null,
+    "unit": "元…元元…元",
+    "scale": 9,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03300F01）"
+  },
+  "03301000": {
+    "name": "阶梯表编程总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301000）"
+  },
+  "03301001": {
+    "name": "(上1次)阶梯表编程记录内容：发生时刻操作者代码阶梯表编程前当前套第1阶梯值…阶梯表编程前当前套第6阶梯值阶梯表编程前当前套阶梯电价1…阶梯表编程前当前套阶梯电价7阶梯表编程前当前年第1结算日阶梯表编程前当前年第2结算日阶梯表编程前当前年第3结算日阶梯表编程前当前年第4结算日阶梯表编程前备用套第1阶梯值…阶梯表编程前备用套第6阶梯值阶梯表编程前备用套阶梯电价1…阶梯表编程前备用套阶梯电价7阶梯表编程前备用年第1结算日阶梯表编程前备用年第2结算日阶梯表编程前备用年第3结算日阶梯表编程前备用年第4结算日",
+    "data_type": "bcd_compact",
+    "length": null,
+    "unit": "kWh…kWh元…元月日时月日时月日时月日时kWh…kWh元…元月日时月日时月日时月日时",
+    "scale": 9,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301001）"
+  },
+  "03301200": {
+    "name": "密钥更新总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301200）"
+  },
+  "03301201": {
+    "name": "(上1次)密钥更新记录内容：发生时刻操作者代码密钥更新的总条数更新前的密钥状态字",
+    "data_type": "bcd_datetime",
+    "length": 6414,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301201）"
+  },
+  "03301300": {
+    "name": "异常插卡总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301300）"
+  },
+  "03301301": {
+    "name": "(上1次)异常插卡记录内容：发生时刻卡序列号错误信息字操作命令头错误响应状态插卡时总购电次数插卡时剩余金额插卡时正向有功总电能插卡时反向有功总电能",
+    "data_type": "bcd_compact",
+    "length": 681522444,
+    "unit": "次元kWhkWh",
+    "scale": 9,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301301）"
+  },
+  "03301400": {
+    "name": "非法插卡总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03301400）"
+  },
+  "03340001": {
+    "name": "上1次退费记录内容：退费日期退费前购电次数退费金额退费前剩余金额退费后剩余金额",
+    "data_type": "bcd_compact",
+    "length": 52444,
+    "unit": "次元元元",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03340001）"
+  },
+  "03350000": {
+    "name": "恒定磁场干扰总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03350000）"
+  },
+  "03350001": {
+    "name": "(上1次) 恒定磁场干扰记录：发生时刻结束时刻发生时刻正向有功总电能发生时刻反向有功总电能结束时刻正向有功总电能结束时刻反向有功总电能",
+    "data_type": "bcd_compact",
+    "length": 664444,
+    "unit": "kWhkWhkWhkWh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03350001）"
+  },
+  "03360000": {
+    "name": "负荷开关误动作总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03360000）"
+  },
+  "03360001": {
+    "name": "(上1次)负荷开关误动作记录内容：发生时刻结束时刻负荷开关误动作后状态负荷开关误动作发生时刻正向有功总电能负荷开关误动作发生时刻反向有功总电能负荷开关误动作结束时刻正向有功总电能负荷开关误动作结束时刻反向有功总电能",
+    "data_type": "bcd_compact",
+    "length": 6614444,
+    "unit": "kWhkWhkWhkWh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03360001）"
+  },
+  "03370000": {
+    "name": "电源异常总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03370000）"
+  },
+  "03370001": {
+    "name": "(上1次)电源异常记录内容：发生时刻结束时刻电源异常发生时刻正向有功总电能电源异常发生时刻反向有功总电能",
+    "data_type": "bcd_compact",
+    "length": 6644,
+    "unit": "kWhkWh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=03370001）"
+  },
+  "1D000001": {
+    "name": "跳闸次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=1D000001）"
+  },
+  "1E000001": {
+    "name": "合闸次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=1E000001）"
+  },
+  "21000000": {
+    "name": "潮流反向总次数",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "次",
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=21000000）"
+  },
+  "21000001": {
+    "name": "（上1次）潮流反向记录内容：发生时刻潮流反向发生时刻总有功功率方向潮流反向发生时刻正向有功总电能潮流反向发生时刻反向有功总电能潮流反向发生时刻组合无功1总电能潮流反向发生时刻组合无功2总电能潮流反向发生时刻A相正向有功电能潮流反向发生时刻A相反向有功电能潮流反向发生时刻A相组合无功1电能潮流反向发生时刻A相组合无功2电能潮流反向发生时刻B相正向有功电能潮流反向发生时刻B相反向有功电能潮流反向发生时刻B相组合无功1电能潮流反向发生时刻B相组合无功2电能潮流反向发生时刻C相正向有功电能潮流反向发生时刻C相反向有功电能潮流反向发生时刻C相组合无功1电能潮流反向发生时刻C相组合无功2电能",
+    "data_type": "bcd_compact",
+    "length": 614444444444444444,
+    "unit": "kWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhkvarhkWhkWhkvarhKvarh",
+    "scale": 8,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=21000001）"
+  },
+  "2C010001": {
+    "name": "恶性负载记录",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": null,
+    "scale": 0,
+    "desc": "645-2007 附录A.2 数据标识编码表（DI=2C010001）"
+  },
+  "00010000": {
+    "name": "(当前)正向有功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00010000，生成）"
+  },
+  "00020000": {
+    "name": "(当前)反向有功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00020000，生成）"
+  },
+  "00030000": {
+    "name": "(当前)组合无功1总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00030000，生成）"
+  },
+  "00040000": {
+    "name": "(当前)组合无功2总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00040000，生成）"
+  },
+  "02010000": {
+    "name": "A相电压",
+    "data_type": "bcd_compact",
+    "length": 2,
+    "unit": "V",
+    "scale": 1,
+    "desc": "A相电压"
+  },
+  "02020000": {
+    "name": "B相电压",
+    "data_type": "bcd_compact",
+    "length": 2,
+    "unit": "V",
+    "scale": 1,
+    "desc": "B相电压"
+  },
+  "02030000": {
+    "name": "C相电压",
+    "data_type": "bcd_compact",
+    "length": 2,
+    "unit": "V",
+    "scale": 1,
+    "desc": "C相电压"
+  },
+  "02010100": {
+    "name": "A相电流",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "A相电流"
+  },
+  "02020100": {
+    "name": "B相电流",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "B相电流"
+  },
+  "02030100": {
+    "name": "C相电流",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "C相电流"
+  },
+  "00000000": {
+    "name": "(当前)组合有功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00000000，生成）"
+  },
+  "00000100": {
+    "name": "(当前)组合有功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00000100，生成）"
+  },
+  "00000200": {
+    "name": "(当前)组合有功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00000200，生成）"
+  },
+  "00000300": {
+    "name": "(当前)组合有功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00000300，生成）"
+  },
+  "00000400": {
+    "name": "(当前)组合有功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00000400，生成）"
+  },
+  "00010100": {
+    "name": "(当前)正向有功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00010100，生成）"
+  },
+  "00010200": {
+    "name": "(当前)正向有功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00010200，生成）"
+  },
+  "00010300": {
+    "name": "(当前)正向有功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00010300，生成）"
+  },
+  "00010400": {
+    "name": "(当前)正向有功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00010400，生成）"
+  },
+  "00020100": {
+    "name": "(当前)反向有功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00020100，生成）"
+  },
+  "00020200": {
+    "name": "(当前)反向有功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00020200，生成）"
+  },
+  "00020300": {
+    "name": "(当前)反向有功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00020300，生成）"
+  },
+  "00020400": {
+    "name": "(当前)反向有功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kWh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00020400，生成）"
+  },
+  "00030100": {
+    "name": "(当前)组合无功1费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00030100，生成）"
+  },
+  "00030200": {
+    "name": "(当前)组合无功1费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00030200，生成）"
+  },
+  "00030300": {
+    "name": "(当前)组合无功1费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00030300，生成）"
+  },
+  "00030400": {
+    "name": "(当前)组合无功1费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00030400，生成）"
+  },
+  "00040100": {
+    "name": "(当前)组合无功2费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00040100，生成）"
+  },
+  "00040200": {
+    "name": "(当前)组合无功2费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00040200，生成）"
+  },
+  "00040300": {
+    "name": "(当前)组合无功2费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00040300，生成）"
+  },
+  "00040400": {
+    "name": "(当前)组合无功2费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00040400，生成）"
+  },
+  "00050000": {
+    "name": "(当前)第一象限无功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00050000，生成）"
+  },
+  "00050100": {
+    "name": "(当前)第一象限无功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00050100，生成）"
+  },
+  "00050200": {
+    "name": "(当前)第一象限无功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00050200，生成）"
+  },
+  "00050300": {
+    "name": "(当前)第一象限无功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00050300，生成）"
+  },
+  "00050400": {
+    "name": "(当前)第一象限无功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00050400，生成）"
+  },
+  "00060000": {
+    "name": "(当前)第二象限无功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00060000，生成）"
+  },
+  "00060100": {
+    "name": "(当前)第二象限无功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00060100，生成）"
+  },
+  "00060200": {
+    "name": "(当前)第二象限无功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00060200，生成）"
+  },
+  "00060300": {
+    "name": "(当前)第二象限无功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00060300，生成）"
+  },
+  "00060400": {
+    "name": "(当前)第二象限无功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00060400，生成）"
+  },
+  "00070000": {
+    "name": "(当前)第三象限无功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00070000，生成）"
+  },
+  "00070100": {
+    "name": "(当前)第三象限无功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00070100，生成）"
+  },
+  "00070200": {
+    "name": "(当前)第三象限无功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00070200，生成）"
+  },
+  "00070300": {
+    "name": "(当前)第三象限无功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00070300，生成）"
+  },
+  "00070400": {
+    "name": "(当前)第三象限无功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00070400，生成）"
+  },
+  "00080000": {
+    "name": "(当前)第四象限无功总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00080000，生成）"
+  },
+  "00080100": {
+    "name": "(当前)第四象限无功费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00080100，生成）"
+  },
+  "00080200": {
+    "name": "(当前)第四象限无功费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00080200，生成）"
+  },
+  "00080300": {
+    "name": "(当前)第四象限无功费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00080300，生成）"
+  },
+  "00080400": {
+    "name": "(当前)第四象限无功费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kvarh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00080400，生成）"
+  },
+  "00090000": {
+    "name": "(当前)正向视在总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00090000，生成）"
+  },
+  "00090100": {
+    "name": "(当前)正向视在费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00090100，生成）"
+  },
+  "00090200": {
+    "name": "(当前)正向视在费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00090200，生成）"
+  },
+  "00090300": {
+    "name": "(当前)正向视在费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00090300，生成）"
+  },
+  "00090400": {
+    "name": "(当前)正向视在费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=00090400，生成）"
+  },
+  "000A0000": {
+    "name": "(当前)反向视在总电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=000A0000，生成）"
+  },
+  "000A0100": {
+    "name": "(当前)反向视在费率1电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=000A0100，生成）"
+  },
+  "000A0200": {
+    "name": "(当前)反向视在费率2电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=000A0200，生成）"
+  },
+  "000A0300": {
+    "name": "(当前)反向视在费率3电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=000A0300，生成）"
+  },
+  "000A0400": {
+    "name": "(当前)反向视在费率4电能",
+    "data_type": "bcd_compact",
+    "length": 4,
+    "unit": "kVAh",
+    "scale": 2,
+    "desc": "645-2007 附录A.2 电能量（DI=000A0400，生成）"
+  },
+  "01010000": {
+    "name": "(当前)正向有功总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kW",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01010000，生成）"
+  },
+  "01020000": {
+    "name": "(当前)反向有功总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kW",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01020000，生成）"
+  },
+  "01030000": {
+    "name": "(当前)组合无功1总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kvar",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01030000，生成）"
+  },
+  "01040000": {
+    "name": "(当前)组合无功2总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kvar",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01040000，生成）"
+  },
+  "01050000": {
+    "name": "(当前)第一象限无功总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kvar",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01050000，生成）"
+  },
+  "01060000": {
+    "name": "(当前)第二象限无功总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kvar",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01060000，生成）"
+  },
+  "01070000": {
+    "name": "(当前)第三象限无功总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kvar",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01070000，生成）"
+  },
+  "01080000": {
+    "name": "(当前)第四象限无功总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kvar",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01080000，生成）"
+  },
+  "01090000": {
+    "name": "(当前)正向视在总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kVA",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=01090000，生成）"
+  },
+  "010A0000": {
+    "name": "(当前)反向视在总最大需量及发生时间",
+    "data_type": "record",
+    "length": 8,
+    "unit": "kVA",
+    "scale": 0,
+    "fields": [
+      {
+        "name": "需量值",
+        "data_type": "bcd_compact",
+        "length": 4,
+        "scale": 4
+      },
+      {
+        "name": "发生时间",
+        "data_type": "bcd_datetime",
+        "length": 4
+      }
+    ],
+    "desc": "645-2007 附录A.2 最大需量及发生时间（DI=010A0000，生成）"
+  }
+}
