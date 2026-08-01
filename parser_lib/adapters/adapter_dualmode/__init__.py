@@ -400,15 +400,23 @@ class DualMode43Adapter(ProtocolAdapter):
         header_len = (business[0] >> 6) | ((business[1] & 0x0F) << 2)
         direction = (business[1] >> 4) & 0x01
         start_flag = (business[1] >> 5) & 0x01
+
+        if start_flag != 1:
+            # 并发抄读格式（格式一）业务布局不同且无转发报文长度，切帧仍按
+            # 内嵌帧扫描（与 try_extract 一致）；本期仅展示通用头并尽力递归。
+            frame.warnings.append(
+                "并发抄读格式（启动位=0）本期仅展示通用头，未展开业务字段"
+            )
+            self._parse_generic_business(frame, business)
+            return
+
         sequence = int.from_bytes(business[2:6], "little")
         forward_len = int.from_bytes(business[6:8], "little")
 
         self._append(frame, "协议版本号", ver, f"{ver:02X}", ver, "固定为1")
         self._append(
-            frame, "分钟采集类型",
-            "主动上报" if start_flag == 1 else "并发抄读",
-            f"{start_flag:02X}", "主动上报" if start_flag == 1 else "并发抄读",
-            "启动位为1时按主动上报格式；否则按并发抄读格式",
+            frame, "分钟采集类型", "主动上报", f"{start_flag:02X}",
+            "主动上报", "启动位为1时按主动上报格式展开",
         )
         self._append(frame, "报文头长度", header_len, f"{header_len:02X}", header_len,
                      "业务报文头(不含转发内容)字节数")

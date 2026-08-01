@@ -450,7 +450,7 @@ function renderMinuteAnalysis(data) {
       period.success_count,
       period.failure_count,
       period.parse_error_count,
-      `${period.station_keys.length} 个站点 · 点击查看`,
+      `${period.station_keys.length} 条上报 · 点击查看`,
     ];
     values.forEach((value, index) => {
       const cell = document.createElement("td");
