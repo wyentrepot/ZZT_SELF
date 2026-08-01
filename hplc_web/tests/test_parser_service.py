@@ -63,6 +63,42 @@ class ParserServiceTests(unittest.TestCase):
         self.assertEqual(result["simple"], {"帧错误": -3})
         self.assertEqual(result["full"], {"帧错误": -3})
 
+    def test_parse_summary_enriches_known_minute_application_payload(self):
+        from hplc_web.application_service import (
+            ApplicationAnalysisService,
+        )
+
+        E4_APP_HEX = (
+            "11E400000132C40000005E00"
+            "013401001412230702005523310726014C00"
+            "6834010014122368910633343435A456AF16"
+            "683401001412236891063335343532321A16"
+            "683401001412236891063336343532321B16"
+            "6834010014122368910A33323435A456323232327916"
+        )
+
+        class E4Dll(FakeDllParser):
+            def parse_simple(self, frame: bytes) -> str:
+                return json.dumps(
+                    {
+                        "kind": "simple",
+                        "length": len(frame),
+                        "FrmType": "APS",
+                        "APP_PORT": "11",
+                        "APP_ID": "00E4",
+                        "APP_RAW": E4_APP_HEX,
+                    }
+                )
+
+        service = ParserService(E4Dll())
+        result = service.parse_summary("7E 01 02 7E")
+
+        simple = result["simple"]
+        self.assertEqual(simple["FrmType"], "分钟采集数据上报")
+        self.assertEqual(simple["BaseFrmType"], "APS")
+        self.assertEqual(simple["application"]["structure"], "双模4-3")
+        self.assertEqual(len(simple["application"]["nested"]), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

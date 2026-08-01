@@ -26,6 +26,31 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn('class="table-shell"', html)
         self.assertIn('class="detail-panel"', html)
 
+    def test_page_has_frame_and_minute_analysis_tabs(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("帧浏览", html)
+        self.assertIn("分钟采集分析", html)
+        self.assertIn('data-view="frames"', html)
+        self.assertIn('data-view="minute"', html)
+
+    def test_minute_analysis_controls_and_layout_are_present(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="period-select"', html)
+        self.assertIn('value="15" selected', html)
+        self.assertIn('id="cco-tei-input"', html)
+        self.assertIn('value="001"', html)
+        self.assertIn('id="dedup-checkbox"', html)
+        self.assertIn("checked", html)
+        self.assertIn('id="minute-query-button"', html)
+        self.assertIn('id="minute-summary-cards"', html)
+        self.assertIn('id="minute-period-table"', html)
+        for header in ("周期", "去重上报STA数", "原始帧数", "重复数",
+                       "成功", "失败", "解析异常", "简介"):
+            self.assertIn(header, html)
+        self.assertIn('id="minute-period-details"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

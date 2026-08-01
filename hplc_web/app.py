@@ -77,6 +77,47 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.get("/api/logs/minute-analysis")
+    def minute_analysis(
+        period_minutes: int = Query(15, ge=1, le=1440),
+        cco_tei: str = Query("001", min_length=3, max_length=3,
+                             pattern=r"^[0-9A-Fa-f]{3}$"),
+        deduplicate: bool = Query(True),
+    ):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            periods = log_service.list_minute_periods(
+                period_minutes, cco_tei, deduplicate
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "periods": periods,
+            "summary": {
+                "total_periods": len(periods),
+                "raw_report_count": sum(
+                    p["raw_report_count"] for p in periods
+                ),
+                "unique_station_count": sum(
+                    p["unique_station_count"] for p in periods
+                ),
+                "duplicate_count": sum(
+                    p["duplicate_count"] for p in periods
+                ),
+                "success_count": sum(p["success_count"] for p in periods),
+                "failure_count": sum(p["failure_count"] for p in periods),
+                "parse_error_count": sum(
+                    p["parse_error_count"] for p in periods
+                ),
+            },
+            "filters": {
+                "period_minutes": period_minutes,
+                "cco_tei": cco_tei.upper(),
+                "deduplicate": deduplicate,
+            },
+        }
+
     @app.get("/api/logs/frames/{frame_id}")
     def log_frame_detail(frame_id: int):
         if log_service is None:

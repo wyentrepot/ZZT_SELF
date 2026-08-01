@@ -543,3 +543,106 @@ tbody tr.selected td { color: #e5eff6; }
   .job-stats { gap: 12px; }
   .search-group input { width: 210px; }
 }
+
+/* ---------- 视图切换与分钟采集分析 ---------- */
+.view-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 20px;
+  margin-top: 14px;
+  border-bottom: 1px solid var(--line, #142433);
+}
+.view-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: #8195a8;
+  padding: 9px 18px;
+  font: inherit;
+  font-size: 12px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+}
+.view-tab.active {
+  color: var(--cyan, #35d0ff);
+  background: var(--panel, #0d1a26);
+  border-color: var(--line, #142433);
+  position: relative;
+  top: 1px;
+}
+.minute-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.minute-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #8195a8;
+  font-size: 11px;
+}
+.minute-filter input[type="text"], .minute-filter select {
+  background: #081420;
+  border: 1px solid var(--line, #142433);
+  color: #dfe9f2;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+}
+.minute-filter input[type="text"] { width: 84px; text-transform: uppercase; }
+.checkbox-filter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  cursor: pointer;
+}
+.minute-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 10px;
+  padding: 12px 0 6px;
+}
+.minute-card {
+  background: #081420;
+  border: 1px solid var(--line, #142433);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.minute-card strong { font-size: 20px; color: var(--cyan, #35d0ff); }
+.minute-card span { font-size: 10px; color: #8195a8; }
+.minute-period-details { padding-top: 12px; }
+.period-detail {
+  border: 1px solid var(--line, #142433);
+  border-radius: 10px;
+  background: #081420;
+  padding: 12px 14px;
+}
+.period-detail h4 { margin: 0 0 8px; font-size: 12px; color: #dfe9f2; }
+.station-list {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: #a9c0d3;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.frame-links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: #8195a8; font-size: 11px; }
+.frame-link {
+  appearance: none;
+  border: 1px solid var(--line, #142433);
+  background: #0d1a26;
+  color: var(--cyan, #35d0ff);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.frame-link:hover { border-color: var(--cyan, #35d0ff); }

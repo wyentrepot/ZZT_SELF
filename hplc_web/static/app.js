@@ -352,3 +352,160 @@ if (launchMode === "test") {
 } else {
   request("/api/logs/status").then(updateStatus).catch(() => {});
 }
+
+// ---------- 分钟采集分析 ----------
+
+const minuteElements = {
+  view: $("#minute-view"),
+  framesView: $("#frames-view"),
+  framesData: $("#frames-data"),
+  tabs: document.querySelectorAll(".view-tab"),
+  period: $("#period-select"),
+  ccoTei: $("#cco-tei-input"),
+  dedup: $("#dedup-checkbox"),
+  query: $("#minute-query-button"),
+  error: $("#minute-error"),
+  cards: $("#minute-summary-cards"),
+  rows: $("#minute-period-table"),
+  details: $("#minute-period-details"),
+};
+
+function switchView(name) {
+  minuteElements.tabs.forEach((tab) => {
+    const active = tab.dataset.view === name;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  minuteElements.framesView.hidden = name !== "frames";
+  minuteElements.framesData.hidden = name !== "frames";
+  minuteElements.view.hidden = name !== "minute";
+}
+
+minuteElements.tabs.forEach((tab) => {
+  tab.addEventListener("click", () => switchView(tab.dataset.view));
+});
+
+async function loadMinuteAnalysis() {
+  const tei = (minuteElements.ccoTei.value.trim() || "001").toUpperCase();
+  minuteElements.ccoTei.value = tei;
+  const params = new URLSearchParams({
+    period_minutes: minuteElements.period.value,
+    cco_tei: tei,
+    deduplicate: String(minuteElements.dedup.checked),
+  });
+  minuteElements.error.hidden = true;
+  try {
+    renderMinuteAnalysis(
+      await request(`/api/logs/minute-analysis?${params}`)
+    );
+  } catch (error) {
+    minuteElements.error.textContent = error.message;
+    minuteElements.error.hidden = false;
+  }
+}
+
+function renderMinuteAnalysis(data) {
+  const summary = data.summary;
+  minuteElements.cards.replaceChildren();
+  const cards = [
+    ["周期数", summary.total_periods],
+    ["原始上报", summary.raw_report_count],
+    ["STA-周期去重数", summary.unique_station_count],
+    ["重复数", summary.duplicate_count],
+    ["成功", summary.success_count],
+    ["失败", summary.failure_count],
+    ["解析异常", summary.parse_error_count],
+  ];
+  for (const [label, value] of cards) {
+    const card = document.createElement("div");
+    card.className = "minute-card";
+    const strong = document.createElement("strong");
+    strong.textContent = value;
+    const span = document.createElement("span");
+    span.textContent = label;
+    card.append(strong, span);
+    minuteElements.cards.append(card);
+  }
+
+  minuteElements.rows.replaceChildren();
+  minuteElements.details.replaceChildren();
+  if (!data.periods.length) {
+    const row = document.createElement("tr");
+    row.className = "empty-row";
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "没有符合当前筛选条件的周期";
+    row.append(cell);
+    minuteElements.rows.append(row);
+    return;
+  }
+
+  for (const period of data.periods) {
+    const row = document.createElement("tr");
+    const values = [
+      period.description,
+      period.unique_station_count,
+      period.raw_report_count,
+      period.duplicate_count,
+      period.success_count,
+      period.failure_count,
+      period.parse_error_count,
+      `${period.station_keys.length} 个站点 · 点击查看`,
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      if (index === 0) cell.className = "route";
+      row.append(cell);
+    });
+    row.addEventListener("click", () => renderPeriodDetails(period));
+    minuteElements.rows.append(row);
+  }
+}
+
+function renderPeriodDetails(period) {
+  minuteElements.details.replaceChildren();
+  const box = document.createElement("div");
+  box.className = "period-detail";
+  const title = document.createElement("h4");
+  title.textContent = `周期 ${period.description} · 站点与证据帧`;
+  box.append(title);
+
+  const stationList = document.createElement("ul");
+  stationList.className = "station-list";
+  period.station_keys.forEach((key) => {
+    const li = document.createElement("li");
+    li.textContent = key;
+    stationList.append(li);
+  });
+  box.append(stationList);
+
+  const frameRow = document.createElement("div");
+  frameRow.className = "frame-links";
+  frameRow.append(document.createTextNode("证据帧："));
+  period.frame_ids.forEach((id) => {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "frame-link";
+    link.textContent = `帧 ${id}`;
+    link.addEventListener("click", () => openFrameById(id));
+    frameRow.append(link);
+  });
+  box.append(frameRow);
+  minuteElements.details.append(box);
+}
+
+async function openFrameById(id) {
+  try {
+    const detail = await request(`/api/logs/frames/${id}`);
+    renderDetail(detail);
+    switchView("frames");
+  } catch (error) {
+    minuteElements.error.textContent = error.message;
+    minuteElements.error.hidden = false;
+  }
+}
+
+minuteElements.query.addEventListener("click", loadMinuteAnalysis);
+minuteElements.period.addEventListener("change", loadMinuteAnalysis);
+minuteElements.dedup.addEventListener("change", loadMinuteAnalysis);

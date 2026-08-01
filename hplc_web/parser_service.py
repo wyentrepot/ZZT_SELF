@@ -3,6 +3,8 @@ import re
 import threading
 from typing import Protocol
 
+from hplc_web.application_service import ApplicationAnalysisService
+
 
 class FrameValidationError(ValueError):
     pass
@@ -33,20 +35,24 @@ def normalize_hex_frame(value: str) -> bytes:
 
 
 class ParserService:
-    def __init__(self, parser: DllParser):
+    def __init__(self, parser: DllParser, application_service=None):
         self.parser = parser
         self._parser_lock = threading.Lock()
+        self.application_service = application_service or ApplicationAnalysisService()
 
     def parse_summary(self, value: str) -> dict:
         frame = normalize_hex_frame(value)
         with self._parser_lock:
             simple = self.parser.parse_simple(frame)
+        simple_dict = self.application_service.enrich_summary(
+            self._decode_result(simple)
+        )
         return {
             "frame": {
                 "length": len(frame),
                 "normalized_hex": " ".join(f"{byte:02X}" for byte in frame),
             },
-            "simple": self._decode_result(simple),
+            "simple": simple_dict,
         }
 
     def parse(self, value: str) -> dict:
@@ -54,12 +60,15 @@ class ParserService:
         with self._parser_lock:
             simple = self.parser.parse_simple(frame)
             full = self.parser.parse_full(frame)
+        simple_dict = self.application_service.enrich_summary(
+            self._decode_result(simple)
+        )
         return {
             "frame": {
                 "length": len(frame),
                 "normalized_hex": " ".join(f"{byte:02X}" for byte in frame),
             },
-            "simple": self._decode_result(simple),
+            "simple": simple_dict,
             "full": self._decode_result(full),
         }
 

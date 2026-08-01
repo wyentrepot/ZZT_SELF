@@ -39,6 +39,25 @@ class FakeLogService:
     def get_frame(self, frame_id):
         return {"id": frame_id, "analysis": {"full": {"ok": True}}}
 
+    def list_minute_periods(self, period_minutes=15, cco_tei="001", deduplicate=True):
+        self.last_minute_query = (period_minutes, cco_tei, deduplicate)
+        return [
+            {
+                "period_start": 0,
+                "period_end": 900000,
+                "raw_report_count": 23,
+                "unique_station_count": 18,
+                "duplicate_count": 5,
+                "success_count": 23,
+                "failure_count": 0,
+                "parse_error_count": 0,
+                "report_count": 18,
+                "station_keys": ["340100141223"],
+                "frame_ids": [1, 2, 3],
+                "description": "00:00:00.000 - 00:15:00.000",
+            }
+        ]
+
 
 class AppTests(unittest.TestCase):
     def setUp(self):
@@ -85,6 +104,34 @@ class AppTests(unittest.TestCase):
         response = self.client.get("/api/logs/frames/7")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["id"], 7)
+
+    def test_minute_analysis_returns_periods_summary_and_filters(self):
+        response = self.client.get(
+            "/api/logs/minute-analysis?period_minutes=15&cco_tei=001&deduplicate=true"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("periods", data)
+        self.assertIn("summary", data)
+        self.assertIn("filters", data)
+        self.assertEqual(data["summary"]["total_periods"], 1)
+        self.assertEqual(data["summary"]["raw_report_count"], 23)
+        self.assertEqual(data["summary"]["duplicate_count"], 5)
+        self.assertEqual(
+            self.log_service.last_minute_query, (15, "001", True)
+        )
+
+    def test_minute_analysis_rejects_invalid_period_and_tei(self):
+        for params in (
+            "period_minutes=0&cco_tei=001",
+            "period_minutes=1441&cco_tei=001",
+            "period_minutes=15&cco_tei=00g",
+        ):
+            response = self.client.get(
+                f"/api/logs/minute-analysis?{params}"
+            )
+            self.assertEqual(response.status_code, 422, params)
 
 
 if __name__ == "__main__":

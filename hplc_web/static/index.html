@@ -22,7 +22,14 @@
       </div>
     </header>
 
-    <section class="operation-panel" aria-label="日志操作区">
+    <nav class="view-tabs" role="tablist" aria-label="视图切换">
+      <button class="view-tab active" type="button" role="tab"
+        data-view="frames" aria-selected="true">帧浏览</button>
+      <button class="view-tab" type="button" role="tab"
+        data-view="minute" aria-selected="false">分钟采集分析</button>
+    </nav>
+
+    <section id="frames-view" class="operation-panel" aria-label="日志操作区">
       <div class="panel-title-row">
         <div>
           <span class="section-kicker">01 / 数据源</span>
@@ -71,7 +78,7 @@
       </div>
     </section>
 
-    <section class="data-section">
+    <section id="frames-data" class="data-section">
       <div class="list-panel">
         <div class="panel-toolbar">
           <div>
@@ -143,6 +150,67 @@
           </details>
         </div>
       </aside>
+    </section>
+
+    <section id="minute-view" class="data-section" hidden>
+      <div class="list-panel">
+        <div class="panel-toolbar">
+          <div>
+            <span class="section-kicker">03 / 分钟采集</span>
+            <h2>分钟采集分析</h2>
+          </div>
+          <div class="minute-filters">
+            <label class="minute-filter">
+              <span>周期</span>
+              <select id="period-select">
+                <option value="5">5 分钟</option>
+                <option value="15" selected>15 分钟</option>
+                <option value="30">30 分钟</option>
+                <option value="60">60 分钟</option>
+              </select>
+            </label>
+            <label class="minute-filter">
+              <span>CCO TEI</span>
+              <input id="cco-tei-input" value="001" maxlength="3"
+                autocomplete="off" aria-label="CCO TEI">
+            </label>
+            <label class="minute-filter checkbox-filter">
+              <input id="dedup-checkbox" type="checkbox" checked>
+              <span>按周期去重</span>
+            </label>
+            <button id="minute-query-button" class="primary-button"
+              type="button">查询</button>
+          </div>
+        </div>
+
+        <div id="minute-error" class="error-banner" role="alert" hidden></div>
+
+        <div id="minute-summary-cards" class="minute-summary-cards"></div>
+
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>周期</th>
+                <th>去重上报STA数</th>
+                <th>原始帧数</th>
+                <th>重复数</th>
+                <th>成功</th>
+                <th>失败</th>
+                <th>解析异常</th>
+                <th>简介</th>
+              </tr>
+            </thead>
+            <tbody id="minute-period-table">
+              <tr class="empty-row">
+                <td colspan="8">建立索引后点击「查询」查看分钟采集周期统计</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div id="minute-period-details" class="minute-period-details"></div>
+      </div>
     </section>
   </main>
 

@@ -53,6 +53,9 @@ _MESSAGE_NAMES = {
     0x00A2: "查询ID信息",
     0x00A3: "精准校时",
     0x00A4: "配电信息上报",
+    0x00E2: "采集任务配置",
+    0x00E3: "采集任务数据读取",
+    0x00E4: "采集任务数据上报",
 }
 
 _nested = None
@@ -151,6 +154,20 @@ class DualMode43Adapter(ProtocolAdapter):
     def try_extract(self, buf: bytes):
         if not _valid_header(buf):
             return None
+        raw_msg_id = buf[1] | (buf[2] << 8)
+        msg_id, _ = _message_parts(raw_msg_id)
+        if msg_id == 0x00E4:
+            # 分钟采集数据上报：主动上报格式按 4 + 报文头长度 + 转发报文长度
+            # 完整消费，而不是停在第一条内嵌 645/698 帧处。
+            business = buf[4:]
+            if len(business) >= 8:
+                header_len = (business[0] >> 6) | ((business[1] & 0x0F) << 2)
+                start_flag = (business[1] >> 5) & 0x01
+                if start_flag == 1 and header_len >= 4:
+                    forward_len = int.from_bytes(business[6:8], "little")
+                    end = 4 + header_len + forward_len
+                    if 8 <= end <= len(buf):
+                        return ExtractResult(raw=buf[:end], consumed=end)
         nested = _find_first_nested(buf, 4)
         if nested is None:
             return None
@@ -207,6 +224,12 @@ class DualMode43Adapter(ProtocolAdapter):
 
         if msg_id in (0x0001, 0x0002, 0x0003):
             self._parse_meter_business(frame, business, msg_id)
+        elif msg_id == 0x00E4:
+            self._parse_minute_report(frame, business)
+        elif msg_id == 0x00E2:
+            self._parse_minute_config(frame, business)
+        elif msg_id == 0x00E3:
+            self._parse_minute_read(frame, business)
         else:
             self._parse_generic_business(frame, business)
         return frame
@@ -350,3 +373,243 @@ class DualMode43Adapter(ProtocolAdapter):
                 desc="业务报文内递归解出",
             ))
             frame.nested.append(pf)
+
+    def _append(self, frame, name, value, hex_str, raw, desc=""):
+        frame.fields.append(DataField(
+            name=name, value=value, hex=hex_str, raw=raw, desc=desc,
+        ))
+
+    def _parse_minute_report(self, frame, business):
+        """采集任务数据上报（0x00E4）主动上报格式解析。
+
+        主动上报头（8 字节）：协议版本号(6)+报文头长度(6)+方向位(1)+启动位(1)+
+        报文序号(32)+转发报文长度(16)；转发报文内容为分钟级数据：前导字段(1)+
+        源MAC(6)+任务号(1)+协议类型/电表类型/响应结果(1)+冻结时刻(6)+
+        报文条数(1)+数据长度(16)+数据内容。
+        """
+        if len(business) < 8:
+            frame.warnings.append("业务报文过短，无法解析分钟采集上报（需≥8字节）")
+            if business:
+                frame.items.append(DataField(
+                    name="业务报文(原始)", value=business.hex(), hex=business.hex(),
+                    raw=business.hex(), desc="双模4-3分钟采集上报业务报文",
+                ))
+            return
+
+        ver = business[0] & 0x3F
+        header_len = (business[0] >> 6) | ((business[1] & 0x0F) << 2)
+        direction = (business[1] >> 4) & 0x01
+        start_flag = (business[1] >> 5) & 0x01
+        sequence = int.from_bytes(business[2:6], "little")
+        forward_len = int.from_bytes(business[6:8], "little")
+
+        self._append(frame, "协议版本号", ver, f"{ver:02X}", ver, "固定为1")
+        self._append(
+            frame, "分钟采集类型",
+            "主动上报" if start_flag == 1 else "并发抄读",
+            f"{start_flag:02X}", "主动上报" if start_flag == 1 else "并发抄读",
+            "启动位为1时按主动上报格式；否则按并发抄读格式",
+        )
+        self._append(frame, "报文头长度", header_len, f"{header_len:02X}", header_len,
+                     "业务报文头(不含转发内容)字节数")
+        self._append(frame, "方向", "上行" if direction else "下行",
+                     f"{direction:02X}", direction)
+        self._append(frame, "启动位", start_flag, f"{start_flag:02X}", start_flag,
+                     "1：主动上报格式")
+        self._append(frame, "报文序号", f"0x{sequence:08X}",
+                     business[2:6].hex().upper(), sequence,
+                     "与下行报文序号保持一致")
+        self._append(frame, "转发报文长度", forward_len, f"{forward_len:04X}",
+                     forward_len, "分钟级报文相关")
+
+        if header_len > len(business):
+            frame.warnings.append(
+                f"报文头长度({header_len})超出业务报文长度({len(business)})"
+            )
+            forwarded = b""
+        else:
+            forwarded = business[header_len:]
+
+        if len(forwarded) < forward_len:
+            frame.warnings.append(
+                f"转发报文长度({forward_len})超出可用字节({len(forwarded)})"
+            )
+            forwarded = forwarded[:forward_len]
+        else:
+            forwarded = forwarded[:forward_len]
+
+        if not forwarded:
+            return
+
+        self._append(frame, "前导字段", f"0x{forwarded[0]:02X}", f"{forwarded[0]:02X}",
+                     forwarded[0],
+                     "源MAC前的未文档化字节，命名待协议文档确认")
+        if len(forwarded) < 7:
+            frame.warnings.append("转发报文不足7字节，缺少源MAC")
+            return
+        src_mac = forwarded[1:7]
+        self._append(frame, "源MAC地址", ":".join(f"{b:02X}" for b in src_mac),
+                     src_mac.hex().upper(), src_mac.hex().upper(),
+                     "模块MAC（转发内容源MAC）")
+        if len(forwarded) < 9:
+            frame.warnings.append("转发报文不足9字节，缺少任务号/协议类型")
+            return
+        task_no = forwarded[7]
+        packed = forwarded[8]
+        proto_type = packed & 0x07
+        meter_type = (packed >> 3) & 0x03
+        result = (packed >> 5) & 0x07
+        self._append(frame, "任务号", task_no, f"{task_no:02X}", task_no,
+                     "采集任务号")
+        self._append(frame, "协议类型", proto_type,
+                     f"{proto_type:02X} ({self._PROTO_NAMES.get(proto_type, '保留')})",
+                     proto_type)
+        self._append(frame, "电表类型", meter_type, f"{meter_type:02X}", meter_type,
+                     "0：单相；1：三相；2：其他")
+        self._append(frame, "响应结果", result, f"{result:02X}", result,
+                     "0：响应成功；1：任务不存在；2：无冻结数据；3：其他原因")
+        if len(forwarded) < 15:
+            frame.warnings.append("转发报文不足15字节，缺少冻结时刻")
+            return
+        freeze = forwarded[9:15]
+        freeze_str = "-".join(f"{b:02X}" for b in freeze)
+        self._append(frame, "冻结时刻", freeze_str, freeze.hex().upper(),
+                     freeze.hex().upper(),
+                     "冻结时间点（YY-MM-DD-HH-MM-SS）")
+        if len(forwarded) < 18:
+            frame.warnings.append("转发报文不足18字节，缺少报文条数/数据长度")
+            return
+        count = forwarded[15]
+        data_len = int.from_bytes(forwarded[16:18], "little")
+        self._append(frame, "上报数量", count, f"{count:02X}", count,
+                     "645协议下配置多个DI时回复多条报文")
+        self._append(frame, "数据长度", data_len, f"{data_len:04X}", data_len)
+        data = forwarded[18:18 + data_len]
+        if len(data) < data_len:
+            frame.warnings.append(
+                f"数据长度({data_len})超出可用字节({len(data)})"
+            )
+
+        if not data:
+            return
+        nested = _scan_nested(data)
+        for idx, pf in enumerate(nested):
+            summary = f"{pf.structure}"
+            if pf.address:
+                summary += f" · 地址{pf.address}"
+            frame.items.append(DataField(
+                name=f"分钟数据嵌套帧[{idx}] · {pf.structure}",
+                value=summary, hex=pf.raw_hex, raw=pf.raw_hex,
+                desc="分钟级数据区内递归解出",
+            ))
+            frame.nested.append(pf)
+        if not nested:
+            frame.items.append(DataField(
+                name="分钟数据(原始)", value=data.hex(), hex=data.hex(),
+                raw=data.hex(), desc="未能按协议类型解出内嵌帧",
+            ))
+
+    def _parse_minute_config(self, frame, business):
+        """采集任务配置（0x00E2）下行报文解析。
+
+        业务头：协议版本号(6)+报文头长度(6)+保留(4)+报文序号(32)+目的MAC(48)+
+        任务号(8)+启动/删除标志(1)+协议类型(3)+表类型(2)+保留(2)+
+        采集周期(8)+数据项个数n(8)+n×(数据项标识(32)+回复长度(8))。
+        """
+        if len(business) < 16:
+            frame.warnings.append("业务报文过短，无法解析采集任务配置（需≥16字节）")
+            return
+        ver = business[0] & 0x3F
+        header_len = (business[0] >> 6) | ((business[1] & 0x0F) << 2)
+        sequence = int.from_bytes(business[2:6], "little")
+        self._append(frame, "协议版本号", ver, f"{ver:02X}", ver, "固定为1")
+        self._append(frame, "报文头长度", header_len, f"{header_len:02X}", header_len)
+        self._append(frame, "方向", "下行", "00", 0, "CCO → STA")
+        self._append(frame, "报文序号", f"0x{sequence:08X}",
+                     business[2:6].hex().upper(), sequence)
+        if len(business) < 13:
+            frame.warnings.append("业务报文不足13字节，缺少目的MAC/任务号")
+            return
+        dst_mac = business[6:12]
+        self._append(frame, "目的MAC地址", ":".join(f"{b:02X}" for b in dst_mac),
+                     dst_mac.hex().upper(), dst_mac.hex().upper())
+        task_no = business[12]
+        flag = business[13]
+        period = business[14]
+        item_count = business[15]
+        self._append(frame, "任务号", task_no, f"{task_no:02X}", task_no,
+                     "采集任务号0~15有效，0xFF代表全部任务")
+        self._append(
+            frame, "启动/删除标志", "启用" if flag & 0x01 else "删除",
+            f"{flag & 0x01:02X}", flag & 0x01,
+        )
+        proto_type = (flag >> 1) & 0x07
+        meter_type = (flag >> 4) & 0x03
+        self._append(frame, "协议类型", proto_type,
+                     f"{proto_type:02X} ({self._PROTO_NAMES.get(proto_type, '保留')})",
+                     proto_type)
+        self._append(frame, "表类型", meter_type, f"{meter_type:02X}", meter_type,
+                     "0x00：单相表；0x01：三相表；0x02：其他表计")
+        self._append(frame, "采集周期", period, f"{period:02X}", period, "单位分钟")
+        self._append(frame, "数据项个数", item_count, f"{item_count:02X}", item_count)
+        # 数据项：n × (标识4B + 回复长度1B)
+        items_start = 16
+        for idx in range(item_count):
+            offset = items_start + idx * 5
+            if offset + 5 > len(business):
+                frame.warnings.append(
+                    f"数据项[{idx}]越界，已解析 {idx} 项"
+                )
+                break
+            di_id = business[offset:offset + 4]
+            di_len = business[offset + 4]
+            self._append(frame, f"数据项{idx}标识", di_id.hex().upper(),
+                         di_id.hex().upper(), di_id.hex().upper())
+            self._append(frame, f"数据项{idx}回复长度", di_len, f"{di_len:02X}",
+                         di_len)
+
+    def _parse_minute_read(self, frame, business):
+        """采集任务数据读取（0x00E3）下行报文解析。
+
+        业务头：协议版本号(6)+报文头长度(6)+方向位(1)+保留(3)+报文序号(32)+
+        协议类型(4)+电表类型(1)+保留(3)+目的MAC(48)+任务号(8)+冻结时刻(48)。
+        """
+        if len(business) < 20:
+            frame.warnings.append("业务报文过短，无法解析采集任务数据读取（需≥20字节）")
+            return
+        ver = business[0] & 0x3F
+        header_len = (business[0] >> 6) | ((business[1] & 0x0F) << 2)
+        direction = (business[1] >> 4) & 0x01
+        sequence = int.from_bytes(business[2:6], "little")
+        self._append(frame, "协议版本号", ver, f"{ver:02X}", ver, "固定为1")
+        self._append(frame, "报文头长度", header_len, f"{header_len:02X}", header_len)
+        self._append(frame, "方向", "上行" if direction else "下行",
+                     f"{direction:02X}", direction, "0：下行；1：上行")
+        self._append(frame, "报文序号", f"0x{sequence:08X}",
+                     business[2:6].hex().upper(), sequence)
+        if len(business) < 7:
+            frame.warnings.append("业务报文不足7字节，缺少协议类型/目的MAC")
+            return
+        proto_type = business[6] & 0x0F
+        meter_type = (business[6] >> 4) & 0x01
+        self._append(frame, "协议类型", proto_type,
+                     f"{proto_type:02X} ({self._PROTO_NAMES.get(proto_type, '保留')})",
+                     proto_type)
+        self._append(frame, "电表类型", meter_type, f"{meter_type:02X}", meter_type,
+                     "0：单相；1：三相")
+        if len(business) < 13:
+            frame.warnings.append("业务报文不足13字节，缺少目的MAC/任务号")
+            return
+        dst_mac = business[7:13]
+        self._append(frame, "目的MAC地址", ":".join(f"{b:02X}" for b in dst_mac),
+                     dst_mac.hex().upper(), dst_mac.hex().upper())
+        task_no = business[13]
+        self._append(frame, "任务号", task_no, f"{task_no:02X}", task_no, "采集任务号")
+        if len(business) < 20:
+            frame.warnings.append("业务报文不足20字节，缺少冻结时刻")
+            return
+        freeze = business[14:20]
+        freeze_str = "-".join(f"{b:02X}" for b in freeze)
+        self._append(frame, "冻结时刻", freeze_str, freeze.hex().upper(),
+                     freeze.hex().upper(),
+                     "冻结时间点（YY-MM-DD-HH-MM-SS）")

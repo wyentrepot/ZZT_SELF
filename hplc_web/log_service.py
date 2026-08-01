@@ -91,6 +91,7 @@ class LogFileService:
     def _initialize_database(self, reset: bool) -> None:
         with self._connect() as connection:
             if reset:
+                connection.execute("DROP TABLE IF EXISTS minute_reports")
                 connection.execute("DROP TABLE IF EXISTS frames")
             connection.execute(
                 """
@@ -106,7 +107,33 @@ class LogFileService:
                 """
             )
             connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS minute_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    frame_id INTEGER NOT NULL,
+                    log_time TEXT NOT NULL,
+                    time_seconds INTEGER NOT NULL,
+                    cco_tei TEXT NOT NULL,
+                    station_key TEXT NOT NULL,
+                    source_mac TEXT,
+                    source_tei TEXT,
+                    task_no INTEGER,
+                    protocol_type INTEGER,
+                    meter_type INTEGER,
+                    response_result INTEGER,
+                    freeze_time TEXT,
+                    report_count INTEGER,
+                    data_length INTEGER,
+                    application_error TEXT
+                )
+                """
+            )
+            connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_frames_sequence ON frames(sequence)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_minute_reports_cco "
+                "ON minute_reports(cco_tei)"
             )
 
     def _replace_status(self, **values) -> dict:
@@ -171,12 +198,22 @@ class LogFileService:
         frame_count = 0
         error_count = 0
         bytes_read = 0
+        minute_day_offset = 0
+        minute_prev_abs_ms = None
 
         with source.open("rb") as stream, self._connect() as connection:
             insert_sql = """
                 INSERT INTO frames (
                     sequence, log_time, byte_length, raw_hex, summary_json, parse_error
                 ) VALUES (?, ?, ?, ?, ?, ?)
+            """
+            insert_minute_sql = """
+                INSERT INTO minute_reports (
+                    frame_id, log_time, time_seconds, cco_tei, station_key,
+                    source_mac, source_tei, task_no, protocol_type, meter_type,
+                    response_result, freeze_time, report_count, data_length,
+                    application_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             for line in stream:
                 line_count += 1
@@ -187,16 +224,16 @@ class LogFileService:
 
                 summary_json = None
                 parse_error = None
+                simple = {}
                 try:
                     parsed = self.parser.parse_summary(record.hex_frame)
-                    summary_json = json.dumps(
-                        parsed.get("simple", {}), ensure_ascii=False
-                    )
+                    simple = parsed.get("simple", {})
+                    summary_json = json.dumps(simple, ensure_ascii=False)
                 except Exception as exc:
                     error_count += 1
                     parse_error = str(exc)
 
-                connection.execute(
+                cursor = connection.execute(
                     insert_sql,
                     (
                         record.sequence,
@@ -208,6 +245,17 @@ class LogFileService:
                     ),
                 )
                 frame_count += 1
+
+                if simple.get("APP_ID") == "00E4":
+                    minute_day_offset, minute_prev_abs_ms = self._insert_minute_report(
+                        connection,
+                        insert_minute_sql,
+                        cursor.lastrowid,
+                        record,
+                        simple,
+                        minute_day_offset,
+                        minute_prev_abs_ms,
+                    )
 
                 if frame_count % 100 == 0:
                     connection.commit()
@@ -230,6 +278,153 @@ class LogFileService:
             error_count=error_count,
             message=f"索引完成，共 {frame_count} 帧",
         )
+
+    # ---------- 分钟采集上报持久化与周期统计 ----------
+
+    _TIME_PATTERN = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$")
+
+    @staticmethod
+    def _parse_time_ms(text: str):
+        match = LogFileService._TIME_PATTERN.match(text)
+        if not match:
+            return None
+        hour, minute, second, milli = (int(part) for part in match.groups())
+        return hour * 3_600_000 + minute * 60_000 + second * 1_000 + milli
+
+    @staticmethod
+    def _minute_fields(simple: dict) -> dict:
+        """从已富化的简单摘要提取 minute_reports 表需要的字段。"""
+        application = simple.get("application") or {}
+        fields = {f.get("name"): f for f in application.get("fields", [])}
+
+        def raw(name):
+            field = fields.get(name)
+            return field.get("raw") if field else None
+
+        source_mac = raw("源MAC地址")
+        station_key = source_mac or simple.get("ORI_S") or simple.get("SRC") or ""
+        return {
+            "cco_tei": simple.get("FINL_D") or simple.get("DST") or "",
+            "station_key": str(station_key),
+            "source_mac": source_mac,
+            "source_tei": simple.get("ORI_S"),
+            "task_no": raw("任务号"),
+            "protocol_type": raw("协议类型"),
+            "meter_type": raw("电表类型"),
+            "response_result": raw("响应结果"),
+            "freeze_time": raw("冻结时刻"),
+            "report_count": raw("上报数量"),
+            "data_length": raw("数据长度"),
+            "application_error": simple.get("application_error"),
+        }
+
+    def _insert_minute_report(self, connection, insert_sql, frame_id, record,
+                              simple, day_offset, prev_abs_ms):
+        """插入一条分钟上报；返回更新后的 (day_offset, prev_abs_ms)。"""
+        fields = self._minute_fields(simple)
+        ms = self._parse_time_ms(record.log_time)
+        if ms is None:
+            return day_offset, prev_abs_ms
+        if prev_abs_ms is not None and ms < prev_abs_ms - 12 * 3_600_000:
+            day_offset += 1
+        absolute_ms = day_offset * 86_400_000 + ms
+
+        connection.execute(
+            insert_sql,
+            (
+                frame_id,
+                record.log_time,
+                absolute_ms,
+                fields["cco_tei"],
+                fields["station_key"],
+                fields["source_mac"],
+                fields["source_tei"],
+                fields["task_no"],
+                fields["protocol_type"],
+                fields["meter_type"],
+                fields["response_result"],
+                fields["freeze_time"],
+                fields["report_count"],
+                fields["data_length"],
+                fields["application_error"],
+            ),
+        )
+        return day_offset, absolute_ms
+
+    @staticmethod
+    def _clock_text(absolute_ms: int) -> str:
+        ms = absolute_ms % 86_400_000
+        hour, rem = divmod(ms, 3_600_000)
+        minute, rem = divmod(rem, 60_000)
+        second, milli = divmod(rem, 1_000)
+        return f"{hour:02d}:{minute:02d}:{second:02d}.{milli:03d}"
+
+    def list_minute_periods(self, period_minutes=15, cco_tei="001",
+                            deduplicate=True) -> list:
+        if not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440:
+            raise ValueError("period_minutes 必须在 1 到 1440 之间")
+        if not isinstance(cco_tei, str) or not re.fullmatch(
+            r"[0-9A-F]{3}", cco_tei.upper()
+        ):
+            raise ValueError("cco_tei 必须为三个大写十六进制字符")
+
+        period_ms = period_minutes * 60_000
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT frame_id, log_time, time_seconds, station_key,
+                       response_result, application_error
+                FROM minute_reports
+                WHERE cco_tei = ?
+                ORDER BY id
+                """,
+                (cco_tei.upper(),),
+            ).fetchall()
+
+        groups = {}
+        for row in rows:
+            start = row["time_seconds"] - (row["time_seconds"] % period_ms)
+            groups.setdefault(start, []).append(row)
+
+        periods = []
+        for start in sorted(groups):
+            bucket = groups[start]
+            frame_ids = []
+            station_keys = []
+            success_count = 0
+            failure_count = 0
+            parse_error_count = 0
+            for row in bucket:
+                frame_ids.append(row["frame_id"])
+                station_keys.append(row["station_key"])
+                if row["application_error"]:
+                    parse_error_count += 1
+                elif row["response_result"] == 0:
+                    success_count += 1
+                else:
+                    failure_count += 1
+            raw_count = len(bucket)
+            unique_count = len(set(station_keys))
+            periods.append(
+                {
+                    "period_start": start,
+                    "period_end": start + period_ms,
+                    "raw_report_count": raw_count,
+                    "unique_station_count": unique_count,
+                    "duplicate_count": raw_count - unique_count,
+                    "success_count": success_count,
+                    "failure_count": failure_count,
+                    "parse_error_count": parse_error_count,
+                    "report_count": unique_count if deduplicate else raw_count,
+                    "station_keys": station_keys,
+                    "frame_ids": frame_ids,
+                    "description": (
+                        f"{self._clock_text(start)} - "
+                        f"{self._clock_text(start + period_ms)}"
+                    ),
+                }
+            )
+        return periods
 
     def list_frames(self, offset=0, limit=100, query="") -> dict:
         if offset < 0:

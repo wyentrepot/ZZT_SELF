@@ -77,6 +77,34 @@ class DLT645Adapter(ProtocolAdapter):
 
     # ---------- 切帧（含结构校验；支持转义与半包） ----------
     def try_extract(self, buf: bytes):
+        res = self._try_extract_escaped(buf)
+        if res is not None:
+            return res
+        # 未转义抓包流回退：CS/数据中的 0x1B 不能被当作转义标记。
+        # 转义帧的原始字节数大于 12+L，plain 解析会因结束符位置不符而失败，
+        # 因此该回退不影响转义帧的正常识别。
+        return self._try_extract_plain(buf)
+
+    def _try_extract_plain(self, buf: bytes):
+        n = len(buf)
+        if n == 0 or buf[0] != 0x68:
+            return None
+        try:
+            if buf[0] != 0x68:
+                return None
+            if buf[7] != 0x68:
+                return None
+            L = buf[9]
+            if not (0 <= L <= 200):
+                return None
+            if buf[11 + L] != 0x16:      # 结束符直接定位（无转义）
+                return None
+            consumed = 12 + L
+            return ExtractResult(raw=buf[:consumed], consumed=consumed)
+        except IndexError:
+            return None
+
+    def _try_extract_escaped(self, buf: bytes):
         n = len(buf)
         if n == 0 or buf[0] != 0x68:
             return None
@@ -129,11 +157,21 @@ class DLT645Adapter(ProtocolAdapter):
             return None                    # 字节不足 → 半包，等待续接
 
     # ---------- 嗅探打分 ----------
+    @staticmethod
+    def _logical_bytes(raw: bytes) -> bytes:
+        """转义解析成立时返回反转义字节，否则按未转义原始字节处理。"""
+        lb = _unescape(raw)
+        if len(lb) >= 12 and lb[0] == 0x68 and lb[7] == 0x68 and lb[-1] == 0x16:
+            L = lb[9]
+            if 0 <= L <= 200 and len(lb) == 12 + L:
+                return lb
+        return raw
+
     def confidence(self, raw: bytes) -> float:
         # 645 帧结构（FT1.2）：68 | A0..A5(6B) | 68 | C | L | 数据域 | CS | 16
         # 识别特征（索引 95 帧类别 · 645 族）：起始 68H、地址域后第二 68H(pos7)、
         # 结束 16H、控制码低 4 位为合法功能码(1..B)、CS 校验。
-        lb = _unescape(raw)
+        lb = self._logical_bytes(raw)
         if len(lb) < 12:
             return 0.0
         if lb[0] != 0x68 or lb[7] != 0x68 or lb[-1] != 0x16:
@@ -155,7 +193,7 @@ class DLT645Adapter(ProtocolAdapter):
 
     # ---------- 解码（协议原生结构） ----------
     def decode(self, raw: bytes) -> ProtocolFrame:
-        lb = _unescape(raw)
+        lb = self._logical_bytes(raw)
         frame = ProtocolFrame(structure="645", raw_hex=raw.hex())
         warnings = []
 
