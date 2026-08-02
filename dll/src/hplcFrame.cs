@@ -6641,7 +6641,7 @@ namespace NW
                 case 2:    //路由主动抄表
                     frame_type = "路由主动抄表";
                     break;
-                case 3:    //终端并发抄表
+                case 3:    //终端主动并发抄表
                     frame_type = "终端主动并发抄表";
                     break;
                 case 4:    //校时

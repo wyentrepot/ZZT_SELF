@@ -50,3 +50,34 @@ class TestDllPythonMeterFieldConsistency:
         )
         assert full_load["转发数据长度"] != mac_offset2_len
         assert full_load["转发数据长度"] > 0
+
+    def test_device_timeout_is_100ms_unit(self):
+        """设备超时单位 100ms（byte6 × 100），与协议及 Python 一致。"""
+        parser = ParserService(DotNetHplcParser(DLL_PATH))
+        result = parser.parse(_frame_at(8))
+        full_load = result["full"]["MPDU"]["GW应用层"]["帧荷载解析"]
+        py_fields = {
+            f["name"]: f["raw"] for f in result["simple"]["application"]["fields"]
+        }
+        # byte6=0x28=40 → 4000ms
+        assert full_load["设备超时时间ms"] == 4000
+        assert py_fields["设备超时时间"] == 40
+        assert full_load["设备超时时间ms"] == py_fields["设备超时时间"] * 100
+
+    def test_direction_field_present_in_python_application(self):
+        """Python 抄表类新增方向位（byte7 bit0），样本帧均为下行。"""
+        parser = ParserService(DotNetHplcParser(DLL_PATH))
+        result = parser.parse(_frame_at(0))
+        direction = next(
+            f for f in result["simple"]["application"]["fields"]
+            if f["name"] == "方向"
+        )
+        assert direction["value"] == "下行"
+        assert direction["raw"] == 0
+
+    def test_meter_head_has_no_electric_meter_address_field(self):
+        """协议确认抄表头无电能表地址字段，DLL 输出中已不存在。"""
+        parser = ParserService(DotNetHplcParser(DLL_PATH))
+        result = parser.parse(_frame_at(0))
+        full_load = result["full"]["MPDU"]["GW应用层"]["帧荷载解析"]
+        assert "电能表地址" not in full_load
