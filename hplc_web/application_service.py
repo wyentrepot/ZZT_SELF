@@ -13,6 +13,17 @@ MINUTE_TYPES = {
     "00E4": "分钟采集数据上报",
 }
 
+# 抄表类报文（DLL 已输出 APP_RAW 与 FrmType；Python 适配器负责 MPDU 数据区
+# 深度解析，内嵌 645/698 帧）。命名与 parser_lib _MESSAGE_NAMES 一致。
+METER_TYPES = {
+    "0001": "终端主动抄表",
+    "0002": "路由主动抄表",
+    "0003": "终端主动并发抄表",
+}
+
+# 所有会触发 Python 富化的 APP_ID
+ENRICHED_TYPES = {**MINUTE_TYPES, **METER_TYPES}
+
 
 def _serialize_field(field) -> dict:
     return {
@@ -49,7 +60,7 @@ class ApplicationAnalysisService:
     def enrich_summary(self, simple: dict) -> dict:
         app_id = simple.get("APP_ID")
         app_raw = simple.get("APP_RAW")
-        if not app_id or app_id not in MINUTE_TYPES or not app_raw:
+        if not app_id or app_id not in ENRICHED_TYPES or not app_raw:
             return simple
         try:
             application = self.decode(app_raw)
@@ -59,5 +70,5 @@ class ApplicationAnalysisService:
 
         simple["application"] = application
         simple["BaseFrmType"] = simple.get("FrmType")
-        simple["FrmType"] = MINUTE_TYPES[app_id]
+        simple["FrmType"] = ENRICHED_TYPES[app_id]
         return simple

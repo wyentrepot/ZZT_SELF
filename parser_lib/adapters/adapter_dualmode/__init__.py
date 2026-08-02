@@ -260,6 +260,8 @@ class DualMode43Adapter(ProtocolAdapter):
         seq = business[4] | (business[5] << 8)
         timeout = business[6]
         option = business[7]
+        # 抄表类方向位在选项字（byte7）bit0：0 下行、1 上行（非事件报文的 byte1 bit4）
+        direction = business[7] & 0x01
 
         frame.fields.append(DataField(
             name="协议版本号", value=ver, hex=f"{ver:02X}", raw=ver,
@@ -270,8 +272,13 @@ class DualMode43Adapter(ProtocolAdapter):
             desc="业务报文头(不含DATA)字节数；DATA 自此偏移开始",
         ))
         frame.fields.append(DataField(
+            name="方向", value="下行" if direction == 0 else "上行",
+            hex=f"{direction:02X}", raw=direction,
+            desc="抄表类方向位在选项字(byte7)bit0：0下行/1上行",
+        ))
+        frame.fields.append(DataField(
             name="配置字/应答状态", value=f"0x{config:01X}", hex=f"{config:01X}", raw=config,
-            desc="并发抄表:未应答/否认重试标志+最大重试次数；上行:应答状态",
+            desc="下行:未应答/否认重试标志+最大重试次数；上行:应答状态",
         ))
         frame.fields.append(DataField(
             name="转发数据规约类型",

@@ -2526,9 +2526,6 @@ namespace NW
         public UInt16 最大重试次数;
         public int 报文间隔ms;
 
-        //新增电表地址
-        public byte[] 电能表地址 = new byte[6];
-
         public string 传输方向;
     }
 
@@ -6640,18 +6637,12 @@ namespace NW
             {
                 case 1:    //终端主动抄表
                     frame_type = "终端主动抄表";
-                    aps_to_dev_down_up_gw down_up =  (aps_to_dev_down_up_gw)sof_pld.GW应用层.帧荷载解析;
-                    addr = comFunc.ByteArryToHexStr_3(down_up.电能表地址,0,6);
                     break;
                 case 2:    //路由主动抄表
                     frame_type = "路由主动抄表";
-                    aps_to_dev_down_up_gw down_up1 = (aps_to_dev_down_up_gw)sof_pld.GW应用层.帧荷载解析;
-                    addr = comFunc.ByteArryToHexStr_3(down_up1.电能表地址,0,6);
                     break;
                 case 3:    //终端并发抄表
-                    frame_type = "终端并发抄表";
-                    aps_to_dev_down_up_gw down_up2 = (aps_to_dev_down_up_gw)sof_pld.GW应用层.帧荷载解析;
-                    addr = comFunc.ByteArryToHexStr_3(down_up2.电能表地址,0,6);
+                    frame_type = "终端主动并发抄表";
                     break;
                 case 4:    //校时
                     frame_type = "校时";
@@ -11698,10 +11689,10 @@ namespace NW
 
                     down_up.报文序号 = comFunc.ToUInt16(buf, start+4);
 
-                    down_up.设备超时时间ms = buf[start+6] * 10;
+                    down_up.设备超时时间ms = buf[start+6] * 100;
                     down_up.选项字 = comFunc.BitField8(buf[start + 7],0,8).ToString("X2");
                    
-                    Array.Copy(buf, start + 9, down_up.电能表地址, 0, 5);
+
 
                 }
                 else//上行
@@ -11741,7 +11732,7 @@ namespace NW
 
                     down_up.选项字 = comFunc.ToUInt16(buf, start + 6).ToString("X2");
 
-                    Array.Copy(buf, start + 9, down_up.电能表地址, 0, 5);
+
                 }
 
                 if (simple_flag == 1)
@@ -11798,10 +11789,10 @@ namespace NW
 
                     down_up.报文序号 = comFunc.ToUInt16(buf, start + 4);
 
-                    down_up.设备超时时间ms = buf[start + 6] * 10;
+                    down_up.设备超时时间ms = buf[start + 6] * 100;
                     down_up.选项字 = comFunc.BitField8(buf[start + 7], 0, 8).ToString("X2");
 
-                    Array.Copy(buf, start + 9, down_up.电能表地址, 0, 5);
+
 
                 }
                 else//上行
@@ -11841,7 +11832,7 @@ namespace NW
 
                     down_up.选项字 = comFunc.ToUInt16(buf, start + 6).ToString("X2");
 
-                    Array.Copy(buf, start + 9, down_up.电能表地址, 0, 5);
+
                 }
 
                 if (simple_flag == 1)
@@ -11859,7 +11850,7 @@ namespace NW
             {//确认否认帧
 
                 aps_mng.具体帧类型 = 3;
-                aps_mng.帧类型含义 = "终端并发抄表";
+                aps_mng.帧类型含义 = "终端主动并发抄表";
                 aps_to_dev_down_up_gw down_up = new aps_to_dev_down_up_gw();
                 tmp16 = comFunc.ToUInt16(buf, start);
 
@@ -11915,15 +11906,15 @@ namespace NW
                         down_up.转发数据的规约类型 = "保留";
                     }
 
-                    down_up.转发数据长度 = comFunc.BitField16(comFunc.ToUInt16(buf, 2), 4, 12);
+                    down_up.转发数据长度 = comFunc.BitField16(comFunc.ToUInt16(buf, start + 2), 4, 12);
 
-                    down_up.报文序号 = comFunc.ToUInt16(buf, 4);
+                    down_up.报文序号 = comFunc.ToUInt16(buf, start + 4);
 
-                    down_up.设备超时时间ms = buf[start + 6] * 10;
+                    down_up.设备超时时间ms = buf[start + 6] * 100;
                     down_up.选项字 = comFunc.BitField8(buf[start + 7], 0, 8).ToString("X2");
                     down_up.报文间隔ms = comFunc.BitField8(buf[start + 7], 0, 8) * 10;
 
-                    Array.Copy(buf, start + 9, down_up.电能表地址, 0, 5);
+
                 }
                 else//上行
                 {
@@ -11956,13 +11947,13 @@ namespace NW
                         down_up.转发数据的规约类型 = "保留";
                     }
 
-                    down_up.转发数据长度 = comFunc.BitField16(comFunc.ToUInt16(buf, 2), 4, 12);
+                    down_up.转发数据长度 = comFunc.BitField16(comFunc.ToUInt16(buf, start + 2), 4, 12);
 
-                    down_up.报文序号 = comFunc.ToUInt16(buf, 4);
+                    down_up.报文序号 = comFunc.ToUInt16(buf, start + 4);
 
-                    down_up.选项字 = comFunc.ToUInt16(buf, 6).ToString("X2");
+                    down_up.选项字 = comFunc.ToUInt16(buf, start + 6).ToString("X2");
 
-                    Array.Copy(buf, start + 9, down_up.电能表地址, 0, 5);
+
                 }
 
                 if (simple_flag == 1)
