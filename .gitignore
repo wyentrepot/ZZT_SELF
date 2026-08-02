@@ -367,3 +367,6 @@ runtime/
 packages/
 __pycache__/
 *.pyc
+
+# Local test data (large raw report files, do not commit)
+测试文件/
