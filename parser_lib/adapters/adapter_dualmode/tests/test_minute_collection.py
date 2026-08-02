@@ -63,6 +63,9 @@ def test_active_report_decodes_real_e4_bytes():
     assert _field(frame, "任务号").raw == 7
     assert _field(frame, "协议类型").raw == 2
     assert _field(frame, "响应结果").raw == 0
+    freeze = _field(frame, "冻结时刻")
+    assert freeze.hex == "005523310726"
+    assert freeze.value == "2026-07-31 23:55:00"
     assert _field(frame, "上报数量").raw == 1
     assert _field(frame, "数据长度").raw == 76
     assert len(frame.nested) == 4

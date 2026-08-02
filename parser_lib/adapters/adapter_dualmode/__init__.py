@@ -500,10 +500,14 @@ class DualMode43Adapter(ProtocolAdapter):
             frame.warnings.append("转发报文不足15字节，缺少冻结时刻")
             return
         freeze = forwarded[9:15]
-        freeze_str = "-".join(f"{b:02X}" for b in freeze)
+        year, month, day, hour, minute, second = freeze[::-1]
+        freeze_str = (
+            f"20{year:02X}-{month:02X}-{day:02X} "
+            f"{hour:02X}:{minute:02X}:{second:02X}"
+        )
         self._append(frame, "冻结时刻", freeze_str, freeze.hex().upper(),
                      freeze.hex().upper(),
-                     "冻结时间点（YY-MM-DD-HH-MM-SS）")
+                     "冻结时间点（小端 BCD：YY-MM-DD-HH-MM-SS）")
         if len(forwarded) < 18:
             frame.warnings.append("转发报文不足18字节，缺少报文条数/数据长度")
             return
