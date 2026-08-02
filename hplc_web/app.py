@@ -1,5 +1,7 @@
 import os
+import queue
 import string
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -92,6 +94,42 @@ def _read_last_path() -> str:
         return ""
 
 
+def _pick_file_via_native_dialog(initial_dir: str = "") -> str:
+    """调用 Windows 原生文件选择对话框，返回用户选中的文件路径。
+
+    浏览器网页受安全沙箱限制无法读取本地路径，但后端运行在用户本机，
+    可通过 tkinter（Windows 通用对话框）弹出系统原生选择器直接拿真实路径。
+    文件内容不经浏览器，由后端后续按路径读取。取消或失败返回空串。
+    """
+    result: "queue.Queue[str]" = queue.Queue()
+
+    def _run() -> None:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            path = filedialog.askopenfilename(
+                parent=root,
+                title="选择日志文件",
+                initialdir=initial_dir or None,
+                filetypes=[
+                    ("日志文件", "*.txt *.log *.dat *.csv *.bin *.raw"),
+                    ("所有文件", "*.*"),
+                ],
+            )
+            result.put(path or "")
+        finally:
+            root.destroy()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=300)
+    return result.get() if not thread.is_alive() else ""
+
+
 class ParseRequest(BaseModel):
     hex: str
 
@@ -165,6 +203,18 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
     def fs_last():
         """返回上次成功打开的日志路径（可能为空字符串）。"""
         return {"path": _read_last_path()}
+
+    @app.get("/api/fs/pick")
+    def fs_pick():
+        """弹出 Windows 原生文件选择对话框，返回用户选中的真实路径。
+
+        浏览器无法读取本地路径，由后端（同机进程）调用系统原生对话框；
+        取消选择时返回空路径。非 Windows 环境返回 501。
+        """
+        if os.name != "nt":
+            raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")
+        path = _pick_file_via_native_dialog(_read_last_path())
+        return {"path": path}
 
     @app.get("/api/logs/frames")
     def log_frames(

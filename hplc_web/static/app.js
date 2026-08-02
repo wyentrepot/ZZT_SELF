@@ -15,6 +15,7 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   path: $("#log-path"),
   pick: $("#pick-button"),
+  browse: $("#browse-button"),
   load: $("#load-button"),
   sample: $("#sample-button"),
   error: $("#operation-error"),
@@ -249,7 +250,18 @@ picker.up.addEventListener("click", () => {
     .catch(() => {});
 });
 picker.confirm.addEventListener("click", pickerConfirm);
-elements.pick.addEventListener("click", pickerOpen);
+elements.browse.addEventListener("click", pickerOpen);
+elements.pick.addEventListener("click", async () => {
+  try {
+    const data = await request("/api/fs/pick");
+    if (data.path) {
+      elements.path.value = data.path;
+      localStorage.setItem("hplc-log-path", data.path);
+    }
+  } catch (error) {
+    showError(`文件选择失败：${error.message}`);
+  }
+});
 
 function updateStatus(status) {
   const progress = Math.max(0, Math.min(1, status.progress || 0));

@@ -252,6 +252,36 @@ class FsApiTests(unittest.TestCase):
         dir_names = [item["name"] for item in data["dirs"]]
         self.assertIn("并发抄表-测试文件", dir_names)
 
+    def test_pick_returns_selected_native_path(self):
+        """/api/fs/pick 调用原生对话框函数并返回选中的路径。"""
+        with mock.patch.object(
+            self.app_module, "_pick_file_via_native_dialog",
+            return_value=r"D:\logs\sample.txt",
+        ):
+            response = self.client.get("/api/fs/pick")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["path"], r"D:\logs\sample.txt")
+
+    def test_pick_returns_empty_when_cancelled(self):
+        """用户在原生对话框中取消时返回空路径。"""
+        with mock.patch.object(
+            self.app_module, "_pick_file_via_native_dialog", return_value=""
+        ):
+            response = self.client.get("/api/fs/pick")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["path"], "")
+
+    def test_pick_passes_last_path_as_initial_dir(self):
+        """对话框初始目录取自上次打开的路径（dir 参数）。"""
+        with mock.patch.object(
+            self.app_module, "_read_last_path", return_value=r"D:\logs\sample.txt"
+        ), mock.patch.object(
+            self.app_module, "_pick_file_via_native_dialog",
+            return_value=r"D:\logs\sample.txt",
+        ) as pick:
+            self.client.get("/api/fs/pick")
+        self.assertEqual(pick.call_args.args[0], r"D:\logs\sample.txt")
+
 
 if __name__ == "__main__":
     unittest.main()

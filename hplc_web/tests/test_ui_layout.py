@@ -97,6 +97,7 @@ class UiLayoutTests(unittest.TestCase):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('id="pick-button"', html)
+        self.assertIn('id="browse-button"', html)
         self.assertIn("选择文件", html)
         self.assertIn('id="file-picker"', html)
         self.assertIn('id="picker-roots"', html)
@@ -120,6 +121,7 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("/api/fs/roots", js)
         self.assertIn("/api/fs/list", js)
         self.assertIn("/api/fs/last", js)
+        self.assertIn("/api/fs/pick", js)
         self.assertIn("hplc-log-path", js)
         self.assertIn("encodeURIComponent", js)
 
