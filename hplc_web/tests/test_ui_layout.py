@@ -93,6 +93,46 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn(".nested-frame", css)
         self.assertIn(".app-expand-hint", css)
 
+    def test_file_picker_button_and_dialog_present(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="pick-button"', html)
+        self.assertIn("选择文件", html)
+        self.assertIn('id="file-picker"', html)
+        self.assertIn('id="picker-roots"', html)
+        self.assertIn('id="picker-list"', html)
+        self.assertIn('id="picker-confirm"', html)
+        self.assertIn('id="picker-up"', html)
+
+    def test_file_picker_is_outside_main_section(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        main_end = html.split("</main>")[0]
+
+        self.assertNotIn('id="file-picker"', main_end)
+
+    def test_js_implements_file_picker_logic(self):
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("pickerOpen", js)
+        self.assertIn("pickerList", js)
+        self.assertIn("pickerRoots", js)
+        self.assertIn("pickerConfirm", js)
+        self.assertIn("/api/fs/roots", js)
+        self.assertIn("/api/fs/list", js)
+        self.assertIn("/api/fs/last", js)
+        self.assertIn("hplc-log-path", js)
+        self.assertIn("encodeURIComponent", js)
+
+    def test_css_styles_file_picker(self):
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".file-picker-overlay", css)
+        self.assertIn(".file-picker", css)
+        self.assertIn(".file-picker-row", css)
+        self.assertIn(".file-picker-row.selected", css)
+        self.assertIn(".file-picker-empty", css)
+        self.assertIn(".picker-root-button", css)
+
 
 if __name__ == "__main__":
     unittest.main()

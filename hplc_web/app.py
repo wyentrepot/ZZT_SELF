@@ -1,3 +1,5 @@
+import os
+import string
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -16,6 +18,72 @@ DEFAULT_DLL = (
     BASE_DIR.parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
 ).resolve()
 DEFAULT_INDEX = BASE_DIR / "runtime" / "log_index.sqlite3"
+LAST_PATH_FILE = BASE_DIR / "runtime" / "last_path.txt"
+
+# 文件选择器只展示常见日志扩展名，避免目录被无关文件淹没
+LOG_EXTENSIONS = {".txt", ".log", ".dat", ".csv", ".bin", ".raw"}
+
+
+def _list_directory(path_text: str) -> dict:
+    """列出目录内容：返回上级目录、子目录与日志文件（按名称排序）。"""
+    try:
+        target = Path(path_text).expanduser().resolve()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"路径无效：{exc}") from exc
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"目录不存在：{target}")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"不是目录：{target}")
+
+    dirs: list[dict] = []
+    files: list[dict] = []
+    try:
+        with os.scandir(target) as entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        dirs.append({"name": entry.name, "path": entry.path})
+                    elif entry.is_file(follow_symlinks=False):
+                        suffix = Path(entry.name).suffix.lower()
+                        if suffix in LOG_EXTENSIONS:
+                            files.append(
+                                {
+                                    "name": entry.name,
+                                    "path": entry.path,
+                                    "size": entry.stat().st_size,
+                                }
+                            )
+                except OSError:
+                    continue
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"无权限访问：{target}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"读取目录失败：{exc}") from exc
+
+    key = lambda item: item["name"].lower()
+    return {
+        "path": str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "dirs": sorted(dirs, key=key),
+        "files": sorted(files, key=key),
+    }
+
+
+def _windows_drives() -> list[dict]:
+    """返回 Windows 可用盘符列表（如 C:\、D:\），非 Windows 返回空列表。"""
+    drives = []
+    for letter in string.ascii_uppercase:
+        drive = f"{letter}:\\"
+        if os.path.exists(drive):
+            drives.append({"name": drive, "path": drive})
+    return drives
+
+
+def _read_last_path() -> str:
+    try:
+        return LAST_PATH_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 class ParseRequest(BaseModel):
@@ -52,17 +120,45 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
-            return log_service.start_index(request.path)
+            result = log_service.start_index(request.path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # 记录上次成功打开的路径，供文件选择器默认定位
+        try:
+            LAST_PATH_FILE.parent.mkdir(parents=True, exist_ok=True)
+            LAST_PATH_FILE.write_text(request.path, encoding="utf-8")
+        except OSError:
+            pass
+        return result
 
     @app.get("/api/logs/status")
     def log_status():
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         return log_service.status()
+
+    @app.get("/api/fs/roots")
+    def fs_roots():
+        """返回可浏览的根路径：Windows 盘符；非 Windows 返回用户主目录。"""
+        drives = _windows_drives()
+        if drives:
+            return {"roots": drives}
+        home = str(Path.home().resolve())
+        return {"roots": [{"name": home, "path": home}]}
+
+    @app.get("/api/fs/list")
+    def fs_list(path: str = Query("", max_length=1024)):
+        """列出目录内容：子目录与常见日志文件。"""
+        if not path.strip():
+            raise HTTPException(status_code=400, detail="请提供目录路径")
+        return _list_directory(path)
+
+    @app.get("/api/fs/last")
+    def fs_last():
+        """返回上次成功打开的日志路径（可能为空字符串）。"""
+        return {"path": _read_last_path()}
 
     @app.get("/api/logs/frames")
     def log_frames(

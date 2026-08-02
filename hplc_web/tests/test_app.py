@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -132,6 +134,112 @@ class AppTests(unittest.TestCase):
                 f"/api/logs/minute-analysis?{params}"
             )
             self.assertEqual(response.status_code, 422, params)
+
+
+class FsApiTests(unittest.TestCase):
+    """文件选择器相关 API：roots / list / last。"""
+
+    def setUp(self):
+        import tempfile
+
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        root = Path(self.tempdir.name)
+        (root / "sub" / "nested").mkdir(parents=True, exist_ok=True)
+        (root / "sub" / "report.txt").write_text("7E FF", encoding="utf-8")
+        (root / "sub" / "notes.md").write_text("no", encoding="utf-8")  # 非日志扩展名
+        (root / "top.log").write_text("7E", encoding="utf-8")
+        self.root = root
+
+        from hplc_web import app as app_module
+
+        self.app_module = app_module
+        self.log_service = FakeLogService()
+        self.client = TestClient(create_app(FakeService(), self.log_service))
+        self._fs_patch = mock.patch.object(
+            app_module, "_windows_drives", return_value=[
+                {"name": "C:\\", "path": "C:\\"},
+                {"name": "D:\\", "path": "D:\\"},
+            ]
+        )
+        self._fs_patch.start()
+        self.addCleanup(self._fs_patch.stop)
+
+    def test_roots_returns_windows_drives(self):
+        response = self.client.get("/api/fs/roots")
+        self.assertEqual(response.status_code, 200)
+        names = [item["name"] for item in response.json()["roots"]]
+        self.assertIn("C:\\", names)
+        self.assertIn("D:\\", names)
+
+    def test_list_returns_dirs_and_log_files_only(self):
+        response = self.client.get("/api/fs/list", params={"path": str(self.root)})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["path"], str(self.root))
+        dir_names = [item["name"] for item in data["dirs"]]
+        file_names = [item["name"] for item in data["files"]]
+        self.assertIn("sub", dir_names)
+        self.assertIn("top.log", file_names)
+        self.assertNotIn("notes.md", file_names)  # 非日志扩展名被过滤
+
+    def test_list_nested_directory_reports_parent(self):
+        target = self.root / "sub"
+        response = self.client.get("/api/fs/list", params={"path": str(target)})
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["parent"], str(self.root))
+        self.assertIn("nested", [item["name"] for item in data["dirs"]])
+        self.assertIn("report.txt", [item["name"] for item in data["files"]])
+
+    def test_list_missing_directory_returns_404(self):
+        response = self.client.get(
+            "/api/fs/list", params={"path": str(self.root / "nope")}
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_list_file_path_returns_400(self):
+        response = self.client.get(
+            "/api/fs/list", params={"path": str(self.root / "top.log")}
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_last_returns_empty_when_never_opened(self):
+        with mock.patch.object(
+            self.app_module, "LAST_PATH_FILE",
+            Path(self.tempdir.name) / "missing_last.txt",
+        ):
+            response = self.client.get("/api/fs/last")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["path"], "")
+
+    def test_open_log_persists_last_path(self):
+        last_file = Path(self.tempdir.name) / "runtime" / "last_path.txt"
+        with mock.patch.object(self.app_module, "LAST_PATH_FILE", last_file):
+            response = self.client.post(
+                "/api/logs/open", json={"path": r"D:\logs\sample.txt"}
+            )
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual(
+                last_file.read_text(encoding="utf-8"), r"D:\logs\sample.txt"
+            )
+            last = self.client.get("/api/fs/last")
+            self.assertEqual(last.json()["path"], r"D:\logs\sample.txt")
+
+    def test_list_real_workspace_directory_finds_sample_log(self):
+        """集成验证：真实日志目录可被 fs API 浏览到样本文件。"""
+        workspace = Path(__file__).resolve().parents[1].parent
+        target = workspace / "测试文件"
+        response = self.client.get(
+            "/api/fs/list", params={"path": str(target)}
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        file_names = [item["name"] for item in data["files"]]
+        self.assertIn("并发抄表-样本.txt", file_names)
+        self.assertIn("测试文本.txt", file_names)
+        dir_names = [item["name"] for item in data["dirs"]]
+        self.assertIn("并发抄表-测试文件", dir_names)
 
 
 if __name__ == "__main__":

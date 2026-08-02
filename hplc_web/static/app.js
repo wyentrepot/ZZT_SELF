@@ -14,6 +14,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   path: $("#log-path"),
+  pick: $("#pick-button"),
   load: $("#load-button"),
   sample: $("#sample-button"),
   error: $("#operation-error"),
@@ -85,6 +86,166 @@ async function openLog() {
     elements.load.disabled = false;
   }
 }
+
+// ---------- 文件选择对话框 ----------
+
+const picker = {
+  overlay: $("#file-picker"),
+  close: $("#picker-close"),
+  cancel: $("#picker-cancel"),
+  up: $("#picker-up"),
+  path: $("#picker-path"),
+  roots: $("#picker-roots"),
+  list: $("#picker-list"),
+  selected: $("#picker-selected"),
+  confirm: $("#picker-confirm"),
+  currentDir: null,
+  chosenFile: null,
+};
+
+function formatFileSize(bytes) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+
+function pickerOpen() {
+  picker.overlay.hidden = false;
+  picker.chosenFile = null;
+  picker.confirm.disabled = true;
+  picker.selected.textContent = "";
+  pickerRoots();
+  // 默认定位：上次打开路径（优先后端持久化，其次浏览器记忆）
+  request("/api/fs/last")
+    .then((data) => {
+      const last = (data.path || localStorage.getItem("hplc-log-path") || "").trim();
+      if (last) {
+        pickerList(last);
+      } else if (picker.currentDir) {
+        pickerList(picker.currentDir);
+      }
+    })
+    .catch(() => {});
+}
+
+function pickerClose() {
+  picker.overlay.hidden = true;
+}
+
+async function pickerRoots() {
+  try {
+    const data = await request("/api/fs/roots");
+    picker.roots.textContent = "";
+    data.roots.forEach((root) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "picker-root-button";
+      button.textContent = root.name;
+      button.addEventListener("click", () => pickerList(root.path));
+      picker.roots.appendChild(button);
+    });
+  } catch (error) {
+    pickerList(picker.currentDir || "");
+  }
+}
+
+async function pickerList(path) {
+  if (!path) return;
+  picker.path.textContent = path;
+  picker.path.title = path;
+  picker.currentDir = path;
+  picker.list.innerHTML = '<div class="file-picker-empty">加载中…</div>';
+  picker.chosenFile = null;
+  picker.confirm.disabled = true;
+  picker.selected.textContent = "";
+  try {
+    const data = await request(`/api/fs/list?path=${encodeURIComponent(path)}`);
+    picker.up.disabled = !data.parent;
+    picker.list.textContent = "";
+    if (!data.dirs.length && !data.files.length) {
+      const empty = document.createElement("div");
+      empty.className = "file-picker-empty";
+      empty.textContent = "该目录没有子目录或日志文件";
+      picker.list.appendChild(empty);
+      return;
+    }
+    data.dirs.forEach((dir) => {
+      picker.list.appendChild(pickerDirRow(dir));
+    });
+    data.files.forEach((file) => {
+      picker.list.appendChild(pickerFileRow(file));
+    });
+  } catch (error) {
+    picker.list.innerHTML = `<div class="file-picker-empty">${error.message}</div>`;
+    picker.up.disabled = true;
+  }
+}
+
+function pickerDirRow(dir) {
+  const row = document.createElement("div");
+  row.className = "file-picker-row file-picker-dir";
+  row.innerHTML = '<span class="picker-icon">📁</span>';
+  const name = document.createElement("span");
+  name.className = "picker-name";
+  name.textContent = dir.name;
+  row.appendChild(name);
+  row.addEventListener("click", () => pickerList(dir.path));
+  row.addEventListener("dblclick", () => pickerList(dir.path));
+  return row;
+}
+
+function pickerFileRow(file) {
+  const row = document.createElement("div");
+  row.className = "file-picker-row file-picker-file";
+  row.innerHTML = '<span class="picker-icon">📄</span>';
+  const name = document.createElement("span");
+  name.className = "picker-name";
+  name.textContent = file.name;
+  const size = document.createElement("span");
+  size.className = "picker-size";
+  size.textContent = formatFileSize(file.size);
+  row.appendChild(name);
+  row.appendChild(size);
+  const select = () => {
+    picker.list.querySelectorAll(".file-picker-row.selected").forEach((node) => {
+      node.classList.remove("selected");
+    });
+    row.classList.add("selected");
+    picker.chosenFile = file.path;
+    picker.selected.textContent = file.path;
+    picker.confirm.disabled = false;
+  };
+  row.addEventListener("click", select);
+  row.addEventListener("dblclick", () => {
+    select();
+    pickerConfirm();
+  });
+  return row;
+}
+
+function pickerConfirm() {
+  if (!picker.chosenFile) return;
+  elements.path.value = picker.chosenFile;
+  localStorage.setItem("hplc-log-path", picker.chosenFile);
+  pickerClose();
+}
+
+picker.close.addEventListener("click", pickerClose);
+picker.cancel.addEventListener("click", pickerClose);
+picker.overlay.addEventListener("click", (event) => {
+  if (event.target === picker.overlay) pickerClose();
+});
+picker.up.addEventListener("click", () => {
+  if (!picker.currentDir) return;
+  request(`/api/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
+    .then((data) => {
+      if (data.parent) pickerList(data.parent);
+    })
+    .catch(() => {});
+});
+picker.confirm.addEventListener("click", pickerConfirm);
+elements.pick.addEventListener("click", pickerOpen);
 
 function updateStatus(status) {
   const progress = Math.max(0, Math.min(1, status.progress || 0));

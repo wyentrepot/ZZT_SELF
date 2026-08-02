@@ -44,6 +44,7 @@
           <input id="log-path" type="text" autocomplete="off"
             placeholder="输入 Windows 本地日志完整路径，例如 D:\日志\原始报文.txt">
         </label>
+        <button id="pick-button" class="secondary-button" type="button">选择文件</button>
         <button id="sample-button" class="secondary-button" type="button">开发样本</button>
         <button id="load-button" class="primary-button" type="button">
           <span>建立解析索引</span><span aria-hidden="true">→</span>
@@ -227,6 +228,31 @@
       </div>
     </section>
   </main>
+
+  <!-- 文件选择对话框：通过后端 /api/fs/* 浏览服务器本地目录 -->
+  <div id="file-picker" class="file-picker-overlay" hidden>
+    <div class="file-picker" role="dialog" aria-modal="true" aria-label="选择日志文件">
+      <div class="file-picker-header">
+        <h3>选择日志文件</h3>
+        <button id="picker-close" class="icon-button" type="button" title="关闭">×</button>
+      </div>
+      <div class="file-picker-toolbar">
+        <button id="picker-up" class="secondary-button" type="button" disabled>上一级</button>
+        <span id="picker-path" class="file-picker-path" title=""></span>
+      </div>
+      <div class="file-picker-roots" id="picker-roots"></div>
+      <div class="file-picker-list" id="picker-list" tabindex="0">
+        <div class="file-picker-empty">加载中…</div>
+      </div>
+      <div class="file-picker-footer">
+        <span id="picker-selected" class="file-picker-selected"></span>
+        <div>
+          <button id="picker-cancel" class="secondary-button" type="button">取消</button>
+          <button id="picker-confirm" class="primary-button" type="button" disabled>选择此文件</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>
