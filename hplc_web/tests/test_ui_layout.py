@@ -93,12 +93,12 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn(".nested-frame", css)
         self.assertIn(".app-expand-hint", css)
 
-    def test_file_picker_button_and_dialog_present(self):
+    def test_page_has_one_unified_log_file_picker_button(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('id="pick-button"', html)
-        self.assertIn('id="browse-button"', html)
-        self.assertIn("选择文件", html)
+        self.assertIn("选择日志文件", html)
+        self.assertNotIn('id="browse-button"', html)
         self.assertIn('id="file-picker"', html)
         self.assertIn('id="picker-roots"', html)
         self.assertIn('id="picker-list"', html)
@@ -121,7 +121,8 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("/api/fs/roots", js)
         self.assertIn("/api/fs/list", js)
         self.assertIn("/api/fs/last", js)
-        self.assertIn("/api/fs/pick", js)
+        self.assertIn('const data = await request("/api/fs/pick")', js)
+        self.assertNotIn('elements.pick.addEventListener("click", pickerOpen)', js)
         self.assertIn("hplc-log-path", js)
         self.assertIn("encodeURIComponent", js)
 

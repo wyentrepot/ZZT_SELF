@@ -15,7 +15,6 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   path: $("#log-path"),
   pick: $("#pick-button"),
-  browse: $("#browse-button"),
   load: $("#load-button"),
   sample: $("#sample-button"),
   error: $("#operation-error"),
@@ -250,7 +249,6 @@ picker.up.addEventListener("click", () => {
     .catch(() => {});
 });
 picker.confirm.addEventListener("click", pickerConfirm);
-elements.browse.addEventListener("click", pickerOpen);
 elements.pick.addEventListener("click", async () => {
   if (elements.pick.disabled) return;
   elements.pick.disabled = true;

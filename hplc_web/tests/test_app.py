@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -282,29 +283,38 @@ class FsApiTests(unittest.TestCase):
             self.client.get("/api/fs/pick")
         self.assertEqual(pick.call_args.args[0], r"D:\logs\sample.txt")
 
-    def test_pick_survives_native_dialog_import_error(self):
-        """tkinter 不可用时 _pick_file_via_native_dialog 返回空串且不挂起。"""
-        real_import = __builtins__["__import__"]
+    def test_native_picker_uses_sta_powershell_open_file_dialog(self):
+        """本地运行时必须通过 STA PowerShell 打开 Windows 文件对话框。"""
+        source = inspect.getsource(self.app_module._pick_file_via_native_dialog)
 
-        def fake_import(name, *args, **kwargs):
-            if name == "tkinter":
-                raise ImportError("no tkinter")
-            return real_import(name, *args, **kwargs)
+        self.assertIn("subprocess.run", source)
+        self.assertIn('"-STA"', source)
+        self.assertIn("OpenFileDialog", self.app_module._POWERSHELL_PICK_FILE_SCRIPT)
 
-        with mock.patch("builtins.__import__", side_effect=fake_import):
-            path = self.app_module._pick_file_via_native_dialog()
-        self.assertEqual(path, "")
-
-    def test_pick_returns_empty_after_timeout(self):
-        """线程超时（用户长时间不操作）时返回空串不阻塞。"""
-        fake_thread = mock.MagicMock()
-        # is_alive 恒 True：模拟 join(timeout) 超时后线程仍存活
-        fake_thread.is_alive.return_value = True
+    def test_native_picker_returns_selected_path_from_powershell(self):
+        completed = mock.Mock(
+            returncode=0, stdout="D:\\logs\\selected.txt\r\n", stderr=""
+        )
         with mock.patch.object(
-            self.app_module.threading, "Thread", return_value=fake_thread
+            self.app_module.subprocess, "run", return_value=completed
+        ) as run:
+            path = self.app_module._pick_file_via_native_dialog(r"D:\logs")
+
+        self.assertEqual(path, r"D:\logs\selected.txt")
+        command = run.call_args.args[0]
+        self.assertIn("powershell", command[0].lower())
+        self.assertIn("-STA", command)
+        self.assertEqual(run.call_args.kwargs["env"]["HPLC_PICKER_INITIAL_DIR"], r"D:\logs")
+
+    def test_pick_endpoint_returns_powershell_error(self):
+        with mock.patch.object(
+            self.app_module, "_pick_file_via_native_dialog",
+            side_effect=RuntimeError("dialog unavailable"),
         ):
-            path = self.app_module._pick_file_via_native_dialog()
-        self.assertEqual(path, "")
+            response = self.client.get("/api/fs/pick")
+
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("dialog unavailable", response.json()["detail"])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import os
 import queue
 import string
 import threading
+import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -94,7 +95,7 @@ def _read_last_path() -> str:
         return ""
 
 
-def _pick_file_via_native_dialog(initial_dir: str = "") -> str:
+def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
     """调用 Windows 原生文件选择对话框，返回用户选中的文件路径。
 
     浏览器网页受安全沙箱限制无法读取本地路径，但后端运行在用户本机，
@@ -137,6 +138,47 @@ def _pick_file_via_native_dialog(initial_dir: str = "") -> str:
         # daemon 线程随后自然结束
         return ""
     return result.get()
+
+
+_POWERSHELL_PICK_FILE_SCRIPT = r"""
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = '选择日志文件'
+$dialog.Filter = '日志文件|*.txt;*.log;*.dat;*.csv;*.bin;*.raw|所有文件|*.*'
+$initial = $env:HPLC_PICKER_INITIAL_DIR
+if ($initial -and (Test-Path -LiteralPath $initial -PathType Leaf)) {
+    $initial = Split-Path -LiteralPath $initial -Parent
+}
+if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) {
+    $dialog.InitialDirectory = $initial
+}
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    [Console]::Out.Write($dialog.FileName)
+}
+"""
+
+
+def _pick_file_via_native_dialog(initial_dir: str = "") -> str:
+    """在本机桌面会话中打开 Windows 文件管理器选文件，并返回完整路径。"""
+    environment = os.environ.copy()
+    environment["HPLC_PICKER_INITIAL_DIR"] = initial_dir
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-Command",
+             _POWERSHELL_PICK_FILE_SCRIPT],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"无法启动 Windows 文件选择器：{exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "PowerShell 未返回错误详情"
+        raise RuntimeError(f"Windows 文件选择器启动失败：{detail}")
+    return completed.stdout.strip()
 
 
 class ParseRequest(BaseModel):
@@ -222,7 +264,10 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         """
         if os.name != "nt":
             raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")
-        path = _pick_file_via_native_dialog(_read_last_path())
+        try:
+            path = _pick_file_via_native_dialog(_read_last_path())
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"path": path}
 
     @app.get("/api/logs/frames")
