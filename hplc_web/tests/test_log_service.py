@@ -33,7 +33,8 @@ class FakeParserService:
 
 
 def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001",
-                response_result=0, application_error=None):
+                response_result=0, report_count=1, data_length=76,
+                application_error=None):
     """构造一份已富化的 0x00E4 简单摘要（模拟 Task 3 之后的 simple 字典）。"""
     summary = {
         "FrmType": "分钟采集数据上报",
@@ -53,8 +54,8 @@ def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001",
                 {"name": "响应结果", "raw": response_result},
                 {"name": "冻结时刻", "value": "2026-07-31 23:55:00",
                  "raw": "00-55-23-31-07-26"},
-                {"name": "上报数量", "raw": 1},
-                {"name": "数据长度", "raw": 76},
+                {"name": "上报数量", "raw": report_count},
+                {"name": "数据长度", "raw": data_length},
             ],
             "nested": [],
             "warnings": [],
@@ -225,6 +226,20 @@ class MinuteReportTests(unittest.TestCase):
             service.list_minute_periods(period_minutes=1441, cco_tei="001")
         with self.assertRaises(ValueError):
             service.list_minute_periods(period_minutes=15, cco_tei="00g")
+
+    def test_report_marks_response_result_two_as_no_freeze_data(self):
+        summary = _e4_summary(response_result=2, report_count=0, data_length=0)
+        directory, path = _write_log([LOG_LINE])
+        self.addCleanup(directory.cleanup)
+        service = self._service([summary])
+
+        service.index_file(path)
+        report = service.list_minute_periods(15, "001")[0]["reports"][0]
+
+        self.assertEqual(report["response_result"], 2)
+        self.assertEqual(report["report_count"], 0)
+        self.assertEqual(report["data_length"], 0)
+        self.assertEqual(report["data_status"], "无冻结数据")
 
     def test_midnight_rollover_creates_separate_periods(self):
         before = b"[1][23:59:59.900]7E FF 02 FF 00 00 00 00 00 00 7E\r\n"

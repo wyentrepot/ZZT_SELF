@@ -132,6 +132,7 @@ class UiLayoutTests(unittest.TestCase):
 
         self.assertIn("renderMinuteReportDetails", js)
         self.assertIn("application_raw", js)
+        self.assertIn("data_status", js)
         self.assertIn("minute-analysis-layout", css)
         self.assertIn("minute-report-row", css)
 

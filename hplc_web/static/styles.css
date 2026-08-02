@@ -723,6 +723,11 @@ tbody tr.selected td { color: #e5eff6; }
   font-size: 11px;
 }
 .minute-report-row summary { cursor: pointer; padding: 10px 2px; }
+.minute-report-status {
+  margin: 0 0 8px;
+  color: #f4c76c;
+  line-height: 1.5;
+}
 .minute-app-raw {
   margin: 0 0 10px;
   padding: 9px;

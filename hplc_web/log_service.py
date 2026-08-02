@@ -365,6 +365,19 @@ class LogFileService:
         second, milli = divmod(rem, 1_000)
         return f"{hour:02d}:{minute:02d}:{second:02d}.{milli:03d}"
 
+    @staticmethod
+    def _minute_report_data_status(row) -> str:
+        if row["application_error"]:
+            return "应用层解析失败"
+        result = row["response_result"]
+        if result == 0:
+            return "无数据" if not row["data_length"] else "已携带数据"
+        return {
+            1: "任务不存在",
+            2: "无冻结数据",
+            3: "其他原因",
+        }.get(result, "响应结果未知")
+
     def list_minute_periods(self, period_minutes=15, cco_tei="001") -> list:
         if not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440:
             raise ValueError("period_minutes 必须在 1 到 1440 之间")
@@ -380,6 +393,9 @@ class LogFileService:
                 SELECT minute_reports.frame_id, minute_reports.log_time,
                        minute_reports.time_seconds, minute_reports.source_mac,
                        minute_reports.source_tei, minute_reports.freeze_time,
+                       minute_reports.response_result,
+                       minute_reports.report_count, minute_reports.data_length,
+                       minute_reports.application_error,
                        frames.summary_json
                 FROM minute_reports
                 LEFT JOIN frames ON frames.id = minute_reports.frame_id
@@ -407,6 +423,11 @@ class LogFileService:
                         "source_mac": row["source_mac"],
                         "source_tei": row["source_tei"],
                         "freeze_time": row["freeze_time"],
+                        "response_result": row["response_result"],
+                        "report_count": row["report_count"],
+                        "data_length": row["data_length"],
+                        "application_error": row["application_error"],
+                        "data_status": self._minute_report_data_status(row),
                         "application_raw": summary.get("APP_RAW"),
                     }
                 )

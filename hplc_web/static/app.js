@@ -794,10 +794,13 @@ function renderMinuteReportDetails(period) {
     item.className = "minute-report-row";
     const label = document.createElement("summary");
     label.textContent = `${report.source_mac || "未知 MAC"} / ${report.source_tei || "未知 TEI"} 模块上报 · 冻结时间 ${report.freeze_time || "未解析"}`;
+    const status = document.createElement("p");
+    status.className = "minute-report-status";
+    status.textContent = `数据状态：${report.data_status || "未确认"} · 响应结果 ${report.response_result ?? "未解析"} · 上报数量 ${report.report_count ?? "未解析"} · 数据长度 ${report.data_length ?? "未解析"} 字节`;
     const raw = document.createElement("pre");
     raw.className = "minute-app-raw";
     raw.textContent = report.application_raw || "应用层原文不可用";
-    item.append(label, raw);
+    item.append(label, status, raw);
     box.append(item);
   });
   minuteElements.details.append(box);
