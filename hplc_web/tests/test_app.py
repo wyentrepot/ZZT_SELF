@@ -282,6 +282,30 @@ class FsApiTests(unittest.TestCase):
             self.client.get("/api/fs/pick")
         self.assertEqual(pick.call_args.args[0], r"D:\logs\sample.txt")
 
+    def test_pick_survives_native_dialog_import_error(self):
+        """tkinter 不可用时 _pick_file_via_native_dialog 返回空串且不挂起。"""
+        real_import = __builtins__["__import__"]
+
+        def fake_import(name, *args, **kwargs):
+            if name == "tkinter":
+                raise ImportError("no tkinter")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            path = self.app_module._pick_file_via_native_dialog()
+        self.assertEqual(path, "")
+
+    def test_pick_returns_empty_after_timeout(self):
+        """线程超时（用户长时间不操作）时返回空串不阻塞。"""
+        fake_thread = mock.MagicMock()
+        # is_alive 恒 True：模拟 join(timeout) 超时后线程仍存活
+        fake_thread.is_alive.return_value = True
+        with mock.patch.object(
+            self.app_module.threading, "Thread", return_value=fake_thread
+        ):
+            path = self.app_module._pick_file_via_native_dialog()
+        self.assertEqual(path, "")
+
 
 if __name__ == "__main__":
     unittest.main()

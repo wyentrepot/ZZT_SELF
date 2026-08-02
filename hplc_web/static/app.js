@@ -252,6 +252,9 @@ picker.up.addEventListener("click", () => {
 picker.confirm.addEventListener("click", pickerConfirm);
 elements.browse.addEventListener("click", pickerOpen);
 elements.pick.addEventListener("click", async () => {
+  if (elements.pick.disabled) return;
+  elements.pick.disabled = true;
+  clearError();
   try {
     const data = await request("/api/fs/pick");
     if (data.path) {
@@ -260,6 +263,8 @@ elements.pick.addEventListener("click", async () => {
     }
   } catch (error) {
     showError(`文件选择失败：${error.message}`);
+  } finally {
+    elements.pick.disabled = false;
   }
 });
 

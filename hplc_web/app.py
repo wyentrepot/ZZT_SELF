@@ -99,35 +99,44 @@ def _pick_file_via_native_dialog(initial_dir: str = "") -> str:
 
     浏览器网页受安全沙箱限制无法读取本地路径，但后端运行在用户本机，
     可通过 tkinter（Windows 通用对话框）弹出系统原生选择器直接拿真实路径。
-    文件内容不经浏览器，由后端后续按路径读取。取消或失败返回空串。
+    文件内容不经浏览器，由后端后续按路径读取。取消、失败或超时返回空串。
     """
     result: "queue.Queue[str]" = queue.Queue()
 
     def _run() -> None:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
         try:
-            path = filedialog.askopenfilename(
-                parent=root,
-                title="选择日志文件",
-                initialdir=initial_dir or None,
-                filetypes=[
-                    ("日志文件", "*.txt *.log *.dat *.csv *.bin *.raw"),
-                    ("所有文件", "*.*"),
-                ],
-            )
-            result.put(path or "")
-        finally:
-            root.destroy()
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            try:
+                path = filedialog.askopenfilename(
+                    parent=root,
+                    title="选择日志文件",
+                    initialdir=initial_dir or None,
+                    filetypes=[
+                        ("日志文件", "*.txt *.log *.dat *.csv *.bin *.raw"),
+                        ("所有文件", "*.*"),
+                    ],
+                )
+                result.put(path or "")
+            finally:
+                root.destroy()
+        except Exception:
+            # 任何异常（tkinter 缺失、无桌面会话 TclError 等）都保证队列有值，
+            # 避免主线程 result.get() 永久挂起
+            result.put("")
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     thread.join(timeout=300)
-    return result.get() if not thread.is_alive() else ""
+    if thread.is_alive():
+        # 超时：对话框仍打开（用户长时间未操作），返回空串不阻塞请求；
+        # daemon 线程随后自然结束
+        return ""
+    return result.get()
 
 
 class ParseRequest(BaseModel):
