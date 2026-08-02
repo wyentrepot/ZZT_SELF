@@ -198,11 +198,15 @@ class FsApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_list_file_path_returns_400(self):
+    def test_list_file_path_lists_parent_directory(self):
+        """传入文件路径时自动定位到其父目录（文件选择器默认定位用）。"""
         response = self.client.get(
             "/api/fs/list", params={"path": str(self.root / "top.log")}
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["path"], str(self.root))
+        self.assertIn("top.log", [item["name"] for item in data["files"]])
 
     def test_last_returns_empty_when_never_opened(self):
         with mock.patch.object(

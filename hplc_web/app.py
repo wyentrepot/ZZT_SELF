@@ -25,13 +25,19 @@ LOG_EXTENSIONS = {".txt", ".log", ".dat", ".csv", ".bin", ".raw"}
 
 
 def _list_directory(path_text: str) -> dict:
-    """列出目录内容：返回上级目录、子目录与日志文件（按名称排序）。"""
+    """列出目录内容：返回上级目录、子目录与日志文件（按名称排序）。
+
+    若传入的是文件路径，自动定位到其父目录（便于文件选择器默认定位
+    到上次打开的文件所在目录）。
+    """
     try:
         target = Path(path_text).expanduser().resolve()
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"路径无效：{exc}") from exc
+        raise HTTPException(status_code=400, detail="路径无效") from exc
     if not target.exists():
         raise HTTPException(status_code=404, detail=f"目录不存在：{target}")
+    if target.is_file():
+        target = target.parent
     if not target.is_dir():
         raise HTTPException(status_code=400, detail=f"不是目录：{target}")
 
@@ -58,7 +64,7 @@ def _list_directory(path_text: str) -> dict:
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=f"无权限访问：{target}") from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"读取目录失败：{exc}") from exc
+        raise HTTPException(status_code=500, detail="读取目录失败") from exc
 
     key = lambda item: item["name"].lower()
     return {
@@ -125,10 +131,10 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        # 记录上次成功打开的路径，供文件选择器默认定位
+        # 记录上次成功打开的路径，供文件选择器默认定位（限制长度防滥用）
         try:
             LAST_PATH_FILE.parent.mkdir(parents=True, exist_ok=True)
-            LAST_PATH_FILE.write_text(request.path, encoding="utf-8")
+            LAST_PATH_FILE.write_text(request.path[:1024], encoding="utf-8")
         except OSError:
             pass
         return result

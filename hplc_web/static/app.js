@@ -177,7 +177,11 @@ async function pickerList(path) {
       picker.list.appendChild(pickerFileRow(file));
     });
   } catch (error) {
-    picker.list.innerHTML = `<div class="file-picker-empty">${error.message}</div>`;
+    picker.list.textContent = "";
+    const empty = document.createElement("div");
+    empty.className = "file-picker-empty";
+    empty.textContent = error.message;
+    picker.list.appendChild(empty);
     picker.up.disabled = true;
   }
 }
