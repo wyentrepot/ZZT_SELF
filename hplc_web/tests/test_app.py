@@ -230,6 +230,12 @@ class FsApiTests(unittest.TestCase):
             last = self.client.get("/api/fs/last")
             self.assertEqual(last.json()["path"], r"D:\logs\sample.txt")
 
+    def test_open_log_rejects_overlong_path(self):
+        """路径超过 1024 字符时返回 422（与 fs_list 限长一致）。"""
+        response = self.client.post(
+            "/api/logs/open", json={"path": "D:\\" + "a" * 1100}
+        )
+        self.assertEqual(response.status_code, 422)
 
     def test_list_real_workspace_directory_finds_sample_log(self):
         """集成验证：真实日志目录可被 fs API 浏览到样本文件。"""

@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from hplc_web.dotnet_parser import DotNetHplcParser
 from hplc_web.log_service import LogFileService
@@ -88,7 +88,7 @@ def _windows_drives() -> list[dict]:
 def _read_last_path() -> str:
     try:
         return LAST_PATH_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 
@@ -97,7 +97,7 @@ class ParseRequest(BaseModel):
 
 
 class OpenLogRequest(BaseModel):
-    path: str
+    path: str = Field(..., max_length=1024)
 
 
 def create_app(service: ParserService, log_service=None) -> FastAPI:
