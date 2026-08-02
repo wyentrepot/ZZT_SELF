@@ -1,92 +1,86 @@
-# zzt_lib
+# 侦听台改造
 
+> HPLC 抄表通信报文侦听、解析与分析工具
 
+## 一、项目简介
 
-## Getting started
+侦听台是一款面向电力线载波（HPLC，High-speed Power Line Communication）抄表场景的**通信报文侦听与分析工具**。它可以捕获智能电表与集中器之间的 HPLC 通信帧，依据**国网 / 南网**两套协议规范对原始报文进行解析，并提供分钟级报表分析、报文文件筛选等能力，帮助研发与运维人员排查通信问题、核对抄表数据。
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 二、主要功能
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+- **HPLC 报文侦听与解析**：按国网、南网协议解析原始报文。
+- **报文解析工具**：对抓取的报文文件做结构化解析。
+- **分钟报表分析**：对分钟级上报数据做状态统计与分析（`/api/logs/minute-analysis`）。
+- **报文文件筛选**：从报文文件中筛选目标记录（`/api/fs/pick`）。
+- **本地 Web 服务**：基于 FastAPI 提供 API 与可视化界面，默认监听 `http://127.0.0.1:8765/`。
 
-## Add your files
+## 三、技术栈
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+| 层 | 技术 | 说明 |
+|----|------|------|
+| 解析引擎 | C# / .NET Framework 4.8 | 动态库 `GwHPLCAnalysis.dll`（工程 `dll/DLL_NwHPLCAnalysis`） |
+| Web 服务 | Python 3 + FastAPI + Uvicorn | `hplc_web/`，通过 `pythonnet`（`clr`）调用 C# 动态库 |
+| 解析库 | Python 3 | `parser_lib/`（核心解析与适配器） |
+| 依赖管理 | NuGet / pip | `Newtonsoft.Json` 等；`hplc_web/requirements.txt` |
+
+## 四、目录结构
 
 ```
-cd existing_repo
-git remote add origin https://git.friendcom.com/dual-mode-communication/tool/zzt_lib.git
-git branch -M main
-git push -uf origin main
+侦听台改造/
+├── dll/                    # C# 解析动态库源码（DLL_NwHPLCAnalysis），输出 GwHPLCAnalysis.dll
+├── use/                    # C# 测试工程（DLL_Test）
+├── hplc_web/               # Python Web 服务（FastAPI），入口 run.py，监听 127.0.0.1:8765
+├── parser_lib/             # Python 解析库（adapters / core）
+├── scripts/                # 辅助脚本
+├── 侦听台文档/              # 协议规范与接口说明文档
+│   ├── 南网协议/            # 南方电网宽带载波通信规约
+│   ├── 国网协议/            # 国网双模通信互联互通技术规范
+│   ├── 侦听台上位机软件协议解析动态库接口说明.docx
+│   └── 侦听台报文格式.docx
+├── doc/  docs/             # 其他文档
+├── DLL.sln / NwHplcDll.sln # 解决方案文件
+├── 启动解析工具.bat          # 生产模式启动
+├── 启动解析工具-测试模式.bat  # 测试模式启动
+└── hplc_launcher.bat         # 启动器核心脚本
 ```
 
-## Integrate with your tools
+## 五、环境要求
 
-- [ ] [Set up project integrations](https://git.friendcom.com/dual-mode-communication/tool/zzt_lib/-/settings/integrations)
+- Windows 操作系统
+- .NET Framework 4.8（构建并运行 C# 动态库）
+- Python 3.x（建议 3.10+），并已加入系统 `PATH`
+- Visual Studio（用于构建 C# 工程）
 
-## Collaborate with your team
+## 六、构建与运行
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Automatically merge when pipeline succeeds](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+1. **构建解析动态库**：用 Visual Studio 打开 `DLL.sln`（或 `NwHplcDll.sln`）生成工程，产物为 `dll\bin\Debug\GwHPLCAnalysis.dll`。
+2. **启动服务**：双击 `启动解析工具.bat`（生产模式）或 `启动解析工具-测试模式.bat`（测试模式）。
+3. **首次运行**：启动器会自动创建 Python 虚拟环境 `.venv` 并安装 `hplc_web/requirements.txt` 中的依赖，随后打开浏览器访问 `http://127.0.0.1:8765/`。
+4. **停止服务**：关闭启动器窗口即可停止本地服务。
 
-## Test and Deploy
+> 说明：启动器会检测本地服务版本，若接口版本过旧会自动重启服务，无需手动干预。
 
-Use the built-in continuous integration in GitLab.
+## 七、API 概览
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+Web 服务默认监听 `127.0.0.1:8765`，主要接口：
 
-***
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/version` | GET | 获取服务版本与接口 revision |
+| `/api/fs/pick` | POST | 报文文件筛选 |
+| `/api/logs/minute-analysis` | POST | 分钟报表数据分析 |
+| `/openapi.json` | GET | OpenAPI 描述（完整接口列表） |
 
-# Editing this README
+## 八、相关文档
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+详见仓库 `侦听台文档/` 目录：
 
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+- `侦听台上位机软件协议解析动态库接口说明.docx` —— 动态库接口说明
+- `侦听台报文格式.docx` —— 报文格式说明
+- `南网协议/` —— 南方电网《低压电力线宽带载波通信规约》数据链路层 / 应用层规范
+- `国网协议/` —— 国网《双模通信互联互通技术规范》数据链路层 / 应用层规范
 
-## Name
-Choose a self-explaining name for your project.
+## 九、说明
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- `测试文件/` 为本地大体积测试数据（含超过 100MB 的原始报文），已被 `.gitignore` 忽略，**不纳入版本库**。
+- 本项目源码托管于 `git@github.com:wyentrepot/ZZT_SELF.git`。
