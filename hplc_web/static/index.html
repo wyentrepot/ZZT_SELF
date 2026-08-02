@@ -138,16 +138,30 @@
           </div>
 
           <div id="detail-badges" class="detail-badges"></div>
-          <div id="parse-stages" class="parse-stages"></div>
 
-          <details class="json-details">
-            <summary>查看完整解析 JSON</summary>
-            <pre id="detail-json"></pre>
-          </details>
-          <details class="json-details">
-            <summary>查看原始十六进制帧</summary>
-            <pre id="detail-raw"></pre>
-          </details>
+          <div class="detail-tabs" role="tablist" aria-label="详情视图切换">
+            <button class="detail-tab active" type="button" role="tab"
+              data-detail-tab="base" aria-selected="true">基础解析</button>
+            <button class="detail-tab" type="button" role="tab"
+              data-detail-tab="app" aria-selected="false">应用层展开</button>
+          </div>
+
+          <div id="detail-base" class="detail-tab-panel">
+            <div id="parse-stages" class="parse-stages"></div>
+
+            <details class="json-details">
+              <summary>查看完整解析 JSON</summary>
+              <pre id="detail-json"></pre>
+            </details>
+            <details class="json-details">
+              <summary>查看原始十六进制帧</summary>
+              <pre id="detail-raw"></pre>
+            </details>
+          </div>
+
+          <div id="detail-app" class="detail-tab-panel" hidden>
+            <div id="app-expand-content"></div>
+          </div>
         </div>
       </aside>
     </section>

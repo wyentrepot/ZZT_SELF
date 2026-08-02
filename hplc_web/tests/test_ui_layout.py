@@ -51,6 +51,48 @@ class UiLayoutTests(unittest.TestCase):
             self.assertIn(header, html)
         self.assertIn('id="minute-period-details"', html)
 
+    def test_detail_panel_has_base_and_app_expand_tabs(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('data-detail-tab="base"', html)
+        self.assertIn('data-detail-tab="app"', html)
+        self.assertIn("基础解析", html)
+        self.assertIn("应用层展开", html)
+        self.assertIn('id="detail-base"', html)
+        self.assertIn('id="detail-app"', html)
+        self.assertIn('id="app-expand-content"', html)
+
+    def test_detail_tabs_are_inside_detail_content(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        detail_content = html.split('id="detail-content"')[1]
+        detail_panel_end = detail_content.split("</aside>")[0]
+
+        self.assertIn('data-detail-tab="base"', detail_panel_end)
+        self.assertIn('data-detail-tab="app"', detail_panel_end)
+        self.assertIn('id="app-expand-content"', detail_panel_end)
+
+    def test_js_implements_app_expand_rendering(self):
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("renderApplicationDetail", js)
+        self.assertIn("APP_EXPAND_IDS", js)
+        self.assertIn('"0003"', js)
+        self.assertIn('"00E2"', js)
+        self.assertIn('"00E3"', js)
+        self.assertIn('"00E4"', js)
+        self.assertIn("switchDetailTab", js)
+        self.assertIn("renderNestedFrame", js)
+        self.assertIn("renderFieldTable", js)
+
+    def test_css_styles_detail_tabs_and_nested_tree(self):
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".detail-tabs", css)
+        self.assertIn(".detail-tab.active", css)
+        self.assertIn(".app-field-table", css)
+        self.assertIn(".nested-frame", css)
+        self.assertIn(".app-expand-hint", css)
+
 
 if __name__ == "__main__":
     unittest.main()

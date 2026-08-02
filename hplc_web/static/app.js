@@ -32,6 +32,10 @@ const elements = {
   pageSummary: $("#page-summary"),
   detailEmpty: $("#detail-empty"),
   detailContent: $("#detail-content"),
+  detailTabs: document.querySelectorAll(".detail-tab"),
+  detailBase: $("#detail-base"),
+  detailApp: $("#detail-app"),
+  appExpandContent: $("#app-expand-content"),
 };
 
 function formatBytes(value) {
@@ -267,7 +271,179 @@ function renderDetail(detail) {
 
   $("#detail-json").textContent = JSON.stringify(detail.analysis, null, 2);
   $("#detail-raw").textContent = detail.raw_hex;
+  renderApplicationDetail(simple);
 }
+
+// 应用层展开渲染：仅对并发抄表帧（0003）与分钟采集相关帧（00E2/00E3/00E4）
+// 渲染 application.fields / items / nested；其他帧显示提示。
+const APP_EXPAND_IDS = new Set(["0003", "00E2", "00E3", "00E4"]);
+
+function renderApplicationDetail(simple) {
+  const container = elements.appExpandContent;
+  container.replaceChildren();
+
+  const appId = simple.APP_ID;
+  const application = simple.application;
+
+  if (!appId || !APP_EXPAND_IDS.has(appId)) {
+    const hint = document.createElement("p");
+    hint.className = "app-expand-hint";
+    hint.textContent = "该帧不是并发抄表或分钟采集报文，无应用层展开内容";
+    container.append(hint);
+    return;
+  }
+  if (simple.application_error) {
+    const hint = document.createElement("p");
+    hint.className = "app-expand-hint error";
+    hint.textContent = `应用层解析异常：${simple.application_error}`;
+    container.append(hint);
+    return;
+  }
+  if (!application) {
+    const hint = document.createElement("p");
+    hint.className = "app-expand-hint";
+    hint.textContent = "该帧暂无应用层展开数据";
+    container.append(hint);
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "app-expand-section";
+
+  const title = document.createElement("h4");
+  title.textContent = `应用层结构（${application.structure || "双模4-3"}）`;
+  section.append(title);
+
+  if (application.fields && application.fields.length) {
+    section.append(renderFieldTable("报文头字段", application.fields));
+  }
+  if (application.items && application.items.length) {
+    section.append(renderItemList("数据项", application.items));
+  }
+  if (application.nested && application.nested.length) {
+    const nestedTitle = document.createElement("h5");
+    nestedTitle.textContent = `内嵌帧（${application.nested.length} 条）`;
+    section.append(nestedTitle);
+    const tree = document.createElement("div");
+    tree.className = "nested-tree";
+    application.nested.forEach((nested) => tree.append(renderNestedFrame(nested)));
+    section.append(tree);
+  }
+  if (application.warnings && application.warnings.length) {
+    const warn = document.createElement("p");
+    warn.className = "app-expand-hint warning";
+    warn.textContent = application.warnings.join("；");
+    section.append(warn);
+  }
+
+  container.append(section);
+}
+
+function renderFieldTable(titleText, fields) {
+  const wrap = document.createElement("div");
+  wrap.className = "app-table-wrap";
+  const heading = document.createElement("h5");
+  heading.textContent = titleText;
+  wrap.append(heading);
+
+  const table = document.createElement("table");
+  table.className = "app-field-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const header of ["字段", "值", "十六进制", "说明"]) {
+    const th = document.createElement("th");
+    th.textContent = header;
+    headRow.append(th);
+  }
+  thead.append(headRow);
+  table.append(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const field of fields) {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = field.name || "";
+    const value = document.createElement("td");
+    value.textContent = String(field.value ?? "");
+    const hex = document.createElement("td");
+    hex.textContent = String(field.hex ?? "");
+    const desc = document.createElement("td");
+    desc.textContent = String(field.desc ?? "");
+    tr.append(name, value, hex, desc);
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  wrap.append(table);
+  return wrap;
+}
+
+function renderItemList(titleText, items) {
+  const wrap = document.createElement("div");
+  wrap.className = "app-items";
+  const heading = document.createElement("h5");
+  heading.textContent = titleText;
+  wrap.append(heading);
+  for (const item of items) {
+    const line = document.createElement("div");
+    line.className = "app-item";
+    const name = document.createElement("strong");
+    name.textContent = item.name || "";
+    const value = document.createElement("span");
+    value.textContent = String(item.value ?? "");
+    line.append(name, value);
+    wrap.append(line);
+  }
+  return wrap;
+}
+
+function renderNestedFrame(nested) {
+  const box = document.createElement("details");
+  box.className = "nested-frame";
+  box.open = true;
+
+  const summary = document.createElement("summary");
+  const tag = document.createElement("span");
+  tag.className = "nested-tag";
+  tag.textContent = nested.structure || "未知";
+  const label = document.createElement("span");
+  label.textContent = nested.address ? `地址 ${nested.address}` : "内嵌帧";
+  summary.append(tag, label);
+  box.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "nested-body";
+  if (nested.fields && nested.fields.length) {
+    body.append(renderFieldTable("字段", nested.fields));
+  }
+  if (nested.items && nested.items.length) {
+    body.append(renderItemList("数据项", nested.items));
+  }
+  if (nested.nested && nested.nested.length) {
+    nested.nested.forEach((child) => body.append(renderNestedFrame(child)));
+  }
+  if (nested.warnings && nested.warnings.length) {
+    const warn = document.createElement("p");
+    warn.className = "app-expand-hint warning";
+    warn.textContent = nested.warnings.join("；");
+    body.append(warn);
+  }
+  box.append(body);
+  return box;
+}
+
+function switchDetailTab(name) {
+  elements.detailTabs.forEach((tab) => {
+    const active = tab.dataset.detailTab === name;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  elements.detailBase.hidden = name !== "base";
+  elements.detailApp.hidden = name !== "app";
+}
+
+elements.detailTabs.forEach((tab) => {
+  tab.addEventListener("click", () => switchDetailTab(tab.dataset.detailTab));
+});
 
 async function loadDetail(id, row) {
   state.selectedId = id;
