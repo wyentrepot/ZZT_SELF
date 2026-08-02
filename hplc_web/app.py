@@ -135,7 +135,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         try:
             LAST_PATH_FILE.parent.mkdir(parents=True, exist_ok=True)
             LAST_PATH_FILE.write_text(request.path[:1024], encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeError):
             pass
         return result
 
