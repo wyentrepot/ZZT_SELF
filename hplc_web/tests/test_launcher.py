@@ -37,6 +37,7 @@ class LauncherScriptTests(unittest.TestCase):
         self.assertIn("openapi.json", content)
         self.assertIn("/api/fs/pick", content)
         self.assertIn("picker_api_revision", content)
+        self.assertIn("minute_analysis_api_revision", content)
         self.assertIn("SERVICE_OUTDATED_RESTARTING", content)
         self.assertIn("taskkill /PID", content)
         self.assertIn(":port_in_use", content)

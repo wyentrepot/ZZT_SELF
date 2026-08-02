@@ -76,6 +76,7 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["picker_api_revision"], 2)
+        self.assertEqual(response.json()["minute_analysis_api_revision"], 2)
 
     def test_parse_endpoint_returns_results(self):
         response = self.client.post("/api/parse", json={"hex": "7E 7E"})

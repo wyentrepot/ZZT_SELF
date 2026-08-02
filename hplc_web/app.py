@@ -208,7 +208,11 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
 
     @app.get("/api/version")
     def version():
-        return {**service.version(), "picker_api_revision": 2}
+        return {
+            **service.version(),
+            "picker_api_revision": 2,
+            "minute_analysis_api_revision": 2,
+        }
 
     @app.post("/api/parse")
     def parse(request: ParseRequest):
