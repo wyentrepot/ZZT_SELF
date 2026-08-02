@@ -230,6 +230,10 @@ class FsApiTests(unittest.TestCase):
             last = self.client.get("/api/fs/last")
             self.assertEqual(last.json()["path"], r"D:\logs\sample.txt")
 
+
+if __name__ == "__main__":
+    unittest.main()
+
     def test_list_real_workspace_directory_finds_sample_log(self):
         """集成验证：真实日志目录可被 fs API 浏览到样本文件。"""
         workspace = Path(__file__).resolve().parents[1].parent
