@@ -72,6 +72,12 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("HPLC", response.text)
 
+    def test_version_reports_picker_api_revision(self):
+        response = self.client.get("/api/version")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["picker_api_revision"], 2)
+
     def test_parse_endpoint_returns_results(self):
         response = self.client.post("/api/parse", json={"hex": "7E 7E"})
         self.assertEqual(response.status_code, 200)
@@ -291,20 +297,23 @@ class FsApiTests(unittest.TestCase):
         self.assertIn('"-STA"', source)
         self.assertIn("OpenFileDialog", self.app_module._POWERSHELL_PICK_FILE_SCRIPT)
 
-    def test_native_picker_returns_selected_path_from_powershell(self):
+    def test_native_picker_decodes_utf8_base64_path_from_powershell(self):
         completed = mock.Mock(
-            returncode=0, stdout="D:\\logs\\selected.txt\r\n", stderr=""
+            returncode=0,
+            stdout="RDpc5L6m5ZCs5Y+w5pS56YCgXOa1i+ivleaWh+S7tlzljp/lp4vmiqXmlocudHh0\r\n",
+            stderr="",
         )
         with mock.patch.object(
             self.app_module.subprocess, "run", return_value=completed
         ) as run:
             path = self.app_module._pick_file_via_native_dialog(r"D:\logs")
 
-        self.assertEqual(path, r"D:\logs\selected.txt")
+        self.assertEqual(path, r"D:\侦听台改造\测试文件\原始报文.txt")
         command = run.call_args.args[0]
         self.assertIn("powershell", command[0].lower())
         self.assertIn("-STA", command)
         self.assertEqual(run.call_args.kwargs["env"]["HPLC_PICKER_INITIAL_DIR"], r"D:\logs")
+        self.assertIn("ToBase64String", self.app_module._POWERSHELL_PICK_FILE_SCRIPT)
 
     def test_pick_endpoint_returns_powershell_error(self):
         with mock.patch.object(

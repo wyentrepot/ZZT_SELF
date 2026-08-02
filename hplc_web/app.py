@@ -1,3 +1,5 @@
+import base64
+import binascii
 import os
 import queue
 import string
@@ -153,7 +155,8 @@ if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) {
     $dialog.InitialDirectory = $initial
 }
 if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-    [Console]::Out.Write($dialog.FileName)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($dialog.FileName)
+    [Console]::Out.Write([Convert]::ToBase64String($bytes))
 }
 """
 
@@ -178,7 +181,13 @@ def _pick_file_via_native_dialog(initial_dir: str = "") -> str:
     if completed.returncode != 0:
         detail = completed.stderr.strip() or "PowerShell 未返回错误详情"
         raise RuntimeError(f"Windows 文件选择器启动失败：{detail}")
-    return completed.stdout.strip()
+    encoded_path = completed.stdout.strip()
+    if not encoded_path:
+        return ""
+    try:
+        return base64.b64decode(encoded_path, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise RuntimeError("Windows 文件选择器返回了无效路径") from exc
 
 
 class ParseRequest(BaseModel):
@@ -199,7 +208,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
 
     @app.get("/api/version")
     def version():
-        return service.version()
+        return {**service.version(), "picker_api_revision": 2}
 
     @app.post("/api/parse")
     def parse(request: ParseRequest):
