@@ -34,6 +34,11 @@ class LauncherScriptTests(unittest.TestCase):
         content = SHARED_LAUNCHER.read_text(encoding="utf-8")
 
         self.assertIn("Invoke-WebRequest", content)
+        self.assertIn("openapi.json", content)
+        self.assertIn("/api/fs/pick", content)
+        self.assertIn("SERVICE_OUTDATED_RESTARTING", content)
+        self.assertIn("taskkill /PID", content)
+        self.assertIn(":port_in_use", content)
         self.assertIn("APP_URL", content)
         self.assertIn("mode=test", content)
         self.assertIn("SERVICE_ALREADY_RUNNING", content)

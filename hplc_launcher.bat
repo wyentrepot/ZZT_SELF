@@ -16,8 +16,23 @@ echo.
 if not exist "dll\bin\Debug\GwHPLCAnalysis.dll" goto :missing_dll
 
 powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8765/api/version' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-if not errorlevel 1 goto :already_running
+if not errorlevel 1 goto :check_service_capability
+goto :bootstrap
 
+:check_service_capability
+powershell -NoProfile -Command "try { $api = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/openapi.json' -TimeoutSec 2; if ($null -ne $api.paths.'/api/fs/pick') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+if not errorlevel 1 goto :already_running
+goto :restart_outdated_service
+
+:restart_outdated_service
+echo [SERVICE_OUTDATED_RESTARTING] Restarting the local parser service...
+for /f "delims=" %%P in ('powershell -NoProfile -Command "$connection = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue; if ($connection) { $process = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $connection.OwningProcess); if ($process.Name -eq 'python.exe' -and $process.CommandLine -match 'hplc_web\.run') { [Console]::Write($process.ProcessId) } }"') do set "HPLC_SERVER_PID=%%P"
+if not defined HPLC_SERVER_PID goto :port_in_use
+taskkill /PID %HPLC_SERVER_PID% /T /F >nul 2>&1
+timeout /T 1 /NOBREAK >nul
+goto :bootstrap
+
+:bootstrap
 where python >nul 2>&1
 if errorlevel 1 goto :missing_python
 
@@ -47,6 +62,12 @@ exit /b 0
 echo [SERVICE_ALREADY_RUNNING] Opening %APP_URL%
 start "" "%APP_URL%"
 exit /b 0
+
+:port_in_use
+echo [ERROR] Port 8765 is in use by a process that is not this parser service.
+echo Stop that process, then run this launcher again.
+pause
+exit /b 1
 
 :missing_dll
 echo [ERROR] dll\bin\Debug\GwHPLCAnalysis.dll was not found.
