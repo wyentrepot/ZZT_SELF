@@ -301,6 +301,12 @@ class LogFileService:
             field = fields.get(name)
             return field.get("raw") if field else None
 
+        def value(name):
+            field = fields.get(name)
+            if not field:
+                return None
+            return field.get("value") or field.get("raw")
+
         source_mac = raw("源MAC地址")
         station_key = source_mac or simple.get("ORI_S") or simple.get("SRC") or ""
         return {
@@ -312,7 +318,7 @@ class LogFileService:
             "protocol_type": raw("协议类型"),
             "meter_type": raw("电表类型"),
             "response_result": raw("响应结果"),
-            "freeze_time": raw("冻结时刻"),
+            "freeze_time": value("冻结时刻"),
             "report_count": raw("上报数量"),
             "data_length": raw("数据长度"),
             "application_error": simple.get("application_error"),
@@ -359,8 +365,7 @@ class LogFileService:
         second, milli = divmod(rem, 1_000)
         return f"{hour:02d}:{minute:02d}:{second:02d}.{milli:03d}"
 
-    def list_minute_periods(self, period_minutes=15, cco_tei="001",
-                            deduplicate=True) -> list:
+    def list_minute_periods(self, period_minutes=15, cco_tei="001") -> list:
         if not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440:
             raise ValueError("period_minutes 必须在 1 到 1440 之间")
         if not isinstance(cco_tei, str) or not re.fullmatch(
@@ -372,11 +377,14 @@ class LogFileService:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT frame_id, log_time, time_seconds, station_key,
-                       response_result, application_error
+                SELECT minute_reports.frame_id, minute_reports.log_time,
+                       minute_reports.time_seconds, minute_reports.source_mac,
+                       minute_reports.source_tei, minute_reports.freeze_time,
+                       frames.summary_json
                 FROM minute_reports
-                WHERE cco_tei = ?
-                ORDER BY id
+                LEFT JOIN frames ON frames.id = minute_reports.frame_id
+                WHERE minute_reports.cco_tei = ?
+                ORDER BY minute_reports.id
                 """,
                 (cco_tei.upper(),),
             ).fetchall()
@@ -389,35 +397,25 @@ class LogFileService:
         periods = []
         for start in sorted(groups):
             bucket = groups[start]
-            frame_ids = []
-            station_keys = []
-            success_count = 0
-            failure_count = 0
-            parse_error_count = 0
+            reports = []
             for row in bucket:
-                frame_ids.append(row["frame_id"])
-                station_keys.append(row["station_key"])
-                if row["application_error"]:
-                    parse_error_count += 1
-                elif row["response_result"] == 0:
-                    success_count += 1
-                else:
-                    failure_count += 1
-            raw_count = len(bucket)
-            unique_count = len(set(station_keys))
+                summary = json.loads(row["summary_json"] or "{}")
+                reports.append(
+                    {
+                        "frame_id": row["frame_id"],
+                        "log_time": row["log_time"],
+                        "source_mac": row["source_mac"],
+                        "source_tei": row["source_tei"],
+                        "freeze_time": row["freeze_time"],
+                        "application_raw": summary.get("APP_RAW"),
+                    }
+                )
             periods.append(
                 {
                     "period_start": start,
                     "period_end": start + period_ms,
-                    "raw_report_count": raw_count,
-                    "unique_station_count": unique_count,
-                    "duplicate_count": raw_count - unique_count,
-                    "success_count": success_count,
-                    "failure_count": failure_count,
-                    "parse_error_count": parse_error_count,
-                    "report_count": unique_count if deduplicate else raw_count,
-                    "station_keys": station_keys,
-                    "frame_ids": frame_ids,
+                    "report_count": len(reports),
+                    "reports": reports,
                     "description": (
                         f"{self._clock_text(start)} - "
                         f"{self._clock_text(start + period_ms)}"

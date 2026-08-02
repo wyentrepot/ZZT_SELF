@@ -51,7 +51,8 @@ def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001",
                 {"name": "协议类型", "raw": 2},
                 {"name": "电表类型", "raw": 0},
                 {"name": "响应结果", "raw": response_result},
-                {"name": "冻结时刻", "raw": "00-55-23-31-07-26"},
+                {"name": "冻结时刻", "value": "2026-07-31 23:55:00",
+                 "raw": "00-55-23-31-07-26"},
                 {"name": "上报数量", "raw": 1},
                 {"name": "数据长度", "raw": 76},
             ],
@@ -195,39 +196,26 @@ class MinuteReportTests(unittest.TestCase):
         for name in EXPECTED_MINUTE_COLUMNS:
             self.assertIn(name, columns)
 
-    def test_duplicate_reports_from_same_station_are_counted(self):
-        summary = _e4_summary()
+    def test_periods_keep_every_report_and_expose_detail_fields(self):
+        summary = _e4_summary(source_mac="340100141223", ori_s="009")
         directory, path = _write_log([LOG_LINE, LOG_LINE])
         self.addCleanup(directory.cleanup)
         service = self._service([summary, summary])
 
         service.index_file(path)
-        periods = service.list_minute_periods(
-            period_minutes=15, cco_tei="001", deduplicate=True
-        )
+        periods = service.list_minute_periods(period_minutes=15, cco_tei="001")
 
         self.assertEqual(len(periods), 1)
         period = periods[0]
-        self.assertEqual(period["raw_report_count"], 2)
-        self.assertEqual(period["unique_station_count"], 1)
-        self.assertEqual(period["duplicate_count"], 1)
-        self.assertEqual(period["report_count"], 1)  # deduplicate=true
-        self.assertEqual(period["success_count"], 2)
-        self.assertEqual(period["failure_count"], 0)
-        self.assertEqual(period["parse_error_count"], 0)
-
-    def test_deduplicate_false_keeps_raw_count(self):
-        summary = _e4_summary()
-        directory, path = _write_log([LOG_LINE, LOG_LINE])
-        self.addCleanup(directory.cleanup)
-        service = self._service([summary, summary])
-
-        service.index_file(path)
-        periods = service.list_minute_periods(
-            period_minutes=15, cco_tei="001", deduplicate=False
-        )
-
         self.assertEqual(periods[0]["report_count"], 2)
+        self.assertNotIn("duplicate_count", period)
+        self.assertEqual(len(period["reports"]), 2)
+        report = period["reports"][0]
+        self.assertEqual(report["source_mac"], "340100141223")
+        self.assertEqual(report["source_tei"], "009")
+        self.assertEqual(report["freeze_time"], "2026-07-31 23:55:00")
+        self.assertEqual(report["application_raw"], "11E40000")
+        self.assertIn("freeze_time", report)
 
     def test_period_query_validates_arguments(self):
         service = self._service([])
@@ -246,9 +234,7 @@ class MinuteReportTests(unittest.TestCase):
         service = self._service([_e4_summary(), _e4_summary()])
 
         service.index_file(path)
-        periods = service.list_minute_periods(
-            period_minutes=15, cco_tei="001", deduplicate=False
-        )
+        periods = service.list_minute_periods(period_minutes=15, cco_tei="001")
 
         self.assertEqual(len(periods), 2)
 
@@ -259,11 +245,11 @@ class MinuteReportTests(unittest.TestCase):
         service = self._service([_e4_summary(), to_other])
 
         service.index_file(path)
-        periods_001 = service.list_minute_periods(15, "001", False)
-        periods_002 = service.list_minute_periods(15, "002", False)
+        periods_001 = service.list_minute_periods(15, "001")
+        periods_002 = service.list_minute_periods(15, "002")
 
-        self.assertEqual(sum(p["raw_report_count"] for p in periods_001), 1)
-        self.assertEqual(sum(p["raw_report_count"] for p in periods_002), 1)
+        self.assertEqual(sum(p["report_count"] for p in periods_001), 1)
+        self.assertEqual(sum(p["report_count"] for p in periods_002), 1)
 
     def test_malformed_report_is_counted_as_parse_error(self):
         bad = _e4_summary(application_error="业务报文过短")
@@ -272,12 +258,12 @@ class MinuteReportTests(unittest.TestCase):
         service = self._service([bad])
 
         service.index_file(path)
-        periods = service.list_minute_periods(15, "001", False)
+        periods = service.list_minute_periods(15, "001")
 
-        self.assertEqual(periods[0]["parse_error_count"], 1)
-        self.assertEqual(periods[0]["success_count"], 0)
+        self.assertEqual(periods[0]["report_count"], 1)
+        self.assertEqual(periods[0]["reports"][0]["application_raw"], "11E40000")
 
-    def test_period_rows_keep_evidence_frame_ids(self):
+    def test_period_reports_keep_frame_ids(self):
         summary_a = _e4_summary(source_mac="340100141223")
         summary_b = _e4_summary(source_mac="340100141224")
         directory, path = _write_log([LOG_LINE, LOG_LINE])
@@ -285,10 +271,11 @@ class MinuteReportTests(unittest.TestCase):
         service = self._service([summary_a, summary_b])
 
         service.index_file(path)
-        periods = service.list_minute_periods(15, "001", False)
+        periods = service.list_minute_periods(15, "001")
 
-        self.assertEqual(len(periods[0]["frame_ids"]), 2)
-        self.assertEqual(len(periods[0]["station_keys"]), 2)
+        reports = periods[0]["reports"]
+        self.assertEqual(len(reports), 2)
+        self.assertEqual([report["frame_id"] for report in reports], [1, 2])
 
 
 if __name__ == "__main__":

@@ -716,14 +716,12 @@ const minuteElements = {
   framesView: $("#frames-view"),
   framesData: $("#frames-data"),
   tabs: document.querySelectorAll(".view-tab"),
-  period: $("#period-select"),
+  period: $("#period-input"),
   ccoTei: $("#cco-tei-input"),
-  dedup: $("#dedup-checkbox"),
   query: $("#minute-query-button"),
   error: $("#minute-error"),
-  cards: $("#minute-summary-cards"),
   rows: $("#minute-period-table"),
-  details: $("#minute-period-details"),
+  details: $("#minute-report-details"),
 };
 
 function switchView(name) {
@@ -747,7 +745,6 @@ async function loadMinuteAnalysis() {
   const params = new URLSearchParams({
     period_minutes: minuteElements.period.value,
     cco_tei: tei,
-    deduplicate: String(minuteElements.dedup.checked),
   });
   minuteElements.error.hidden = true;
   try {
@@ -761,35 +758,13 @@ async function loadMinuteAnalysis() {
 }
 
 function renderMinuteAnalysis(data) {
-  const summary = data.summary;
-  minuteElements.cards.replaceChildren();
-  const cards = [
-    ["周期数", summary.total_periods],
-    ["原始上报", summary.raw_report_count],
-    ["STA-周期去重数", summary.unique_station_count],
-    ["重复数", summary.duplicate_count],
-    ["成功", summary.success_count],
-    ["失败", summary.failure_count],
-    ["解析异常", summary.parse_error_count],
-  ];
-  for (const [label, value] of cards) {
-    const card = document.createElement("div");
-    card.className = "minute-card";
-    const strong = document.createElement("strong");
-    strong.textContent = value;
-    const span = document.createElement("span");
-    span.textContent = label;
-    card.append(strong, span);
-    minuteElements.cards.append(card);
-  }
-
   minuteElements.rows.replaceChildren();
   minuteElements.details.replaceChildren();
   if (!data.periods.length) {
     const row = document.createElement("tr");
     row.className = "empty-row";
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    cell.colSpan = 1;
     cell.textContent = "没有符合当前筛选条件的周期";
     row.append(cell);
     minuteElements.rows.append(row);
@@ -798,70 +773,37 @@ function renderMinuteAnalysis(data) {
 
   for (const period of data.periods) {
     const row = document.createElement("tr");
-    const values = [
-      period.description,
-      period.unique_station_count,
-      period.raw_report_count,
-      period.duplicate_count,
-      period.success_count,
-      period.failure_count,
-      period.parse_error_count,
-      `${period.station_keys.length} 条上报 · 点击查看`,
-    ];
-    values.forEach((value, index) => {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      if (index === 0) cell.className = "route";
-      row.append(cell);
-    });
-    row.addEventListener("click", () => renderPeriodDetails(period));
+    const cell = document.createElement("td");
+    cell.className = "route";
+    cell.textContent = `CCO ${data.filters.cco_tei} 在 ${period.description} 周期收到 ${period.report_count} 帧上报`;
+    row.append(cell);
+    row.addEventListener("click", () => renderMinuteReportDetails(period));
     minuteElements.rows.append(row);
   }
 }
 
-function renderPeriodDetails(period) {
+function renderMinuteReportDetails(period) {
   minuteElements.details.replaceChildren();
   const box = document.createElement("div");
   box.className = "period-detail";
   const title = document.createElement("h4");
-  title.textContent = `周期 ${period.description} · 站点与证据帧`;
+  title.textContent = `周期 ${period.description} · ${period.report_count} 帧上报`;
   box.append(title);
-
-  const stationList = document.createElement("ul");
-  stationList.className = "station-list";
-  period.station_keys.forEach((key) => {
-    const li = document.createElement("li");
-    li.textContent = key;
-    stationList.append(li);
+  period.reports.forEach((report) => {
+    const item = document.createElement("details");
+    item.className = "minute-report-row";
+    const label = document.createElement("summary");
+    label.textContent = `${report.source_mac || "未知 MAC"} / ${report.source_tei || "未知 TEI"} 模块上报 · 冻结时间 ${report.freeze_time || "未解析"}`;
+    const raw = document.createElement("pre");
+    raw.className = "minute-app-raw";
+    raw.textContent = report.application_raw || "应用层原文不可用";
+    item.append(label, raw);
+    box.append(item);
   });
-  box.append(stationList);
-
-  const frameRow = document.createElement("div");
-  frameRow.className = "frame-links";
-  frameRow.append(document.createTextNode("证据帧："));
-  period.frame_ids.forEach((id) => {
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "frame-link";
-    link.textContent = `帧 ${id}`;
-    link.addEventListener("click", () => openFrameById(id));
-    frameRow.append(link);
-  });
-  box.append(frameRow);
   minuteElements.details.append(box);
 }
 
-async function openFrameById(id) {
-  try {
-    const detail = await request(`/api/logs/frames/${id}`);
-    renderDetail(detail);
-    switchView("frames");
-  } catch (error) {
-    minuteElements.error.textContent = error.message;
-    minuteElements.error.hidden = false;
-  }
-}
-
 minuteElements.query.addEventListener("click", loadMinuteAnalysis);
-minuteElements.period.addEventListener("change", loadMinuteAnalysis);
-minuteElements.dedup.addEventListener("change", loadMinuteAnalysis);
+minuteElements.period.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadMinuteAnalysis();
+});

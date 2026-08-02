@@ -37,19 +37,19 @@ class UiLayoutTests(unittest.TestCase):
     def test_minute_analysis_controls_and_layout_are_present(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn('id="period-select"', html)
-        self.assertIn('value="15" selected', html)
+        self.assertIn('id="period-input"', html)
+        self.assertIn('type="number"', html)
+        self.assertIn('min="1"', html)
+        self.assertIn('max="1440"', html)
+        self.assertIn('value="15"', html)
         self.assertIn('id="cco-tei-input"', html)
         self.assertIn('value="001"', html)
-        self.assertIn('id="dedup-checkbox"', html)
-        self.assertIn("checked", html)
+        self.assertNotIn('id="dedup-checkbox"', html)
         self.assertIn('id="minute-query-button"', html)
-        self.assertIn('id="minute-summary-cards"', html)
+        self.assertNotIn('id="minute-summary-cards"', html)
         self.assertIn('id="minute-period-table"', html)
-        for header in ("周期", "去重上报STA数", "原始帧数", "重复数",
-                       "成功", "失败", "解析异常", "简介"):
-            self.assertIn(header, html)
-        self.assertIn('id="minute-period-details"', html)
+        self.assertIn("CCO", html)
+        self.assertIn('id="minute-report-details"', html)
 
     def test_detail_panel_has_base_and_app_expand_tabs(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -125,6 +125,15 @@ class UiLayoutTests(unittest.TestCase):
         self.assertNotIn('elements.pick.addEventListener("click", pickerOpen)', js)
         self.assertIn("hplc-log-path", js)
         self.assertIn("encodeURIComponent", js)
+
+    def test_minute_analysis_uses_two_column_detail_interaction(self):
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("renderMinuteReportDetails", js)
+        self.assertIn("application_raw", js)
+        self.assertIn("minute-analysis-layout", css)
+        self.assertIn("minute-report-row", css)
 
     def test_css_styles_file_picker(self):
         css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")

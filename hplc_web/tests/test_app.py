@@ -42,21 +42,20 @@ class FakeLogService:
     def get_frame(self, frame_id):
         return {"id": frame_id, "analysis": {"full": {"ok": True}}}
 
-    def list_minute_periods(self, period_minutes=15, cco_tei="001", deduplicate=True):
-        self.last_minute_query = (period_minutes, cco_tei, deduplicate)
+    def list_minute_periods(self, period_minutes=15, cco_tei="001"):
+        self.last_minute_query = (period_minutes, cco_tei)
         return [
             {
                 "period_start": 0,
                 "period_end": 900000,
-                "raw_report_count": 23,
-                "unique_station_count": 18,
-                "duplicate_count": 5,
-                "success_count": 23,
-                "failure_count": 0,
-                "parse_error_count": 0,
-                "report_count": 18,
-                "station_keys": ["340100141223"],
-                "frame_ids": [1, 2, 3],
+                "report_count": 23,
+                "reports": [{
+                    "frame_id": 1,
+                    "source_mac": "340100141223",
+                    "source_tei": "009",
+                    "freeze_time": "2026-07-31 23:55:00",
+                    "application_raw": "11E40000",
+                }],
                 "description": "00:00:00.000 - 00:15:00.000",
             }
         ]
@@ -116,7 +115,7 @@ class AppTests(unittest.TestCase):
 
     def test_minute_analysis_returns_periods_summary_and_filters(self):
         response = self.client.get(
-            "/api/logs/minute-analysis?period_minutes=15&cco_tei=001&deduplicate=true"
+            "/api/logs/minute-analysis?period_minutes=15&cco_tei=001"
         )
 
         self.assertEqual(response.status_code, 200)
@@ -125,11 +124,10 @@ class AppTests(unittest.TestCase):
         self.assertIn("summary", data)
         self.assertIn("filters", data)
         self.assertEqual(data["summary"]["total_periods"], 1)
-        self.assertEqual(data["summary"]["raw_report_count"], 23)
-        self.assertEqual(data["summary"]["duplicate_count"], 5)
-        self.assertEqual(
-            self.log_service.last_minute_query, (15, "001", True)
-        )
+        self.assertEqual(data["summary"]["report_count"], 23)
+        self.assertNotIn("duplicate_count", data["summary"])
+        self.assertNotIn("deduplicate", data["filters"])
+        self.assertEqual(self.log_service.last_minute_query, (15, "001"))
 
     def test_minute_analysis_rejects_invalid_period_and_tei(self):
         for params in (

@@ -690,7 +690,7 @@ tbody tr.selected td { color: #e5eff6; }
   color: #8195a8;
   font-size: 11px;
 }
-.minute-filter input[type="text"], .minute-filter select {
+.minute-filter input {
   background: #081420;
   border: 1px solid var(--line, #142433);
   color: #dfe9f2;
@@ -699,32 +699,17 @@ tbody tr.selected td { color: #e5eff6; }
   font: inherit;
   font-size: 12px;
 }
-.minute-filter input[type="text"] { width: 84px; text-transform: uppercase; }
-.checkbox-filter {
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  padding-bottom: 8px;
-  cursor: pointer;
-}
-.minute-summary-cards {
+.minute-filter input { width: 84px; }
+.minute-filter #cco-tei-input { text-transform: uppercase; }
+.minute-analysis-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
-  gap: 10px;
-  padding: 12px 0 6px;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(680px, 1.8fr) minmax(360px, .72fr);
+  gap: 16px;
+  min-height: 0;
+  overflow: hidden;
 }
-.minute-card {
-  background: #081420;
-  border: 1px solid var(--line, #142433);
-  border-radius: 10px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.minute-card strong { font-size: 20px; color: var(--cyan, #35d0ff); }
-.minute-card span { font-size: 10px; color: #8195a8; }
-.minute-period-details { padding-top: 12px; }
+.minute-report-details { overflow-y: auto; }
 .period-detail {
   border: 1px solid var(--line, #142433);
   border-radius: 10px;
@@ -732,26 +717,22 @@ tbody tr.selected td { color: #e5eff6; }
   padding: 12px 14px;
 }
 .period-detail h4 { margin: 0 0 8px; font-size: 12px; color: #dfe9f2; }
-.station-list {
-  margin: 0 0 10px;
-  padding-left: 18px;
+.minute-report-row {
+  border-top: 1px solid var(--line, #142433);
   color: #a9c0d3;
   font-size: 11px;
-  line-height: 1.7;
 }
-.frame-links { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: #8195a8; font-size: 11px; }
-.frame-link {
-  appearance: none;
-  border: 1px solid var(--line, #142433);
-  background: #0d1a26;
-  color: var(--cyan, #35d0ff);
+.minute-report-row summary { cursor: pointer; padding: 10px 2px; }
+.minute-app-raw {
+  margin: 0 0 10px;
+  padding: 9px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #050e16;
   border-radius: 6px;
-  padding: 4px 9px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+  color: var(--cyan, #35d0ff);
 }
-.frame-link:hover { border-color: var(--cyan, #35d0ff); }
 
 /* ---------- 文件选择对话框 ---------- */
 .file-picker-overlay {

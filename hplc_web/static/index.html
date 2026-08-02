@@ -167,7 +167,7 @@
       </aside>
     </section>
 
-    <section id="minute-view" class="data-section" hidden>
+    <section id="minute-view" class="minute-analysis-layout" hidden>
       <div class="list-panel">
         <div class="panel-toolbar">
           <div>
@@ -177,21 +177,13 @@
           <div class="minute-filters">
             <label class="minute-filter">
               <span>周期</span>
-              <select id="period-select">
-                <option value="5">5 分钟</option>
-                <option value="15" selected>15 分钟</option>
-                <option value="30">30 分钟</option>
-                <option value="60">60 分钟</option>
-              </select>
+              <input id="period-input" type="number" min="1" max="1440"
+                value="15" inputmode="numeric" aria-label="周期（分钟）">
             </label>
             <label class="minute-filter">
               <span>CCO TEI</span>
               <input id="cco-tei-input" value="001" maxlength="3"
                 autocomplete="off" aria-label="CCO TEI">
-            </label>
-            <label class="minute-filter checkbox-filter">
-              <input id="dedup-checkbox" type="checkbox" checked>
-              <span>按周期去重</span>
             </label>
             <button id="minute-query-button" class="primary-button"
               type="button">查询</button>
@@ -200,32 +192,29 @@
 
         <div id="minute-error" class="error-banner" role="alert" hidden></div>
 
-        <div id="minute-summary-cards" class="minute-summary-cards"></div>
-
         <div class="table-shell">
           <table>
             <thead>
               <tr>
-                <th>周期</th>
-                <th>去重上报STA数</th>
-                <th>原始帧数</th>
-                <th>重复数</th>
-                <th>成功</th>
-                <th>失败</th>
-                <th>解析异常</th>
-                <th>简介</th>
+                <th>CCO 周期上报</th>
               </tr>
             </thead>
             <tbody id="minute-period-table">
               <tr class="empty-row">
-                <td colspan="8">建立索引后点击「查询」查看分钟采集周期统计</td>
+                <td>建立索引后点击「查询」查看分钟采集周期统计</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <div id="minute-period-details" class="minute-period-details"></div>
       </div>
+      <aside id="minute-report-details" class="detail-panel minute-report-details">
+        <div class="detail-empty">
+          <span class="detail-icon">⌁</span>
+          <h2>选择一个周期查看上报</h2>
+          <p>点击左侧周期后，这里会列出该周期收到的分钟采集上报。</p>
+        </div>
+      </aside>
     </section>
   </main>
 
