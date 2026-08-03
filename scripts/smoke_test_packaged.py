@@ -5,7 +5,7 @@
 默认 exe：dist/侦听台/侦听台.exe（相对仓库根，从脚本所在目录定位）。
 
 验证项：
-1. exe 启动后 /api/version 返回 GwHPLCAnalysis（DLL 加载成功）
+1. exe 启动后 /api/version 返回 GW_SMAnalysis（DLL 加载成功）
 2. 首页 / 正常返回
 3. 用 hplc_web/tests/data/gw_log_sample.txt 建索引并分页取帧
 4. runtime/ 生成在 exe 同目录
