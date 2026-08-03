@@ -68,7 +68,7 @@ def main() -> int:
     try:
         version = _wait_ready(proc=proc)
         print(f"[OK] /api/version -> {version}")
-        if "GwHPLCAnalysis" not in version.get("name", ""):
+        if "GW_SMAnalysis" not in version.get("name", ""):
             print(f"[FAIL] DLL 名称异常：{version}")
             return 1
 
