@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller onedir 打包配置：产出 dist/侦听台/侦听台.exe。
+r"""PyInstaller onedir 打包配置：产出 dist/侦听台/侦听台.exe。
 
 在仓库根目录运行：
     .venv\Scripts\python.exe -m PyInstaller --clean --noconfirm packaging\hplc_parser.spec
@@ -14,7 +14,7 @@ from PyInstaller.utils.hooks import collect_all
 net_datas, net_binaries, net_hiddenimports = collect_all("pythonnet")
 
 datas = [
-    ("hplc_web/static", "hplc_web/static"),
+    ("hplc_web/static", "static"),
     ("dll/bin/Debug/GwHPLCAnalysis.dll", "dll/bin/Debug"),
     ("dll/bin/Debug/Newtonsoft.Json.dll", "dll/bin/Debug"),
 ] + list(net_datas)
