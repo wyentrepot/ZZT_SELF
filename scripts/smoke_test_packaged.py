@@ -28,10 +28,15 @@ def _default_exe() -> Path:
     return ROOT / "dist" / "侦听台" / "侦听台.exe"
 
 
-def _wait_ready(timeout: float = 90.0) -> dict:
+def _wait_ready(timeout: float = 90.0, proc=None) -> dict:
+    """轮询 /api/version 直至就绪；传入 proc 时感知子进程早退。"""
     deadline = time.monotonic() + timeout
     last_error = None
     while time.monotonic() < deadline:
+        if proc is not None:
+            code = proc.poll()
+            if code is not None:
+                raise RuntimeError(f"子进程提前退出（退出码={code}）")
         try:
             with urllib.request.urlopen(f"{HOST}/api/version", timeout=3) as resp:
                 return json.loads(resp.read().decode("utf-8"))
@@ -56,8 +61,12 @@ def main() -> int:
         return 1
 
     proc = subprocess.Popen([str(exe)], cwd=str(exe.parent))
+    exit_code = proc.poll()
+    if exit_code is not None:
+        print(f"[FAIL] exe 提前退出，退出码={exit_code}（可能端口 8765 被占用）")
+        return 1
     try:
-        version = _wait_ready()
+        version = _wait_ready(proc=proc)
         print(f"[OK] /api/version -> {version}")
         if "GwHPLCAnalysis" not in version.get("name", ""):
             print(f"[FAIL] DLL 名称异常：{version}")
@@ -65,7 +74,7 @@ def main() -> int:
 
         with urllib.request.urlopen(f"{HOST}/", timeout=3) as resp:
             html = resp.read().decode("utf-8", errors="replace")
-        if "侦听" not in html:
+        if "国网 HPLC 日志解析台" not in html:
             print("[FAIL] 首页内容异常")
             return 1
         print("[OK] 首页可访问")
@@ -83,10 +92,13 @@ def main() -> int:
         status = {}
         while time.monotonic() < deadline:
             status = _get("/api/logs/status")
-            if status.get("state") == "done":
+            if status.get("state") == "completed":
                 break
+            if status.get("state") == "failed":
+                print(f"[FAIL] 索引失败：{status.get('message')}")
+                return 1
             time.sleep(1.0)
-        if status.get("state") != "done":
+        if status.get("state") != "completed":
             print(f"[FAIL] 索引未完成：{status}")
             return 1
         print(f"[OK] 索引完成：{status.get('frame_count')} 帧")
