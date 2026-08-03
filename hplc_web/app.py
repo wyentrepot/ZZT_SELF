@@ -40,7 +40,7 @@ def _default_dll() -> Path:
     """解析 DLL 默认路径：frozen 下数据打进 _MEIPASS，否则在仓库根 dll/ 下。"""
     if _is_frozen():
         return _base_dir() / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
-    return _base_dir().parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+    return (_base_dir().parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll").resolve()
 
 
 BASE_DIR = _base_dir()

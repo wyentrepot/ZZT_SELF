@@ -52,7 +52,7 @@ def test_frozen_base_dir_is_meipass(frozen_environment):
 
 def test_frozen_runtime_dir_is_next_to_exe(frozen_environment):
     _, exe = frozen_environment
-    assert app_module._runtime_dir() == exe.parent / "runtime"
+    assert app_module._runtime_dir() == exe.resolve().parent / "runtime"
 
 
 def test_frozen_default_dll_is_under_meipass(frozen_environment):
