@@ -5,6 +5,7 @@ import queue
 import string
 import threading
 import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -17,13 +18,36 @@ from hplc_web.log_service import LogFileService
 from hplc_web.parser_service import FrameValidationError, ParserService
 
 
-BASE_DIR = Path(__file__).resolve().parent
+def _is_frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+
+def _base_dir() -> Path:
+    """打包数据根：frozen 下为 PyInstaller _MEIPASS，否则为 hplc_web 包目录。"""
+    if _is_frozen():
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
+
+def _runtime_dir() -> Path:
+    """运行时数据目录：frozen 下为 exe 同目录 runtime/，否则为包内 runtime/。"""
+    if _is_frozen():
+        return Path(sys.executable).resolve().parent / "runtime"
+    return _base_dir() / "runtime"
+
+
+def _default_dll() -> Path:
+    """解析 DLL 默认路径：frozen 下数据打进 _MEIPASS，否则在仓库根 dll/ 下。"""
+    if _is_frozen():
+        return _base_dir() / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+    return _base_dir().parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+
+
+BASE_DIR = _base_dir()
 STATIC_DIR = BASE_DIR / "static"
-DEFAULT_DLL = (
-    BASE_DIR.parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
-).resolve()
-DEFAULT_INDEX = BASE_DIR / "runtime" / "log_index.sqlite3"
-LAST_PATH_FILE = BASE_DIR / "runtime" / "last_path.txt"
+DEFAULT_DLL = _default_dll()
+DEFAULT_INDEX = _runtime_dir() / "log_index.sqlite3"
+LAST_PATH_FILE = _runtime_dir() / "last_path.txt"
 
 # 文件选择器只展示常见日志扩展名，避免目录被无关文件淹没
 LOG_EXTENSIONS = {".txt", ".log", ".dat", ".csv", ".bin", ".raw"}
