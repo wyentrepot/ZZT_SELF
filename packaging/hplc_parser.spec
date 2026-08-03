@@ -10,7 +10,7 @@ datas 布局与 hplc_web/app.py 的 frozen 路径解析一致：
 """
 from pathlib import Path
 
-SPEC_DIR = Path(__file__).resolve().parent
+SPEC_DIR = Path(SPECPATH)  # PyInstaller 6.x 下 spec 在 exec 时无 __file__，改用 SPECPATH（spec 所在目录）
 ROOT = SPEC_DIR.parent  # 仓库根（packaging/ 的上级）
 
 from PyInstaller.utils.hooks import collect_all
