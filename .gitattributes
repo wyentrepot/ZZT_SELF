@@ -61,3 +61,6 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# Windows 批处理须以 CRLF 出库，cmd 才能正确解析（LF-only 批处理会被 cmd 解析错乱）
+*.bat eol=crlf
