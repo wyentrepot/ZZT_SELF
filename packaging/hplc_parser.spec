@@ -8,15 +8,20 @@ datas 布局与 hplc_web/app.py 的 frozen 路径解析一致：
 - static/、dll/bin/Debug/ 均落入 _MEIPASS（onedir 下即 _internal/）
 - 运行时数据 runtime/ 不入包，由 exe 在自身目录生成
 """
+from pathlib import Path
+
+SPEC_DIR = Path(__file__).resolve().parent
+ROOT = SPEC_DIR.parent  # 仓库根（packaging/ 的上级）
+
 from PyInstaller.utils.hooks import collect_all
 
 # pythonnet：收集 Python.Runtime.dll 等 .NET 程序集与 clr 模块
 net_datas, net_binaries, net_hiddenimports = collect_all("pythonnet")
 
 datas = [
-    ("hplc_web/static", "static"),
-    ("dll/bin/Debug/GwHPLCAnalysis.dll", "dll/bin/Debug"),
-    ("dll/bin/Debug/Newtonsoft.Json.dll", "dll/bin/Debug"),
+    (str(ROOT / "hplc_web" / "static"), "static"),
+    (str(ROOT / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"), "dll/bin/Debug"),
+    (str(ROOT / "dll" / "bin" / "Debug" / "Newtonsoft.Json.dll"), "dll/bin/Debug"),
 ] + list(net_datas)
 
 binaries = list(net_binaries)
@@ -40,8 +45,8 @@ hiddenimports = [
 ] + list(net_hiddenimports)
 
 a = Analysis(
-    ["hplc_web/run.py"],
-    pathex=[],
+    [str(ROOT / "hplc_web" / "run.py")],
+    pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
