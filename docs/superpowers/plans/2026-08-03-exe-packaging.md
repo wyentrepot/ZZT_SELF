@@ -492,8 +492,8 @@ Expected: exit 0；输出 `Output: D:\2-侦听台改造\dist\侦听台\`
 
 - [ ] **Step 3: 检查产物结构**
 
-Run: `cd "D:\2-侦听台改造" && ls dist\侦听台\ && ls dist\侦听台\_internal\dll\bin\Debug\ && ls dist\侦听台\_internal\hplc_web\static\`
-Expected: exe 在 `dist\侦听台\`；`_internal\dll\bin\Debug\` 含 `GwHPLCAnalysis.dll` + `Newtonsoft.Json.dll`；`_internal\hplc_web\static\` 含 `index.html/app.js/styles.css`；产物总大小合理（无 1GB 索引混入——`runtime/` 不应在 dist 内）
+Run: `cd "D:\2-侦听台改造" && ls dist\侦听台\ && ls dist\侦听台\_internal\dll\bin\Debug\ && ls dist\侦听台\_internal\static\`
+Expected: exe 在 `dist\侦听台\`；`_internal\dll\bin\Debug\` 含 `GwHPLCAnalysis.dll` + `Newtonsoft.Json.dll`；`_internal\static\` 含 `index.html/app.js/styles.css`；产物总大小合理（无 1GB 索引混入——`runtime/` 不应在 dist 内）
 
 - [ ] **Step 4: 冒烟验证**
 
