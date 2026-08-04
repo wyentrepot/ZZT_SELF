@@ -170,6 +170,16 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("/api/logs/task-config-summary", js)
         self.assertIn("renderTaskConfigSummary", js)
 
+    def test_task_config_rows_support_mac_sort_and_inline_details(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="task-config-mac-sort"', html)
+        self.assertNotIn('id="task-config-raw"', html)
+        self.assertIn("task-no-response-mac", js)
+        self.assertIn("task-config-inline-detail", js)
+        self.assertIn("未应答 STA", js)
+
     def test_js_summarizes_minute_report_data_status(self):
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 

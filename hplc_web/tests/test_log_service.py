@@ -34,7 +34,7 @@ class FakeParserService:
 
 def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001", task=7,
                 response_result=0, report_count=1, data_length=76,
-                application_error=None):
+                application_error=None, freeze_time="2026-07-31 23:55:00"):
     """构造一份已富化的 0x00E4 简单摘要（模拟 Task 3 之后的 simple 字典）。"""
     summary = {
         "FrmType": "分钟采集数据上报",
@@ -52,7 +52,7 @@ def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001", task=7,
                 {"name": "协议类型", "raw": 2},
                 {"name": "电表类型", "raw": 0},
                 {"name": "响应结果", "raw": response_result},
-                {"name": "冻结时刻", "value": "2026-07-31 23:55:00",
+                {"name": "冻结时刻", "value": freeze_time,
                  "raw": "00-55-23-31-07-26"},
                 {"name": "上报数量", "raw": report_count},
                 {"name": "数据长度", "raw": data_length},
@@ -400,7 +400,7 @@ def _e2_up_summary(flag="00", result="00", seq="039528",
 
 
 def _del_config_summary(ori_s="001", flag="删除", seq="0x0001",
-                        mac="11:11:50:00:00:66", task=2):
+                        mac="11:11:50:00:00:66", task=2, period=5):
     """构造一条「分钟采集任务配置（0x00E2）- 启动/删除标志」的简单摘要。"""
     return {
         "FrmType": "分钟采集任务配置",
@@ -416,6 +416,7 @@ def _del_config_summary(ori_s="001", flag="删除", seq="0x0001",
                 {"name": "目的MAC地址", "value": mac, "raw": mac},
                 {"name": "启动/删除标志", "value": flag, "raw": flag},
                 {"name": "任务号", "value": task, "raw": task},
+                {"name": "采集周期", "value": period, "raw": period},
             ],
             "nested": [],
             "warnings": [],
@@ -492,6 +493,37 @@ class MinuteReportTests(unittest.TestCase):
         self.assertEqual(report["freeze_time"], "2026-07-31 23:55:00")
         self.assertEqual(report["application_raw"], "11E40000")
         self.assertIn("freeze_time", report)
+
+    def test_task_periods_use_each_sta_configured_cycle_and_show_missing_sta(self):
+        sta_one = "11:11:50:00:00:01"
+        sta_two = "11:11:50:00:00:02"
+        summaries = [
+            _del_config_summary(flag="启用", mac=sta_one, task=2, period=5),
+            _del_config_summary(flag="启用", mac=sta_two, task=2, period=5),
+            _e4_summary(source_mac="111150000001", task=2,
+                        freeze_time="2026-07-31 09:55:00"),
+            _e4_summary(source_mac="111150000001", task=2,
+                        freeze_time="2026-07-31 10:00:00"),
+        ]
+        directory, path = _write_log([
+            _log_line_at("10:00:00.000"), _log_line_at("10:00:01.000"),
+            _log_line_at("10:03:00.000"), _log_line_at("10:07:00.000"),
+        ])
+        self.addCleanup(directory.cleanup)
+        service = self._service(summaries)
+
+        service.index_file(path)
+        result = service.list_task_minute_periods("2", cco_tei="001")
+
+        self.assertEqual(result["source"], "configured")
+        self.assertEqual(len(result["periods"]), 2)
+        first, second = result["periods"]
+        self.assertEqual(first["expected_count"], 1)
+        self.assertEqual(first["missing_stas"], [])
+        self.assertEqual(first["freeze_ok_count"], 1)
+        self.assertEqual(second["expected_count"], 2)
+        self.assertEqual(second["missing_stas"], ["111150000002"])
+        self.assertEqual(second["reports"][0]["expected_freeze_time"], "10:00:00.000")
 
     def test_periods_filter_by_nid(self):
         summaries = [

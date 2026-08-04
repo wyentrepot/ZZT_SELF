@@ -372,6 +372,12 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
             "filters": {"cco_tei": cco_tei.upper()},
         }
 
+    @app.get("/api/logs/task-minute-analysis")
+    def task_minute_analysis(task_no: str = Query(..., pattern=r"^\d{1,3}$"), period_minutes: int | None = Query(None, ge=1, le=1440), cco_tei: str = Query("001", pattern=r"^[0-9A-Fa-f]{3}$"), nid: str = Query("", max_length=16)):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        return log_service.list_task_minute_periods(task_no, period_minutes, cco_tei, nid)
+
     @app.get("/api/logs/task-config-tasks")
     def task_config_tasks(
         cco_tei: str = Query("001", min_length=3, max_length=3,

@@ -756,6 +756,9 @@ tbody tr.selected td { color: #e5eff6; }
 .task-config-analysis h3 { margin: 0 0 10px; font-size: 14px; }
 .task-config-analysis select { width: 100%; margin-bottom: 10px; }
 #task-config-analysis-content { white-space: pre-line; color: #b7c7d6; font-size: 12px; line-height: 1.7; }
+.table-sort { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.task-no-response-mac { color: #ff6b6b; font-weight: 700; }
+.task-config-inline-detail td { white-space: pre-wrap; color: #a8c6dd; background: #07111d; font: 12px/1.7 Consolas, monospace; }
 .delete-config-toolbar {
   display: flex;
   align-items: flex-end;

@@ -466,6 +466,124 @@ class LogFileService:
             )
         return periods
 
+    def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001", nid=""):
+        """按每个 STA 实际启用到删除成功之间的周期汇总分钟采集上报。"""
+        task = self._task_key(task_no)
+        if period_minutes is not None and (
+            not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440
+        ):
+            raise ValueError("period_minutes 必须在 1 到 1440 之间")
+
+        # 每台 STA 以最后一次启用作为本轮配置开始，以该 STA 的删除成功应答作为结束。
+        active, configured = {}, {}
+        for kind, record in self._task_config_records(cco_tei, nid):
+            if record["task_no"] != task or not record["mac"]:
+                continue
+            mac = record["mac"]
+            if kind == "down_config" and record["operation"] == "启用":
+                try:
+                    configured_period = int(record.get("period_minutes") or 0)
+                except (TypeError, ValueError):
+                    configured_period = 0
+                if configured_period:
+                    active[mac] = {
+                        **record, "period_minutes": configured_period,
+                        "end_ms": None, "end_time": "",
+                    }
+                    configured[mac] = active[mac]
+            elif kind == "up" and record.get("del_flag") == "删除" and record.get("result") == "成功":
+                config = active.get(mac)
+                if config and record["absolute_ms"] is not None:
+                    config["end_ms"] = record["absolute_ms"]
+                    config["end_time"] = record["log_time"]
+                    active.pop(mac, None)
+
+        conditions = ["minute_reports.cco_tei = ?", "minute_reports.task_no = ?"]
+        parameters = [cco_tei.upper(), int(task)]
+        if nid.strip():
+            conditions.append("frames.summary_json LIKE ? ESCAPE '\\'")
+            parameters.append(self._nid_like(nid))
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT minute_reports.*, frames.summary_json
+                FROM minute_reports
+                LEFT JOIN frames ON frames.id = minute_reports.frame_id
+                WHERE {' AND '.join(conditions)}
+                ORDER BY minute_reports.id
+                """, parameters
+            ).fetchall()
+
+        source = "configured" if configured else "manual"
+        reports_by_window, unconfigured_reports = {}, []
+        horizon = max((row["time_seconds"] for row in rows), default=None)
+        for row in rows:
+            mac = self._sta_key(row["source_mac"])
+            config = configured.get(mac)
+            minutes = (config or {}).get("period_minutes") or period_minutes
+            if not minutes:
+                continue
+            period_ms = int(minutes) * 60_000
+            start = row["time_seconds"] - row["time_seconds"] % period_ms
+            expected_freeze = start - period_ms
+            freeze = row["freeze_time"] or ""
+            # 冻结时刻含日期时，日志并不一定含日期；以时分秒校验固定周期边界。
+            expected_clock = self._clock_text(expected_freeze)
+            item = {
+                "frame_id": row["frame_id"], "mac": mac, "log_time": row["log_time"],
+                "freeze_time": freeze, "expected_freeze_time": expected_clock,
+                "freeze_ok": freeze.endswith(expected_clock[:8]),
+                "period_minutes": int(minutes),
+                "config_time": (config or {}).get("log_time", ""),
+                "config_end_time": (config or {}).get("end_time", ""),
+                "config_content": (config or {}).get("config_content", {}),
+                "in_config_period": bool(config and row["time_seconds"] >= config["absolute_ms"]
+                                         and (config["end_ms"] is None or row["time_seconds"] < config["end_ms"])),
+                "application_raw": json.loads(row["summary_json"] or "{}").get("APP_RAW"),
+            }
+            if source == "configured" and not item["in_config_period"]:
+                unconfigured_reports.append(item)
+                continue
+            reports_by_window.setdefault(start, []).append(item)
+
+        # 为每一台已配置 STA 生成其实际周期内的应报窗口，未上报的窗口也会被展示。
+        expected_by_window = {}
+        if configured and horizon is not None:
+            for mac, config in configured.items():
+                period_ms = config["period_minutes"] * 60_000
+                start = config["absolute_ms"] - config["absolute_ms"] % period_ms
+                if start < config["absolute_ms"]:
+                    start += period_ms
+                stop = min(horizon, config["end_ms"] - 1) if config["end_ms"] else horizon
+                while start <= stop:
+                    expected_by_window.setdefault(start, {})[mac] = config
+                    start += period_ms
+
+        periods = []
+        for start in sorted(set(reports_by_window) | set(expected_by_window)):
+            reports = reports_by_window.get(start, [])
+            expected = expected_by_window.get(start, {})
+            received = {item["mac"] for item in reports}
+            # 一个 STA 在同一窗口的多帧只算一次应答，但明细全部保留。
+            missing = sorted(set(expected) - received)
+            periods.append({
+                "period_start": start,
+                "period_end": start + max([item["period_minutes"] for item in reports] + [config["period_minutes"] for config in expected.values()] + [period_minutes or 1]) * 60_000,
+                "description": self._clock_text(start),
+                "report_count": len(reports),
+                "received_sta_count": len(received),
+                "expected_count": len(expected) if source == "configured" else None,
+                "missing_stas": missing if source == "configured" else [],
+                "freeze_ok_count": sum(item["freeze_ok"] for item in reports),
+                "freeze_error_count": sum(not item["freeze_ok"] for item in reports),
+                "reports": reports,
+            })
+        return {
+            "task_no": task, "source": source, "periods": periods,
+            "unconfigured_report_count": len(unconfigured_reports),
+            "unconfigured_reports": unconfigured_reports,
+        }
+
     @staticmethod
     def _e2_fields(simple: dict):
         """从 00E2 帧的 simple 提取应用层字段名 -> 值 映射。"""
@@ -560,6 +678,12 @@ class LogFileService:
                     "seq": fields.get("报文序号") or "",
                     "task_no": str(fields.get("任务号") or ""),
                     "operation": fields.get("启动/删除标志"),
+                    "period_minutes": fields.get("采集周期"),
+                    "config_content": {
+                        "protocol_type": fields.get("协议类型"),
+                        "meter_type": fields.get("电表类型"),
+                        "data_item_count": fields.get("数据项个数"),
+                    },
                     "app_raw": simple.get("APP_RAW") or "",
                 }
 
@@ -757,7 +881,12 @@ class LogFileService:
             replies = [item["reply"] for item in cycle["deletes"].values()]
             cycle["delete_success_count"] = sum(reply is not None and reply["result"] == "成功" for reply in replies)
             cycle["delete_fail_count"] = sum(reply is not None and reply["result"] != "成功" for reply in replies)
-            cycle["delete_pending_count"] = len(cycle["stas"]) - cycle["delete_success_count"] - cycle["delete_fail_count"]
+            # 删除未下发与删除已下发未应答必须分开统计，避免误把前者显示为未应答。
+            cycle["delete_not_sent_count"] = sum(mac not in cycle["deletes"] for mac in cycle["stas"])
+            cycle["delete_pending_count"] = sum(
+                mac in cycle["deletes"] and item["reply"] is None
+                for mac, item in cycle["deletes"].items()
+            )
             if cycle["stas"] and cycle["delete_success_count"] == len(cycle["stas"]):
                 cycle["status"] = "已完成"; cycle["end_time"] = max((item["reply"] for item in cycle["deletes"].values() if item["reply"] and item["reply"]["result"] == "成功"), key=lambda reply: reply["frame_id"])["log_time"]
             elif cycle["delete_fail_count"]: cycle["status"] = "删除异常"

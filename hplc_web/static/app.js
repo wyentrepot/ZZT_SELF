@@ -726,6 +726,8 @@ const minuteElements = {
   deleteConfigView: $("#delete-config-view"),
   tabs: document.querySelectorAll(".view-tab"),
   period: $("#period-input"),
+  source: $("#minute-source"),
+  task: $("#minute-task-input"),
   ccoTei: $("#cco-tei-input"),
   query: $("#minute-query-button"),
   error: $("#minute-error"),
@@ -747,12 +749,12 @@ const minuteElements = {
   taskPendingCount: $("#task-pending-count"),
   taskUnissuedCount: $("#task-unissued-count"),
   taskConfigStaTable: $("#task-config-sta-table"),
-  taskConfigRaw: $("#task-config-raw"),
-  taskConfigRawMeta: $("#task-config-raw-meta"),
-  taskConfigRawText: $("#task-config-raw-text"),
+  taskConfigMacSort: $("#task-config-mac-sort"),
   taskConfigCycle: $("#task-config-cycle-select"),
   taskConfigAnalysis: $("#task-config-analysis-content"),
 };
+let taskConfigRows = [];
+let taskConfigMacAscending = true;
 
 function switchView(name) {
   minuteElements.tabs.forEach((tab) => {
@@ -789,19 +791,24 @@ async function loadMinuteAnalysis() {
   minuteElements.ccoTei.value = tei;
   updateNidHint(minuteElements.nidHint);
   const params = new URLSearchParams({
-    period_minutes: minuteElements.period.value,
+    task_no: minuteElements.task.value,
     cco_tei: tei,
     nid: state.nid,
   });
+  if (minuteElements.source.value === "manual") params.set("period_minutes", minuteElements.period.value);
   minuteElements.error.hidden = true;
   try {
-    renderMinuteAnalysis(
-      await request(`/api/logs/minute-analysis?${params}`)
-    );
+    renderMinuteAnalysis(await request(`/api/logs/task-minute-analysis?${params}`));
   } catch (error) {
     minuteElements.error.textContent = error.message;
     minuteElements.error.hidden = false;
   }
+}
+
+function updateMinuteSourceControls() {
+  const manual = minuteElements.source.value === "manual";
+  minuteElements.period.disabled = !manual;
+  minuteElements.period.closest("label")?.classList.toggle("is-disabled", !manual);
 }
 
 function renderMinuteAnalysis(data) {
@@ -822,7 +829,8 @@ function renderMinuteAnalysis(data) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.className = "route";
-    cell.textContent = `CCO ${data.filters.cco_tei} 在 ${period.description} 周期收到 ${period.report_count} 帧上报`;
+    const expected = period.expected_count === null ? "应报未知" : `应报 ${period.expected_count} STA，缺报 ${period.missing_stas.length}`;
+    cell.textContent = `任务 ${data.task_no} · ${period.description} · 实报 ${period.report_count} 帧 · ${expected} · 冻结正确 ${period.freeze_ok_count} / 异常 ${period.freeze_error_count}`;
     row.append(cell);
     row.addEventListener("click", () => renderMinuteReportDetails(period));
     minuteElements.rows.append(row);
@@ -886,9 +894,13 @@ function renderTaskConfigLifecycle(data) {
   data.cycles.forEach((item, index) => select.append(new Option(`第 ${index + 1} 轮：${item.start_time} · ${item.status}`, index)));
   if (!cycle) { minuteElements.taskConfigAnalysis.textContent = "该任务暂无启用配置轮次"; return; }
   select.value = String(data.cycles.indexOf(cycle));
+  const notSent = cycle.stas.filter(item => !item.delete_time);
+  const unanswered = cycle.stas.filter(item => item.delete_time && item.delete_result === "未下发删除");
   const anomalies = cycle.anomalies.length
     ? cycle.anomalies.map(item => `${item.type}：${item.mac}，删除成功 ${item.delete_time}，上报 ${item.report_time}`).join("\n") : "无异常";
-  minuteElements.taskConfigAnalysis.textContent = `开始：${cycle.start_time}\n最后下发删除：${cycle.last_delete_time || "无"}\n结束：${cycle.end_time || "未完成"}\n配置 STA：${cycle.configured_sta_count}，删除成功：${cycle.delete_success_count}，失败：${cycle.delete_fail_count}，未应答：${cycle.delete_pending_count}\n状态：${cycle.status}\n${anomalies}`;
+  const notSentText = notSent.length ? `未下发删除 STA（${notSent.length}）：${notSent.map(item => item.mac).join("、")}` : "未下发删除 STA：无";
+  const unansweredText = unanswered.length ? `已下发删除但未应答 STA（${unanswered.length}）：${unanswered.map(item => item.mac).join("、")}` : "已下发删除但未应答 STA：无";
+  minuteElements.taskConfigAnalysis.textContent = `开始：${cycle.start_time}\n最后下发删除：${cycle.last_delete_time || "无"}\n结束：${cycle.end_time || "未完成"}\n配置 STA：${cycle.configured_sta_count}，删除成功：${cycle.delete_success_count}，失败：${cycle.delete_fail_count}，删除未下发：${cycle.delete_not_sent_count}，删除已下发未应答：${cycle.delete_pending_count}\n${notSentText}\n${unansweredText}\n状态：${cycle.status}\n${anomalies}`;
 }
 
 function renderTaskConfigSummary(data) {
@@ -900,34 +912,44 @@ function renderTaskConfigSummary(data) {
   minuteElements.taskPendingCount.textContent = String(data.pending_sta_count);
   minuteElements.taskUnissuedCount.textContent = String(data.unissued_report_sta_count);
   minuteElements.taskConfigStats.hidden = false;
-  minuteElements.taskConfigRaw.hidden = true;
+  taskConfigRows = [...data.stas];
+  renderTaskConfigRows();
+}
 
+function renderTaskConfigRows() {
   const body = minuteElements.taskConfigStaTable;
   body.replaceChildren();
-  if (!data.stas.length) {
+  if (!taskConfigRows.length) {
     body.append(emptyRow(6, "该任务暂无 STA 记录"));
     return;
   }
-  for (const row of data.stas) {
+  const rows = [...taskConfigRows].sort((a, b) => taskConfigMacAscending ? a.mac.localeCompare(b.mac) : b.mac.localeCompare(a.mac));
+  minuteElements.taskConfigMacSort.textContent = `STA MAC ${taskConfigMacAscending ? "↑" : "↓"}`;
+  for (const row of rows) {
     const tr = document.createElement("tr");
+    const macCell = td(row.mac);
+    if (row.status === "未应答") macCell.className = "task-no-response-mac";
     const statusCell = td(row.status);
     statusCell.className = row.status === "成功" ? "status-success"
       : ["失败", "未应答"].includes(row.status) ? "status-fail" : "";
-    tr.append(td(row.mac), td(row.operation), td(row.sent_time), td(row.reply_time),
+    tr.append(macCell, td(row.operation), td(row.sent_time), td(row.reply_time),
       statusCell, td(row.sequence));
-    tr.addEventListener("click", () => showTaskConfigRaw(row));
+    tr.addEventListener("click", () => toggleTaskConfigInlineDetail(tr, row));
     body.append(tr);
   }
 }
 
-function showTaskConfigRaw(record) {
+function toggleTaskConfigInlineDetail(rowElement, record) {
+  const next = rowElement.nextElementSibling;
+  if (next?.classList.contains("task-config-inline-detail")) { next.remove(); return; }
+  document.querySelectorAll(".task-config-inline-detail").forEach(item => item.remove());
+  const detail = document.createElement("tr");
+  detail.className = "task-config-inline-detail";
+  const cell = document.createElement("td");
+  cell.colSpan = 6;
   const raw = record.app_raw || "";
-  minuteElements.taskConfigRawMeta.textContent =
-    `${record.mac} · ${record.status} · 下发 ${record.sent_time || "无"} · 应答 ${record.reply_time || "无"}`;
-  minuteElements.taskConfigRawText.textContent = raw
-    ? formatRawHex(raw)
-    : "（无 APP_RAW）";
-  minuteElements.taskConfigRaw.hidden = false;
+  cell.textContent = `${record.mac} · ${record.status}\nAPS 原文：${raw ? formatRawHex(raw) : "（无 APP_RAW）"}`;
+  detail.append(cell); rowElement.after(detail);
 }
 
 function formatRawHex(hex) {
@@ -954,6 +976,7 @@ function emptyRow(colspan, message) {
 minuteElements.taskConfigRefresh.addEventListener("click", loadTaskConfigTasks);
 minuteElements.taskConfigQuery.addEventListener("click", loadTaskConfigSummary);
 minuteElements.taskConfigSelect.addEventListener("change", loadTaskConfigSummary);
+minuteElements.taskConfigMacSort.addEventListener("click", () => { taskConfigMacAscending = !taskConfigMacAscending; renderTaskConfigRows(); });
 
 function summarizeMinuteReports(reports) {
   let dataCount = 0;
@@ -986,7 +1009,7 @@ function renderMinuteReportDetails(period) {
   const { dataCount, duplicateCount, noDataCount } = summarizeMinuteReports(
     period.reports || []
   );
-  title.textContent = `周期 ${period.description} · ${period.report_count} 帧上报 · ${dataCount} 帧有数据（${duplicateCount} 帧重复上报） · ${noDataCount} 帧无数据`;
+  title.textContent = `周期 ${period.description} · 实报 ${period.report_count} 帧 · 应报 ${period.expected_count ?? "未知"} · 缺报 ${(period.missing_stas || []).join("、") || "无"} · ${dataCount} 帧有数据 / ${noDataCount} 帧无数据 / ${duplicateCount} 帧重复上报`;
   box.append(title);
   (period.reports || []).forEach((report) => {
     const item = document.createElement("details");
@@ -995,7 +1018,11 @@ function renderMinuteReportDetails(period) {
     label.textContent = `${report.source_mac || "未知 MAC"} / ${report.source_tei || "未知 TEI"} 模块上报 · 冻结时间 ${report.freeze_time || "未解析"}`;
     const status = document.createElement("p");
     status.className = "minute-report-status";
-    status.textContent = `数据状态：${report.data_status || "未确认"} · 响应结果 ${report.response_result ?? "未解析"} · 上报数量 ${report.report_count ?? "未解析"} · 数据长度 ${report.data_length ?? "未解析"} 字节`;
+    const config = report.config_content || {};
+    const configText = report.period_minutes
+      ? ` · 实际配置周期 ${report.period_minutes} 分钟 · 启用 ${report.config_time || "手工筛选"}`
+      : "";
+    status.textContent = `STA ${report.mac || report.source_mac || "未知"} · 冻结 ${report.freeze_time || "未解析"} · 期望冻结 ${report.expected_freeze_time || "未知"} · ${report.freeze_ok ? "冻结正确" : "冻结异常"}${configText}${config.protocol_type ? ` · 协议 ${config.protocol_type}` : ""}`;
     const raw = document.createElement("pre");
     raw.className = "minute-app-raw";
     raw.textContent = report.application_raw || "应用层原文不可用";
@@ -1006,6 +1033,8 @@ function renderMinuteReportDetails(period) {
 }
 
 minuteElements.query.addEventListener("click", loadMinuteAnalysis);
+minuteElements.source.addEventListener("change", updateMinuteSourceControls);
+updateMinuteSourceControls();
 minuteElements.period.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadMinuteAnalysis();
 });

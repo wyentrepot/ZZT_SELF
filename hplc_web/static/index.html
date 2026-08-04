@@ -179,6 +179,8 @@
             <h2>分钟采集分析</h2>
           </div>
           <div class="minute-filters">
+            <label class="minute-filter"><span>来源</span><select id="minute-source"><option value="configured">配置推导</option><option value="manual">手工输入</option></select></label>
+            <label class="minute-filter"><span>任务号</span><input id="minute-task-input" type="number" min="0" max="255" value="2"></label>
             <label class="minute-filter">
               <span>周期</span>
               <input id="period-input" type="number" min="1" max="1440"
@@ -201,7 +203,7 @@
           <table>
             <thead>
               <tr>
-                <th>CCO 周期上报</th>
+                <th>任务周期统计</th>
               </tr>
             </thead>
             <tbody id="minute-period-table">
@@ -273,7 +275,7 @@
         <table>
           <thead>
             <tr>
-              <th>STA MAC</th>
+              <th><button id="task-config-mac-sort" class="table-sort" type="button">STA MAC ↑</button></th>
               <th>配置类型</th>
               <th>最近下发时间</th>
               <th>应答时间</th>
@@ -293,13 +295,6 @@
       </aside>
       </div>
 
-      <div id="task-config-raw" class="delete-config-raw" hidden>
-        <div class="detail-subtitle">
-          <h3>APS 层原文</h3>
-          <span id="task-config-raw-meta" class="raw-meta"></span>
-        </div>
-        <code id="task-config-raw-text" class="raw-text"></code>
-      </div>
     </section>
   </main>
 
