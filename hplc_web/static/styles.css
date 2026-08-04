@@ -690,7 +690,7 @@ tbody tr.selected td { color: #e5eff6; }
   color: #8195a8;
   font-size: 11px;
 }
-.minute-filter input {
+.minute-filter input, .minute-filter select {
   background: #081420;
   border: 1px solid var(--line, #142433);
   color: #dfe9f2;
@@ -699,7 +699,7 @@ tbody tr.selected td { color: #e5eff6; }
   font: inherit;
   font-size: 12px;
 }
-.minute-filter input { width: 84px; }
+.minute-filter input, .minute-filter select { width: 112px; }
 .minute-filter #cco-tei-input { text-transform: uppercase; }
 .minute-delete-stats {
   display: flex;
@@ -751,6 +751,11 @@ tbody tr.selected td { color: #e5eff6; }
   min-height: 0;
   overflow-y: auto;
 }
+.task-config-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; }
+.task-config-analysis { border: 1px solid var(--line, #142433); border-radius: 10px; background: #081420; padding: 14px; }
+.task-config-analysis h3 { margin: 0 0 10px; font-size: 14px; }
+.task-config-analysis select { width: 100%; margin-bottom: 10px; }
+#task-config-analysis-content { white-space: pre-line; color: #b7c7d6; font-size: 12px; line-height: 1.7; }
 .delete-config-toolbar {
   display: flex;
   align-items: flex-end;
@@ -761,8 +766,8 @@ tbody tr.selected td { color: #e5eff6; }
 .detail-subtitle h3 { margin: 0; font-size: 13px; color: #dfe9f2; }
 .status-success { color: #4dd27a; font-weight: 600; }
 .status-fail { color: #ff6b6b; font-weight: 600; }
-#delete-down-table tr, #delete-up-table tr { cursor: pointer; }
-#delete-down-table tr:hover, #delete-up-table tr:hover {
+#task-config-sta-table tr { cursor: pointer; }
+#task-config-sta-table tr:hover {
   background: rgba(77, 210, 255, 0.06);
 }
 .delete-config-raw {

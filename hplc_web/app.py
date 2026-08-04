@@ -372,6 +372,45 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
             "filters": {"cco_tei": cco_tei.upper()},
         }
 
+    @app.get("/api/logs/task-config-tasks")
+    def task_config_tasks(
+        cco_tei: str = Query("001", min_length=3, max_length=3,
+                             pattern=r"^[0-9A-Fa-f]{3}$"),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+    ):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        return {"tasks": log_service.list_task_config_numbers(cco_tei, nid)}
+
+    @app.get("/api/logs/task-config-summary")
+    def task_config_summary(
+        task_no: str = Query(..., min_length=1, max_length=3, pattern=r"^\d{1,3}$"),
+        cco_tei: str = Query("001", min_length=3, max_length=3,
+                             pattern=r"^[0-9A-Fa-f]{3}$"),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+    ):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            data = log_service.task_config_summary(cco_tei, task_no, nid)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            **data,
+            "filters": {"cco_tei": cco_tei.upper(), "nid": nid.strip().upper()},
+        }
+
+    @app.get("/api/logs/task-config-lifecycle")
+    def task_config_lifecycle(
+        task_no: str = Query(..., min_length=1, max_length=3, pattern=r"^\d{1,3}$"),
+        cycle_index: int | None = Query(None, ge=0),
+        cco_tei: str = Query("001", min_length=3, max_length=3, pattern=r"^[0-9A-Fa-f]{3}$"),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+    ):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        return log_service.task_config_lifecycle_summary(cco_tei, task_no, nid, cycle_index)
+
     @app.get("/api/logs/frames/{frame_id}")
     def log_frame_detail(frame_id: int):
         if log_service is None:

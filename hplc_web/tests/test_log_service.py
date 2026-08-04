@@ -32,7 +32,7 @@ class FakeParserService:
         return result
 
 
-def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001",
+def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001", task=7,
                 response_result=0, report_count=1, data_length=76,
                 application_error=None):
     """构造一份已富化的 0x00E4 简单摘要（模拟 Task 3 之后的 simple 字典）。"""
@@ -48,7 +48,7 @@ def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001",
             "structure": "双模4-3",
             "fields": [
                 {"name": "源MAC地址", "value": source_mac, "raw": source_mac},
-                {"name": "任务号", "raw": 7},
+                {"name": "任务号", "raw": task},
                 {"name": "协议类型", "raw": 2},
                 {"name": "电表类型", "raw": 0},
                 {"name": "响应结果", "raw": response_result},
@@ -280,6 +280,98 @@ class LogFileServiceTests(unittest.TestCase):
         finally:
             service.close()
 
+    def test_task_config_summary_groups_stas_and_prioritizes_success(self):
+        summaries = [
+            _del_config_summary(task=2, mac="11:11:50:00:00:01"),
+            _del_config_summary(flag="启用", task=2, mac="11:11:50:00:00:02"),
+            _del_config_summary(task=2, mac="11:11:50:00:00:03"),
+            _del_config_summary(task=2, mac="11:11:50:00:00:04"),
+            _e2_up_summary(task="02", mac_bytes="111150000002", result="01"),
+            _e2_up_summary(task="02", mac_bytes="111150000002", result="00", seq="039529"),
+            _e2_up_summary(task="02", mac_bytes="111150000003", result="01", seq="039530"),
+            _e2_up_summary(task="02", mac_bytes="111150000099", result="00", seq="039531"),
+            _e2_up_summary(task="03", mac_bytes="111150000005", result="00", seq="039532"),
+            _e2_up_summary(task="03", mac_bytes="111150000006", result="00", seq="039533",),
+            _e2_up_summary(task="02", mac_bytes="111150000007", result="00", seq="039534"),
+        ]
+        summaries[-1]["FINL_D"] = "002"
+        parser = FakeMinuteParserService(summaries)
+        service = LogFileService(parser, Path(self.temp_dir.name) / "task.sqlite3")
+        try:
+            directory, path = _write_log([
+                _log_line_at("00:00:00.000"), _log_line_at("00:00:01.000"),
+                _log_line_at("00:00:02.000"), _log_line_at("00:01:30.000"),
+                _log_line_at("00:01:31.000"), _log_line_at("00:01:32.000"),
+                _log_line_at("00:01:33.000"), _log_line_at("00:01:34.000"),
+                _log_line_at("00:01:35.000"), _log_line_at("00:01:36.000"),
+                _log_line_at("00:01:37.000"),
+            ])
+            try:
+                service.index_file(path)
+                self.assertEqual(service.list_task_config_numbers("001"), ["2", "3"])
+
+                data = service.task_config_summary("001", "2")
+                self.assertEqual(data["sent_sta_count"], 4)
+                self.assertEqual(data["success_sta_count"], 1)
+                self.assertEqual(data["failed_sta_count"], 1)
+                self.assertEqual(data["no_response_sta_count"], 1)
+                self.assertEqual(data["pending_sta_count"], 1)
+                self.assertEqual(data["unissued_report_sta_count"], 1)
+                statuses = {row["mac"]: row["status"] for row in data["stas"]}
+                self.assertEqual(statuses["111150000002"], "成功")
+                self.assertEqual(statuses["111150000003"], "失败")
+                self.assertEqual(statuses["111150000004"], "等待应答")
+                self.assertEqual(statuses["111150000099"], "未下发")
+            finally:
+                directory.cleanup()
+        finally:
+            service.close()
+
+    def test_task_lifecycle_tracks_delete_completion_broadcast_and_late_reports(self):
+        summaries = [
+            _del_config_summary(flag="\u542f\u7528", task=2, mac="11:11:50:00:00:01"),
+            _del_config_summary(flag="\u542f\u7528", task=2, mac="11:11:50:00:00:02"),
+            _del_config_summary(flag="\u5220\u9664", task=2, mac="11:11:50:00:00:01"),
+            _del_config_summary(flag="\u5220\u9664", task=2, mac="11:11:50:00:00:02"),
+            _e2_up_summary(task="02", mac_bytes="111150000001", result="00"),
+            _e2_up_summary(task="02", mac_bytes="111150000002", result="01", seq="039529"),
+            _e4_summary(source_mac="11:11:50:00:00:01", task=2),
+            _del_config_summary(flag="\u542f\u7528", task=3, mac="11:11:50:00:00:03"),
+            _del_config_summary(flag="\u5220\u9664", task=255, mac="99:99:99:99:99:99"),
+            _e2_up_summary(task="03", mac_bytes="111150000003", result="00", seq="039530"),
+        ]
+        parser = FakeMinuteParserService(summaries)
+        service = LogFileService(parser, Path(self.temp_dir.name) / "lifecycle.sqlite3")
+        try:
+            directory, path = _write_log([
+                _log_line_at("00:00:00.000"), _log_line_at("00:00:01.000"),
+                _log_line_at("00:00:10.000"), _log_line_at("00:00:11.000"),
+                _log_line_at("00:00:12.000"), _log_line_at("00:00:13.000"),
+                _log_line_at("00:00:14.000"), _log_line_at("00:01:00.000"),
+                _log_line_at("00:01:10.000"), _log_line_at("00:01:11.000"),
+            ])
+            try:
+                service.index_file(path)
+                task_two = service.task_config_lifecycle_summary("001", "2")
+                cycle = task_two["cycle"]
+                self.assertEqual(cycle["start_time"], "00:00:00.000")
+                self.assertEqual(cycle["delete_success_count"], 1)
+                self.assertEqual(cycle["delete_fail_count"], 1)
+                self.assertEqual(cycle["status"], "删除异常")
+                self.assertIsNone(cycle["end_time"])
+                self.assertEqual(cycle["anomalies"][0]["type"], "删除成功后仍上报")
+                self.assertEqual(cycle["anomalies"][0]["report_time"], "00:00:14.000")
+
+                task_three = service.task_config_lifecycle_summary("001", "3")
+                broadcast_cycle = task_three["cycle"]
+                self.assertEqual(broadcast_cycle["delete_mode"], "广播全清")
+                self.assertEqual(broadcast_cycle["status"], "已完成")
+                self.assertEqual(broadcast_cycle["end_time"], "00:01:11.000")
+            finally:
+                directory.cleanup()
+        finally:
+            service.close()
+
 
 def _e2_up_summary(flag="00", result="00", seq="039528",
                    mac_bytes="111150000066", task="02", period="05"):
@@ -308,7 +400,7 @@ def _e2_up_summary(flag="00", result="00", seq="039528",
 
 
 def _del_config_summary(ori_s="001", flag="删除", seq="0x0001",
-                        mac="11:11:50:00:00:66"):
+                        mac="11:11:50:00:00:66", task=2):
     """构造一条「分钟采集任务配置（0x00E2）- 启动/删除标志」的简单摘要。"""
     return {
         "FrmType": "分钟采集任务配置",
@@ -323,7 +415,7 @@ def _del_config_summary(ori_s="001", flag="删除", seq="0x0001",
                 {"name": "报文序号", "value": seq, "raw": seq},
                 {"name": "目的MAC地址", "value": mac, "raw": mac},
                 {"name": "启动/删除标志", "value": flag, "raw": flag},
-                {"name": "任务号", "value": 2, "raw": 2},
+                {"name": "任务号", "value": task, "raw": task},
             ],
             "nested": [],
             "warnings": [],
@@ -339,6 +431,10 @@ EXPECTED_MINUTE_COLUMNS = [
 ]
 
 LOG_LINE = b"[1][00:00:00.000]7E FF 02 FF 00 00 00 00 00 00 7E\r\n"
+
+
+def _log_line_at(log_time):
+    return f"[1][{log_time}]7E FF 02 FF 00 00 00 00 00 00 7E\r\n".encode()
 
 
 class MinuteReportTests(unittest.TestCase):

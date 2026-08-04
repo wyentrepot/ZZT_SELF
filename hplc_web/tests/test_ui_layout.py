@@ -155,10 +155,20 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("updateNidHint", js)
         self.assertIn("当前 NID 筛选", js)
         self.assertIn('id="minute-nid-hint"', html)
-        self.assertIn('id="delete-config-nid-hint"', html)
+        self.assertIn('id="task-config-nid-hint"', html)
         self.assertIn(".nid-hint", css)
-        # loadFrames / loadMinuteAnalysis / loadDeleteConfigDetails 均携带全局 nid
+        # loadFrames / loadMinuteAnalysis / task config requests 均携带全局 nid
         self.assertGreaterEqual(js.count("nid: state.nid,"), 3)
+
+    def test_task_config_view_uses_task_dropdown_and_sta_summary(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="task-config-task-select"', html)
+        self.assertIn('id="task-config-sta-table"', html)
+        self.assertIn("/api/logs/task-config-tasks", js)
+        self.assertIn("/api/logs/task-config-summary", js)
+        self.assertIn("renderTaskConfigSummary", js)
 
     def test_js_summarizes_minute_report_data_status(self):
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")

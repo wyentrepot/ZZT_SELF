@@ -505,6 +505,7 @@ class LogFileService:
                 f"""
                 SELECT id, log_time, summary_json FROM frames
                 WHERE {' AND '.join(conditions)}
+                ORDER BY id
                 """,
                 parameters,
             ).fetchall()
@@ -550,14 +551,15 @@ class LogFileService:
                     "result": result,
                     "app_raw": raw,
                 }
-            elif ori_s == cco and fields.get("启动/删除标志") == "删除":
-                # 下行删除配置：CCO 发出
-                yield "down_delete", {
+            elif ori_s == cco and fields.get("启动/删除标志") in {"删除", "启用"}:
+                # 下行任务配置：CCO 发出
+                yield "down_config", {
                     "frame_id": frame_id,
                     "log_time": log_time,
                     "mac": fields.get("目的MAC地址") or "",
                     "seq": fields.get("报文序号") or "",
-                    "task_no": fields.get("任务号") or "",
+                    "task_no": str(fields.get("任务号") or ""),
+                    "operation": fields.get("启动/删除标志"),
                     "app_raw": simple.get("APP_RAW") or "",
                 }
 
@@ -576,10 +578,10 @@ class LogFileService:
         up_success = 0
         up_fail = 0
         for kind, record in self._e2_records(cco_tei, nid):
-            if kind == "down_delete":
+            if kind == "down_config" and record["operation"] == "删除":
                 down_total += 1
                 down_seen.add((record["seq"], record["mac"]))
-            else:
+            elif kind == "up":
                 up_total += 1
                 key = (record["seq"], record["mac"])
                 if key not in up_seen:
@@ -602,14 +604,167 @@ class LogFileService:
         down_seen = {}
         up_seen = {}
         for kind, record in self._e2_records(cco_tei, nid):
-            if kind == "down_delete":
+            if kind == "down_config" and record["operation"] == "删除":
                 down_seen.setdefault((record["seq"], record["mac"]), record)
-            else:
+            elif kind == "up":
                 up_seen.setdefault((record["seq"], record["mac"]), record)
         return {
             "down": sorted(down_seen.values(), key=lambda r: r["log_time"]),
             "up": sorted(up_seen.values(), key=lambda r: r["log_time"]),
         }
+
+    @staticmethod
+    def _task_key(value) -> str:
+        """规范任务号，避免解析器将同一任务表示为 int 或 str。"""
+        try:
+            return str(int(str(value), 10))
+        except (TypeError, ValueError):
+            return str(value or "").strip()
+
+    @staticmethod
+    def _sta_key(mac) -> str:
+        return re.sub(r"[^0-9A-Fa-f]", "", str(mac or "")).upper()
+
+    def _task_config_records(self, cco_tei: str, nid: str = ""):
+        """产出带绝对日志时间的 00E2 任务配置记录。"""
+        day_offset = 0
+        previous_ms = None
+        for kind, record in self._e2_records(cco_tei, nid):
+            clock_ms = self._parse_time_ms(record["log_time"])
+            if clock_ms is None:
+                absolute_ms = None
+            else:
+                if previous_ms is not None and clock_ms < previous_ms - 12 * 3_600_000:
+                    day_offset += 1
+                absolute_ms = day_offset * 86_400_000 + clock_ms
+                previous_ms = clock_ms
+            record = dict(record)
+            record["task_no"] = self._task_key(record["task_no"])
+            record["mac"] = self._sta_key(record["mac"])
+            record["absolute_ms"] = absolute_ms
+            yield kind, record
+
+    def list_task_config_numbers(self, cco_tei: str, nid: str = "") -> list[str]:
+        """返回当前范围内下发或上报过的任务号。"""
+        task_numbers = {
+            record["task_no"]
+            for _, record in self._task_config_records(cco_tei, nid)
+            if record["task_no"]
+        }
+        return sorted(task_numbers, key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value))
+
+    def task_config_summary(self, cco_tei: str, task_no: str, nid: str = "") -> dict:
+        """按任务号汇总 STA 下发及应答状态。"""
+        requested_task = self._task_key(task_no)
+        down_by_sta = {}
+        up_by_sta = {}
+        observed_ms = None
+        for kind, record in self._task_config_records(cco_tei, nid):
+            if record["absolute_ms"] is not None:
+                observed_ms = max(observed_ms or record["absolute_ms"], record["absolute_ms"])
+            if record["task_no"] != requested_task or not record["mac"]:
+                continue
+            if kind == "down_config":
+                down_by_sta[record["mac"]] = record
+            elif kind == "up":
+                up_by_sta.setdefault(record["mac"], []).append(record)
+
+        rows = []
+        counts = {
+            "sent_sta_count": len(down_by_sta), "success_sta_count": 0,
+            "failed_sta_count": 0, "no_response_sta_count": 0,
+            "pending_sta_count": 0, "unissued_report_sta_count": 0,
+        }
+        for mac in sorted(set(down_by_sta) | set(up_by_sta)):
+            down = down_by_sta.get(mac)
+            replies = up_by_sta.get(mac, [])
+            success = next((reply for reply in reversed(replies) if reply["result"] == "成功"), None)
+            latest_reply = success or (replies[-1] if replies else None)
+            if down is None:
+                status = "未下发"
+                counts["unissued_report_sta_count"] += 1
+            elif success:
+                status = "成功"
+                counts["success_sta_count"] += 1
+            elif replies:
+                status = "失败"
+                counts["failed_sta_count"] += 1
+            elif (down["absolute_ms"] is not None and observed_ms is not None
+                  and observed_ms - down["absolute_ms"] >= 60_000):
+                status = "未应答"
+                counts["no_response_sta_count"] += 1
+            else:
+                status = "等待应答"
+                counts["pending_sta_count"] += 1
+            rows.append({
+                "mac": mac,
+                "operation": down["operation"] if down else (latest_reply or {}).get("del_flag", ""),
+                "sent_time": down["log_time"] if down else "",
+                "reply_time": (latest_reply or {}).get("log_time", ""),
+                "status": status,
+                "sequence": down["seq"] if down else (latest_reply or {}).get("seq", ""),
+                "app_raw": (down or latest_reply or {}).get("app_raw", ""),
+                "frame_id": (down or latest_reply or {}).get("frame_id"),
+            })
+        return {"task_no": requested_task, **counts, "stas": rows}
+
+    def _e4_records(self, cco_tei: str, nid: str = ""):
+        conditions = ["summary_json IS NOT NULL", "summary_json LIKE '%00E4%'"]
+        parameters = []
+        if nid.strip():
+            conditions.append("summary_json LIKE ? ESCAPE '\\'")
+            parameters.append(self._nid_like(nid))
+        with self._connect() as connection:
+            rows = connection.execute(f"SELECT id, log_time, summary_json FROM frames WHERE {' AND '.join(conditions)} ORDER BY id", parameters).fetchall()
+        for frame_id, log_time, summary_json in rows:
+            try:
+                simple = json.loads(summary_json)
+            except (TypeError, ValueError):
+                continue
+            if (simple.get("APP_ID") or "").upper() != "00E4" or (simple.get("FINL_D") or "").upper() != cco_tei.upper():
+                continue
+            fields = self._e2_fields(simple)
+            yield {"frame_id": frame_id, "log_time": log_time, "mac": fields.get("源MAC地址") or "", "task_no": str(fields.get("任务号") or ""), "app_raw": simple.get("APP_RAW") or ""}
+
+    def task_config_lifecycle_summary(self, cco_tei: str, task_no: str, nid: str = "", cycle_index: int | None = None) -> dict:
+        task = self._task_key(task_no)
+        events = [(kind, record) for kind, record in self._task_config_records(cco_tei, nid)]
+        events += [("report", {**record, "task_no": self._task_key(record["task_no"]), "mac": self._sta_key(record["mac"]), "absolute_ms": self._parse_time_ms(record["log_time"])}) for record in self._e4_records(cco_tei, nid)]
+        events.sort(key=lambda item: item[1]["frame_id"])
+        cycles, active = [], {}
+        def start(record):
+            cycle = {"start_time": record["log_time"], "start_ms": record["absolute_ms"], "stas": {}, "deletes": {}, "delete_mode": "", "delete_success_count": 0, "delete_fail_count": 0, "delete_pending_count": 0, "anomalies": [], "status": "进行中", "end_time": None, "last_delete_time": None}
+            cycles.append(cycle); active[task] = cycle
+            return cycle
+        for kind, record in events:
+            record_task = record["task_no"]
+            affected = list(active) if kind == "down_config" and record["operation"] == "删除" and record["mac"] == "999999999999" and record_task == "255" else [record_task]
+            for key in affected:
+                cycle = active.get(key)
+                if kind == "down_config" and record["operation"] == "启用" and key == task:
+                    cycle = start(record) if cycle is None else cycle; cycle["stas"][record["mac"]] = record
+                elif kind == "down_config" and record["operation"] == "删除" and cycle:
+                    targets = list(cycle["stas"]) if record["mac"] == "999999999999" else [record["mac"]]
+                    cycle["delete_mode"] = "广播全清" if record["mac"] == "999999999999" else cycle["delete_mode"] or "单播删除"; cycle["last_delete_time"] = record["log_time"]
+                    for mac in targets: cycle["deletes"].setdefault(mac, {"down": record, "reply": None})
+                elif kind == "up" and cycle and key == task and record["mac"] in cycle["deletes"]:
+                    prior = cycle["deletes"][record["mac"]]["reply"]
+                    if prior is None or record["result"] == "成功": cycle["deletes"][record["mac"]]["reply"] = record
+                elif kind == "report" and cycle and key == task and record["mac"] in cycle["deletes"]:
+                    reply = cycle["deletes"][record["mac"]]["reply"]
+                    if reply and reply["result"] == "成功": cycle["anomalies"].append({"type": "删除成功后仍上报", "mac": record["mac"], "delete_time": reply["log_time"], "report_time": record["log_time"]})
+        for cycle in cycles:
+            replies = [item["reply"] for item in cycle["deletes"].values()]
+            cycle["delete_success_count"] = sum(reply is not None and reply["result"] == "成功" for reply in replies)
+            cycle["delete_fail_count"] = sum(reply is not None and reply["result"] != "成功" for reply in replies)
+            cycle["delete_pending_count"] = len(cycle["stas"]) - cycle["delete_success_count"] - cycle["delete_fail_count"]
+            if cycle["stas"] and cycle["delete_success_count"] == len(cycle["stas"]):
+                cycle["status"] = "已完成"; cycle["end_time"] = max((item["reply"] for item in cycle["deletes"].values() if item["reply"] and item["reply"]["result"] == "成功"), key=lambda reply: reply["frame_id"])["log_time"]
+            elif cycle["delete_fail_count"]: cycle["status"] = "删除异常"
+            elif cycle["deletes"]: cycle["status"] = "删除未完成"
+            cycle["configured_sta_count"] = len(cycle["stas"]); cycle["stas"] = [{"mac": mac, "config_time": info["log_time"], "delete_time": cycle["deletes"].get(mac, {}).get("down", {}).get("log_time", ""), "delete_result": (cycle["deletes"].get(mac, {}).get("reply") or {}).get("result", "未下发删除")} for mac, info in sorted(cycle["stas"].items())]
+        selected = cycles[cycle_index if cycle_index is not None else len(cycles) - 1] if cycles else None
+        return {"task_no": task, "cycles": cycles, "cycle": selected}
 
     def list_frames(self, offset=0, limit=100, query="", nid="") -> dict:
         if offset < 0:

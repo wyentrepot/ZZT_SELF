@@ -81,6 +81,14 @@ class FakeLogService:
         self.last_delete_details_query = (cco_tei, nid)
         return {"down": [], "up": []}
 
+    def list_task_config_numbers(self, cco_tei="001", nid=""):
+        self.last_task_list_query = (cco_tei, nid)
+        return ["2", "3"]
+
+    def task_config_summary(self, cco_tei, task_no, nid=""):
+        self.last_task_summary_query = (cco_tei, task_no, nid)
+        return {"task_no": task_no, "sent_sta_count": 1, "stas": []}
+
 
 class AppTests(unittest.TestCase):
     def setUp(self):
@@ -174,6 +182,21 @@ class AppTests(unittest.TestCase):
         self.assertEqual(
             self.log_service.last_delete_details_query, ("001", "00000123")
         )
+
+    def test_task_config_endpoints_pass_filters_and_task_number(self):
+        tasks = self.client.get(
+            "/api/logs/task-config-tasks?cco_tei=001&nid=00000123"
+        )
+        summary = self.client.get(
+            "/api/logs/task-config-summary?cco_tei=001&task_no=2&nid=00000123"
+        )
+
+        self.assertEqual(tasks.status_code, 200)
+        self.assertEqual(tasks.json()["tasks"], ["2", "3"])
+        self.assertEqual(self.log_service.last_task_list_query, ("001", "00000123"))
+        self.assertEqual(summary.status_code, 200)
+        self.assertEqual(summary.json()["task_no"], "2")
+        self.assertEqual(self.log_service.last_task_summary_query, ("001", "2", "00000123"))
 
     def test_minute_analysis_rejects_invalid_period_and_tei(self):
         for params in (

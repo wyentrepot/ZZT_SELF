@@ -28,7 +28,7 @@
       <button class="view-tab" type="button" role="tab"
         data-view="minute" aria-selected="false">分钟采集分析</button>
       <button class="view-tab" type="button" role="tab"
-        data-view="delete-config" aria-selected="false">删除配置统计</button>
+        data-view="delete-config" aria-selected="false">任务配置统计</button>
     </nav>
 
     <section id="frames-view" class="operation-panel" aria-label="日志操作区">
@@ -197,38 +197,6 @@
         <div id="minute-error" class="error-banner" role="alert" hidden></div>
         <p id="minute-nid-hint" class="nid-hint" hidden></p>
 
-        <div id="minute-delete-stats" class="minute-delete-stats" hidden>
-          <div class="delete-stats-header">
-            <span class="section-kicker">删除配置统计</span>
-            <h3>CCO 向网络层下发删除配置</h3>
-          </div>
-          <div class="delete-stats-numbers">
-            <div class="stat-item">
-              <span id="delete-down-deduped" class="stat-value">0</span>
-              <span class="stat-label">下发（去重后）</span>
-            </div>
-            <div class="stat-item">
-              <span id="delete-up-deduped" class="stat-value">0</span>
-              <span class="stat-label">上行应答（去重后）</span>
-            </div>
-            <div class="stat-item">
-              <span id="delete-up-success" class="stat-value stat-success">0</span>
-              <span class="stat-label">上行成功（去重）</span>
-            </div>
-            <div class="stat-item">
-              <span id="delete-up-fail" class="stat-value stat-fail">0</span>
-              <span class="stat-label">上行失败（去重）</span>
-            </div>
-          </div>
-          <div class="delete-stats-footer">
-            <p class="delete-stats-note">
-              下发按（报文序号, 目的MAC）去重；上行按（序号, 源MAC）去重，发往 CCO 即上行
-            </p>
-            <button id="delete-detail-button" class="secondary-button"
-              type="button">查看详情 →</button>
-          </div>
-        </div>
-
         <div class="table-shell">
           <table>
             <thead>
@@ -257,71 +225,80 @@
     <section id="delete-config-view" class="delete-config-layout" hidden>
       <div class="panel-toolbar">
         <div>
-          <span class="section-kicker">04 / 删除配置</span>
-          <h2>删除配置统计详情</h2>
+          <span class="section-kicker">04 / 任务配置</span>
+          <h2>任务配置下发应答统计</h2>
         </div>
         <div class="delete-config-toolbar">
           <label class="minute-filter">
             <span>CCO TEI</span>
-            <input id="delete-config-tei-input" value="001" maxlength="3"
+            <input id="task-config-tei-input" value="001" maxlength="3"
               autocomplete="off" aria-label="CCO TEI">
           </label>
-          <button id="delete-config-refresh" class="primary-button"
-            type="button">查询</button>
-          <button id="delete-config-back" class="secondary-button"
-            type="button">← 返回分钟分析</button>
+          <label class="minute-filter">
+            <span>任务号</span>
+            <select id="task-config-task-select" aria-label="任务号" disabled>
+              <option value="">请先查询任务号</option>
+            </select>
+          </label>
+          <button id="task-config-refresh" class="secondary-button"
+            type="button">刷新任务号</button>
+          <button id="task-config-query" class="primary-button"
+            type="button" disabled>查询统计</button>
         </div>
       </div>
 
-      <div id="delete-config-error" class="error-banner" role="alert" hidden></div>
-      <p id="delete-config-nid-hint" class="nid-hint" hidden></p>
+      <div id="task-config-error" class="error-banner" role="alert" hidden></div>
+      <p id="task-config-nid-hint" class="nid-hint" hidden></p>
 
+      <div id="task-config-stats" class="minute-delete-stats" hidden>
+        <div class="delete-stats-header">
+          <span class="section-kicker">任务号 <span id="task-config-number"></span></span>
+          <h3>下发与应答状态（按 STA 去重）</h3>
+        </div>
+        <div class="delete-stats-numbers">
+          <div class="stat-item"><span id="task-sent-count" class="stat-value">0</span><span class="stat-label">下发 STA</span></div>
+          <div class="stat-item"><span id="task-success-count" class="stat-value stat-success">0</span><span class="stat-label">应答成功</span></div>
+          <div class="stat-item"><span id="task-failed-count" class="stat-value stat-fail">0</span><span class="stat-label">应答失败</span></div>
+          <div class="stat-item"><span id="task-no-response-count" class="stat-value stat-fail">0</span><span class="stat-label">未应答</span></div>
+          <div class="stat-item"><span id="task-pending-count" class="stat-value">0</span><span class="stat-label">等待应答</span></div>
+          <div class="stat-item"><span id="task-unissued-count" class="stat-value">0</span><span class="stat-label">未下发上报</span></div>
+        </div>
+      </div>
+
+      <div class="task-config-workspace">
       <div class="table-shell">
         <div class="detail-subtitle">
-          <h3>下发明细（去重后 <span id="delete-down-count">0</span> 条）</h3>
+          <h3>STA 汇总</h3>
         </div>
         <table>
           <thead>
             <tr>
-              <th>时间</th>
-              <th>目的 MAC</th>
-              <th>任务号</th>
+              <th>STA MAC</th>
+              <th>配置类型</th>
+              <th>最近下发时间</th>
+              <th>应答时间</th>
+              <th>状态</th>
               <th>报文序号</th>
             </tr>
           </thead>
-          <tbody id="delete-down-table">
-            <tr class="empty-row"><td colspan="4">暂无数据</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="table-shell">
-        <div class="detail-subtitle">
-          <h3>上行应答明细（去重后 <span id="delete-up-count">0</span> 条）</h3>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>源 MAC</th>
-              <th>任务号</th>
-              <th>序号</th>
-              <th>标志</th>
-              <th>结果</th>
-            </tr>
-          </thead>
-          <tbody id="delete-up-table">
+          <tbody id="task-config-sta-table">
             <tr class="empty-row"><td colspan="6">暂无数据</td></tr>
           </tbody>
         </table>
       </div>
 
-      <div id="delete-config-raw" class="delete-config-raw" hidden>
+      <aside id="task-config-analysis" class="task-config-analysis">
+        <h3>轮次分析</h3><select id="task-config-cycle-select"></select>
+        <div id="task-config-analysis-content">选择任务号后显示生命周期、删除状态和异常。</div>
+      </aside>
+      </div>
+
+      <div id="task-config-raw" class="delete-config-raw" hidden>
         <div class="detail-subtitle">
           <h3>APS 层原文</h3>
-          <span id="delete-config-raw-meta" class="raw-meta"></span>
+          <span id="task-config-raw-meta" class="raw-meta"></span>
         </div>
-        <code id="delete-config-raw-text" class="raw-text"></code>
+        <code id="task-config-raw-text" class="raw-text"></code>
       </div>
     </section>
   </main>

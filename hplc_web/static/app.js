@@ -732,24 +732,26 @@ const minuteElements = {
   nidHint: $("#minute-nid-hint"),
   rows: $("#minute-period-table"),
   details: $("#minute-report-details"),
-  deleteStats: $("#minute-delete-stats"),
-  deleteDown: $("#delete-down-deduped"),
-  deleteUp: $("#delete-up-deduped"),
-  deleteUpSuccess: $("#delete-up-success"),
-  deleteUpFail: $("#delete-up-fail"),
-  deleteDetail: $("#delete-detail-button"),
-  deleteConfigTei: $("#delete-config-tei-input"),
-  deleteConfigRefresh: $("#delete-config-refresh"),
-  deleteConfigBack: $("#delete-config-back"),
-  deleteConfigError: $("#delete-config-error"),
-  deleteConfigNidHint: $("#delete-config-nid-hint"),
-  deleteDownCount: $("#delete-down-count"),
-  deleteUpCount: $("#delete-up-count"),
-  deleteDownTable: $("#delete-down-table"),
-  deleteUpTable: $("#delete-up-table"),
-  deleteConfigRaw: $("#delete-config-raw"),
-  deleteConfigRawMeta: $("#delete-config-raw-meta"),
-  deleteConfigRawText: $("#delete-config-raw-text"),
+  taskConfigTei: $("#task-config-tei-input"),
+  taskConfigSelect: $("#task-config-task-select"),
+  taskConfigRefresh: $("#task-config-refresh"),
+  taskConfigQuery: $("#task-config-query"),
+  taskConfigError: $("#task-config-error"),
+  taskConfigNidHint: $("#task-config-nid-hint"),
+  taskConfigStats: $("#task-config-stats"),
+  taskConfigNumber: $("#task-config-number"),
+  taskSentCount: $("#task-sent-count"),
+  taskSuccessCount: $("#task-success-count"),
+  taskFailedCount: $("#task-failed-count"),
+  taskNoResponseCount: $("#task-no-response-count"),
+  taskPendingCount: $("#task-pending-count"),
+  taskUnissuedCount: $("#task-unissued-count"),
+  taskConfigStaTable: $("#task-config-sta-table"),
+  taskConfigRaw: $("#task-config-raw"),
+  taskConfigRawMeta: $("#task-config-raw-meta"),
+  taskConfigRawText: $("#task-config-raw-text"),
+  taskConfigCycle: $("#task-config-cycle-select"),
+  taskConfigAnalysis: $("#task-config-analysis-content"),
 };
 
 function switchView(name) {
@@ -765,7 +767,10 @@ function switchView(name) {
 }
 
 minuteElements.tabs.forEach((tab) => {
-  tab.addEventListener("click", () => switchView(tab.dataset.view));
+  tab.addEventListener("click", () => {
+    switchView(tab.dataset.view);
+    if (tab.dataset.view === "delete-config") loadTaskConfigTasks();
+  });
 });
 
 function updateNidHint(el) {
@@ -802,7 +807,6 @@ async function loadMinuteAnalysis() {
 function renderMinuteAnalysis(data) {
   minuteElements.rows.replaceChildren();
   minuteElements.details.replaceChildren();
-  renderDeleteConfigStats(data.delete_config_stats);
   if (!data.periods.length) {
     const row = document.createElement("tr");
     row.className = "empty-row";
@@ -825,82 +829,105 @@ function renderMinuteAnalysis(data) {
   }
 }
 
-function renderDeleteConfigStats(stats) {
-  const box = minuteElements.deleteStats;
-  if (!stats || typeof stats.down_deduped !== "number") {
-    box.hidden = true;
-    return;
-  }
-  minuteElements.deleteDown.textContent = String(stats.down_deduped);
-  minuteElements.deleteUp.textContent = String(stats.up_deduped);
-  minuteElements.deleteUpSuccess.textContent = String(stats.up_success);
-  minuteElements.deleteUpFail.textContent = String(stats.up_fail);
-  box.hidden = false;
-}
-
-async function loadDeleteConfigDetails() {
-  const tei = (minuteElements.deleteConfigTei.value.trim() || "001").toUpperCase();
-  minuteElements.deleteConfigTei.value = tei;
-  updateNidHint(minuteElements.deleteConfigNidHint);
+async function loadTaskConfigTasks() {
+  const tei = (minuteElements.taskConfigTei.value.trim() || "001").toUpperCase();
+  minuteElements.taskConfigTei.value = tei;
+  updateNidHint(minuteElements.taskConfigNidHint);
   const params = new URLSearchParams({
     cco_tei: tei,
     nid: state.nid,
   });
-  minuteElements.deleteConfigError.hidden = true;
+  minuteElements.taskConfigError.hidden = true;
+  minuteElements.taskConfigSelect.disabled = true;
+  minuteElements.taskConfigQuery.disabled = true;
   try {
-    const data = await request(`/api/logs/delete-config-details?${params}`);
-    renderDeleteConfigDetails(data);
-    switchView("delete-config");
+    const data = await request(`/api/logs/task-config-tasks?${params}`);
+    const select = minuteElements.taskConfigSelect;
+    select.replaceChildren();
+    if (!data.tasks.length) {
+      select.append(new Option("当前条件下没有任务", ""));
+      minuteElements.taskConfigStats.hidden = true;
+      return;
+    }
+    for (const taskNo of data.tasks) select.append(new Option(`任务号 ${taskNo}`, taskNo));
+    select.disabled = false;
+    minuteElements.taskConfigQuery.disabled = false;
+    await loadTaskConfigSummary();
   } catch (error) {
-    minuteElements.deleteConfigError.textContent = error.message;
-    minuteElements.deleteConfigError.hidden = false;
+    minuteElements.taskConfigError.textContent = error.message;
+    minuteElements.taskConfigError.hidden = false;
   }
 }
 
-function renderDeleteConfigDetails(data) {
-  minuteElements.deleteDownCount.textContent = String(data.down_count);
-  minuteElements.deleteUpCount.textContent = String(data.up_count);
-  minuteElements.deleteConfigRaw.hidden = true;
-
-  const downBody = minuteElements.deleteDownTable;
-  downBody.replaceChildren();
-  if (!data.down.length) {
-    downBody.append(emptyRow(4, "无下发明细"));
-  } else {
-    for (const r of data.down) {
-      const tr = document.createElement("tr");
-      tr.append(td(r.log_time), td(r.mac), td(r.task_no), td(r.seq));
-      tr.addEventListener("click", () => showDeleteConfigRaw(r, "下行"));
-      downBody.append(tr);
-    }
-  }
-
-  const upBody = minuteElements.deleteUpTable;
-  upBody.replaceChildren();
-  if (!data.up.length) {
-    upBody.append(emptyRow(6, "无上行应答明细"));
-  } else {
-    for (const r of data.up) {
-      const tr = document.createElement("tr");
-      const resultCell = td(r.result);
-      resultCell.className = r.result === "成功" ? "status-success" : "status-fail";
-      tr.append(td(r.log_time), td(r.mac), td(r.task_no), td(r.seq),
-        td(r.del_flag || ""), resultCell);
-      tr.addEventListener("click", () => showDeleteConfigRaw(r, "上行"));
-      upBody.append(tr);
-    }
+async function loadTaskConfigSummary() {
+  const taskNo = minuteElements.taskConfigSelect.value;
+  if (!taskNo) return;
+  const params = new URLSearchParams({
+    cco_tei: minuteElements.taskConfigTei.value,
+    task_no: taskNo,
+    nid: state.nid,
+  });
+  minuteElements.taskConfigError.hidden = true;
+  try {
+    renderTaskConfigSummary(
+      await request(`/api/logs/task-config-summary?${params}`)
+    );
+    renderTaskConfigLifecycle(await request(`/api/logs/task-config-lifecycle?${params}`));
+  } catch (error) {
+    minuteElements.taskConfigError.textContent = error.message;
+    minuteElements.taskConfigError.hidden = false;
   }
 }
 
-function showDeleteConfigRaw(record, kind) {
+function renderTaskConfigLifecycle(data) {
+  const cycle = data.cycle;
+  const select = minuteElements.taskConfigCycle;
+  select.replaceChildren();
+  data.cycles.forEach((item, index) => select.append(new Option(`第 ${index + 1} 轮：${item.start_time} · ${item.status}`, index)));
+  if (!cycle) { minuteElements.taskConfigAnalysis.textContent = "该任务暂无启用配置轮次"; return; }
+  select.value = String(data.cycles.indexOf(cycle));
+  const anomalies = cycle.anomalies.length
+    ? cycle.anomalies.map(item => `${item.type}：${item.mac}，删除成功 ${item.delete_time}，上报 ${item.report_time}`).join("\n") : "无异常";
+  minuteElements.taskConfigAnalysis.textContent = `开始：${cycle.start_time}\n最后下发删除：${cycle.last_delete_time || "无"}\n结束：${cycle.end_time || "未完成"}\n配置 STA：${cycle.configured_sta_count}，删除成功：${cycle.delete_success_count}，失败：${cycle.delete_fail_count}，未应答：${cycle.delete_pending_count}\n状态：${cycle.status}\n${anomalies}`;
+}
+
+function renderTaskConfigSummary(data) {
+  minuteElements.taskConfigNumber.textContent = data.task_no;
+  minuteElements.taskSentCount.textContent = String(data.sent_sta_count);
+  minuteElements.taskSuccessCount.textContent = String(data.success_sta_count);
+  minuteElements.taskFailedCount.textContent = String(data.failed_sta_count);
+  minuteElements.taskNoResponseCount.textContent = String(data.no_response_sta_count);
+  minuteElements.taskPendingCount.textContent = String(data.pending_sta_count);
+  minuteElements.taskUnissuedCount.textContent = String(data.unissued_report_sta_count);
+  minuteElements.taskConfigStats.hidden = false;
+  minuteElements.taskConfigRaw.hidden = true;
+
+  const body = minuteElements.taskConfigStaTable;
+  body.replaceChildren();
+  if (!data.stas.length) {
+    body.append(emptyRow(6, "该任务暂无 STA 记录"));
+    return;
+  }
+  for (const row of data.stas) {
+    const tr = document.createElement("tr");
+    const statusCell = td(row.status);
+    statusCell.className = row.status === "成功" ? "status-success"
+      : ["失败", "未应答"].includes(row.status) ? "status-fail" : "";
+    tr.append(td(row.mac), td(row.operation), td(row.sent_time), td(row.reply_time),
+      statusCell, td(row.sequence));
+    tr.addEventListener("click", () => showTaskConfigRaw(row));
+    body.append(tr);
+  }
+}
+
+function showTaskConfigRaw(record) {
   const raw = record.app_raw || "";
-  minuteElements.deleteConfigRawMeta.textContent =
-    `${kind} · ${record.log_time} · ${record.mac} · 任务号 ${record.task_no}` +
-    (record.result ? ` · ${record.result}` : "");
-  minuteElements.deleteConfigRawText.textContent = raw
+  minuteElements.taskConfigRawMeta.textContent =
+    `${record.mac} · ${record.status} · 下发 ${record.sent_time || "无"} · 应答 ${record.reply_time || "无"}`;
+  minuteElements.taskConfigRawText.textContent = raw
     ? formatRawHex(raw)
     : "（无 APP_RAW）";
-  minuteElements.deleteConfigRaw.hidden = false;
+  minuteElements.taskConfigRaw.hidden = false;
 }
 
 function formatRawHex(hex) {
@@ -924,9 +951,9 @@ function emptyRow(colspan, message) {
   return tr;
 }
 
-minuteElements.deleteDetail.addEventListener("click", loadDeleteConfigDetails);
-minuteElements.deleteConfigRefresh.addEventListener("click", loadDeleteConfigDetails);
-minuteElements.deleteConfigBack.addEventListener("click", () => switchView("minute"));
+minuteElements.taskConfigRefresh.addEventListener("click", loadTaskConfigTasks);
+minuteElements.taskConfigQuery.addEventListener("click", loadTaskConfigSummary);
+minuteElements.taskConfigSelect.addEventListener("change", loadTaskConfigSummary);
 
 function summarizeMinuteReports(reports) {
   let dataCount = 0;
