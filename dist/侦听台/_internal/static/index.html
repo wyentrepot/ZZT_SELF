@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>国网 HPLC 日志解析台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">GW</span>
+        <div>
+          <h1>国网 HPLC 日志解析台</h1>
+          <p>本地流式索引 · 分页摘要 · 单帧按需深度解析</p>
+        </div>
+      </div>
+      <div class="dll-status">
+        <span class="live-dot"></span>
+        <span id="version">正在连接 GwHPLCAnalysis.dll</span>
+      </div>
+    </header>
+
+    <nav class="view-tabs" role="tablist" aria-label="视图切换">
+      <button class="view-tab active" type="button" role="tab"
+        data-view="frames" aria-selected="true">帧浏览</button>
+      <button class="view-tab" type="button" role="tab"
+        data-view="minute" aria-selected="false">分钟采集分析</button>
+    </nav>
+
+    <section id="frames-view" class="operation-panel" aria-label="日志操作区">
+      <div class="panel-title-row">
+        <div>
+          <span class="section-kicker">01 / 数据源</span>
+          <h2>加载本地日志</h2>
+        </div>
+        <button id="single-toggle" class="text-button" type="button">单帧调试</button>
+      </div>
+
+      <div class="load-row">
+        <label class="path-field">
+          <span>日志路径</span>
+          <input id="log-path" type="text" autocomplete="off"
+            placeholder="输入 Windows 本地日志完整路径，例如 D:\日志\原始报文.txt">
+        </label>
+        <button id="pick-button" class="secondary-button" type="button">选择日志文件</button>
+        <button id="sample-button" class="secondary-button" type="button">开发样本</button>
+        <button id="load-button" class="primary-button" type="button">
+          <span>建立解析索引</span><span aria-hidden="true">→</span>
+        </button>
+      </div>
+
+      <div id="operation-error" class="error-banner" role="alert" hidden></div>
+
+      <div class="job-strip">
+        <div class="progress-copy">
+          <strong id="job-message">等待加载日志</strong>
+          <span id="job-source">文件只在建立索引时顺序读取一次</span>
+        </div>
+        <div class="progress-track" aria-label="文件索引进度">
+          <span id="progress-bar"></span>
+        </div>
+        <div class="job-stats">
+          <div><span>进度</span><strong id="progress-value">0%</strong></div>
+          <div><span>已读取</span><strong id="bytes-read">0 B</strong></div>
+          <div><span>帧数</span><strong id="frame-count">0</strong></div>
+          <div><span>异常</span><strong id="error-count">0</strong></div>
+        </div>
+      </div>
+
+      <div id="single-debugger" class="single-debugger" hidden>
+        <div class="single-input">
+          <label for="frame-input">单帧十六进制报文</label>
+          <textarea id="frame-input" spellcheck="false" placeholder="7E FF 02 ... 7E"></textarea>
+        </div>
+        <button id="parse-button" class="primary-button" type="button">解析这一帧</button>
+        <pre id="single-output">输入完整帧后点击解析</pre>
+      </div>
+    </section>
+
+    <section id="frames-data" class="data-section">
+      <div class="list-panel">
+        <div class="panel-toolbar">
+          <div>
+            <span class="section-kicker">02 / 帧索引</span>
+            <h2>解析摘要</h2>
+          </div>
+          <div class="search-group">
+            <input id="frame-filter" type="search" placeholder="筛选序号、时间或解析字段">
+            <button id="filter-button" class="secondary-button" type="button">筛选</button>
+          </div>
+        </div>
+
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th class="number-cell">#</th>
+                <th>日志时间</th>
+                <th>帧类型</th>
+                <th>源 → 目的</th>
+                <th>通道</th>
+                <th class="length-cell">长度</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="frame-rows">
+              <tr class="empty-row"><td colspan="7">加载日志后，这里会分页显示每一帧的解析摘要</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination">
+          <span id="page-summary">0 帧</span>
+          <div>
+            <button id="prev-page" class="page-button" type="button" disabled>上一页</button>
+            <span id="page-number">第 1 页</span>
+            <button id="next-page" class="page-button" type="button" disabled>下一页</button>
+          </div>
+        </div>
+      </div>
+
+      <aside id="detail-panel" class="detail-panel" aria-label="单帧解析详情">
+        <div id="detail-empty" class="detail-empty">
+          <span class="detail-icon">⌁</span>
+          <h2>选择一帧查看解析过程</h2>
+          <p>左侧只显示轻量摘要；点击具体帧后，才会调用 DLL 进行完整解析。</p>
+        </div>
+
+        <div id="detail-content" hidden>
+          <div class="detail-header">
+            <div>
+              <span class="section-kicker">03 / 深度解析</span>
+              <h2 id="detail-title">帧详情</h2>
+              <p id="detail-meta"></p>
+            </div>
+            <button id="copy-detail" class="icon-button" type="button" title="复制完整 JSON">复制</button>
+          </div>
+
+          <div id="detail-badges" class="detail-badges"></div>
+
+          <div class="detail-tabs" role="tablist" aria-label="详情视图切换">
+            <button class="detail-tab active" type="button" role="tab"
+              data-detail-tab="base" aria-selected="true">基础解析</button>
+            <button class="detail-tab" type="button" role="tab"
+              data-detail-tab="app" aria-selected="false">应用层展开</button>
+          </div>
+
+          <div id="detail-base" class="detail-tab-panel">
+            <div id="parse-stages" class="parse-stages"></div>
+
+            <details class="json-details">
+              <summary>查看完整解析 JSON</summary>
+              <pre id="detail-json"></pre>
+            </details>
+            <details class="json-details">
+              <summary>查看原始十六进制帧</summary>
+              <pre id="detail-raw"></pre>
+            </details>
+          </div>
+
+          <div id="detail-app" class="detail-tab-panel" hidden>
+            <div id="app-expand-content"></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section id="minute-view" class="minute-analysis-layout" hidden>
+      <div class="list-panel">
+        <div class="panel-toolbar">
+          <div>
+            <span class="section-kicker">03 / 分钟采集</span>
+            <h2>分钟采集分析</h2>
+          </div>
+          <div class="minute-filters">
+            <label class="minute-filter">
+              <span>周期</span>
+              <input id="period-input" type="number" min="1" max="1440"
+                value="15" inputmode="numeric" aria-label="周期（分钟）">
+            </label>
+            <label class="minute-filter">
+              <span>CCO TEI</span>
+              <input id="cco-tei-input" value="001" maxlength="3"
+                autocomplete="off" aria-label="CCO TEI">
+            </label>
+            <button id="minute-query-button" class="primary-button"
+              type="button">查询</button>
+          </div>
+        </div>
+
+        <div id="minute-error" class="error-banner" role="alert" hidden></div>
+
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>CCO 周期上报</th>
+              </tr>
+            </thead>
+            <tbody id="minute-period-table">
+              <tr class="empty-row">
+                <td>建立索引后点击「查询」查看分钟采集周期统计</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+      <aside id="minute-report-details" class="detail-panel minute-report-details">
+        <div class="detail-empty">
+          <span class="detail-icon">⌁</span>
+          <h2>选择一个周期查看上报</h2>
+          <p>点击左侧周期后，这里会列出该周期收到的分钟采集上报。</p>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <!-- 文件选择对话框：通过后端 /api/fs/* 浏览服务器本地目录 -->
+  <div id="file-picker" class="file-picker-overlay" hidden>
+    <div class="file-picker" role="dialog" aria-modal="true" aria-label="选择日志文件">
+      <div class="file-picker-header">
+        <h3>选择日志文件</h3>
+        <button id="picker-close" class="icon-button" type="button" title="关闭">×</button>
+      </div>
+      <div class="file-picker-toolbar">
+        <button id="picker-up" class="secondary-button" type="button" disabled>上一级</button>
+        <span id="picker-path" class="file-picker-path" title=""></span>
+      </div>
+      <div class="file-picker-roots" id="picker-roots"></div>
+      <div class="file-picker-list" id="picker-list" tabindex="0">
+        <div class="file-picker-empty">加载中…</div>
+      </div>
+      <div class="file-picker-footer">
+        <span id="picker-selected" class="file-picker-selected"></span>
+        <div>
+          <button id="picker-cancel" class="secondary-button" type="button">取消</button>
+          <button id="picker-confirm" class="primary-button" type="button" disabled>选择此文件</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

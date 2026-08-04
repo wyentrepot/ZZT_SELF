@@ -61,3 +61,12 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# Windows 批处理须以 CRLF 出库，cmd 才能正确解析（LF-only 批处理会被 cmd 解析错乱）
+*.bat eol=crlf
+
+# Git LFS 跟踪打包产物（onedir 分发包，避免大文件直接入库）
+dist/**/*.exe filter=lfs diff=lfs merge=lfs -text
+dist/**/*.dll filter=lfs diff=lfs merge=lfs -text
+dist/**/*.pyd filter=lfs diff=lfs merge=lfs -text
+dist/**/*.dylib filter=lfs diff=lfs merge=lfs -text
