@@ -136,6 +136,19 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("minute-analysis-layout", css)
         self.assertIn("minute-report-row", css)
 
+    def test_js_summarizes_minute_report_data_status(self):
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("summarizeMinuteReports", js)
+        self.assertIn("帧有数据", js)
+        self.assertIn("帧重复上报", js)
+        self.assertIn("帧无数据", js)
+        # 有数据 = 已携带数据；其余所有未携带采集数据的帧（无数据/无冻结数据/
+        # 任务不存在/其他原因/解析失败等）全部计入无数据，dataCount+noDataCount 恒等于 report_count
+        self.assertIn('data_status === "已携带数据"', js)
+        self.assertIn("noDataCount += 1", js)
+        self.assertNotIn('else if (report.data_status === "无数据")', js)
+
     def test_css_styles_file_picker(self):
         css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 

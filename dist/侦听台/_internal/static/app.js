@@ -782,14 +782,40 @@ function renderMinuteAnalysis(data) {
   }
 }
 
+function summarizeMinuteReports(reports) {
+  let dataCount = 0;
+  let noDataCount = 0;
+  let duplicateCount = 0;
+  const seen = new Map();
+  for (const report of reports) {
+    if (report.data_status === "已携带数据") {
+      dataCount += 1;
+      const key = report.application_raw;
+      if (key) {
+        const count = (seen.get(key) || 0) + 1;
+        seen.set(key, count);
+        if (count > 1) duplicateCount += 1;
+      }
+    } else {
+      // 未携带采集数据即视为无数据：无数据 / 无冻结数据 / 任务不存在 /
+      // 其他原因 / 应用层解析失败 / 响应结果未知，全部计入 noDataCount
+      noDataCount += 1;
+    }
+  }
+  return { dataCount, duplicateCount, noDataCount };
+}
+
 function renderMinuteReportDetails(period) {
   minuteElements.details.replaceChildren();
   const box = document.createElement("div");
   box.className = "period-detail";
   const title = document.createElement("h4");
-  title.textContent = `周期 ${period.description} · ${period.report_count} 帧上报`;
+  const { dataCount, duplicateCount, noDataCount } = summarizeMinuteReports(
+    period.reports || []
+  );
+  title.textContent = `周期 ${period.description} · ${period.report_count} 帧上报 · ${dataCount} 帧有数据（${duplicateCount} 帧重复上报） · ${noDataCount} 帧无数据`;
   box.append(title);
-  period.reports.forEach((report) => {
+  (period.reports || []).forEach((report) => {
     const item = document.createElement("details");
     item.className = "minute-report-row";
     const label = document.createElement("summary");
