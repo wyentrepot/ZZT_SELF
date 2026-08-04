@@ -312,7 +312,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         offset: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=500),
         query: str = Query("", max_length=100),
-        nid: str = Query("", max_length=16),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
@@ -328,7 +328,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         period_minutes: int = Query(15, ge=1, le=1440),
         cco_tei: str = Query("001", min_length=3, max_length=3,
                              pattern=r"^[0-9A-Fa-f]{3}$"),
-        nid: str = Query("", max_length=16),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
@@ -355,7 +355,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
     def delete_config_details(
         cco_tei: str = Query("001", min_length=3, max_length=3,
                              pattern=r"^[0-9A-Fa-f]{3}$"),
-        nid: str = Query("", max_length=16),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
     ):
         """删除配置统计详情：去重后的下发明细与上行应答明细。"""
         if log_service is None:

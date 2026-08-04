@@ -378,6 +378,21 @@ class LogFileService:
             3: "其他原因",
         }.get(result, "响应结果未知")
 
+    @staticmethod
+    def _nid_like(nid: str) -> str:
+        """构造匹配 summary_json 中 SNID 键（24 位网络标识 NID）的 LIKE 模式，并转义通配符。
+
+        与 SQL 中的 `ESCAPE '\\'` 搭配使用；转义 `%`/`_`/`\\` 防止输入被当作通配符。
+        """
+        escaped = (
+            nid.strip()
+            .upper()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        return f'%"SNID": "{escaped}%'
+
     def list_minute_periods(self, period_minutes=15, cco_tei="001", nid="") -> list:
         if not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440:
             raise ValueError("period_minutes 必须在 1 到 1440 之间")
@@ -389,10 +404,10 @@ class LogFileService:
         period_ms = period_minutes * 60_000
         conditions = ["minute_reports.cco_tei = ?"]
         parameters = [cco_tei.upper()]
-        if nid:
+        if nid.strip():
             # 按 24 位网络标识（SNID 键）过滤，与帧浏览页 NID 筛选一致
-            conditions.append("frames.summary_json LIKE ?")
-            parameters.append(f'%"SNID": "{nid.strip().upper()}%')
+            conditions.append("frames.summary_json LIKE ? ESCAPE '\\'")
+            parameters.append(self._nid_like(nid))
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
@@ -480,10 +495,10 @@ class LogFileService:
             "summary_json LIKE '%00E2%'",
         ]
         parameters = []
-        if nid:
+        if nid.strip():
             # 按 24 位网络标识（SNID 键）过滤，与帧浏览页 NID 筛选一致
-            conditions.append("summary_json LIKE ?")
-            parameters.append(f'%"SNID": "{nid.strip().upper()}%')
+            conditions.append("summary_json LIKE ? ESCAPE '\\'")
+            parameters.append(self._nid_like(nid))
 
         with self._connect() as connection:
             rows = connection.execute(
@@ -610,10 +625,10 @@ class LogFileService:
             )
             wildcard = f"%{query}%"
             parameters.extend([wildcard, wildcard, wildcard])
-        if nid:
+        if nid.strip():
             # summary_json 中的 SNID 键即 24 位网络标识（NID）
-            conditions.append("summary_json LIKE ?")
-            parameters.append(f'%"SNID": "{nid.strip().upper()}%')
+            conditions.append("summary_json LIKE ? ESCAPE '\\'")
+            parameters.append(self._nid_like(nid))
         where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         with self._connect() as connection:

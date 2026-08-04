@@ -676,7 +676,7 @@ $("#single-toggle").addEventListener("click", () => {
 $("#parse-button").addEventListener("click", parseSingleFrame);
 $("#filter-button").addEventListener("click", () => {
   state.query = elements.filter.value.trim();
-  state.nid = elements.nidFilter.value.trim();
+  state.nid = elements.nidFilter.value.trim().toUpperCase();
   state.offset = 0;
   loadFrames();
 });
