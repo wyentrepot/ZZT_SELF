@@ -312,11 +312,14 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         offset: int = Query(0, ge=0),
         limit: int = Query(100, ge=1, le=500),
         query: str = Query("", max_length=100),
+        nid: str = Query("", max_length=16),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
-            return log_service.list_frames(offset=offset, limit=limit, query=query)
+            return log_service.list_frames(
+                offset=offset, limit=limit, query=query, nid=nid
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

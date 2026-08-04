@@ -5,6 +5,7 @@ const state = {
   offset: 0,
   total: 0,
   query: "",
+  nid: "",
   selectedId: null,
   pollTimer: null,
   lastFrameCount: -1,
@@ -27,6 +28,7 @@ const elements = {
   errors: $("#error-count"),
   rows: $("#frame-rows"),
   filter: $("#frame-filter"),
+  nidFilter: $("#nid-filter"),
   prev: $("#prev-page"),
   next: $("#next-page"),
   pageNumber: $("#page-number"),
@@ -320,8 +322,8 @@ function renderFrames(page) {
     const row = document.createElement("tr");
     row.className = "empty-row";
     const cell = document.createElement("td");
-    cell.colSpan = 7;
-    cell.textContent = state.query ? "没有符合当前筛选条件的帧" : "正在等待日志帧…";
+    cell.colSpan = 8;
+    cell.textContent = state.query || state.nid ? "没有符合当前筛选条件的帧" : "正在等待日志帧…";
     row.append(cell);
     elements.rows.append(row);
   }
@@ -336,6 +338,7 @@ function renderFrames(page) {
       frame.sequence,
       frame.log_time,
       summaryValue(summary, "FrmType", "帧类型"),
+      summaryValue(summary, "SNID"),
       `${summaryValue(summary, "SRC", "源地址")} → ${summaryValue(summary, "DST", "目的地址")}`,
       summaryValue(summary.Info2 || summary.Info || summary, "ChType", "通道"),
       `${frame.byte_length} B`,
@@ -344,8 +347,8 @@ function renderFrames(page) {
       const cell = document.createElement("td");
       cell.textContent = value;
       if (index === 0) cell.className = "number-cell";
-      if (index === 3) cell.className = "route";
-      if (index === 5) cell.className = "length-cell";
+      if (index === 4) cell.className = "route";
+      if (index === 6) cell.className = "length-cell";
       row.append(cell);
     });
 
@@ -372,6 +375,7 @@ async function loadFrames() {
     offset: state.offset,
     limit: PAGE_SIZE,
     query: state.query,
+    nid: state.nid,
   });
   try {
     renderFrames(await request(`/api/logs/frames?${params}`));
@@ -672,10 +676,14 @@ $("#single-toggle").addEventListener("click", () => {
 $("#parse-button").addEventListener("click", parseSingleFrame);
 $("#filter-button").addEventListener("click", () => {
   state.query = elements.filter.value.trim();
+  state.nid = elements.nidFilter.value.trim();
   state.offset = 0;
   loadFrames();
 });
 elements.filter.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") $("#filter-button").click();
+});
+elements.nidFilter.addEventListener("keydown", (event) => {
   if (event.key === "Enter") $("#filter-button").click();
 });
 elements.prev.addEventListener("click", () => {
@@ -715,6 +723,7 @@ const minuteElements = {
   view: $("#minute-view"),
   framesView: $("#frames-view"),
   framesData: $("#frames-data"),
+  deleteConfigView: $("#delete-config-view"),
   tabs: document.querySelectorAll(".view-tab"),
   period: $("#period-input"),
   ccoTei: $("#cco-tei-input"),
@@ -722,6 +731,23 @@ const minuteElements = {
   error: $("#minute-error"),
   rows: $("#minute-period-table"),
   details: $("#minute-report-details"),
+  deleteStats: $("#minute-delete-stats"),
+  deleteDown: $("#delete-down-deduped"),
+  deleteUp: $("#delete-up-deduped"),
+  deleteUpSuccess: $("#delete-up-success"),
+  deleteUpFail: $("#delete-up-fail"),
+  deleteDetail: $("#delete-detail-button"),
+  deleteConfigTei: $("#delete-config-tei-input"),
+  deleteConfigRefresh: $("#delete-config-refresh"),
+  deleteConfigBack: $("#delete-config-back"),
+  deleteConfigError: $("#delete-config-error"),
+  deleteDownCount: $("#delete-down-count"),
+  deleteUpCount: $("#delete-up-count"),
+  deleteDownTable: $("#delete-down-table"),
+  deleteUpTable: $("#delete-up-table"),
+  deleteConfigRaw: $("#delete-config-raw"),
+  deleteConfigRawMeta: $("#delete-config-raw-meta"),
+  deleteConfigRawText: $("#delete-config-raw-text"),
 };
 
 function switchView(name) {
@@ -733,6 +759,7 @@ function switchView(name) {
   minuteElements.framesView.hidden = name !== "frames";
   minuteElements.framesData.hidden = name !== "frames";
   minuteElements.view.hidden = name !== "minute";
+  minuteElements.deleteConfigView.hidden = name !== "delete-config";
 }
 
 minuteElements.tabs.forEach((tab) => {
@@ -760,6 +787,7 @@ async function loadMinuteAnalysis() {
 function renderMinuteAnalysis(data) {
   minuteElements.rows.replaceChildren();
   minuteElements.details.replaceChildren();
+  renderDeleteConfigStats(data.delete_config_stats);
   if (!data.periods.length) {
     const row = document.createElement("tr");
     row.className = "empty-row";
@@ -781,6 +809,105 @@ function renderMinuteAnalysis(data) {
     minuteElements.rows.append(row);
   }
 }
+
+function renderDeleteConfigStats(stats) {
+  const box = minuteElements.deleteStats;
+  if (!stats || typeof stats.down_deduped !== "number") {
+    box.hidden = true;
+    return;
+  }
+  minuteElements.deleteDown.textContent = String(stats.down_deduped);
+  minuteElements.deleteUp.textContent = String(stats.up_deduped);
+  minuteElements.deleteUpSuccess.textContent = String(stats.up_success);
+  minuteElements.deleteUpFail.textContent = String(stats.up_fail);
+  box.hidden = false;
+}
+
+async function loadDeleteConfigDetails() {
+  const tei = (minuteElements.deleteConfigTei.value.trim() || "001").toUpperCase();
+  minuteElements.deleteConfigTei.value = tei;
+  const params = new URLSearchParams({ cco_tei: tei });
+  minuteElements.deleteConfigError.hidden = true;
+  try {
+    const data = await request(`/api/logs/delete-config-details?${params}`);
+    renderDeleteConfigDetails(data);
+    switchView("delete-config");
+  } catch (error) {
+    minuteElements.deleteConfigError.textContent = error.message;
+    minuteElements.deleteConfigError.hidden = false;
+  }
+}
+
+function renderDeleteConfigDetails(data) {
+  minuteElements.deleteDownCount.textContent = String(data.down_count);
+  minuteElements.deleteUpCount.textContent = String(data.up_count);
+  minuteElements.deleteConfigRaw.hidden = true;
+
+  const downBody = minuteElements.deleteDownTable;
+  downBody.replaceChildren();
+  if (!data.down.length) {
+    downBody.append(emptyRow(4, "无下发明细"));
+  } else {
+    for (const r of data.down) {
+      const tr = document.createElement("tr");
+      tr.append(td(r.log_time), td(r.mac), td(r.task_no), td(r.seq));
+      tr.addEventListener("click", () => showDeleteConfigRaw(r, "下行"));
+      downBody.append(tr);
+    }
+  }
+
+  const upBody = minuteElements.deleteUpTable;
+  upBody.replaceChildren();
+  if (!data.up.length) {
+    upBody.append(emptyRow(6, "无上行应答明细"));
+  } else {
+    for (const r of data.up) {
+      const tr = document.createElement("tr");
+      const resultCell = td(r.result);
+      resultCell.className = r.result === "成功" ? "status-success" : "status-fail";
+      tr.append(td(r.log_time), td(r.mac), td(r.task_no), td(r.seq),
+        td(r.del_flag || ""), resultCell);
+      tr.addEventListener("click", () => showDeleteConfigRaw(r, "上行"));
+      upBody.append(tr);
+    }
+  }
+}
+
+function showDeleteConfigRaw(record, kind) {
+  const raw = record.app_raw || "";
+  minuteElements.deleteConfigRawMeta.textContent =
+    `${kind} · ${record.log_time} · ${record.mac} · 任务号 ${record.task_no}` +
+    (record.result ? ` · ${record.result}` : "");
+  minuteElements.deleteConfigRawText.textContent = raw
+    ? formatRawHex(raw)
+    : "（无 APP_RAW）";
+  minuteElements.deleteConfigRaw.hidden = false;
+}
+
+function formatRawHex(hex) {
+  const bytes = hex.match(/../g) || [];
+  return bytes.map((b, i) => (i > 0 && i % 8 === 0 ? "  " : "") + b).join(" ");
+}
+
+function td(text) {
+  const cell = document.createElement("td");
+  cell.textContent = text ?? "";
+  return cell;
+}
+
+function emptyRow(colspan, message) {
+  const tr = document.createElement("tr");
+  tr.className = "empty-row";
+  const cell = document.createElement("td");
+  cell.colSpan = colspan;
+  cell.textContent = message;
+  tr.append(cell);
+  return tr;
+}
+
+minuteElements.deleteDetail.addEventListener("click", loadDeleteConfigDetails);
+minuteElements.deleteConfigRefresh.addEventListener("click", loadDeleteConfigDetails);
+minuteElements.deleteConfigBack.addEventListener("click", () => switchView("minute"));
 
 function summarizeMinuteReports(reports) {
   let dataCount = 0;

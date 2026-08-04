@@ -31,7 +31,13 @@ class FakeLogService:
     def status(self):
         return {"state": "completed", "frame_count": 12, "progress": 1.0}
 
-    def list_frames(self, offset=0, limit=100, query=""):
+    def list_frames(self, offset=0, limit=100, query="", nid=""):
+        self.last_frames_query = {
+            "offset": offset,
+            "limit": limit,
+            "query": query,
+            "nid": nid,
+        }
         return {
             "items": [{"id": 1, "sequence": "406727", "summary": {"帧类型": "SOF"}}],
             "offset": offset,
@@ -59,6 +65,16 @@ class FakeLogService:
                 "description": "00:00:00.000 - 00:15:00.000",
             }
         ]
+
+    def delete_config_stats(self, cco_tei="001"):
+        return {
+            "down_total": 0,
+            "down_deduped": 0,
+            "up_total": 0,
+            "up_deduped": 0,
+            "up_success": 0,
+            "up_fail": 0,
+        }
 
 
 class AppTests(unittest.TestCase):
@@ -108,6 +124,13 @@ class AppTests(unittest.TestCase):
         self.assertEqual(status.json()["frame_count"], 12)
         self.assertEqual(frames.json()["offset"], 20)
         self.assertEqual(frames.json()["limit"], 50)
+
+    def test_frames_endpoint_accepts_nid_filter(self):
+        response = self.client.get("/api/logs/frames?nid=00000123")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.log_service.last_frames_query["nid"], "00000123")
+        self.assertEqual(self.log_service.last_frames_query["query"], "")
 
     def test_returns_selected_frame_detail(self):
         response = self.client.get("/api/logs/frames/7")

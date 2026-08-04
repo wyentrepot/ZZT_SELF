@@ -136,6 +136,17 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("minute-analysis-layout", css)
         self.assertIn("minute-report-row", css)
 
+    def test_nid_filter_and_summary_column_are_present(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="nid-filter"', html)
+        self.assertIn("<th>NID</th>", html)
+        self.assertIn('nidFilter: $("#nid-filter")', js)
+        self.assertIn('summaryValue(summary, "SNID")', js)
+        self.assertIn("nid: state.nid", js)
+        self.assertIn('nid: state.nid,', js)
+
     def test_js_summarizes_minute_report_data_status(self):
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 

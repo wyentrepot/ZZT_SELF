@@ -27,6 +27,8 @@
         data-view="frames" aria-selected="true">帧浏览</button>
       <button class="view-tab" type="button" role="tab"
         data-view="minute" aria-selected="false">分钟采集分析</button>
+      <button class="view-tab" type="button" role="tab"
+        data-view="delete-config" aria-selected="false">删除配置统计</button>
     </nav>
 
     <section id="frames-view" class="operation-panel" aria-label="日志操作区">
@@ -88,6 +90,7 @@
           </div>
           <div class="search-group">
             <input id="frame-filter" type="search" placeholder="筛选序号、时间或解析字段">
+            <input id="nid-filter" type="search" placeholder="按 NID 筛选（如 00000123）">
             <button id="filter-button" class="secondary-button" type="button">筛选</button>
           </div>
         </div>
@@ -99,6 +102,7 @@
                 <th class="number-cell">#</th>
                 <th>日志时间</th>
                 <th>帧类型</th>
+                <th>NID</th>
                 <th>源 → 目的</th>
                 <th>通道</th>
                 <th class="length-cell">长度</th>
@@ -106,7 +110,7 @@
               </tr>
             </thead>
             <tbody id="frame-rows">
-              <tr class="empty-row"><td colspan="7">加载日志后，这里会分页显示每一帧的解析摘要</td></tr>
+              <tr class="empty-row"><td colspan="8">加载日志后，这里会分页显示每一帧的解析摘要</td></tr>
             </tbody>
           </table>
         </div>
@@ -192,6 +196,38 @@
 
         <div id="minute-error" class="error-banner" role="alert" hidden></div>
 
+        <div id="minute-delete-stats" class="minute-delete-stats" hidden>
+          <div class="delete-stats-header">
+            <span class="section-kicker">删除配置统计</span>
+            <h3>CCO 向网络层下发删除配置</h3>
+          </div>
+          <div class="delete-stats-numbers">
+            <div class="stat-item">
+              <span id="delete-down-deduped" class="stat-value">0</span>
+              <span class="stat-label">下发（去重后）</span>
+            </div>
+            <div class="stat-item">
+              <span id="delete-up-deduped" class="stat-value">0</span>
+              <span class="stat-label">上行应答（去重后）</span>
+            </div>
+            <div class="stat-item">
+              <span id="delete-up-success" class="stat-value stat-success">0</span>
+              <span class="stat-label">上行成功（去重）</span>
+            </div>
+            <div class="stat-item">
+              <span id="delete-up-fail" class="stat-value stat-fail">0</span>
+              <span class="stat-label">上行失败（去重）</span>
+            </div>
+          </div>
+          <div class="delete-stats-footer">
+            <p class="delete-stats-note">
+              下发按（报文序号, 目的MAC）去重；上行按（序号, 源MAC）去重，发往 CCO 即上行
+            </p>
+            <button id="delete-detail-button" class="secondary-button"
+              type="button">查看详情 →</button>
+          </div>
+        </div>
+
         <div class="table-shell">
           <table>
             <thead>
@@ -215,6 +251,76 @@
           <p>点击左侧周期后，这里会列出该周期收到的分钟采集上报。</p>
         </div>
       </aside>
+    </section>
+
+    <section id="delete-config-view" class="delete-config-layout" hidden>
+      <div class="panel-toolbar">
+        <div>
+          <span class="section-kicker">04 / 删除配置</span>
+          <h2>删除配置统计详情</h2>
+        </div>
+        <div class="delete-config-toolbar">
+          <label class="minute-filter">
+            <span>CCO TEI</span>
+            <input id="delete-config-tei-input" value="001" maxlength="3"
+              autocomplete="off" aria-label="CCO TEI">
+          </label>
+          <button id="delete-config-refresh" class="primary-button"
+            type="button">查询</button>
+          <button id="delete-config-back" class="secondary-button"
+            type="button">← 返回分钟分析</button>
+        </div>
+      </div>
+
+      <div id="delete-config-error" class="error-banner" role="alert" hidden></div>
+
+      <div class="table-shell">
+        <div class="detail-subtitle">
+          <h3>下发明细（去重后 <span id="delete-down-count">0</span> 条）</h3>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>目的 MAC</th>
+              <th>任务号</th>
+              <th>报文序号</th>
+            </tr>
+          </thead>
+          <tbody id="delete-down-table">
+            <tr class="empty-row"><td colspan="4">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-shell">
+        <div class="detail-subtitle">
+          <h3>上行应答明细（去重后 <span id="delete-up-count">0</span> 条）</h3>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>源 MAC</th>
+              <th>任务号</th>
+              <th>序号</th>
+              <th>标志</th>
+              <th>结果</th>
+            </tr>
+          </thead>
+          <tbody id="delete-up-table">
+            <tr class="empty-row"><td colspan="6">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="delete-config-raw" class="delete-config-raw" hidden>
+        <div class="detail-subtitle">
+          <h3>APS 层原文</h3>
+          <span id="delete-config-raw-meta" class="raw-meta"></span>
+        </div>
+        <code id="delete-config-raw-text" class="raw-text"></code>
+      </div>
     </section>
   </main>
 

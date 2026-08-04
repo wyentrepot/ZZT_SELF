@@ -579,20 +579,25 @@ class LogFileService:
             "up": sorted(up_seen.values(), key=lambda r: r["log_time"]),
         }
 
-    def list_frames(self, offset=0, limit=100, query="") -> dict:
+    def list_frames(self, offset=0, limit=100, query="", nid="") -> dict:
         if offset < 0:
             raise ValueError("offset 不能小于 0")
         if limit < 1 or limit > self.MAX_PAGE_SIZE:
             raise ValueError(f"limit 必须在 1 到 {self.MAX_PAGE_SIZE} 之间")
 
-        where_sql = ""
+        conditions = []
         parameters = []
         if query:
-            where_sql = """
-                WHERE sequence LIKE ? OR log_time LIKE ? OR summary_json LIKE ?
-            """
+            conditions.append(
+                "(sequence LIKE ? OR log_time LIKE ? OR summary_json LIKE ?)"
+            )
             wildcard = f"%{query}%"
             parameters.extend([wildcard, wildcard, wildcard])
+        if nid:
+            # summary_json 中的 SNID 键即 24 位网络标识（NID）
+            conditions.append("summary_json LIKE ?")
+            parameters.append(f'%"SNID": "{nid.strip().upper()}%')
+        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         with self._connect() as connection:
             total = connection.execute(

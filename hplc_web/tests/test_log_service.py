@@ -94,6 +94,19 @@ def _write_log(lines):
     return directory, path
 
 
+class SnidParserService(FakeParserService):
+    """按索引顺序返回不同 SNID（即 24 位网络标识 NID）的摘要，用于 NID 筛选测试。"""
+
+    def __init__(self):
+        super().__init__()
+        self._snids = ["00000123", "00000456", "00000123"]
+
+    def parse_summary(self, value: str) -> dict:
+        result = super().parse_summary(value)
+        result["simple"]["SNID"] = self._snids.pop(0) if self._snids else "00000000"
+        return result
+
+
 class LogRecordTests(unittest.TestCase):
     def test_extracts_sequence_time_and_frame(self):
         record = extract_log_record(
@@ -146,6 +159,31 @@ class LogFileServiceTests(unittest.TestCase):
         self.service.index_file(SAMPLE_FILE)
         with self.assertRaises(ValueError):
             self.service.list_frames(offset=0, limit=501)
+
+    def test_list_frames_filters_by_nid(self):
+        directory, path = _write_log([LOG_LINE, LOG_LINE, LOG_LINE])
+        self.addCleanup(directory.cleanup)
+        service = LogFileService(
+            SnidParserService(), Path(self.temp_dir.name) / "nid.sqlite3"
+        )
+        self.addCleanup(service.close)
+        service.index_file(path)
+
+        matched = service.list_frames(nid="00000123")
+        self.assertEqual(matched["total"], 2)
+        self.assertEqual(len(matched["items"]), 2)
+
+        other = service.list_frames(nid="00000456")
+        self.assertEqual(other["total"], 1)
+
+        missing = service.list_frames(nid="99999999")
+        self.assertEqual(missing["total"], 0)
+
+        combined = service.list_frames(query="SOF", nid="00000123")
+        self.assertEqual(combined["total"], 2)
+
+        without_nid = service.list_frames()
+        self.assertEqual(without_nid["total"], 3)
 
     def test_missing_source_is_reported(self):
         with self.assertRaises(FileNotFoundError):

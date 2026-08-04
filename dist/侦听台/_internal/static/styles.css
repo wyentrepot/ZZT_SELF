@@ -701,6 +701,90 @@ tbody tr.selected td { color: #e5eff6; }
 }
 .minute-filter input { width: 84px; }
 .minute-filter #cco-tei-input { text-transform: uppercase; }
+.minute-delete-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line, #142433);
+  border-radius: 10px;
+  background: #081420;
+  padding: 12px 16px;
+  margin: 14px 0 16px;
+}
+.delete-stats-header .section-kicker { margin-bottom: 4px; }
+.delete-stats-header h3 { margin: 0; font-size: 13px; color: #dfe9f2; }
+.delete-stats-numbers { display: flex; gap: 32px; }
+.stat-item { display: flex; flex-direction: column; gap: 2px; }
+.stat-value {
+  font: 700 22px Consolas, monospace;
+  color: var(--cyan, #4dd2ff);
+}
+.stat-label { color: #8195a8; font-size: 11px; }
+.delete-stats-note {
+  width: 100%;
+  color: var(--faint, #5a6f82);
+  font-size: 11px;
+  margin: 4px 0 0;
+}
+.delete-stats-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.delete-stats-footer .delete-stats-note { width: auto; margin: 0; }
+.stat-success { color: #4dd27a; }
+.stat-fail { color: #ff6b6b; }
+.delete-config-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.delete-config-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.detail-subtitle { margin: 4px 0 8px; }
+.detail-subtitle h3 { margin: 0; font-size: 13px; color: #dfe9f2; }
+.status-success { color: #4dd27a; font-weight: 600; }
+.status-fail { color: #ff6b6b; font-weight: 600; }
+#delete-down-table tr, #delete-up-table tr { cursor: pointer; }
+#delete-down-table tr:hover, #delete-up-table tr:hover {
+  background: rgba(77, 210, 255, 0.06);
+}
+.delete-config-raw {
+  border: 1px solid var(--line, #142433);
+  border-radius: 10px;
+  background: #081420;
+  padding: 12px 16px;
+}
+.delete-config-raw .detail-subtitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.raw-meta { color: var(--faint, #5a6f82); font-size: 11px; }
+.raw-text {
+  display: block;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #060d15;
+  border-radius: 6px;
+  color: #7fd4ff;
+  font: 12px/1.7 Consolas, monospace;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
 .minute-analysis-layout {
   display: grid;
   flex: 1 1 auto;

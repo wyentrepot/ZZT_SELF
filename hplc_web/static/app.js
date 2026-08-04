@@ -5,6 +5,7 @@ const state = {
   offset: 0,
   total: 0,
   query: "",
+  nid: "",
   selectedId: null,
   pollTimer: null,
   lastFrameCount: -1,
@@ -27,6 +28,7 @@ const elements = {
   errors: $("#error-count"),
   rows: $("#frame-rows"),
   filter: $("#frame-filter"),
+  nidFilter: $("#nid-filter"),
   prev: $("#prev-page"),
   next: $("#next-page"),
   pageNumber: $("#page-number"),
@@ -320,8 +322,8 @@ function renderFrames(page) {
     const row = document.createElement("tr");
     row.className = "empty-row";
     const cell = document.createElement("td");
-    cell.colSpan = 7;
-    cell.textContent = state.query ? "没有符合当前筛选条件的帧" : "正在等待日志帧…";
+    cell.colSpan = 8;
+    cell.textContent = state.query || state.nid ? "没有符合当前筛选条件的帧" : "正在等待日志帧…";
     row.append(cell);
     elements.rows.append(row);
   }
@@ -336,6 +338,7 @@ function renderFrames(page) {
       frame.sequence,
       frame.log_time,
       summaryValue(summary, "FrmType", "帧类型"),
+      summaryValue(summary, "SNID"),
       `${summaryValue(summary, "SRC", "源地址")} → ${summaryValue(summary, "DST", "目的地址")}`,
       summaryValue(summary.Info2 || summary.Info || summary, "ChType", "通道"),
       `${frame.byte_length} B`,
@@ -344,8 +347,8 @@ function renderFrames(page) {
       const cell = document.createElement("td");
       cell.textContent = value;
       if (index === 0) cell.className = "number-cell";
-      if (index === 3) cell.className = "route";
-      if (index === 5) cell.className = "length-cell";
+      if (index === 4) cell.className = "route";
+      if (index === 6) cell.className = "length-cell";
       row.append(cell);
     });
 
@@ -372,6 +375,7 @@ async function loadFrames() {
     offset: state.offset,
     limit: PAGE_SIZE,
     query: state.query,
+    nid: state.nid,
   });
   try {
     renderFrames(await request(`/api/logs/frames?${params}`));
@@ -672,10 +676,14 @@ $("#single-toggle").addEventListener("click", () => {
 $("#parse-button").addEventListener("click", parseSingleFrame);
 $("#filter-button").addEventListener("click", () => {
   state.query = elements.filter.value.trim();
+  state.nid = elements.nidFilter.value.trim();
   state.offset = 0;
   loadFrames();
 });
 elements.filter.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") $("#filter-button").click();
+});
+elements.nidFilter.addEventListener("keydown", (event) => {
   if (event.key === "Enter") $("#filter-button").click();
 });
 elements.prev.addEventListener("click", () => {

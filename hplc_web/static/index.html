@@ -90,6 +90,7 @@
           </div>
           <div class="search-group">
             <input id="frame-filter" type="search" placeholder="筛选序号、时间或解析字段">
+            <input id="nid-filter" type="search" placeholder="按 NID 筛选（如 00000123）">
             <button id="filter-button" class="secondary-button" type="button">筛选</button>
           </div>
         </div>
@@ -101,6 +102,7 @@
                 <th class="number-cell">#</th>
                 <th>日志时间</th>
                 <th>帧类型</th>
+                <th>NID</th>
                 <th>源 → 目的</th>
                 <th>通道</th>
                 <th class="length-cell">长度</th>
@@ -108,7 +110,7 @@
               </tr>
             </thead>
             <tbody id="frame-rows">
-              <tr class="empty-row"><td colspan="7">加载日志后，这里会分页显示每一帧的解析摘要</td></tr>
+              <tr class="empty-row"><td colspan="8">加载日志后，这里会分页显示每一帧的解析摘要</td></tr>
             </tbody>
           </table>
         </div>
