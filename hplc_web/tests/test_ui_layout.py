@@ -147,6 +147,19 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("nid: state.nid", js)
         self.assertIn('nid: state.nid,', js)
 
+    def test_all_analyses_carry_global_nid_filter(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("updateNidHint", js)
+        self.assertIn("当前 NID 筛选", js)
+        self.assertIn('id="minute-nid-hint"', html)
+        self.assertIn('id="delete-config-nid-hint"', html)
+        self.assertIn(".nid-hint", css)
+        # loadFrames / loadMinuteAnalysis / loadDeleteConfigDetails 均携带全局 nid
+        self.assertGreaterEqual(js.count("nid: state.nid,"), 3)
+
     def test_js_summarizes_minute_report_data_status(self):
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
 

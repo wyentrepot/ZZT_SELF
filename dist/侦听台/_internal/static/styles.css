@@ -728,6 +728,11 @@ tbody tr.selected td { color: #e5eff6; }
   font-size: 11px;
   margin: 4px 0 0;
 }
+.nid-hint {
+  color: var(--faint, #5a6f82);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
 .delete-stats-footer {
   display: flex;
   align-items: center;

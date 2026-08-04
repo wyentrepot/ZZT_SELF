@@ -48,8 +48,8 @@ class FakeLogService:
     def get_frame(self, frame_id):
         return {"id": frame_id, "analysis": {"full": {"ok": True}}}
 
-    def list_minute_periods(self, period_minutes=15, cco_tei="001"):
-        self.last_minute_query = (period_minutes, cco_tei)
+    def list_minute_periods(self, period_minutes=15, cco_tei="001", nid=""):
+        self.last_minute_query = (period_minutes, cco_tei, nid)
         return [
             {
                 "period_start": 0,
@@ -66,7 +66,8 @@ class FakeLogService:
             }
         ]
 
-    def delete_config_stats(self, cco_tei="001"):
+    def delete_config_stats(self, cco_tei="001", nid=""):
+        self.last_delete_stats_query = (cco_tei, nid)
         return {
             "down_total": 0,
             "down_deduped": 0,
@@ -75,6 +76,10 @@ class FakeLogService:
             "up_success": 0,
             "up_fail": 0,
         }
+
+    def delete_config_details(self, cco_tei="001", nid=""):
+        self.last_delete_details_query = (cco_tei, nid)
+        return {"down": [], "up": []}
 
 
 class AppTests(unittest.TestCase):
@@ -151,7 +156,24 @@ class AppTests(unittest.TestCase):
         self.assertEqual(data["summary"]["report_count"], 23)
         self.assertNotIn("duplicate_count", data["summary"])
         self.assertNotIn("deduplicate", data["filters"])
-        self.assertEqual(self.log_service.last_minute_query, (15, "001"))
+
+    def test_minute_analysis_passes_nid_to_service(self):
+        response = self.client.get(
+            "/api/logs/minute-analysis?period_minutes=15&cco_tei=001&nid=00000123"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.log_service.last_minute_query, (15, "001", "00000123"))
+
+    def test_delete_config_details_passes_nid_to_service(self):
+        response = self.client.get(
+            "/api/logs/delete-config-details?cco_tei=001&nid=00000123"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.log_service.last_delete_details_query, ("001", "00000123")
+        )
 
     def test_minute_analysis_rejects_invalid_period_and_tei(self):
         for params in (

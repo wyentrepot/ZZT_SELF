@@ -729,6 +729,7 @@ const minuteElements = {
   ccoTei: $("#cco-tei-input"),
   query: $("#minute-query-button"),
   error: $("#minute-error"),
+  nidHint: $("#minute-nid-hint"),
   rows: $("#minute-period-table"),
   details: $("#minute-report-details"),
   deleteStats: $("#minute-delete-stats"),
@@ -741,6 +742,7 @@ const minuteElements = {
   deleteConfigRefresh: $("#delete-config-refresh"),
   deleteConfigBack: $("#delete-config-back"),
   deleteConfigError: $("#delete-config-error"),
+  deleteConfigNidHint: $("#delete-config-nid-hint"),
   deleteDownCount: $("#delete-down-count"),
   deleteUpCount: $("#delete-up-count"),
   deleteDownTable: $("#delete-down-table"),
@@ -766,12 +768,25 @@ minuteElements.tabs.forEach((tab) => {
   tab.addEventListener("click", () => switchView(tab.dataset.view));
 });
 
+function updateNidHint(el) {
+  if (!el) return;
+  if (state.nid) {
+    el.textContent = `当前 NID 筛选：${state.nid}（所有分析仅统计该网络）`;
+    el.hidden = false;
+  } else {
+    el.textContent = "";
+    el.hidden = true;
+  }
+}
+
 async function loadMinuteAnalysis() {
   const tei = (minuteElements.ccoTei.value.trim() || "001").toUpperCase();
   minuteElements.ccoTei.value = tei;
+  updateNidHint(minuteElements.nidHint);
   const params = new URLSearchParams({
     period_minutes: minuteElements.period.value,
     cco_tei: tei,
+    nid: state.nid,
   });
   minuteElements.error.hidden = true;
   try {
@@ -826,7 +841,11 @@ function renderDeleteConfigStats(stats) {
 async function loadDeleteConfigDetails() {
   const tei = (minuteElements.deleteConfigTei.value.trim() || "001").toUpperCase();
   minuteElements.deleteConfigTei.value = tei;
-  const params = new URLSearchParams({ cco_tei: tei });
+  updateNidHint(minuteElements.deleteConfigNidHint);
+  const params = new URLSearchParams({
+    cco_tei: tei,
+    nid: state.nid,
+  });
   minuteElements.deleteConfigError.hidden = true;
   try {
     const data = await request(`/api/logs/delete-config-details?${params}`);

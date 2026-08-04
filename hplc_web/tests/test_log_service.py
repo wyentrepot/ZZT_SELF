@@ -107,6 +107,12 @@ class SnidParserService(FakeParserService):
         return result
 
 
+def _with_snid(summary, snid="00000123"):
+    """在摘要上附加 SNID 键（24 位网络标识 NID）。"""
+    summary["SNID"] = snid
+    return summary
+
+
 class LogRecordTests(unittest.TestCase):
     def test_extracts_sequence_time_and_frame(self):
         record = extract_log_record(
@@ -248,6 +254,32 @@ class LogFileServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.delete_config_stats("not-tei")
 
+    def test_delete_config_stats_filters_by_nid(self):
+        summaries = [
+            _with_snid(_e2_up_summary(), "00000123"),
+            _with_snid(_e2_up_summary(seq="039529"), "00000123"),
+            _with_snid(_e2_up_summary(seq="039530"), "00000456"),
+        ]
+        parser = FakeMinuteParserService(summaries)
+        service = LogFileService(parser, Path(self.temp_dir.name) / "nid-e2.sqlite3")
+        try:
+            directory, path = _write_log([LOG_LINE] * len(summaries))
+            try:
+                service.index_file(path)
+                stats = service.delete_config_stats("001", nid="00000123")
+                self.assertEqual(stats["up_total"], 2)
+                self.assertEqual(stats["up_deduped"], 2)
+                details = service.delete_config_details("001", nid="00000123")
+                self.assertEqual(len(details["up"]), 2)
+                other = service.delete_config_stats("001", nid="00000456")
+                self.assertEqual(other["up_total"], 1)
+                none = service.delete_config_stats("001", nid="99999999")
+                self.assertEqual(none["up_total"], 0)
+            finally:
+                directory.cleanup()
+        finally:
+            service.close()
+
 
 def _e2_up_summary(flag="00", result="00", seq="039528",
                    mac_bytes="111150000066", task="02", period="05"):
@@ -364,6 +396,26 @@ class MinuteReportTests(unittest.TestCase):
         self.assertEqual(report["freeze_time"], "2026-07-31 23:55:00")
         self.assertEqual(report["application_raw"], "11E40000")
         self.assertIn("freeze_time", report)
+
+    def test_periods_filter_by_nid(self):
+        summaries = [
+            _with_snid(_e4_summary(), "00000123"),
+            _with_snid(_e4_summary(), "00000456"),
+            _with_snid(_e4_summary(), "00000123"),
+        ]
+        directory, path = _write_log([LOG_LINE] * len(summaries))
+        self.addCleanup(directory.cleanup)
+        service = self._service(summaries)
+
+        service.index_file(path)
+        matched = service.list_minute_periods(15, "001", nid="00000123")
+        self.assertEqual(sum(p["report_count"] for p in matched), 2)
+        other = service.list_minute_periods(15, "001", nid="00000456")
+        self.assertEqual(sum(p["report_count"] for p in other), 1)
+        none = service.list_minute_periods(15, "001", nid="99999999")
+        self.assertEqual(sum(p["report_count"] for p in none), 0)
+        all_periods = service.list_minute_periods(15, "001")
+        self.assertEqual(sum(p["report_count"] for p in all_periods), 3)
 
     def test_period_query_validates_arguments(self):
         service = self._service([])

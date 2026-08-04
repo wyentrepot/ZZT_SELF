@@ -378,7 +378,7 @@ class LogFileService:
             3: "其他原因",
         }.get(result, "响应结果未知")
 
-    def list_minute_periods(self, period_minutes=15, cco_tei="001") -> list:
+    def list_minute_periods(self, period_minutes=15, cco_tei="001", nid="") -> list:
         if not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440:
             raise ValueError("period_minutes 必须在 1 到 1440 之间")
         if not isinstance(cco_tei, str) or not re.fullmatch(
@@ -387,9 +387,15 @@ class LogFileService:
             raise ValueError("cco_tei 必须为三个大写十六进制字符")
 
         period_ms = period_minutes * 60_000
+        conditions = ["minute_reports.cco_tei = ?"]
+        parameters = [cco_tei.upper()]
+        if nid:
+            # 按 24 位网络标识（SNID 键）过滤，与帧浏览页 NID 筛选一致
+            conditions.append("frames.summary_json LIKE ?")
+            parameters.append(f'%"SNID": "{nid.strip().upper()}%')
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT minute_reports.frame_id, minute_reports.log_time,
                        minute_reports.time_seconds, minute_reports.source_mac,
                        minute_reports.source_tei, minute_reports.freeze_time,
@@ -399,10 +405,10 @@ class LogFileService:
                        frames.summary_json
                 FROM minute_reports
                 LEFT JOIN frames ON frames.id = minute_reports.frame_id
-                WHERE minute_reports.cco_tei = ?
+                WHERE {' AND '.join(conditions)}
                 ORDER BY minute_reports.id
                 """,
-                (cco_tei.upper(),),
+                parameters,
             ).fetchall()
 
         groups = {}
@@ -454,7 +460,7 @@ class LogFileService:
             for f in application.get("fields", [])
         }
 
-    def _e2_records(self, cco_tei: str):
+    def _e2_records(self, cco_tei: str, nid: str = ""):
         """遍历 00E2 帧，产出 (kind, 记录) ；kind ∈ {down_delete, up}。
 
         下行删除：报文源（ORI_S）为指定 CCO 且「启动/删除标志 = 删除」；
@@ -468,13 +474,24 @@ class LogFileService:
             raise ValueError("cco_tei 必须为三个大写十六进制字符")
         cco = cco_tei.upper()
 
+        conditions = [
+            "summary_json IS NOT NULL",
+            "summary_json != ''",
+            "summary_json LIKE '%00E2%'",
+        ]
+        parameters = []
+        if nid:
+            # 按 24 位网络标识（SNID 键）过滤，与帧浏览页 NID 筛选一致
+            conditions.append("summary_json LIKE ?")
+            parameters.append(f'%"SNID": "{nid.strip().upper()}%')
+
         with self._connect() as connection:
             rows = connection.execute(
-                """
+                f"""
                 SELECT id, log_time, summary_json FROM frames
-                WHERE summary_json IS NOT NULL AND summary_json != ''
-                  AND summary_json LIKE '%00E2%'
-                """
+                WHERE {' AND '.join(conditions)}
+                """,
+                parameters,
             ).fetchall()
 
         for frame_id, log_time, summary_json in rows:
@@ -529,7 +546,7 @@ class LogFileService:
                     "app_raw": simple.get("APP_RAW") or "",
                 }
 
-    def delete_config_stats(self, cco_tei: str) -> dict:
+    def delete_config_stats(self, cco_tei: str, nid: str = "") -> dict:
         """统计删除配置下发与上行应答（均按应用层去重）。
 
         返回：
@@ -543,7 +560,7 @@ class LogFileService:
         up_seen = set()
         up_success = 0
         up_fail = 0
-        for kind, record in self._e2_records(cco_tei):
+        for kind, record in self._e2_records(cco_tei, nid):
             if kind == "down_delete":
                 down_total += 1
                 down_seen.add((record["seq"], record["mac"]))
@@ -565,11 +582,11 @@ class LogFileService:
             "up_fail": up_fail,
         }
 
-    def delete_config_details(self, cco_tei: str) -> dict:
+    def delete_config_details(self, cco_tei: str, nid: str = "") -> dict:
         """删除配置统计详情（去重后记录列表）。"""
         down_seen = {}
         up_seen = {}
-        for kind, record in self._e2_records(cco_tei):
+        for kind, record in self._e2_records(cco_tei, nid):
             if kind == "down_delete":
                 down_seen.setdefault((record["seq"], record["mac"]), record)
             else:
