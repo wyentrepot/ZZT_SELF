@@ -445,6 +445,140 @@ class LogFileService:
             )
         return periods
 
+    @staticmethod
+    def _e2_fields(simple: dict):
+        """从 00E2 帧的 simple 提取应用层字段名 -> 值 映射。"""
+        application = simple.get("application") or {}
+        return {
+            f.get("name"): (f.get("value") or f.get("raw"))
+            for f in application.get("fields", [])
+        }
+
+    def _e2_records(self, cco_tei: str):
+        """遍历 00E2 帧，产出 (kind, 记录) ；kind ∈ {down_delete, up}。
+
+        下行删除：报文源（ORI_S）为指定 CCO 且「启动/删除标志 = 删除」；
+        上行应答：报文目的（FINL_D）为指定 CCO（发往 CCO 即上行）。
+        上行应答的应用层字段 DLL 未完整解析，从 APP_RAW 补充解析：
+        结构 11 E2 00 00 | C1 | 序号3 | 00 00 | 源MAC6 | 任务号 | 结果 | 长度
+        """
+        if not isinstance(cco_tei, str) or not re.fullmatch(
+            r"[0-9A-F]{3}", cco_tei.upper()
+        ):
+            raise ValueError("cco_tei 必须为三个大写十六进制字符")
+        cco = cco_tei.upper()
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, log_time, summary_json FROM frames
+                WHERE summary_json IS NOT NULL AND summary_json != ''
+                  AND summary_json LIKE '%00E2%'
+                """
+            ).fetchall()
+
+        for frame_id, log_time, summary_json in rows:
+            try:
+                simple = json.loads(summary_json)
+            except (ValueError, TypeError):
+                continue
+            if (simple.get("APP_ID") or "").upper() != "00E2":
+                continue
+            fields = self._e2_fields(simple)
+            finl_d = (simple.get("FINL_D") or "").upper()
+            ori_s = (simple.get("ORI_S") or "").upper()
+
+            if finl_d == cco:
+                # 上行应答：发往 CCO
+                raw = simple.get("APP_RAW") or ""
+                try:
+                    bs = bytes.fromhex(raw)
+                except (ValueError, TypeError):
+                    continue
+                if len(bs) < 19:
+                    continue
+                seq = bytes(bs[5:8])
+                mac = "".join(f"{b:02X}" for b in bs[10:16])
+                task_no = bs[16]
+                # 字段布局（用户真机解析确认）：
+                #   byte[16]=任务号；byte[18]=采集周期(min)；
+                #   byte[17] 组合位字段：bit0=启用/删除标志(0=删除,1=启用)，
+                #   bit1=结果(0=设置成功,1=设置失败)。
+                del_flag = "删除" if (bs[17] & 0x01) == 0x00 else "启用"
+                result = "失败" if ((bs[17] >> 1) & 0x01) == 0x01 else "成功"
+                period = str(bs[18])
+                yield "up", {
+                    "frame_id": frame_id,
+                    "log_time": log_time,
+                    "mac": mac,
+                    "seq": seq.hex().upper(),
+                    "task_no": str(task_no),
+                    "del_flag": del_flag,
+                    "period": period,
+                    "result": result,
+                    "app_raw": raw,
+                }
+            elif ori_s == cco and fields.get("启动/删除标志") == "删除":
+                # 下行删除配置：CCO 发出
+                yield "down_delete", {
+                    "frame_id": frame_id,
+                    "log_time": log_time,
+                    "mac": fields.get("目的MAC地址") or "",
+                    "seq": fields.get("报文序号") or "",
+                    "task_no": fields.get("任务号") or "",
+                    "app_raw": simple.get("APP_RAW") or "",
+                }
+
+    def delete_config_stats(self, cco_tei: str) -> dict:
+        """统计删除配置下发与上行应答（均按应用层去重）。
+
+        返回：
+          down_total / down_deduped  删除配置下发帧数（去重键 报文序号+目的MAC）
+          up_total / up_deduped      上行应答帧数（去重键 序号+源MAC）
+          up_success / up_fail       上行应答去重后成功/失败条数
+        """
+        down_total = 0
+        down_seen = set()
+        up_total = 0
+        up_seen = set()
+        up_success = 0
+        up_fail = 0
+        for kind, record in self._e2_records(cco_tei):
+            if kind == "down_delete":
+                down_total += 1
+                down_seen.add((record["seq"], record["mac"]))
+            else:
+                up_total += 1
+                key = (record["seq"], record["mac"])
+                if key not in up_seen:
+                    up_seen.add(key)
+                    if record["result"] == "成功":
+                        up_success += 1
+                    else:
+                        up_fail += 1
+        return {
+            "down_total": down_total,
+            "down_deduped": len(down_seen),
+            "up_total": up_total,
+            "up_deduped": len(up_seen),
+            "up_success": up_success,
+            "up_fail": up_fail,
+        }
+
+    def delete_config_details(self, cco_tei: str) -> dict:
+        """删除配置统计详情（去重后记录列表）。"""
+        down_seen = {}
+        up_seen = {}
+        for kind, record in self._e2_records(cco_tei):
+            if kind == "down_delete":
+                down_seen.setdefault((record["seq"], record["mac"]), record)
+            else:
+                up_seen.setdefault((record["seq"], record["mac"]), record)
+        return {
+            "down": sorted(down_seen.values(), key=lambda r: r["log_time"]),
+            "up": sorted(up_seen.values(), key=lambda r: r["log_time"]),
+        }
+
     def list_frames(self, offset=0, limit=100, query="") -> dict:
         if offset < 0:
             raise ValueError("offset 不能小于 0")

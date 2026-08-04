@@ -151,6 +151,115 @@ class LogFileServiceTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.service.index_file(Path(self.temp_dir.name) / "missing.txt")
 
+    def test_delete_config_stats_counts_and_dedupes_application_layer(self):
+        summaries = [
+            _del_config_summary(),  # 删除 seq=0001 mac=A
+            _del_config_summary(seq="0x0001", mac="11:11:50:00:00:66"),  # 同键重复(网络层重传)
+            _del_config_summary(seq="0x0002", mac="12:11:50:00:00:66"),  # 删除 seq=0002 mac=B
+            _del_config_summary(flag="启用"),  # 启用：不计
+            _del_config_summary(ori_s="002"),  # 其他 CCO：不计
+        ]
+        parser = FakeMinuteParserService(summaries)
+        service = LogFileService(parser, Path(self.temp_dir.name) / "del.sqlite3")
+        try:
+            directory, path = _write_log(
+                [LOG_LINE] * len(summaries)
+            )
+            try:
+                service.index_file(path)
+                stats = service.delete_config_stats("001")
+                self.assertEqual(stats["down_total"], 3)
+                self.assertEqual(stats["down_deduped"], 2)
+                self.assertEqual(stats["up_total"], 0)
+                self.assertEqual(stats["up_deduped"], 0)
+                self.assertEqual(stats["up_success"], 0)
+                self.assertEqual(stats["up_fail"], 0)
+            finally:
+                directory.cleanup()
+        finally:
+            service.close()
+
+    def test_delete_config_stats_counts_and_dedupes_upload_acks(self):
+        summaries = [
+            _e2_up_summary(flag="00", result="00"),  # 删除+成功
+            _e2_up_summary(flag="00", result="00"),  # 同键重复抓取：去重
+            _e2_up_summary(seq="039529", mac_bytes="121150000066",
+                           flag="00", result="01"),  # 删除+失败
+        ]
+        parser = FakeMinuteParserService(summaries)
+        service = LogFileService(parser, Path(self.temp_dir.name) / "up.sqlite3")
+        try:
+            directory, path = _write_log([LOG_LINE] * len(summaries))
+            try:
+                service.index_file(path)
+                stats = service.delete_config_stats("001")
+                self.assertEqual(stats["up_total"], 3)
+                self.assertEqual(stats["up_deduped"], 2)
+                self.assertEqual(stats["up_success"], 1)
+                self.assertEqual(stats["up_fail"], 1)
+                details = service.delete_config_details("001")
+                self.assertEqual(len(details["up"]), 2)
+                self.assertEqual(len(details["down"]), 0)
+                self.assertEqual(details["up"][0]["del_flag"], "删除")
+            finally:
+                directory.cleanup()
+        finally:
+            service.close()
+
+    def test_delete_config_stats_rejects_bad_tei(self):
+        with self.assertRaises(ValueError):
+            self.service.delete_config_stats("not-tei")
+
+
+def _e2_up_summary(flag="00", result="00", seq="039528",
+                   mac_bytes="111150000066", task="02", period="05"):
+    """构造一条发往 CCO（FINL_D=001）的 00E2 上行应答 simple 摘要。
+
+    APP_RAW 结构：11 E2 00 00 | C1 | 序号3 | 00 00 | 源MAC6 | 任务号 | 组合位 | 采集周期
+    组合位 byte[17]：bit0=启用/删除标志(0=删除,1=启用)，
+                     bit1=结果(0=设置成功,1=设置失败)。
+    """
+    byte17 = int(flag, 16) | (int(result, 16) << 1)
+    raw = f"11E20000C1{seq}0000{mac_bytes}{task}{byte17:02X}{period}"
+    return {
+        "FrmType": "分钟采集任务配置",
+        "BaseFrmType": "APS",
+        "APP_ID": "00E2",
+        "APP_RAW": raw,
+        "ORI_S": "03F",
+        "FINL_D": "001",
+        "application": {
+            "structure": "双模4-3",
+            "fields": [],
+            "nested": [],
+            "warnings": [],
+        },
+    }
+
+
+def _del_config_summary(ori_s="001", flag="删除", seq="0x0001",
+                        mac="11:11:50:00:00:66"):
+    """构造一条「分钟采集任务配置（0x00E2）- 启动/删除标志」的简单摘要。"""
+    return {
+        "FrmType": "分钟采集任务配置",
+        "BaseFrmType": "APS",
+        "APP_ID": "00E2",
+        "APP_RAW": "11E20000",
+        "ORI_S": ori_s,
+        "FINL_D": "03F",
+        "application": {
+            "structure": "双模4-3",
+            "fields": [
+                {"name": "报文序号", "value": seq, "raw": seq},
+                {"name": "目的MAC地址", "value": mac, "raw": mac},
+                {"name": "启动/删除标志", "value": flag, "raw": flag},
+                {"name": "任务号", "value": 2, "raw": 2},
+            ],
+            "nested": [],
+            "warnings": [],
+        },
+    }
+
 
 EXPECTED_MINUTE_COLUMNS = [
     "frame_id", "log_time", "time_seconds", "cco_tei", "station_key",

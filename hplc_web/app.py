@@ -330,6 +330,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
             periods = log_service.list_minute_periods(period_minutes, cco_tei)
+            delete_stats = log_service.delete_config_stats(cco_tei)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
@@ -338,10 +339,31 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
                 "total_periods": len(periods),
                 "report_count": sum(p["report_count"] for p in periods),
             },
+            "delete_config_stats": delete_stats,
             "filters": {
                 "period_minutes": period_minutes,
                 "cco_tei": cco_tei.upper(),
             },
+        }
+
+    @app.get("/api/logs/delete-config-details")
+    def delete_config_details(
+        cco_tei: str = Query("001", min_length=3, max_length=3,
+                             pattern=r"^[0-9A-Fa-f]{3}$"),
+    ):
+        """删除配置统计详情：去重后的下发明细与上行应答明细。"""
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            details = log_service.delete_config_details(cco_tei)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "down_count": len(details["down"]),
+            "up_count": len(details["up"]),
+            "down": details["down"],
+            "up": details["up"],
+            "filters": {"cco_tei": cco_tei.upper()},
         }
 
     @app.get("/api/logs/frames/{frame_id}")
