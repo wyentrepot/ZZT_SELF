@@ -393,6 +393,18 @@ class LogFileService:
         )
         return f'%"SNID": "{escaped}%'
 
+    def _append_time_range(self, conditions, parameters, start_time="", end_time="", column="log_time"):
+        start_bound = self._time_range_bound(start_time)
+        end_bound = self._time_range_bound(end_time, is_end=True)
+        if start_bound and end_bound and start_bound > end_bound:
+            raise ValueError("结束时间不能早于起始时间")
+        if start_bound:
+            conditions.append(f"{column} >= ?")
+            parameters.append(start_bound)
+        if end_bound:
+            conditions.append(f"{column} <= ?")
+            parameters.append(end_bound)
+
     def list_minute_periods(self, period_minutes=15, cco_tei="001", nid="") -> list:
         if not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440:
             raise ValueError("period_minutes 必须在 1 到 1440 之间")
@@ -466,7 +478,7 @@ class LogFileService:
             )
         return periods
 
-    def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001", nid=""):
+    def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001", nid="", start_time="", end_time=""):
         """按每个 STA 实际启用到删除成功之间的周期汇总分钟采集上报。
 
         划分周期以实际周期为准：有任务配置时按配置周期，否则按手工输入的
@@ -487,6 +499,7 @@ class LogFileService:
         if nid.strip():
             conditions.append("frames.summary_json LIKE ? ESCAPE '\\'")
             parameters.append(self._nid_like(nid))
+        self._append_time_range(conditions, parameters, start_time, end_time, "minute_reports.log_time")
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
@@ -597,7 +610,7 @@ class LogFileService:
             for f in application.get("fields", [])
         }
 
-    def _e2_records(self, cco_tei: str, nid: str = ""):
+    def _e2_records(self, cco_tei: str, nid: str = "", start_time="", end_time=""):
         """遍历 00E2 帧，产出 (kind, 记录) ；kind ∈ {down_delete, up}。
 
         下行删除：报文源（ORI_S）为指定 CCO 且「启动/删除标志 = 删除」；
@@ -622,6 +635,8 @@ class LogFileService:
             conditions.append("summary_json LIKE ? ESCAPE '\\'")
             parameters.append(self._nid_like(nid))
 
+        self._append_time_range(conditions, parameters, start_time, end_time)
+
         with self._connect() as connection:
             rows = connection.execute(
                 f"""
@@ -643,7 +658,7 @@ class LogFileService:
             finl_d = (simple.get("FINL_D") or "").upper()
             ori_s = (simple.get("ORI_S") or "").upper()
 
-            if finl_d == cco:
+            if finl_d == cco and ori_s and ori_s != cco:
                 # 上行应答：发往 CCO
                 raw = simple.get("APP_RAW") or ""
                 try:
@@ -673,7 +688,12 @@ class LogFileService:
                     "result": result,
                     "app_raw": raw,
                 }
-            elif ori_s == cco and fields.get("启动/删除标志") in {"删除", "启用"}:
+            elif (
+                ori_s == cco
+                and finl_d
+                and finl_d != cco
+                and fields.get("启动/删除标志") in {"删除", "启用"}
+            ):
                 # 下行任务配置：CCO 发出
                 yield "down_config", {
                     "frame_id": frame_id,
@@ -809,11 +829,11 @@ class LogFileService:
             "derived_period_minutes": derived_period,
         }
 
-    def _task_config_records(self, cco_tei: str, nid: str = ""):
+    def _task_config_records(self, cco_tei: str, nid: str = "", start_time="", end_time=""):
         """产出带绝对日志时间的 00E2 任务配置记录。"""
         day_offset = 0
         previous_ms = None
-        for kind, record in self._e2_records(cco_tei, nid):
+        for kind, record in self._e2_records(cco_tei, nid, start_time, end_time):
             clock_ms = self._parse_time_ms(record["log_time"])
             if clock_ms is None:
                 absolute_ms = None
@@ -828,22 +848,22 @@ class LogFileService:
             record["absolute_ms"] = absolute_ms
             yield kind, record
 
-    def list_task_config_numbers(self, cco_tei: str, nid: str = "") -> list[str]:
+    def list_task_config_numbers(self, cco_tei: str, nid: str = "", start_time="", end_time="") -> list[str]:
         """返回当前范围内下发或上报过的任务号。"""
         task_numbers = {
             record["task_no"]
-            for _, record in self._task_config_records(cco_tei, nid)
+            for _, record in self._task_config_records(cco_tei, nid, start_time, end_time)
             if record["task_no"]
         }
         return sorted(task_numbers, key=lambda value: (not value.isdigit(), int(value) if value.isdigit() else value))
 
-    def task_config_summary(self, cco_tei: str, task_no: str, nid: str = "") -> dict:
+    def task_config_summary(self, cco_tei: str, task_no: str, nid: str = "", start_time="", end_time="") -> dict:
         """按任务号汇总 STA 下发及应答状态。"""
         requested_task = self._task_key(task_no)
         down_by_sta = {}
         up_by_sta = {}
         observed_ms = None
-        for kind, record in self._task_config_records(cco_tei, nid):
+        for kind, record in self._task_config_records(cco_tei, nid, start_time, end_time):
             if record["absolute_ms"] is not None:
                 observed_ms = max(observed_ms or record["absolute_ms"], record["absolute_ms"])
             if record["task_no"] != requested_task or not record["mac"]:
@@ -880,8 +900,31 @@ class LogFileService:
             else:
                 status = "等待应答"
                 counts["pending_sta_count"] += 1
+            frames = []
+            if down:
+                frames.append({
+                    "direction": "downlink",
+                    "label": f"下行 {cco_tei.upper()}→STA",
+                    "log_time": down["log_time"],
+                    "app_raw": down.get("app_raw", ""),
+                    "frame_id": down["frame_id"],
+                })
+            frames.extend({
+                "direction": "uplink",
+                "label": f"上行 STA→{cco_tei.upper()}",
+                "log_time": reply["log_time"],
+                "app_raw": reply.get("app_raw", ""),
+                "frame_id": reply["frame_id"],
+            } for reply in replies)
+            frames.sort(key=lambda frame: frame["frame_id"])
             rows.append({
                 "mac": mac,
+                "directions": "；".join(
+                    direction for direction, present in (
+                        (f"下行 {cco_tei.upper()}→STA", down is not None),
+                        (f"上行 STA→{cco_tei.upper()}", bool(replies)),
+                    ) if present
+                ),
                 "operation": down["operation"] if down else (latest_reply or {}).get("del_flag", ""),
                 "sent_time": down["log_time"] if down else "",
                 "reply_time": (latest_reply or {}).get("log_time", ""),
@@ -889,6 +932,7 @@ class LogFileService:
                 "sequence": down["seq"] if down else (latest_reply or {}).get("seq", ""),
                 "app_raw": (down or latest_reply or {}).get("app_raw", ""),
                 "frame_id": (down or latest_reply or {}).get("frame_id"),
+                "frames": frames,
             })
         return {"task_no": requested_task, **counts, "stas": rows}
 
@@ -955,11 +999,29 @@ class LogFileService:
         selected = cycles[cycle_index if cycle_index is not None else len(cycles) - 1] if cycles else None
         return {"task_no": task, "cycles": cycles, "cycle": selected}
 
-    def list_frames(self, offset=0, limit=100, query="", nid="") -> dict:
+    @staticmethod
+    def _time_range_bound(value, is_end=False):
+        if not value:
+            return ""
+        match = re.fullmatch(r"(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?", value)
+        if not match:
+            raise ValueError("时间必须是 HH:MM:SS 或 HH:MM:SS.mmm 格式")
+        hour, minute, second, milli = match.groups()
+        if int(hour) > 23 or int(minute) > 59 or int(second) > 59:
+            raise ValueError("时间不在有效的时分秒范围内")
+        return f"{hour}:{minute}:{second}.{milli or ('999' if is_end else '000')}"
+
+    def list_frames(
+        self, offset=0, limit=100, query="", nid="", start_time="", end_time=""
+    ) -> dict:
         if offset < 0:
             raise ValueError("offset 不能小于 0")
         if limit < 1 or limit > self.MAX_PAGE_SIZE:
             raise ValueError(f"limit 必须在 1 到 {self.MAX_PAGE_SIZE} 之间")
+        start_bound = self._time_range_bound(start_time)
+        end_bound = self._time_range_bound(end_time, is_end=True)
+        if start_bound and end_bound and start_bound > end_bound:
+            raise ValueError("结束时间不能早于起始时间")
 
         conditions = []
         parameters = []
@@ -973,6 +1035,12 @@ class LogFileService:
             # summary_json 中的 SNID 键即 24 位网络标识（NID）
             conditions.append("summary_json LIKE ? ESCAPE '\\'")
             parameters.append(self._nid_like(nid))
+        if start_bound:
+            conditions.append("log_time >= ?")
+            parameters.append(start_bound)
+        if end_bound:
+            conditions.append("log_time <= ?")
+            parameters.append(end_bound)
         where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         with self._connect() as connection:
@@ -1002,6 +1070,7 @@ class LogFileService:
                     "parse_error": row["parse_error"],
                 }
             )
+
         return {"items": items, "offset": offset, "limit": limit, "total": total}
 
     def get_frame(self, frame_id: int) -> dict:

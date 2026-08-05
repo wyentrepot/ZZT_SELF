@@ -166,6 +166,28 @@ class LogFileServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.service.list_frames(offset=0, limit=501)
 
+    def test_list_frames_filters_by_selected_time_range(self):
+        lines = [
+            b"[1][08:59:59.999]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+            b"[2][09:00:00.000]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+            b"[3][09:30:00.500]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+            b"[4][10:00:00.000]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+        ]
+        directory, path = _write_log(lines)
+        self.addCleanup(directory.cleanup)
+        service = LogFileService(
+            FakeParserService(), Path(self.temp_dir.name) / "time-range.sqlite3"
+        )
+        self.addCleanup(service.close)
+        service.index_file(path)
+
+        page = service.list_frames(start_time="09:00:00", end_time="09:30:00")
+
+        self.assertEqual(page["total"], 2)
+        self.assertEqual([item["sequence"] for item in page["items"]], ["2", "3"])
+        with self.assertRaises(ValueError):
+            service.list_frames(start_time="10:00:00", end_time="09:00:00")
+
     def test_list_frames_filters_by_nid(self):
         directory, path = _write_log([LOG_LINE, LOG_LINE, LOG_LINE])
         self.addCleanup(directory.cleanup)
@@ -318,7 +340,16 @@ class LogFileServiceTests(unittest.TestCase):
                 self.assertEqual(data["pending_sta_count"], 1)
                 self.assertEqual(data["unissued_report_sta_count"], 1)
                 statuses = {row["mac"]: row["status"] for row in data["stas"]}
+                directions = {row["mac"]: row["directions"] for row in data["stas"]}
                 self.assertEqual(statuses["111150000002"], "成功")
+                self.assertEqual(
+                    directions["111150000002"], "下行 001→STA；上行 STA→001"
+                )
+                sta_two = next(row for row in data["stas"] if row["mac"] == "111150000002")
+                self.assertEqual(len(sta_two["frames"]), 3)
+                self.assertEqual(sta_two["frames"][0]["direction"], "downlink")
+                self.assertEqual(sta_two["frames"][1]["direction"], "uplink")
+                self.assertEqual(sta_two["frames"][1]["log_time"], "00:01:31.000")
                 self.assertEqual(statuses["111150000003"], "失败")
                 self.assertEqual(statuses["111150000004"], "等待应答")
                 self.assertEqual(statuses["111150000099"], "未下发")

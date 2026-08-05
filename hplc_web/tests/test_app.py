@@ -31,12 +31,14 @@ class FakeLogService:
     def status(self):
         return {"state": "completed", "frame_count": 12, "progress": 1.0}
 
-    def list_frames(self, offset=0, limit=100, query="", nid=""):
+    def list_frames(self, offset=0, limit=100, query="", nid="", start_time="", end_time=""):
         self.last_frames_query = {
             "offset": offset,
             "limit": limit,
             "query": query,
             "nid": nid,
+            "start_time": start_time,
+            "end_time": end_time,
         }
         return {
             "items": [{"id": 1, "sequence": "406727", "summary": {"帧类型": "SOF"}}],
@@ -121,6 +123,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["picker_api_revision"], 2)
         self.assertEqual(response.json()["minute_analysis_api_revision"], 3)
+        self.assertEqual(response.json()["frame_filter_api_revision"], 2)
 
     def test_parse_endpoint_returns_results(self):
         response = self.client.post("/api/parse", json={"hex": "7E 7E"})
@@ -159,6 +162,15 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.log_service.last_frames_query["nid"], "00000123")
         self.assertEqual(self.log_service.last_frames_query["query"], "")
+
+    def test_frames_endpoint_passes_time_range_filter(self):
+        response = self.client.get(
+            "/api/logs/frames?start_time=09:00:00&end_time=10:30:00"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.log_service.last_frames_query["start_time"], "09:00:00")
+        self.assertEqual(self.log_service.last_frames_query["end_time"], "10:30:00")
 
     def test_returns_selected_frame_detail(self):
         response = self.client.get("/api/logs/frames/7")

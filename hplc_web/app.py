@@ -236,6 +236,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
             **service.version(),
             "picker_api_revision": 2,
             "minute_analysis_api_revision": 3,
+            "frame_filter_api_revision": 2,
         }
 
     @app.post("/api/parse")
@@ -313,12 +314,19 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         limit: int = Query(100, ge=1, le=500),
         query: str = Query("", max_length=100),
         nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
             return log_service.list_frames(
-                offset=offset, limit=limit, query=query, nid=nid
+                offset=offset,
+                limit=limit,
+                query=query,
+                nid=nid,
+                start_time=start_time,
+                end_time=end_time,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -373,9 +381,11 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         }
 
     @app.get("/api/logs/task-minute-analysis")
-    def task_minute_analysis(task_no: str = Query(..., pattern=r"^\d{1,3}$"), period_minutes: int | None = Query(None, ge=1, le=1440), cco_tei: str = Query("001", pattern=r"^[0-9A-Fa-f]{3}$"), nid: str = Query("", max_length=16)):
+    def task_minute_analysis(task_no: str = Query(..., pattern=r"^\d{1,3}$"), period_minutes: int | None = Query(None, ge=1, le=1440), cco_tei: str = Query("001", pattern=r"^[0-9A-Fa-f]{3}$"), nid: str = Query("", max_length=16), start_time: str = Query("", max_length=12), end_time: str = Query("", max_length=12)):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
+        if start_time or end_time:
+            return log_service.list_task_minute_periods(task_no, period_minutes, cco_tei, nid, start_time, end_time)
         return log_service.list_task_minute_periods(task_no, period_minutes, cco_tei, nid)
 
     @app.get("/api/logs/task-derived-period")
@@ -384,6 +394,8 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         cco_tei: str = Query("001", min_length=3, max_length=3,
                              pattern=r"^[0-9A-Fa-f]{3}$"),
         nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
     ):
         """任务在配置推导下的实际周期（切换任务号时前端据此更新周期输入框）。"""
         if log_service is None:
@@ -395,9 +407,13 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         cco_tei: str = Query("001", min_length=3, max_length=3,
                              pattern=r"^[0-9A-Fa-f]{3}$"),
         nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
+        if start_time or end_time:
+            return {"tasks": log_service.list_task_config_numbers(cco_tei, nid, start_time, end_time)}
         return {"tasks": log_service.list_task_config_numbers(cco_tei, nid)}
 
     @app.get("/api/logs/task-config-summary")
@@ -406,11 +422,14 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         cco_tei: str = Query("001", min_length=3, max_length=3,
                              pattern=r"^[0-9A-Fa-f]{3}$"),
         nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
-            data = log_service.task_config_summary(cco_tei, task_no, nid)
+            data = (log_service.task_config_summary(cco_tei, task_no, nid, start_time, end_time)
+                    if start_time or end_time else log_service.task_config_summary(cco_tei, task_no, nid))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {

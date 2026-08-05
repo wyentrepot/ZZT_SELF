@@ -1,4 +1,4 @@
-const PAGE_SIZE = 100;
+const DEFAULT_PAGE_SIZE = 100;
 const SAMPLE_PATH = "hplc_web\\tests\\data\\gw_log_sample.txt";
 
 const state = {
@@ -6,10 +6,14 @@ const state = {
   total: 0,
   query: "",
   nid: "",
+  startTime: "",
+  endTime: "",
+  pageSize: DEFAULT_PAGE_SIZE,
   selectedId: null,
   pollTimer: null,
   lastFrameCount: -1,
   detail: null,
+  pageCache: new Map(),
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -29,10 +33,18 @@ const elements = {
   rows: $("#frame-rows"),
   filter: $("#frame-filter"),
   nidFilter: $("#nid-filter"),
+  startTime: $("#start-time-filter"),
+  endTime: $("#end-time-filter"),
+  pageSize: $("#page-size"),
   prev: $("#prev-page"),
   next: $("#next-page"),
   pageNumber: $("#page-number"),
   pageSummary: $("#page-summary"),
+  pageJumpInput: $("#page-jump-input"),
+  pageJumpButton: $("#page-jump-button"),
+  activeFilterSummary: $("#active-filter-summary"),
+  activeFilterChips: $("#active-filter-chips"),
+  pageCacheHint: $("#page-cache-hint"),
   detailEmpty: $("#detail-empty"),
   detailContent: $("#detail-content"),
   detailTabs: document.querySelectorAll(".detail-tab"),
@@ -362,25 +374,92 @@ function renderFrames(page) {
     elements.rows.append(row);
   }
 
-  const currentPage = Math.floor(state.offset / PAGE_SIZE) + 1;
-  const pageCount = Math.max(1, Math.ceil(state.total / PAGE_SIZE));
+  const currentPage = Math.floor(state.offset / state.pageSize) + 1;
+  const pageCount = Math.max(1, Math.ceil(state.total / state.pageSize));
+  const range = state.startTime || state.endTime
+    ? ` · ${state.startTime || "00:00:00"}–${state.endTime || "23:59:59"}`
+    : "";
   elements.pageNumber.textContent = `第 ${currentPage} / ${pageCount} 页`;
-  elements.pageSummary.textContent = `共 ${state.total.toLocaleString()} 帧 · 每页 ${PAGE_SIZE}`;
+  elements.pageSummary.textContent = `共 ${state.total.toLocaleString()} 帧${range} · 每页 ${state.pageSize}`;
   elements.prev.disabled = state.offset === 0;
-  elements.next.disabled = state.offset + PAGE_SIZE >= state.total;
+  elements.next.disabled = state.offset + state.pageSize >= state.total;
+  elements.pageJumpInput.value = String(currentPage);
+  elements.pageJumpInput.max = String(pageCount);
+  elements.pageJumpInput.disabled = false;
+  elements.pageJumpButton.disabled = false;
+}
+
+function updateActiveFilterSummary() {
+  const nid = state.nid ? `NID ${state.nid}` : "全部 NID";
+  const range = state.startTime || state.endTime
+    ? `${state.startTime || "00:00:00"}–${state.endTime || "23:59:59"}` : "全时段";
+  elements.activeFilterSummary.textContent = `当前条件：${nid} · ${range}（适用于所有分析）`;
+  renderActiveFilterChips();
+  document.querySelectorAll(".analysis-scope").forEach((node) => {
+    node.textContent = `当前条件：${nid} · ${range}`;
+  });
+}
+
+function renderActiveFilterChips() {
+  const host = elements.activeFilterChips;
+  if (!host) return;
+  host.replaceChildren();
+  const filters = [
+    ["NID", state.nid, () => { elements.nidFilter.value = ""; }],
+    ["起始", state.startTime, () => { elements.startTime.value = ""; }],
+    ["结束", state.endTime, () => { elements.endTime.value = ""; }],
+  ];
+  filters.filter(([, value]) => value).forEach(([label, value, clear]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.textContent = `${label} ${value} ×`;
+    chip.addEventListener("click", () => { clear(); elements.filter.click(); });
+    host.append(chip);
+  });
+}
+
+function setFrameLoading(loading) {
+  document.querySelector("#frames-data .list-panel")?.classList.toggle("is-loading", loading);
+}
+
+function jumpToPage() {
+  const maximum = Math.max(1, Math.ceil(state.total / state.pageSize));
+  const requested = parseInt(elements.pageJumpInput.value, 10) || 1;
+  const target = Math.min(maximum, Math.max(1, requested));
+  elements.pageJumpInput.value = String(target);
+  state.offset = (target - 1) * state.pageSize;
+  loadFrames();
 }
 
 async function loadFrames() {
   const params = new URLSearchParams({
-    offset: state.offset,
-    limit: PAGE_SIZE,
     query: state.query,
     nid: state.nid,
+    start_time: state.startTime,
+    end_time: state.endTime,
+    offset: state.offset,
+    limit: state.pageSize,
   });
+  const cacheKey = params.toString();
+  const cached = state.pageCache.get(cacheKey);
+  if (cached) {
+    setFrameLoading(true);
+    renderFrames(cached);
+    elements.pageCacheHint.textContent = `已缓存 · ${state.pageCache.size} 页`;
+    requestAnimationFrame(() => setFrameLoading(false));
+    return;
+  }
+  setFrameLoading(true);
   try {
-    renderFrames(await request(`/api/logs/frames?${params}`));
+    const page = await request(`/api/logs/frames?${params}`);
+    state.pageCache.set(cacheKey, page);
+    renderFrames(page);
+    elements.pageCacheHint.textContent = `${state.pageCache.size} 页已缓存`;
   } catch (error) {
     showError(error.message);
+  } finally {
+    setFrameLoading(false);
   }
 }
 
@@ -677,7 +756,11 @@ $("#parse-button").addEventListener("click", parseSingleFrame);
 $("#filter-button").addEventListener("click", () => {
   state.query = elements.filter.value.trim();
   state.nid = elements.nidFilter.value.trim().toUpperCase();
+  state.startTime = elements.startTime.value;
+  state.endTime = elements.endTime.value;
   state.offset = 0;
+  state.pageCache.clear();
+  updateActiveFilterSummary();
   loadFrames();
 });
 elements.filter.addEventListener("keydown", (event) => {
@@ -687,12 +770,26 @@ elements.nidFilter.addEventListener("keydown", (event) => {
   if (event.key === "Enter") $("#filter-button").click();
 });
 elements.prev.addEventListener("click", () => {
-  state.offset = Math.max(0, state.offset - PAGE_SIZE);
+  state.offset = Math.max(0, state.offset - state.pageSize);
   loadFrames();
 });
 elements.next.addEventListener("click", () => {
-  state.offset += PAGE_SIZE;
+  state.offset += state.pageSize;
   loadFrames();
+});
+elements.pageJumpButton.addEventListener("click", jumpToPage);
+elements.pageJumpInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") jumpToPage();
+});
+elements.pageSize.addEventListener("change", () => {
+  const value = Math.min(500, Math.max(1, parseInt(elements.pageSize.value, 10) || DEFAULT_PAGE_SIZE));
+  elements.pageSize.value = String(value);
+  state.pageSize = value;
+  state.offset = 0;
+  loadFrames();
+});
+elements.pageSize.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") elements.pageSize.dispatchEvent(new Event("change"));
 });
 $("#copy-detail").addEventListener("click", async () => {
   if (!state.detail) return;
@@ -702,6 +799,7 @@ $("#copy-detail").addEventListener("click", async () => {
 });
 
 elements.path.value = localStorage.getItem("hplc-log-path") || "";
+updateActiveFilterSummary();
 fetch("/api/version")
   .then((response) => response.json())
   .then((data) => {
@@ -796,6 +894,8 @@ async function loadMinuteAnalysis() {
     task_no: minuteElements.task.value.trim(),
     cco_tei: tei,
     nid: state.nid,
+    start_time: state.startTime,
+    end_time: state.endTime,
   });
   if (minuteElements.source.value === "manual") params.set("period_minutes", minuteElements.period.value);
   minuteElements.error.hidden = true;
@@ -813,7 +913,7 @@ async function loadMinuteAnalysis() {
 
 async function loadMinuteTaskList() {
   const tei = (minuteElements.ccoTei.value.trim() || "001").toUpperCase();
-  const params = new URLSearchParams({ cco_tei: tei, nid: state.nid });
+  const params = new URLSearchParams({ cco_tei: tei, nid: state.nid, start_time: state.startTime, end_time: state.endTime });
   try {
     const data = await request(`/api/logs/task-config-tasks?${params}`);
     minuteElements.taskList.replaceChildren();
@@ -880,6 +980,8 @@ async function loadTaskConfigTasks() {
   const params = new URLSearchParams({
     cco_tei: tei,
     nid: state.nid,
+    start_time: state.startTime,
+    end_time: state.endTime,
   });
   minuteElements.taskConfigError.hidden = true;
   minuteElements.taskConfigSelect.disabled = true;
@@ -910,6 +1012,8 @@ async function loadTaskConfigSummary() {
     cco_tei: minuteElements.taskConfigTei.value,
     task_no: taskNo,
     nid: state.nid,
+    start_time: state.startTime,
+    end_time: state.endTime,
   });
   minuteElements.taskConfigError.hidden = true;
   try {
@@ -956,7 +1060,7 @@ function renderTaskConfigRows() {
   const body = minuteElements.taskConfigStaTable;
   body.replaceChildren();
   if (!taskConfigRows.length) {
-    body.append(emptyRow(6, "该任务暂无 STA 记录"));
+    body.append(emptyRow(7, "该任务暂无 STA 记录"));
     return;
   }
   const rows = [...taskConfigRows].sort((a, b) => taskConfigMacAscending ? a.mac.localeCompare(b.mac) : b.mac.localeCompare(a.mac));
@@ -968,7 +1072,7 @@ function renderTaskConfigRows() {
     const statusCell = td(row.status);
     statusCell.className = row.status === "成功" ? "status-success"
       : ["失败", "未应答"].includes(row.status) ? "status-fail" : "";
-    tr.append(macCell, td(row.operation), td(row.sent_time), td(row.reply_time),
+    tr.append(macCell, td(row.directions), td(row.operation), td(row.sent_time), td(row.reply_time),
       statusCell, td(row.sequence));
     tr.addEventListener("click", () => toggleTaskConfigInlineDetail(tr, row));
     body.append(tr);
@@ -982,9 +1086,22 @@ function toggleTaskConfigInlineDetail(rowElement, record) {
   const detail = document.createElement("tr");
   detail.className = "task-config-inline-detail";
   const cell = document.createElement("td");
-  cell.colSpan = 6;
-  const raw = record.app_raw || "";
-  cell.textContent = `${record.mac} · ${record.status}\nAPS 原文：${raw ? formatRawHex(raw) : "（无 APP_RAW）"}`;
+  cell.colSpan = 7;
+  const title = document.createElement("div");
+  title.textContent = `${record.mac} · ${record.status}`;
+  cell.append(title);
+  for (const frame of record.frames || []) {
+    const item = document.createElement("div");
+    item.className = `task-config-frame ${frame.direction}`;
+    const colors = frame.direction === "downlink"
+      ? { border: "#4dd27a", text: "#8af0a9", background: "rgba(77, 210, 122, .16)" }
+      : { border: "#f2c14e", text: "#ffe08a", background: "rgba(242, 193, 78, .16)" };
+    item.style.setProperty("border-left-color", colors.border);
+    item.style.setProperty("color", colors.text);
+    item.style.setProperty("background-color", colors.background);
+    item.textContent = `${frame.label} · ${frame.log_time}\nAPS 原文：${frame.app_raw ? formatRawHex(frame.app_raw) : "（无 APP_RAW）"}`;
+    cell.append(item);
+  }
   detail.append(cell); rowElement.after(detail);
 }
 

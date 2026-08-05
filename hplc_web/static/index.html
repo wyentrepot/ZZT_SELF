@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>国网 HPLC 日志解析台</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=task-config-frame-colors-v2">
 </head>
 <body>
   <main class="app-shell">
@@ -30,6 +30,15 @@
       <button class="view-tab" type="button" role="tab"
         data-view="delete-config" aria-selected="false">任务配置统计</button>
     </nav>
+
+    <section class="active-filter-bar" aria-label="全局分析筛选条件">
+      <label><span>全局 NID</span><input id="nid-filter" type="search" placeholder="全部网络（如 00000123）"></label>
+      <label><span>起始时间</span><input id="start-time-filter" type="time" step="1"></label>
+      <label><span>结束时间</span><input id="end-time-filter" type="time" step="1"></label>
+      <button id="filter-button" class="secondary-button" type="button">应用筛选</button>
+      <output id="active-filter-summary">当前条件：全部 NID · 全时段</output>
+      <div id="active-filter-chips" class="active-filter-chips" aria-live="polite"></div>
+    </section>
 
     <section id="frames-view" class="operation-panel" aria-label="日志操作区">
       <div class="panel-title-row">
@@ -90,8 +99,10 @@
           </div>
           <div class="search-group">
             <input id="frame-filter" type="search" placeholder="筛选序号、时间或解析字段">
-            <input id="nid-filter" type="search" placeholder="按 NID 筛选（如 00000123）">
-            <button id="filter-button" class="secondary-button" type="button">筛选</button>
+            <label class="filter-control">
+              <span>每页帧数</span>
+              <input id="page-size" type="number" min="1" max="500" value="100" title="按帧分页时每页显示的帧数">
+            </label>
           </div>
         </div>
 
@@ -116,10 +127,15 @@
         </div>
 
         <div class="pagination">
-          <span id="page-summary">0 帧</span>
+          <span id="page-summary">0 帧</span><span id="page-cache-hint" class="page-cache-hint">未缓存</span>
           <div>
             <button id="prev-page" class="page-button" type="button" disabled>上一页</button>
             <span id="page-number">第 1 页</span>
+            <label class="page-jump-control" for="page-jump-input">
+              跳至
+              <input id="page-jump-input" type="number" min="1" value="1" inputmode="numeric" aria-label="跳转页码">
+            </label>
+            <button id="page-jump-button" class="page-button" type="button" disabled>跳转</button>
             <button id="next-page" class="page-button" type="button" disabled>下一页</button>
           </div>
         </div>
@@ -199,6 +215,7 @@
 
         <div id="minute-error" class="error-banner" role="alert" hidden></div>
         <p id="minute-nid-hint" class="nid-hint" hidden></p>
+        <p id="minute-filter-scope" class="analysis-scope">当前条件：全部 NID · 全时段</p>
 
         <div class="table-shell">
           <table>
@@ -252,6 +269,7 @@
 
       <div id="task-config-error" class="error-banner" role="alert" hidden></div>
       <p id="task-config-nid-hint" class="nid-hint" hidden></p>
+      <p id="task-config-filter-scope" class="analysis-scope">当前条件：全部 NID · 全时段</p>
 
       <div id="task-config-stats" class="minute-delete-stats" hidden>
         <div class="delete-stats-header">
@@ -266,6 +284,11 @@
           <div class="stat-item"><span id="task-pending-count" class="stat-value">0</span><span class="stat-label">等待应答</span></div>
           <div class="stat-item"><span id="task-unissued-count" class="stat-value">0</span><span class="stat-label">未下发上报</span></div>
         </div>
+        <div id="task-config-status-legend" class="status-legend" aria-label="状态图例">
+          <span><i class="legend-dot success"></i>成功</span>
+          <span><i class="legend-dot fail"></i>失败 / 未应答</span>
+          <span><i class="legend-dot pending"></i>等待处理</span>
+        </div>
       </div>
 
       <div class="task-config-workspace">
@@ -277,6 +300,7 @@
           <thead>
             <tr>
               <th><button id="task-config-mac-sort" class="table-sort" type="button">STA MAC ↑</button></th>
+              <th>方向</th>
               <th>配置类型</th>
               <th>最近下发时间</th>
               <th>应答时间</th>
@@ -285,7 +309,7 @@
             </tr>
           </thead>
           <tbody id="task-config-sta-table">
-            <tr class="empty-row"><td colspan="6">暂无数据</td></tr>
+            <tr class="empty-row"><td colspan="7">暂无数据</td></tr>
           </tbody>
         </table>
       </div>
@@ -324,6 +348,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=task-config-frame-colors-v2"></script>
 </body>
 </html>

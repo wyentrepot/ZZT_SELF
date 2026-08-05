@@ -150,6 +150,35 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("nid: state.nid", js)
         self.assertIn('nid: state.nid,', js)
 
+    def test_time_range_controls_replace_pagination_modes(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="start-time-filter"', html)
+        self.assertIn('id="end-time-filter"', html)
+        self.assertIn('type="time"', html)
+        self.assertIn('step="1"', html)
+        self.assertNotIn('id="page-mode"', html)
+        self.assertIn('id="page-size"', html)
+        self.assertIn('startTime: $("#start-time-filter")', js)
+        self.assertIn('endTime: $("#end-time-filter")', js)
+        self.assertIn('pageSize: $("#page-size")', js)
+        self.assertIn('start_time: state.startTime', js)
+        self.assertIn('end_time: state.endTime', js)
+        self.assertIn(".filter-control", css)
+
+    def test_pagination_supports_direct_page_jump(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="page-jump-input"', html)
+        self.assertIn('id="page-jump-button"', html)
+        self.assertIn('pageJumpInput: $("#page-jump-input")', js)
+        self.assertIn('pageJumpButton: $("#page-jump-button")', js)
+        self.assertIn("function jumpToPage()", js)
+        self.assertIn("state.offset = (target - 1) * state.pageSize", js)
+
     def test_all_analyses_carry_global_nid_filter(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
@@ -172,16 +201,44 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("/api/logs/task-config-tasks", js)
         self.assertIn("/api/logs/task-config-summary", js)
         self.assertIn("renderTaskConfigSummary", js)
+        self.assertIn("方向", html)
+        self.assertIn("row.directions", js)
 
     def test_task_config_rows_support_mac_sort_and_inline_details(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('id="task-config-mac-sort"', html)
+        self.assertIn('/static/app.js?v=task-config-frame-colors-v2', html)
         self.assertNotIn('id="task-config-raw"', html)
         self.assertIn("task-no-response-mac", js)
         self.assertIn("task-config-inline-detail", js)
+        self.assertIn("record.frames", js)
+        self.assertIn("task-config-frame", js)
+        self.assertIn("frame.direction", js)
+        self.assertIn("item.style.setProperty", js)
+        self.assertIn(".task-config-frame.downlink", css)
+        self.assertIn(".task-config-frame.uplink", css)
         self.assertIn("未应答 STA", js)
+
+    def test_global_analysis_filter_context_and_cached_page_feedback_are_present(self):
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="active-filter-summary"', html)
+        self.assertIn('id="active-filter-chips"', html)
+        self.assertIn('id="minute-filter-scope"', html)
+        self.assertIn('id="task-config-filter-scope"', html)
+        self.assertIn('id="task-config-status-legend"', html)
+        self.assertIn('id="page-cache-hint"', html)
+        self.assertIn('id="nid-filter"', html)
+        self.assertIn("updateActiveFilterSummary", js)
+        self.assertIn("renderActiveFilterChips", js)
+        self.assertIn("pageCache", js)
+        self.assertIn("setFrameLoading", js)
+        self.assertIn(".list-panel.is-loading", css)
 
     def test_js_summarizes_minute_report_data_status(self):
         js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
