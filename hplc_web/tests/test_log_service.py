@@ -524,6 +524,71 @@ class MinuteReportTests(unittest.TestCase):
         self.assertEqual(second["expected_count"], 2)
         self.assertEqual(second["missing_stas"], ["111150000002"])
         self.assertEqual(second["reports"][0]["expected_freeze_time"], "10:00:00.000")
+        # 划分周期以实际周期为准：窗口跨度、周期与任务级推导周期
+        self.assertEqual(first["description"], "10:00:00.000 - 10:05:00.000")
+        self.assertEqual(first["period_minutes"], 5)
+        self.assertEqual(first["deduped_app_count"], 1)
+        self.assertEqual(result["derived_period_minutes"], 5)
+
+    def test_task_periods_dedup_same_app_raw_and_keep_freeze_verdict(self):
+        summaries = [
+            _del_config_summary(flag="启用", mac="11:11:50:00:00:01", task=2, period=5),
+            _e4_summary(source_mac="111150000001", task=2,
+                        freeze_time="2026-07-31 09:55:00"),
+            _e4_summary(source_mac="111150000001", task=2,
+                        freeze_time="2026-07-31 09:55:00"),
+            _e4_summary(source_mac="111150000001", task=2,
+                        freeze_time="2026-07-31 09:55:00"),
+        ]
+        # 第 1、2 帧是同一上报被抓两次（APP_RAW 相同）；
+        # 第 2 帧冻结时刻错误，但去重后应取第 1 帧的判定。
+        summaries[1]["APP_RAW"] = "11E40000A1"
+        summaries[2]["APP_RAW"] = "11E40000A1"
+        summaries[2]["application"]["fields"][5]["value"] = "2026-07-31 09:56:00"
+        summaries[3]["APP_RAW"] = "11E40000B2"
+        directory, path = _write_log([
+            _log_line_at("10:00:00.000"),
+            _log_line_at("10:01:00.000"), _log_line_at("10:02:00.000"),
+            _log_line_at("10:03:00.000"),
+        ])
+        self.addCleanup(directory.cleanup)
+        service = self._service(summaries)
+
+        service.index_file(path)
+        result = service.list_task_minute_periods("2", cco_tei="001")
+
+        self.assertEqual(result["source"], "configured")
+        self.assertEqual(result["derived_period_minutes"], 5)
+        self.assertEqual(len(result["periods"]), 1)
+        period = result["periods"][0]
+        self.assertEqual(period["description"], "10:00:00.000 - 10:05:00.000")
+        self.assertEqual(period["period_minutes"], 5)
+        self.assertEqual(period["report_count"], 3)          # 原始帧数全部保留
+        self.assertEqual(period["received_sta_count"], 1)    # 按 STA 去重
+        self.assertEqual(period["deduped_app_count"], 2)     # 相同 APP_RAW 只算一次
+        # 冻结判定基于去重后帧：重复帧的错误冻结不计入
+        self.assertEqual(period["freeze_ok_count"], 2)
+        self.assertEqual(period["freeze_error_count"], 0)
+        self.assertEqual(len(period["reports"]), 3)          # 明细保留全部帧
+
+    def test_task_derived_period_returns_configured_cycle_or_manual(self):
+        summaries = [
+            _del_config_summary(flag="启用", mac="11:11:50:00:00:01", task=2, period=5),
+            _del_config_summary(flag="启用", mac="11:11:50:00:00:02", task=2, period=10),
+            _del_config_summary(flag="启用", mac="11:11:50:00:00:03", task=3, period=15),
+        ]
+        directory, path = _write_log([LOG_LINE] * 3)
+        self.addCleanup(directory.cleanup)
+        service = self._service(summaries)
+
+        service.index_file(path)
+        configured = service.task_derived_period("001", "2")
+        self.assertEqual(configured["source"], "configured")
+        # 周期 5 与 10 各一次，众数并列取较小者
+        self.assertEqual(configured["derived_period_minutes"], 5)
+        manual = service.task_derived_period("001", "9")
+        self.assertEqual(manual["source"], "manual")
+        self.assertIsNone(manual["derived_period_minutes"])
 
     def test_periods_filter_by_nid(self):
         summaries = [

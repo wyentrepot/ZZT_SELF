@@ -467,36 +467,20 @@ class LogFileService:
         return periods
 
     def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001", nid=""):
-        """按每个 STA 实际启用到删除成功之间的周期汇总分钟采集上报。"""
+        """按每个 STA 实际启用到删除成功之间的周期汇总分钟采集上报。
+
+        划分周期以实际周期为准：有任务配置时按配置周期，否则按手工输入的
+        period_minutes。每个周期窗口内统计该任务所有分钟采集上报帧，按
+        (STA, 应用层原文) 双重去重后再做统计计算，保留冻结数据判定逻辑。
+        """
         task = self._task_key(task_no)
         if period_minutes is not None and (
             not isinstance(period_minutes, int) or not 1 <= period_minutes <= 1440
         ):
             raise ValueError("period_minutes 必须在 1 到 1440 之间")
 
-        # 每台 STA 以最后一次启用作为本轮配置开始，以该 STA 的删除成功应答作为结束。
-        active, configured = {}, {}
-        for kind, record in self._task_config_records(cco_tei, nid):
-            if record["task_no"] != task or not record["mac"]:
-                continue
-            mac = record["mac"]
-            if kind == "down_config" and record["operation"] == "启用":
-                try:
-                    configured_period = int(record.get("period_minutes") or 0)
-                except (TypeError, ValueError):
-                    configured_period = 0
-                if configured_period:
-                    active[mac] = {
-                        **record, "period_minutes": configured_period,
-                        "end_ms": None, "end_time": "",
-                    }
-                    configured[mac] = active[mac]
-            elif kind == "up" and record.get("del_flag") == "删除" and record.get("result") == "成功":
-                config = active.get(mac)
-                if config and record["absolute_ms"] is not None:
-                    config["end_ms"] = record["absolute_ms"]
-                    config["end_time"] = record["log_time"]
-                    active.pop(mac, None)
+        configured, derived_period = self._task_config_periods(cco_tei, task, nid)
+        effective_period = derived_period or period_minutes
 
         conditions = ["minute_reports.cco_tei = ?", "minute_reports.task_no = ?"]
         parameters = [cco_tei.upper(), int(task)]
@@ -520,7 +504,7 @@ class LogFileService:
         for row in rows:
             mac = self._sta_key(row["source_mac"])
             config = configured.get(mac)
-            minutes = (config or {}).get("period_minutes") or period_minutes
+            minutes = (config or {}).get("period_minutes") or effective_period
             if not minutes:
                 continue
             period_ms = int(minutes) * 60_000
@@ -564,22 +548,42 @@ class LogFileService:
             reports = reports_by_window.get(start, [])
             expected = expected_by_window.get(start, {})
             received = {item["mac"] for item in reports}
-            # 一个 STA 在同一窗口的多帧只算一次应答，但明细全部保留。
+            # 双重去重：同一 STA 同一窗口内相同应用层原文（同一上报被多次抓取）
+            # 只算一次；明细全部保留。
+            deduped_items = {}
+            for item in reports:
+                deduped_items.setdefault(
+                    (item["mac"], item["application_raw"] or ""), item
+                )
+            deduped_items = list(deduped_items.values())
+            # 窗口实际周期取窗口内上报/预期配置周期中的主流周期。
+            window_minutes = self._mode(
+                [item["period_minutes"] for item in reports]
+                + [config["period_minutes"] for config in expected.values()]
+            ) or effective_period or 1
+            window_ms = window_minutes * 60_000
             missing = sorted(set(expected) - received)
             periods.append({
                 "period_start": start,
-                "period_end": start + max([item["period_minutes"] for item in reports] + [config["period_minutes"] for config in expected.values()] + [period_minutes or 1]) * 60_000,
-                "description": self._clock_text(start),
+                "period_end": start + window_ms,
+                "period_minutes": window_minutes,
+                "description": (
+                    f"{self._clock_text(start)} - "
+                    f"{self._clock_text(start + window_ms)}"
+                ),
                 "report_count": len(reports),
                 "received_sta_count": len(received),
+                "deduped_app_count": len(deduped_items),
                 "expected_count": len(expected) if source == "configured" else None,
                 "missing_stas": missing if source == "configured" else [],
-                "freeze_ok_count": sum(item["freeze_ok"] for item in reports),
-                "freeze_error_count": sum(not item["freeze_ok"] for item in reports),
+                "freeze_ok_count": sum(item["freeze_ok"] for item in deduped_items),
+                "freeze_error_count": sum(not item["freeze_ok"] for item in deduped_items),
                 "reports": reports,
             })
         return {
-            "task_no": task, "source": source, "periods": periods,
+            "task_no": task, "source": source,
+            "derived_period_minutes": derived_period,
+            "periods": periods,
             "unconfigured_report_count": len(unconfigured_reports),
             "unconfigured_reports": unconfigured_reports,
         }
@@ -748,6 +752,62 @@ class LogFileService:
     @staticmethod
     def _sta_key(mac) -> str:
         return re.sub(r"[^0-9A-Fa-f]", "", str(mac or "")).upper()
+
+    @staticmethod
+    def _mode(values) -> object:
+        """返回出现次数最多的值；并列取较小者；空序列返回 None。"""
+        if not values:
+            return None
+        counts = {}
+        for value in values:
+            counts[value] = counts.get(value, 0) + 1
+        return max(counts, key=lambda value: (counts[value], -value))
+
+    def _task_config_periods(self, cco_tei: str, task: str, nid: str = ""):
+        """遍历 00E2 任务配置，返回 (configured, derived_period)。
+
+        configured: mac -> 该 STA 最后一次启用的配置记录（含 period_minutes、
+                    end_ms/end_time，删除成功应答后 end_ms 非空）；
+        derived_period: 任务级推导周期（启用配置周期的众数），无配置时为 None。
+        """
+        # 每台 STA 以最后一次启用作为本轮配置开始，以该 STA 的删除成功应答作为结束。
+        active, configured = {}, {}
+        for kind, record in self._task_config_records(cco_tei, nid):
+            if record["task_no"] != task or not record["mac"]:
+                continue
+            mac = record["mac"]
+            if kind == "down_config" and record["operation"] == "启用":
+                try:
+                    configured_period = int(record.get("period_minutes") or 0)
+                except (TypeError, ValueError):
+                    configured_period = 0
+                if configured_period:
+                    active[mac] = {
+                        **record, "period_minutes": configured_period,
+                        "end_ms": None, "end_time": "",
+                    }
+                    configured[mac] = active[mac]
+            elif kind == "up" and record.get("del_flag") == "删除" and record.get("result") == "成功":
+                config = active.get(mac)
+                if config and record["absolute_ms"] is not None:
+                    config["end_ms"] = record["absolute_ms"]
+                    config["end_time"] = record["log_time"]
+                    active.pop(mac, None)
+        periods = [config["period_minutes"] for config in configured.values()]
+        return configured, self._mode(periods)
+
+    def task_derived_period(self, cco_tei: str, task_no: str, nid: str = "") -> dict:
+        """返回任务在配置推导下的实际周期（启用配置周期的众数）。
+
+        source 为 configured 表示该任务存在启用配置；否则为 manual（无配置）。
+        """
+        task = self._task_key(task_no)
+        configured, derived_period = self._task_config_periods(cco_tei, task, nid)
+        return {
+            "task_no": task,
+            "source": "configured" if configured else "manual",
+            "derived_period_minutes": derived_period,
+        }
 
     def _task_config_records(self, cco_tei: str, nid: str = ""):
         """产出带绝对日志时间的 00E2 任务配置记录。"""

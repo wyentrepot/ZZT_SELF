@@ -728,6 +728,7 @@ const minuteElements = {
   period: $("#period-input"),
   source: $("#minute-source"),
   task: $("#minute-task-input"),
+  taskList: $("#minute-task-list"),
   ccoTei: $("#cco-tei-input"),
   query: $("#minute-query-button"),
   error: $("#minute-error"),
@@ -766,6 +767,7 @@ function switchView(name) {
   minuteElements.framesData.hidden = name !== "frames";
   minuteElements.view.hidden = name !== "minute";
   minuteElements.deleteConfigView.hidden = name !== "delete-config";
+  if (name === "minute") loadMinuteTaskList();
 }
 
 minuteElements.tabs.forEach((tab) => {
@@ -791,24 +793,56 @@ async function loadMinuteAnalysis() {
   minuteElements.ccoTei.value = tei;
   updateNidHint(minuteElements.nidHint);
   const params = new URLSearchParams({
-    task_no: minuteElements.task.value,
+    task_no: minuteElements.task.value.trim(),
     cco_tei: tei,
     nid: state.nid,
   });
   if (minuteElements.source.value === "manual") params.set("period_minutes", minuteElements.period.value);
   minuteElements.error.hidden = true;
   try {
-    renderMinuteAnalysis(await request(`/api/logs/task-minute-analysis?${params}`));
+    const data = await request(`/api/logs/task-minute-analysis?${params}`);
+    if (minuteElements.source.value === "configured" && data.derived_period_minutes) {
+      minuteElements.period.value = String(data.derived_period_minutes);
+    }
+    renderMinuteAnalysis(data);
   } catch (error) {
     minuteElements.error.textContent = error.message;
     minuteElements.error.hidden = false;
   }
 }
 
+async function loadMinuteTaskList() {
+  const tei = (minuteElements.ccoTei.value.trim() || "001").toUpperCase();
+  const params = new URLSearchParams({ cco_tei: tei, nid: state.nid });
+  try {
+    const data = await request(`/api/logs/task-config-tasks?${params}`);
+    minuteElements.taskList.replaceChildren();
+    for (const taskNo of data.tasks) {
+      const option = document.createElement("option");
+      option.value = String(taskNo);
+      minuteElements.taskList.append(option);
+    }
+  } catch { /* 下拉列表加载失败不影响手动输入 */ }
+}
+
+async function refreshDerivedPeriod() {
+  if (minuteElements.source.value !== "configured") return;
+  const taskNo = minuteElements.task.value.trim();
+  const tei = (minuteElements.ccoTei.value.trim() || "001").toUpperCase();
+  if (!taskNo) { minuteElements.period.value = ""; return; }
+  const params = new URLSearchParams({ task_no: taskNo, cco_tei: tei, nid: state.nid });
+  try {
+    const data = await request(`/api/logs/task-derived-period?${params}`);
+    minuteElements.period.value = (data.source === "configured" && data.derived_period_minutes)
+      ? String(data.derived_period_minutes) : "";
+  } catch { /* 推导失败保持原值 */ }
+}
+
 function updateMinuteSourceControls() {
   const manual = minuteElements.source.value === "manual";
   minuteElements.period.disabled = !manual;
   minuteElements.period.closest("label")?.classList.toggle("is-disabled", !manual);
+  if (!manual) refreshDerivedPeriod();
 }
 
 function renderMinuteAnalysis(data) {
@@ -819,7 +853,9 @@ function renderMinuteAnalysis(data) {
     row.className = "empty-row";
     const cell = document.createElement("td");
     cell.colSpan = 1;
-    cell.textContent = "没有符合当前筛选条件的周期";
+    cell.textContent = minuteElements.source.value === "configured" && data.source === "manual"
+      ? "该任务没有启用配置记录，请在「来源」切换为「手工输入」并填写周期"
+      : "没有符合当前筛选条件的周期";
     row.append(cell);
     minuteElements.rows.append(row);
     return;
@@ -830,7 +866,7 @@ function renderMinuteAnalysis(data) {
     const cell = document.createElement("td");
     cell.className = "route";
     const expected = period.expected_count === null ? "应报未知" : `应报 ${period.expected_count} STA，缺报 ${period.missing_stas.length}`;
-    cell.textContent = `任务 ${data.task_no} · ${period.description} · 实报 ${period.report_count} 帧 · ${expected} · 冻结正确 ${period.freeze_ok_count} / 异常 ${period.freeze_error_count}`;
+    cell.textContent = `任务 ${data.task_no} · ${period.description}（周期 ${period.period_minutes} 分钟） · 实报 ${period.report_count} 帧 · 去重后 ${period.deduped_app_count} 个应用层上报 / ${period.received_sta_count} 个 STA · ${expected} · 冻结正确 ${period.freeze_ok_count} / 异常 ${period.freeze_error_count}`;
     row.append(cell);
     row.addEventListener("click", () => renderMinuteReportDetails(period));
     minuteElements.rows.append(row);
@@ -1038,3 +1074,8 @@ updateMinuteSourceControls();
 minuteElements.period.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadMinuteAnalysis();
 });
+minuteElements.task.addEventListener("change", refreshDerivedPeriod);
+minuteElements.task.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") loadMinuteAnalysis();
+});
+loadMinuteTaskList();

@@ -50,6 +50,9 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn('id="minute-period-table"', html)
         self.assertIn("CCO", html)
         self.assertIn('id="minute-report-details"', html)
+        self.assertIn('id="minute-task-input"', html)
+        self.assertIn('list="minute-task-list"', html)
+        self.assertIn('id="minute-task-list"', html)
 
     def test_detail_panel_has_base_and_app_expand_tabs(self):
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

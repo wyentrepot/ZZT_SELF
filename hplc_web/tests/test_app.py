@@ -89,6 +89,21 @@ class FakeLogService:
         self.last_task_summary_query = (cco_tei, task_no, nid)
         return {"task_no": task_no, "sent_sta_count": 1, "stas": []}
 
+    def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001", nid=""):
+        self.last_task_minute_query = (task_no, period_minutes, cco_tei, nid)
+        return {
+            "task_no": task_no, "source": "configured",
+            "derived_period_minutes": 10, "periods": [],
+            "unconfigured_report_count": 0, "unconfigured_reports": [],
+        }
+
+    def task_derived_period(self, cco_tei="001", task_no="", nid=""):
+        self.last_task_derived_query = (cco_tei, task_no, nid)
+        return {
+            "task_no": task_no, "source": "configured",
+            "derived_period_minutes": 10,
+        }
+
 
 class AppTests(unittest.TestCase):
     def setUp(self):
@@ -197,6 +212,28 @@ class AppTests(unittest.TestCase):
         self.assertEqual(summary.status_code, 200)
         self.assertEqual(summary.json()["task_no"], "2")
         self.assertEqual(self.log_service.last_task_summary_query, ("001", "2", "00000123"))
+
+    def test_task_minute_analysis_passes_task_and_period_to_service(self):
+        response = self.client.get(
+            "/api/logs/task-minute-analysis?task_no=2&cco_tei=001&nid=00000123"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.log_service.last_task_minute_query, ("2", None, "001", "00000123")
+        )
+        self.assertEqual(response.json()["derived_period_minutes"], 10)
+
+    def test_task_derived_period_endpoint(self):
+        response = self.client.get(
+            "/api/logs/task-derived-period?task_no=2&cco_tei=001&nid=00000123"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.log_service.last_task_derived_query, ("001", "2", "00000123")
+        )
+        self.assertEqual(response.json()["derived_period_minutes"], 10)
 
     def test_minute_analysis_rejects_invalid_period_and_tei(self):
         for params in (
