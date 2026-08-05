@@ -1168,7 +1168,8 @@ function renderMinuteReportDetails(period) {
     const item = document.createElement("details");
     item.className = "minute-report-row";
     const label = document.createElement("summary");
-    label.textContent = `${report.source_mac || "未知 MAC"} / ${report.source_tei || "未知 TEI"} 模块上报 · 冻结时间 ${report.freeze_time || "未解析"}`;
+    const stationMac = report.mac || report.source_mac || "未知 MAC";
+    label.textContent = `${stationMac} / ${report.source_tei || "未知 TEI"} 模块上报 · 冻结时间 ${report.freeze_time || "未解析"}`;
     const status = document.createElement("p");
     status.className = "minute-report-status";
     const config = report.config_content || {};

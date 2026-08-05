@@ -602,6 +602,24 @@ class MinuteReportTests(unittest.TestCase):
         self.assertEqual(period["freeze_error_count"], 0)
         self.assertEqual(len(period["reports"]), 3)          # 明细保留全部帧
 
+    def test_task_period_reports_expose_data_status_and_station_identity(self):
+        summary = _e4_summary(source_mac="530000141223", ori_s="053", task=2,
+                              response_result=0, report_count=1, data_length=56,
+                              freeze_time="2026-08-05 20:40:00")
+        directory, path = _write_log([_log_line_at("20:45:01.000")])
+        self.addCleanup(directory.cleanup)
+        service = self._service([summary])
+        service.index_file(path)
+
+        result = service.list_task_minute_periods("2", period_minutes=5, cco_tei="001")
+        report = result["periods"][0]["reports"][0]
+
+        self.assertEqual(report["data_status"], "已携带数据")
+        self.assertEqual(report["source_mac"], "530000141223")
+        self.assertEqual(report["source_tei"], "053")
+        self.assertEqual(report["mac"], "530000141223")
+        self.assertEqual(report["expected_freeze_time"], "20:40:00.000")
+
     def test_task_derived_period_returns_configured_cycle_or_manual(self):
         summaries = [
             _del_config_summary(flag="启用", mac="11:11:50:00:00:01", task=2, period=5),

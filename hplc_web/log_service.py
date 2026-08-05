@@ -528,9 +528,16 @@ class LogFileService:
             expected_clock = self._clock_text(expected_freeze)
             item = {
                 "frame_id": row["frame_id"], "mac": mac, "log_time": row["log_time"],
+                "source_mac": row["source_mac"] or mac,
+                "source_tei": row["source_tei"] or "",
                 "freeze_time": freeze, "expected_freeze_time": expected_clock,
                 "freeze_ok": freeze.endswith(expected_clock[:8]),
                 "period_minutes": int(minutes),
+                "response_result": row["response_result"],
+                "report_count": row["report_count"],
+                "data_length": row["data_length"],
+                "application_error": row["application_error"],
+                "data_status": self._minute_report_data_status(row),
                 "config_time": (config or {}).get("log_time", ""),
                 "config_end_time": (config or {}).get("end_time", ""),
                 "config_content": (config or {}).get("config_content", {}),
