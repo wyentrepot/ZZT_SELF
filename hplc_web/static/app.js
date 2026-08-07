@@ -51,6 +51,13 @@ const elements = {
   detailBase: $("#detail-base"),
   detailApp: $("#detail-app"),
   appExpandContent: $("#app-expand-content"),
+  serialPort: $("#serial-port"),
+  serialPortList: $("#serial-port-list"),
+  serialBaud: $("#serial-baud"),
+  serialStart: $("#serial-start"),
+  serialStop: $("#serial-stop"),
+  serialState: $("#serial-state"),
+  serialMessage: $("#serial-message"),
 };
 
 function formatBytes(value) {
@@ -531,6 +538,11 @@ function renderDetail(detail) {
     stage("4. MPDU / MSDU 载荷", full.MPDU ? "已展开" : "无数据", compactObject(full.MPDU)),
   );
   if (full.Error) stages.append(stage("5. 解析提示", "注意", String(full.Error)));
+  // 详情解析失败时显示错误横幅，但保留原始帧数据
+  const detailError = detail.parse_error || detail.analysis?.parse_error;
+  if (detailError) {
+    stages.append(stage("⚠ 解析失败", "错误", String(detailError)));
+  }
 
   $("#detail-json").textContent = JSON.stringify(detail.analysis, null, 2);
   $("#detail-raw").textContent = detail.raw_hex;
@@ -1197,3 +1209,197 @@ minuteElements.task.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadMinuteAnalysis();
 });
 loadMinuteTaskList();
+
+// ---------- 串口实时采集 ----------
+
+async function loadSerialPorts() {
+  try {
+    const data = await request("/api/serial/ports");
+    const ports = (data.ports || []).map((p) => p.device);
+    elements.serialPortList.replaceChildren();
+    ports.forEach((device) => {
+      const option = document.createElement("option");
+      option.value = device;
+      elements.serialPortList.append(option);
+    });
+    if (ports.length && !ports.includes(elements.serialPort.value)) {
+      elements.serialPort.value = ports[0];
+    }
+  } catch (error) {
+    // 列表加载失败不阻塞使用，串口可在输入框手动填写
+  }
+}
+
+let serialPollTimer = null;
+
+function setSerialState(active) {
+  elements.serialStart.disabled = active;
+  elements.serialStop.disabled = !active;
+  const label = elements.serialState;
+  if (active) {
+    label.className = "serial-state running";
+    label.textContent = "采集中";
+  } else {
+    label.className = "serial-state idle";
+    label.textContent = "未启动";
+  }
+}
+
+async function refreshSerialStatus() {
+  try {
+    const status = await request("/api/serial/status");
+    const active = status.state === "running" || status.state === "starting";
+    setSerialState(active);
+    if (status.state === "running") {
+      elements.serialState.textContent = `采集中 · ${status.frame_count || 0} 帧`;
+      elements.serialState.className = "serial-state running";
+    } else if (status.state === "error") {
+      elements.serialState.className = "serial-state error";
+      elements.serialState.textContent = "错误";
+      elements.serialMessage.textContent = status.message || "串口采集出错";
+      stopSerialPolling();
+    } else if (status.state === "stopped") {
+      elements.serialMessage.textContent =
+        `已停止，本次共采集 ${status.frame_count || 0} 帧`;
+      stopSerialPolling();
+    } else {
+      elements.serialMessage.textContent = status.message || "串口未启动";
+    }
+  } catch (error) {
+    // 服务不可用时静默
+  }
+}
+
+function startSerialPolling() {
+  if (serialPollTimer) clearInterval(serialPollTimer);
+  const tick = async () => {
+    await refreshSerialStatus();
+    // 串口新帧实时写入同一 frames 表，激活期间清缓存并周期性刷新帧列表
+    state.pageCache.clear();
+    loadFrames();
+  };
+  tick();
+  serialPollTimer = setInterval(tick, 1000);
+}
+
+function stopSerialPolling() {
+  if (serialPollTimer) {
+    clearInterval(serialPollTimer);
+    serialPollTimer = null;
+  }
+}
+
+async function startSerial() {
+  const port = elements.serialPort.value.trim() || "COM19";
+  const baud = Number(elements.serialBaud.value) || 115200;
+  elements.serialStart.disabled = true;
+  elements.serialMessage.textContent = `正在打开 ${port} ...`;
+  try {
+    await request("/api/serial/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port, baudrate: baud }),
+    });
+    elements.serialMessage.textContent = `正在监听 ${port} (${baud}, N, 8, 1)`;
+    startSerialPolling();
+  } catch (error) {
+    elements.serialMessage.textContent = error.message;
+    elements.serialStart.disabled = false;
+  }
+}
+
+async function stopSerial() {
+  try {
+    await request("/api/serial/stop", { method: "POST" });
+    elements.serialMessage.textContent = "正在停止串口采集...";
+    stopSerialPolling();
+    await refreshSerialStatus();
+  } catch (error) {
+    elements.serialMessage.textContent = error.message;
+  }
+}
+
+elements.serialStart.addEventListener("click", startSerial);
+elements.serialStop.addEventListener("click", stopSerial);
+loadSerialPorts();
+
+// ---------- 数据源二选一：日志文件分析 / 串口实时监听 ----------
+
+const sourceRadios = document.querySelectorAll('input[name="data-source"]');
+let dataSourceSwitchBusy = false;
+
+function applyDataSourceMode(mode) {
+  document.body.setAttribute("data-source", mode);
+}
+
+function clearFrameListForSwitch() {
+  // 切换数据源后清空当前帧列表与详情，避免显示旧模式数据
+  state.offset = 0;
+  state.total = 0;
+  state.query = "";
+  state.nid = "";
+  state.pageCache.clear();
+  state.selectedId = null;
+  state.lastFrameCount = -1;
+  if (typeof resetDetail === "function") resetDetail();
+  if (elements.rows) {
+    const row = document.createElement("tr");
+    row.className = "empty-row";
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "切换数据源后，请重新建立索引或启动串口采集";
+    row.append(cell);
+    elements.rows.replaceChildren(row);
+  }
+  if (elements.pageSummary) elements.pageSummary.textContent = "0 帧";
+  if (elements.pageNumber) elements.pageNumber.textContent = "第 1 页";
+}
+
+sourceRadios.forEach((radio) => {
+  radio.addEventListener("change", async (event) => {
+    if (dataSourceSwitchBusy) return;
+    const mode = event.target.value;
+    const previous = document.body.getAttribute("data-source") || "log";
+
+    // 串口监听模式
+    if (mode === "serial") {
+      dataSourceSwitchBusy = true;
+      try {
+        // 数据源二选一：日志索引运行中时禁止切到串口，避免数据混在一起
+        const status = await request("/api/logs/status").catch(() => null);
+        if (status && (status.state === "indexing" || status.state === "queued")) {
+          event.target.checked = false;
+          document.querySelector('input[name="data-source"][value="log"]').checked = true;
+          alert("日志正在建立索引，请等待完成后再切换串口监听。");
+          return;
+        }
+        applyDataSourceMode("serial");
+        clearFrameListForSwitch();
+        loadSerialPorts();
+      } finally {
+        dataSourceSwitchBusy = false;
+      }
+    }
+
+    // 日志文件分析模式
+    if (mode === "log") {
+      dataSourceSwitchBusy = true;
+      try {
+        // 数据源二选一：串口采集运行中时禁止切到日志，避免数据混在一起
+        const status = await request("/api/serial/status").catch(() => null);
+        if (status && (status.state === "running" || status.state === "starting")) {
+          event.target.checked = false;
+          document.querySelector('input[name="data-source"][value="serial"]').checked = true;
+          alert("串口监听正在运行，请先停止串口采集再切换日志分析。");
+          return;
+        }
+        applyDataSourceMode("log");
+        clearFrameListForSwitch();
+      } finally {
+        dataSourceSwitchBusy = false;
+      }
+    }
+  });
+});
+// 初始化当前模式（默认日志）
+applyDataSourceMode(document.querySelector('input[name="data-source"]:checked')?.value || "log");

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from hplc_web.dotnet_parser import DotNetHplcParser
 from hplc_web.log_service import LogFileService
 from hplc_web.parser_service import FrameValidationError, ParserService
+from hplc_web.serial_service import SerialCaptureService
 
 
 def _is_frozen() -> bool:
@@ -34,6 +35,21 @@ def _runtime_dir() -> Path:
     if _is_frozen():
         return Path(sys.executable).resolve().parent / "runtime"
     return _base_dir() / "runtime"
+
+
+def _log_dir() -> Path:
+    """项目根 LOG/ 目录：串口采集数据落盘位置。
+
+    frozen 下为 exe 同目录 LOG/（可写持久位置）；非 frozen 为仓库/部署根
+    （hplc_web 上级）下的 LOG/。目录不存在时自动创建。
+    """
+    if _is_frozen():
+        root = Path(sys.executable).resolve().parent
+    else:
+        root = _base_dir().parent
+    log_dir = root / "LOG"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
 
 
 def _default_dll() -> Path:
@@ -222,7 +238,7 @@ class OpenLogRequest(BaseModel):
     path: str = Field(..., max_length=1024)
 
 
-def create_app(service: ParserService, log_service=None) -> FastAPI:
+def create_app(service: ParserService, log_service=None, serial_service=None) -> FastAPI:
     app = FastAPI(title="国网 HPLC 日志解析工具")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -237,6 +253,7 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
             "picker_api_revision": 2,
             "minute_analysis_api_revision": 3,
             "frame_filter_api_revision": 2,
+            "serial_api_revision": 1,
         }
 
     @app.post("/api/parse")
@@ -252,6 +269,14 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
     def open_log(request: OpenLogRequest):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
+        # 数据源二选一：串口监听运行中时禁止建立日志索引，避免数据混在一起
+        if serial_service is not None:
+            serial_state = serial_service.status().get("state")
+            if serial_state in ("running", "starting"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="串口监听正在运行，请先停止串口采集，再建立日志索引",
+                )
         try:
             result = log_service.start_index(request.path)
         except FileNotFoundError as exc:
@@ -459,9 +484,64 @@ def create_app(service: ParserService, log_service=None) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"帧详情解析失败：{exc}") from exc
 
+    # ---------- 串口实时采集 ----------
+
+    @app.get("/api/serial/ports")
+    def serial_ports():
+        """列出可用串口（COM 口）。"""
+        if serial_service is None:
+            raise HTTPException(status_code=503, detail="串口服务未启用")
+        return {"ports": serial_service.list_available_ports()}
+
+    @app.get("/api/serial/status")
+    def serial_status():
+        if serial_service is None:
+            raise HTTPException(status_code=503, detail="串口服务未启用")
+        return serial_service.status()
+
+    class SerialStartRequest(BaseModel):
+        port: str = Field("COM19", min_length=1, max_length=64)
+        baudrate: int = Field(115200, ge=300, le=921600)
+        bytesize: int = Field(8, ge=5, le=8)
+        parity: str = Field("N", min_length=1, max_length=1)
+        stopbits: int = Field(1, ge=1, le=2)
+
+    @app.post("/api/serial/start", status_code=202)
+    def serial_start(request: SerialStartRequest):
+        if serial_service is None:
+            raise HTTPException(status_code=503, detail="串口服务未启用")
+        # 数据源二选一：日志索引运行中时禁止启动串口，避免数据混在一起
+        if log_service is not None:
+            log_state = log_service.status().get("state")
+            if log_state in ("indexing", "queued"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="日志正在建立索引，请等待完成后再启动串口采集",
+                )
+        try:
+            result = serial_service.start(
+                port=request.port,
+                baudrate=request.baudrate,
+                bytesize=request.bytesize,
+                parity=request.parity,
+                stopbits=request.stopbits,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"串口启动失败：{exc}") from exc
+        return result
+
+    @app.post("/api/serial/stop")
+    def serial_stop():
+        if serial_service is None:
+            raise HTTPException(status_code=503, detail="串口服务未启用")
+        return serial_service.stop()
+
     return app
 
 
 parser_service = ParserService(DotNetHplcParser(DEFAULT_DLL))
 log_file_service = LogFileService(parser_service, DEFAULT_INDEX)
-app = create_app(parser_service, log_file_service)
+serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir())
+app = create_app(parser_service, log_file_service, serial_capture_service)

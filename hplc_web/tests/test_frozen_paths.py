@@ -58,3 +58,20 @@ def test_frozen_runtime_dir_is_next_to_exe(frozen_environment):
 def test_frozen_default_dll_is_under_meipass(frozen_environment):
     internal_dir, _ = frozen_environment
     assert app_module._default_dll() == internal_dir / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+
+
+def test_non_frozen_log_dir_is_repo_root_log(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "_base_dir", lambda: tmp_path / "hplc_web")
+    assert app_module._log_dir() == tmp_path / "LOG"
+
+
+def test_non_frozen_log_dir_creates_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "_base_dir", lambda: tmp_path / "hplc_web")
+    log_dir = app_module._log_dir()
+    assert log_dir.is_dir()
+
+
+def test_frozen_log_dir_is_next_to_exe(frozen_environment, monkeypatch):
+    internal_dir, exe = frozen_environment
+    monkeypatch.setattr(app_module, "_is_frozen", lambda: True)
+    assert app_module._log_dir() == exe.resolve().parent / "LOG"
