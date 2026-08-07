@@ -190,6 +190,34 @@ class SerialCaptureServiceTest(unittest.TestCase):
         rows = service.log_service.list_frames(offset=0, limit=10)
         self.assertEqual([r["sequence"] for r in rows["items"]], ["000001", "000002"])
 
+    def test_on_chunk_merges_partial_frame_across_chunks(self):
+        """回归：跨块到达的半帧应合并成完整帧，且缓冲保持 bytearray 类型。"""
+        import tempfile
+        service, _ = self._service_with_open_log(tempfile.mkdtemp())
+        # 一帧分成两块到达：7E AA 和 BB 7E
+        service._on_chunk(bytes([0x7E, 0xAA]))
+        self.assertEqual(service.status()["frame_count"], 0)  # 半帧未形成完整帧
+        self.assertIsInstance(service._buffer, bytearray)
+        service._on_chunk(bytes([0xBB, 0x7E]))
+        self.assertEqual(service.status()["frame_count"], 1)
+        self.assertIsInstance(service._buffer, bytearray)
+        self.assertEqual(service._buffer, bytearray())
+        rows = service.log_service.list_frames(offset=0, limit=10)
+        self.assertEqual(rows["total"], 1)
+        self.assertEqual(rows["items"][0]["byte_length"], 4)
+
+    def test_on_chunk_keeps_tail_across_chunks(self):
+        """回归：块尾未闭合帧头应保留到下一块。"""
+        import tempfile
+        service, _ = self._service_with_open_log(tempfile.mkdtemp())
+        service._on_chunk(bytes([0x7E, 0xAA, 0xBB, 0x7E, 0x7E, 0x11]))  # 完整帧 + 下一帧头
+        self.assertEqual(service.status()["frame_count"], 1)
+        self.assertIsInstance(service._buffer, bytearray)
+        self.assertEqual(bytes(service._buffer), bytes([0x7E, 0x11]))
+        service._on_chunk(bytes([0x22, 0x7E]))  # 补全下一帧
+        self.assertEqual(service.status()["frame_count"], 2)
+        self.assertEqual(service._buffer, bytearray())
+
 
 if __name__ == "__main__":
     unittest.main()

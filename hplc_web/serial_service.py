@@ -226,14 +226,22 @@ class SerialCaptureService:
                 chunk = ser.read(4096)
                 if not chunk:
                     continue
-                self._buffer.extend(chunk)
-                frames, self._buffer = split_7e_frames(bytes(self._buffer))
-                for frame in frames:
-                    self._ingest(frame)
+                self._on_chunk(chunk)
             # 停止时把缓冲区残留一并入库（可选）
             self._replace_status(
                 state="stopped", message="串口采集已停止"
             )
+
+    def _on_chunk(self, chunk: bytes) -> None:
+        """处理串口到达的一块数据：并入缓冲、切出完整帧逐帧入库。
+
+        缓冲跨块累积（bytearray），保证半帧在下一块到达后能合并成完整帧。
+        """
+        self._buffer.extend(chunk)
+        frames, tail = split_7e_frames(bytes(self._buffer))
+        self._buffer = bytearray(tail)  # 保留未闭合尾部，保持 bytearray 类型
+        for frame in frames:
+            self._ingest(frame)
 
     def _ingest(self, frame: bytes) -> None:
         """切出的完整帧：加时间戳、落盘 LOG 文件、解析追加入库、更新计数。"""
