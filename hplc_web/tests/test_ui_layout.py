@@ -210,7 +210,7 @@ class UiLayoutTests(unittest.TestCase):
         css = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
 
         self.assertIn('id="task-config-mac-sort"', html)
-        self.assertIn('/static/app.js?v=task-config-frame-colors-v2', html)
+        self.assertIn('/static/app.js?v=serial-capture-v1', html)
         self.assertNotIn('id="task-config-raw"', html)
         self.assertIn("task-no-response-mac", js)
         self.assertIn("task-config-inline-detail", js)

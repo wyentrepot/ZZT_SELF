@@ -1105,6 +1105,64 @@ class LogFileService:
             "analysis": analysis,
         }
 
+    def append_frame(self, sequence, log_time, hex_frame, minute_state=None):
+        """追加单帧到索引（供串口实时采集复用）。
+
+        minute_state: 可变的 dict，携带 minute_day_offset / minute_prev_abs_ms，
+        用于跨多次追加保持分钟上报的日偏移推导。为 None 时不做分钟入库。
+        返回 (frame_id, simple_dict)；解析失败时 simple 为空 dict。
+        """
+        simple = {}
+        summary_json = None
+        parse_error = None
+        try:
+            parsed = self.parser.parse_summary(hex_frame)
+            simple = parsed.get("simple", {})
+            summary_json = json.dumps(simple, ensure_ascii=False)
+        except Exception as exc:
+            parse_error = str(exc)
+
+        insert_sql = """
+            INSERT INTO frames (
+                sequence, log_time, byte_length, raw_hex, summary_json, parse_error
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                insert_sql,
+                (
+                    sequence,
+                    log_time,
+                    len(hex_frame.split()),
+                    hex_frame,
+                    summary_json,
+                    parse_error,
+                ),
+            )
+            frame_id = cursor.lastrowid
+
+            if minute_state is not None and simple.get("APP_ID") == "00E4":
+                record = LogRecord(sequence, log_time, hex_frame)
+                insert_minute_sql = """
+                    INSERT INTO minute_reports (
+                        frame_id, log_time, time_seconds, cco_tei, station_key,
+                        source_mac, source_tei, task_no, protocol_type, meter_type,
+                        response_result, freeze_time, report_count, data_length,
+                        application_error
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+                day_offset = minute_state.setdefault("day_offset", 0)
+                prev_abs_ms = minute_state.get("prev_abs_ms")
+                day_offset, prev_abs_ms = self._insert_minute_report(
+                    connection, insert_minute_sql, frame_id, record, simple,
+                    day_offset, prev_abs_ms,
+                )
+                minute_state["day_offset"] = day_offset
+                minute_state["prev_abs_ms"] = prev_abs_ms
+            connection.commit()
+
+        return frame_id, simple
+
     def close(self) -> None:
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=2)

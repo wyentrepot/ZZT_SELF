@@ -1,4 +1,5 @@
 fastapi
 httpx
+pyserial
 pythonnet
 uvicorn

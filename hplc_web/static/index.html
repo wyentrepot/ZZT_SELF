@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>国网 HPLC 日志解析台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=task-config-frame-colors-v2">
+  <link rel="stylesheet" href="/static/styles.css?v=serial-capture-v1">
 </head>
 <body>
   <main class="app-shell">
@@ -78,6 +78,29 @@
           <div><span>帧数</span><strong id="frame-count">0</strong></div>
           <div><span>异常</span><strong id="error-count">0</strong></div>
         </div>
+      </div>
+
+      <div id="serial-panel" class="serial-panel" aria-label="串口实时采集">
+        <div class="serial-header">
+          <span class="section-kicker">串口实时采集</span>
+          <span id="serial-state" class="serial-state idle">未启动</span>
+        </div>
+        <div class="serial-controls">
+          <label class="path-field serial-port-field">
+            <span>串口</span>
+            <input id="serial-port" type="text" value="COM19" autocomplete="off"
+              list="serial-port-list" placeholder="COM19">
+          </label>
+          <datalist id="serial-port-list"></datalist>
+          <label class="path-field serial-baud-field">
+            <span>波特率</span>
+            <input id="serial-baud" type="number" value="115200" min="300" max="921600" step="1">
+          </label>
+          <span class="serial-params">8 数据位 · 无校验 · 1 停止位</span>
+          <button id="serial-start" class="primary-button" type="button">启动采集</button>
+          <button id="serial-stop" class="secondary-button" type="button" disabled>停止</button>
+        </div>
+        <p id="serial-message" class="serial-message">采集到的 HPLC 帧会自动加上实时时间戳并写入解析索引，可在上方帧索引中实时查看。</p>
       </div>
 
       <div id="single-debugger" class="single-debugger" hidden>
@@ -348,6 +371,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=task-config-frame-colors-v2"></script>
+  <script src="/static/app.js?v=serial-capture-v1"></script>
 </body>
 </html>

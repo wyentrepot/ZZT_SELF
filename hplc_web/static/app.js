@@ -51,6 +51,13 @@ const elements = {
   detailBase: $("#detail-base"),
   detailApp: $("#detail-app"),
   appExpandContent: $("#app-expand-content"),
+  serialPort: $("#serial-port"),
+  serialPortList: $("#serial-port-list"),
+  serialBaud: $("#serial-baud"),
+  serialStart: $("#serial-start"),
+  serialStop: $("#serial-stop"),
+  serialState: $("#serial-state"),
+  serialMessage: $("#serial-message"),
 };
 
 function formatBytes(value) {
@@ -1197,3 +1204,116 @@ minuteElements.task.addEventListener("keydown", (event) => {
   if (event.key === "Enter") loadMinuteAnalysis();
 });
 loadMinuteTaskList();
+
+// ---------- 串口实时采集 ----------
+
+async function loadSerialPorts() {
+  try {
+    const data = await request("/api/serial/ports");
+    const ports = (data.ports || []).map((p) => p.device);
+    elements.serialPortList.replaceChildren();
+    ports.forEach((device) => {
+      const option = document.createElement("option");
+      option.value = device;
+      elements.serialPortList.append(option);
+    });
+    if (ports.length && !ports.includes(elements.serialPort.value)) {
+      elements.serialPort.value = ports[0];
+    }
+  } catch (error) {
+    // 列表加载失败不阻塞使用，串口可在输入框手动填写
+  }
+}
+
+let serialPollTimer = null;
+
+function setSerialState(active) {
+  elements.serialStart.disabled = active;
+  elements.serialStop.disabled = !active;
+  const label = elements.serialState;
+  if (active) {
+    label.className = "serial-state running";
+    label.textContent = "采集中";
+  } else {
+    label.className = "serial-state idle";
+    label.textContent = "未启动";
+  }
+}
+
+async function refreshSerialStatus() {
+  try {
+    const status = await request("/api/serial/status");
+    const active = status.state === "running" || status.state === "starting";
+    setSerialState(active);
+    if (status.state === "running") {
+      elements.serialState.textContent = `采集中 · ${status.frame_count || 0} 帧`;
+      elements.serialState.className = "serial-state running";
+    } else if (status.state === "error") {
+      elements.serialState.className = "serial-state error";
+      elements.serialState.textContent = "错误";
+      elements.serialMessage.textContent = status.message || "串口采集出错";
+      stopSerialPolling();
+    } else if (status.state === "stopped") {
+      elements.serialMessage.textContent =
+        `已停止，本次共采集 ${status.frame_count || 0} 帧`;
+      stopSerialPolling();
+    } else {
+      elements.serialMessage.textContent = status.message || "串口未启动";
+    }
+  } catch (error) {
+    // 服务不可用时静默
+  }
+}
+
+function startSerialPolling() {
+  if (serialPollTimer) clearInterval(serialPollTimer);
+  const tick = async () => {
+    await refreshSerialStatus();
+    // 串口新帧实时写入同一 frames 表，激活期间清缓存并周期性刷新帧列表
+    state.pageCache.clear();
+    loadFrames();
+  };
+  tick();
+  serialPollTimer = setInterval(tick, 1000);
+}
+
+function stopSerialPolling() {
+  if (serialPollTimer) {
+    clearInterval(serialPollTimer);
+    serialPollTimer = null;
+  }
+}
+
+async function startSerial() {
+  const port = elements.serialPort.value.trim() || "COM19";
+  const baud = Number(elements.serialBaud.value) || 115200;
+  elements.serialStart.disabled = true;
+  elements.serialMessage.textContent = `正在打开 ${port} ...`;
+  try {
+    await request("/api/serial/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port, baudrate: baud }),
+    });
+    elements.serialMessage.textContent = `正在监听 ${port} (${baud}, N, 8, 1)`;
+    startSerialPolling();
+  } catch (error) {
+    elements.serialMessage.textContent = error.message;
+    elements.serialStart.disabled = false;
+  }
+}
+
+async function stopSerial() {
+  try {
+    await request("/api/serial/stop", { method: "POST" });
+    elements.serialMessage.textContent = "正在停止串口采集...";
+    stopSerialPolling();
+    await refreshSerialStatus();
+  } catch (error) {
+    elements.serialMessage.textContent = error.message;
+  }
+}
+
+elements.serialStart.addEventListener("click", startSerial);
+elements.serialStop.addEventListener("click", stopSerial);
+loadSerialPorts();
