@@ -1061,3 +1061,35 @@ tbody tr.selected td { color: #e5eff6; }
   color: #6f8699;
   line-height: 1.5;
 }
+
+/* ---------- 数据源二选一 ---------- */
+.data-source-toggle {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid rgba(90, 120, 150, 0.18);
+  margin-bottom: 14px;
+}
+.source-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #a9c0d3;
+  padding: 4px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(90, 120, 150, 0.25);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.source-option:hover { border-color: rgba(127, 212, 255, 0.5); }
+.source-option input[type="radio"] { accent-color: #2e9bd6; }
+.source-option:has(input:checked) {
+  background: rgba(46, 155, 214, 0.14);
+  border-color: #2e9bd6;
+  color: #eaf6ff;
+}
+[data-mode="serial"] { display: none; }
+body[data-source="serial"] [data-mode="log"] { display: none; }
+body[data-source="serial"] [data-mode="serial"] { display: block; }

@@ -269,6 +269,14 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
     def open_log(request: OpenLogRequest):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
+        # 数据源二选一：串口监听运行中时禁止建立日志索引，避免数据混在一起
+        if serial_service is not None:
+            serial_state = serial_service.status().get("state")
+            if serial_state in ("running", "starting"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="串口监听正在运行，请先停止串口采集，再建立日志索引",
+                )
         try:
             result = log_service.start_index(request.path)
         except FileNotFoundError as exc:
@@ -502,6 +510,14 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
     def serial_start(request: SerialStartRequest):
         if serial_service is None:
             raise HTTPException(status_code=503, detail="串口服务未启用")
+        # 数据源二选一：日志索引运行中时禁止启动串口，避免数据混在一起
+        if log_service is not None:
+            log_state = log_service.status().get("state")
+            if log_state in ("indexing", "queued"):
+                raise HTTPException(
+                    status_code=409,
+                    detail="日志正在建立索引，请等待完成后再启动串口采集",
+                )
         try:
             result = serial_service.start(
                 port=request.port,

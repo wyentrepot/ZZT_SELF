@@ -442,5 +442,79 @@ class FsApiTests(unittest.TestCase):
         self.assertIn("dialog unavailable", response.json()["detail"])
 
 
+class FakeLogMutex:
+    """支持 reset_index / 可变状态的日志服务，用于互斥测试。"""
+
+    def __init__(self, state="idle"):
+        self._state = state
+
+    def status(self):
+        return {"state": self._state}
+
+    def start_index(self, path):
+        self._state = "indexing"
+        return {"state": "indexing"}
+
+    def reset_index(self):
+        self._state = "idle"
+        return {"state": "idle"}
+
+
+class FakeSerialMutex:
+    """支持可变状态的串口服务，用于互斥测试。"""
+
+    def __init__(self, state="idle"):
+        self._state = state
+
+    def status(self):
+        return {"state": self._state}
+
+    def start(self, **kwargs):
+        self._state = "running"
+        return {"state": "running"}
+
+    def stop(self):
+        self._state = "idle"
+        return {"state": "idle"}
+
+    def list_available_ports(self):
+        return []
+
+
+class SerialLogMutexTests(unittest.TestCase):
+    """数据源二选一：串口监听与日志文件分析运行时互斥。"""
+
+    def _client(self, log_state="idle", serial_state="idle"):
+        return TestClient(
+            create_app(
+                FakeService(),
+                FakeLogMutex(state=log_state),
+                FakeSerialMutex(state=serial_state),
+            )
+        )
+
+    def test_open_log_409_when_serial_running(self):
+        client = self._client(log_state="idle", serial_state="running")
+        response = client.post("/api/logs/open", json={"path": r"D:\x.txt"})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("串口监听正在运行", response.json()["detail"])
+
+    def test_open_log_ok_when_serial_idle(self):
+        client = self._client(log_state="idle", serial_state="idle")
+        response = client.post("/api/logs/open", json={"path": r"D:\x.txt"})
+        self.assertEqual(response.status_code, 202)
+
+    def test_serial_start_409_when_log_indexing(self):
+        client = self._client(log_state="indexing", serial_state="idle")
+        response = client.post("/api/serial/start", json={"port": "COM19"})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("日志正在建立索引", response.json()["detail"])
+
+    def test_serial_start_ok_when_log_idle(self):
+        client = self._client(log_state="idle", serial_state="idle")
+        response = client.post("/api/serial/start", json={"port": "COM19"})
+        self.assertEqual(response.status_code, 202)
+
+
 if __name__ == "__main__":
     unittest.main()

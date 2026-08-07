@@ -1317,3 +1317,84 @@ async function stopSerial() {
 elements.serialStart.addEventListener("click", startSerial);
 elements.serialStop.addEventListener("click", stopSerial);
 loadSerialPorts();
+
+// ---------- 数据源二选一：日志文件分析 / 串口实时监听 ----------
+
+const sourceRadios = document.querySelectorAll('input[name="data-source"]');
+let dataSourceSwitchBusy = false;
+
+function applyDataSourceMode(mode) {
+  document.body.setAttribute("data-source", mode);
+}
+
+function clearFrameListForSwitch() {
+  // 切换数据源后清空当前帧列表与详情，避免显示旧模式数据
+  state.offset = 0;
+  state.total = 0;
+  state.query = "";
+  state.nid = "";
+  state.pageCache.clear();
+  state.selectedId = null;
+  state.lastFrameCount = -1;
+  if (typeof resetDetail === "function") resetDetail();
+  if (elements.rows) {
+    const row = document.createElement("tr");
+    row.className = "empty-row";
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "切换数据源后，请重新建立索引或启动串口采集";
+    row.append(cell);
+    elements.rows.replaceChildren(row);
+  }
+  if (elements.pageSummary) elements.pageSummary.textContent = "0 帧";
+  if (elements.pageNumber) elements.pageNumber.textContent = "第 1 页";
+}
+
+sourceRadios.forEach((radio) => {
+  radio.addEventListener("change", async (event) => {
+    if (dataSourceSwitchBusy) return;
+    const mode = event.target.value;
+    const previous = document.body.getAttribute("data-source") || "log";
+
+    // 串口监听模式
+    if (mode === "serial") {
+      dataSourceSwitchBusy = true;
+      try {
+        // 数据源二选一：日志索引运行中时禁止切到串口，避免数据混在一起
+        const status = await request("/api/logs/status").catch(() => null);
+        if (status && (status.state === "indexing" || status.state === "queued")) {
+          event.target.checked = false;
+          document.querySelector('input[name="data-source"][value="log"]').checked = true;
+          alert("日志正在建立索引，请等待完成后再切换串口监听。");
+          return;
+        }
+        applyDataSourceMode("serial");
+        clearFrameListForSwitch();
+        loadSerialPorts();
+      } finally {
+        dataSourceSwitchBusy = false;
+      }
+    }
+
+    // 日志文件分析模式
+    if (mode === "log") {
+      dataSourceSwitchBusy = true;
+      try {
+        // 数据源二选一：串口采集运行中时禁止切到日志，避免数据混在一起
+        const status = await request("/api/serial/status").catch(() => null);
+        if (status && (status.state === "running" || status.state === "starting")) {
+          event.target.checked = false;
+          document.querySelector('input[name="data-source"][value="serial"]').checked = true;
+          alert("串口监听正在运行，请先停止串口采集再切换日志分析。");
+          return;
+        }
+        applyDataSourceMode("log");
+        clearFrameListForSwitch();
+      } finally {
+        dataSourceSwitchBusy = false;
+      }
+    }
+  });
+});
+// 初始化当前模式（默认日志）
+applyDataSourceMode(document.querySelector('input[name="data-source"]:checked')?.value || "log");

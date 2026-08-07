@@ -218,6 +218,43 @@ class SerialCaptureServiceTest(unittest.TestCase):
         self.assertEqual(service.status()["frame_count"], 2)
         self.assertEqual(service._buffer, bytearray())
 
+    def test_start_calls_reset_index(self):
+        """数据源二选一：串口启动时应清空现有索引（调用 log_service.reset_index）。"""
+        import tempfile
+        import time
+        from unittest import mock
+
+        calls = []
+
+        class FakeLogReset:
+            def reset_index(self):
+                calls.append(1)
+                return {"state": "idle"}
+
+            def status(self):
+                return {"state": "idle"}
+
+        class FakeSer:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n):
+                return b""
+
+        base = Path(tempfile.mkdtemp())
+        with mock.patch("hplc_web.serial_service.serial.Serial", FakeSer):
+            svc = SerialCaptureService(FakeLogReset(), port="COM_TEST", log_dir=base / "LOG")
+            svc.start()
+            time.sleep(0.2)
+            svc.stop()
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

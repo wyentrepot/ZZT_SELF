@@ -145,6 +145,24 @@ class LogFileService:
         with self._status_lock:
             return dict(self._status)
 
+    def reset_index(self) -> dict:
+        """清空并重建索引（供串口模式启动时调用，保证从干净库开始）。
+
+        丢弃 frames / minute_reports 全部数据，仅保留表结构。
+        """
+        self._initialize_database(reset=True)
+        return self._replace_status(
+            state="idle",
+            source_path=None,
+            file_size=0,
+            bytes_read=0,
+            progress=0.0,
+            line_count=0,
+            frame_count=0,
+            error_count=0,
+            message="索引已清空（串口模式）",
+        )
+
     def start_index(self, path) -> dict:
         source = Path(path).expanduser().resolve()
         if not source.is_file():

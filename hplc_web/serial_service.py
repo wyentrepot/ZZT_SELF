@@ -164,6 +164,11 @@ class SerialCaptureService:
             self._log_file, self._log_path = self._open_log_file()
             if self._log_path is not None:
                 self._status["log_file"] = str(self._log_path)
+            # 串口模式：清空现有索引，保证从干净库开始（与日志模式互斥，各自保留）
+            try:
+                self.log_service.reset_index()
+            except Exception:
+                pass
         self._thread = threading.Thread(
             target=self._run, name="hplc-serial-capture", daemon=True
         )
