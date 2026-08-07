@@ -1111,7 +1111,25 @@ class LogFileService:
         if row is None:
             raise KeyError(frame_id)
 
-        analysis = self.parser.parse(row["raw_hex"])
+        try:
+            analysis = self.parser.parse(row["raw_hex"])
+        except Exception as exc:
+            # 详情解析失败时保留原始帧数据，返回错误信息而非抛异常
+            return {
+                "id": row["id"],
+                "sequence": row["sequence"],
+                "log_time": row["log_time"],
+                "byte_length": row["byte_length"],
+                "raw_hex": row["raw_hex"],
+                "summary": json.loads(row["summary_json"] or "{}"),
+                "parse_error": row["parse_error"] or str(exc),
+                "analysis": {
+                    "parse_error": f"完整解析失败：{exc}",
+                    "simple": {},
+                    "full": {},
+                },
+            }
+
         return {
             "id": row["id"],
             "sequence": row["sequence"],

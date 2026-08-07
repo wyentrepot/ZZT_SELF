@@ -538,6 +538,11 @@ function renderDetail(detail) {
     stage("4. MPDU / MSDU 载荷", full.MPDU ? "已展开" : "无数据", compactObject(full.MPDU)),
   );
   if (full.Error) stages.append(stage("5. 解析提示", "注意", String(full.Error)));
+  // 详情解析失败时显示错误横幅，但保留原始帧数据
+  const detailError = detail.parse_error || detail.analysis?.parse_error;
+  if (detailError) {
+    stages.append(stage("⚠ 解析失败", "错误", String(detailError)));
+  }
 
   $("#detail-json").textContent = JSON.stringify(detail.analysis, null, 2);
   $("#detail-raw").textContent = detail.raw_hex;

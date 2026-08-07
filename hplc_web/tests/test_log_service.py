@@ -403,6 +403,28 @@ class LogFileServiceTests(unittest.TestCase):
         finally:
             service.close()
 
+    def test_full_parse_error_keeps_raw_hex(self):
+        """详情完整解析失败时仍返回原始帧数据，不抛异常。"""
+        directory, path = _write_log([LOG_LINE])
+        self.addCleanup(directory.cleanup)
+
+        class FailingParser(FakeParserService):
+            def parse(self, value):
+                raise RuntimeError("DLL 解析异常")
+
+        self.service = LogFileService(
+            FailingParser(), Path(self.temp_dir.name) / "error.sqlite3"
+        )
+        self.addCleanup(self.service.close)
+        self.service.index_file(path)
+        first = self.service.list_frames(offset=0, limit=1)["items"][0]
+
+        detail = self.service.get_frame(first["id"])
+        self.assertIn("raw_hex", detail)
+        self.assertTrue(detail["raw_hex"].startswith("7E "))
+        self.assertIn("parse_error", detail)
+        self.assertIn("完整解析失败", detail["analysis"]["parse_error"])
+
 
 def _e2_up_summary(flag="00", result="00", seq="039528",
                    mac_bytes="111150000066", task="02", period="05"):
