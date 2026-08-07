@@ -9,6 +9,8 @@
 ## 二、主要功能
 
 - **HPLC 报文侦听与解析**：按国网、南网协议解析原始报文。
+- **串口实时采集**：从 COM19（115200/N/8/1）裸 7E 帧流实时读取 HPLC 帧，自动加时间戳，先落盘项目根 `LOG/` 文件夹，再实时入库，前端实时浏览。
+- **数据源二选一**：串口实时监听与日志文件分析运行时互斥，切换即清空重建索引，避免数据混在一起。
 - **报文解析工具**：对抓取的报文文件做结构化解析。
 - **分钟报表分析**：对分钟级上报数据做状态统计与分析（`/api/logs/minute-analysis`）。
 - **报文文件筛选**：从报文文件中筛选目标记录（`/api/fs/pick`）。
@@ -81,6 +83,10 @@ Web 服务默认监听 `127.0.0.1:8765`，主要接口：
 | `/api/version` | GET | 获取服务版本与接口 revision |
 | `/api/fs/pick` | POST | 报文文件筛选 |
 | `/api/logs/minute-analysis` | POST | 分钟报表数据分析 |
+| `/api/serial/ports` | GET | 列出可用串口 |
+| `/api/serial/status` | GET | 串口采集状态（frame_count/log_dir/log_file） |
+| `/api/serial/start` | POST | 启动串口采集（默认 COM19/115200/N/8/1） |
+| `/api/serial/stop` | POST | 停止串口采集 |
 | `/openapi.json` | GET | OpenAPI 描述（完整接口列表） |
 
 ## 九、相关文档
