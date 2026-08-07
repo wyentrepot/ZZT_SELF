@@ -97,12 +97,73 @@ class FormatTimestampTest(unittest.TestCase):
 
 class SerialCaptureServiceTest(unittest.TestCase):
     def _service(self, tmpdir):
-        return SerialCaptureService(_log_service(tmpdir), port="COM_TEST")
+        base = Path(tmpdir)
+        return SerialCaptureService(
+            _log_service(tmpdir), port="COM_TEST",
+            log_dir=base / "LOG",
+        )
 
     def test_initial_status(self):
         status = self._service(tempfile.mkdtemp()).status()
         self.assertEqual(status["state"], "idle")
         self.assertEqual(status["port"], "COM_TEST")
+        self.assertIn("log_dir", status)
+        self.assertIsNone(status["log_file"])
+
+    def test_log_dir_created_on_init(self):
+        base = Path(tempfile.mkdtemp()) / "nested" / "LOG"
+        service = SerialCaptureService(
+            _log_service(str(base.parent)), port="COM_TEST", log_dir=base
+        )
+        self.assertTrue(base.is_dir())
+
+    def test_open_log_file_creates_named_file(self):
+        service = self._service(tempfile.mkdtemp())
+        handle, path = service._open_log_file()
+        self.assertIsNotNone(handle)
+        self.assertIsNotNone(path)
+        self.assertTrue(path.name.endswith("_自动保存.txt"))
+        self.assertIn("COM_TEST", path.name)
+        self.assertTrue(path.is_file())
+        handle.close()
+
+    def _service_with_open_log(self, tmpdir):
+        """构造服务并打开会话 LOG 文件，返回 (service, path)。"""
+        base = Path(tmpdir)
+        service = SerialCaptureService(
+            _log_service(tmpdir), port="COM_TEST", log_dir=base / "LOG"
+        )
+        service._log_file, service._log_path = service._open_log_file()
+        return service, service._log_path
+
+    def test_ingest_writes_log_file_and_db(self):
+        import tempfile
+        service, path = self._service_with_open_log(tempfile.mkdtemp())
+        frame = bytes([0x7E, 0xAA, 0xBB, 0x7E])
+        service._ingest(frame)
+        service._close_log_file()
+        # 落盘格式 [序号][时间]7E...7E，与 extract_log_record 兼容
+        content = path.read_text(encoding="utf-8")
+        self.assertRegex(content, r"^\[\d+\]\[\d{2}:\d{2}:\d{2}\.\d{3}\]7E AA BB 7E$")
+        # 实时入库仍在
+        rows = service.log_service.list_frames(offset=0, limit=10)
+        self.assertEqual(rows["total"], 1)
+        self.assertEqual(rows["items"][0]["byte_length"], 4)
+        status = service.status()
+        self.assertEqual(status["frame_count"], 1)
+        self.assertEqual(service._log_path, path)
+
+    def test_log_record_reparseable(self):
+        # 落盘行应能被现有 extract_log_record 重新解析（间接入库可复用 start_index）
+        from hplc_web.log_service import extract_log_record
+        import tempfile
+        service, path = self._service_with_open_log(tempfile.mkdtemp())
+        service._ingest(bytes([0x7E, 0xAA, 0xBB, 0x7E]))
+        service._close_log_file()
+        line = path.read_text(encoding="utf-8").strip().encode("ascii")
+        record = extract_log_record(line)
+        self.assertIsNotNone(record)
+        self.assertEqual(record.hex_frame, "7E AA BB 7E")
 
     def test_start_missing_pyserial(self):
         # 无 pyserial 时构造应抛错；此处假定已安装，仅验证构造流程
@@ -110,7 +171,7 @@ class SerialCaptureServiceTest(unittest.TestCase):
 
     def test_ingest_appends_to_db(self):
         import tempfile
-        service = self._service(tempfile.mkdtemp())
+        service, _ = self._service_with_open_log(tempfile.mkdtemp())
         frame = bytes([0x7E, 0xAA, 0xBB, 0x7E])
         service._ingest(frame)
         status = service.status()
@@ -123,7 +184,7 @@ class SerialCaptureServiceTest(unittest.TestCase):
 
     def test_sequence_increments(self):
         import tempfile
-        service = self._service(tempfile.mkdtemp())
+        service, _ = self._service_with_open_log(tempfile.mkdtemp())
         service._ingest(bytes([0x7E, 0x01, 0x7E]))
         service._ingest(bytes([0x7E, 0x02, 0x7E]))
         rows = service.log_service.list_frames(offset=0, limit=10)

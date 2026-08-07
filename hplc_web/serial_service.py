@@ -13,6 +13,7 @@
 import queue
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -89,7 +90,7 @@ def split_7e_frames(data: bytes):
 class SerialCaptureService:
     def __init__(self, log_service, port="COM19", baudrate=SERIAL_BAUD,
                  bytesize=SERIAL_BYTESIZE, parity=SERIAL_PARITY,
-                 stopbits=SERIAL_STOPBITS):
+                 stopbits=SERIAL_STOPBITS, log_dir=None):
         if serial is None:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
         self.log_service = log_service
@@ -98,6 +99,12 @@ class SerialCaptureService:
         self.bytesize = bytesize
         self.parity = parity
         self.stopbits = stopbits
+        # 串口数据落盘目录：默认项目根 LOG/（与 app 约定一致），不存在则创建
+        self.log_dir = Path(log_dir) if log_dir else (Path(__file__).resolve().parent.parent / "LOG")
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -105,6 +112,8 @@ class SerialCaptureService:
         self._buffer = bytearray()
         self._sequence = 0
         self._minute_state = {}
+        self._log_file = None  # 当前会话打开的日志文件对象
+        self._log_path = None  # 当前 LOG 文件路径
         self._status = self._empty_status()
 
     def _empty_status(self) -> dict:
@@ -116,6 +125,8 @@ class SerialCaptureService:
             "byte_count": 0,
             "error_count": 0,
             "message": "串口未启动",
+            "log_dir": str(self.log_dir),
+            "log_file": None,
             "started_at": None,
         }
 
@@ -150,23 +161,51 @@ class SerialCaptureService:
             self._status = self._empty_status()
             self._status["state"] = "starting"
             self._status["message"] = f"正在打开 {self.port} ..."
+            self._log_file, self._log_path = self._open_log_file()
+            if self._log_path is not None:
+                self._status["log_file"] = str(self._log_path)
         self._thread = threading.Thread(
             target=self._run, name="hplc-serial-capture", daemon=True
         )
         self._thread.start()
         return self.status()
 
+    def _open_log_file(self):
+        """在 LOG 目录新建会话日志文件，命名 {COM}_{时间}_自动保存.txt。
+
+        返回 (file_object, path)；失败返回 (None, None)，采集仍继续但落盘跳过。
+        """
+        try:
+            stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+            port_safe = str(self.port).replace("\\", "").replace("/", "")
+            path = self.log_dir / f"{port_safe}_{stamp}_自动保存.txt"
+            handle = open(path, "a", encoding="utf-8", buffering=1)
+            return handle, path
+        except OSError:
+            return None, None
+
     def stop(self) -> dict:
         self._stop_event.set()
         thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=3)
+        self._close_log_file()
         return self.status()
+
+    def _close_log_file(self):
+        try:
+            if self._log_file is not None:
+                self._log_file.close()
+        except OSError:
+            pass
+        finally:
+            self._log_file = None
 
     def _run(self) -> None:
         try:
             self._capture_loop()
         except Exception as exc:
+            self._close_log_file()
             self._replace_status(state="error", message=f"串口采集错误：{exc}")
 
     def _capture_loop(self) -> None:
@@ -197,11 +236,14 @@ class SerialCaptureService:
             )
 
     def _ingest(self, frame: bytes) -> None:
-        """切出的完整帧：加时间戳、解析、追加入库、更新计数。"""
+        """切出的完整帧：加时间戳、落盘 LOG 文件、解析追加入库、更新计数。"""
         self._sequence += 1
         seq = f"{self._sequence:06d}"
         ts = format_timestamp()
         hex_frame = " ".join(f"{b:02X}" for b in frame)
+        # 1) 间接入库：先落盘 LOG 文件（[序号][时间]7E...7E，与日志索引格式一致）
+        self._write_log_line(f"[{seq}][{ts}]{hex_frame}")
+        # 2) 保留实时入库：写入 sqlite 供前端实时查看
         try:
             frame_id, simple = self.log_service.append_frame(
                 seq, ts, hex_frame, self._minute_state
@@ -213,6 +255,15 @@ class SerialCaptureService:
             frame_count=self._sequence,
             byte_count=self._status.get("byte_count", 0) + len(frame),
         )
+
+    def _write_log_line(self, line: str) -> None:
+        """追加一行到当前会话 LOG 文件；失败仅计数不中断采集。"""
+        if self._log_file is None:
+            return
+        try:
+            self._log_file.write(line + "\n")
+        except OSError:
+            self._replace_status(error_count=self._status.get("error_count", 0) + 1)
 
     def list_available_ports(self) -> list:
         if list_ports is None:
@@ -226,5 +277,5 @@ class SerialCaptureService:
             return []
 
 
-def create_serial_service(log_service, port="COM19") -> SerialCaptureService:
-    return SerialCaptureService(log_service, port=port)
+def create_serial_service(log_service, port="COM19", log_dir=None) -> SerialCaptureService:
+    return SerialCaptureService(log_service, port=port, log_dir=log_dir)

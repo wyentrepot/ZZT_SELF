@@ -37,6 +37,21 @@ def _runtime_dir() -> Path:
     return _base_dir() / "runtime"
 
 
+def _log_dir() -> Path:
+    """项目根 LOG/ 目录：串口采集数据落盘位置。
+
+    frozen 下为 exe 同目录 LOG/（可写持久位置）；非 frozen 为仓库/部署根
+    （hplc_web 上级）下的 LOG/。目录不存在时自动创建。
+    """
+    if _is_frozen():
+        root = Path(sys.executable).resolve().parent
+    else:
+        root = _base_dir().parent
+    log_dir = root / "LOG"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+
 def _default_dll() -> Path:
     """解析 DLL 默认路径：frozen 下数据打进 _MEIPASS，否则在仓库根 dll/ 下。"""
     if _is_frozen():
@@ -512,5 +527,5 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
 
 parser_service = ParserService(DotNetHplcParser(DEFAULT_DLL))
 log_file_service = LogFileService(parser_service, DEFAULT_INDEX)
-serial_capture_service = SerialCaptureService(log_file_service, port="COM19")
+serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir())
 app = create_app(parser_service, log_file_service, serial_capture_service)
