@@ -7,7 +7,7 @@
 验证项：
 1. exe 启动后 /api/version 返回 GW_SMAnalysis（DLL 加载成功）
 2. 首页 / 正常返回
-3. 用 hplc_web/tests/data/gw_log_sample.txt 建索引并分页取帧
+3. 用 listener/test_data/gw_log_sample.txt 建索引并分页取帧
 4. runtime/ 生成在 exe 同目录
 退出码 0 = 全部通过；非 0 = 失败。
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 
 HOST = "http://127.0.0.1:8765"
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLE = ROOT / "hplc_web" / "tests" / "data" / "gw_log_sample.txt"
+SAMPLE = ROOT / "listener" / "test_data" / "gw_log_sample.txt"
 
 
 def _default_exe() -> Path:

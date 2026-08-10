@@ -9,12 +9,12 @@ import json
 import re
 import sys
 
-from hplc_web.dotnet_parser import DotNetHplcParser
-from hplc_web.parser_service import ParserService
+from shared.dotnet_parser import DotNetHplcParser
+from shared.parser_service import ParserService
 
 SAMPLE = r"D:\2-侦听台改造\测试文件\并发抄表-样本.txt"
 
-parser = ParserService(DotNetHplcParser(r"D:\2-侦听台改造\dll\bin\Debug\GwHPLCAnalysis.dll"))
+parser = ParserService(DotNetHplcParser(r"D:\2-侦听台改造\shared\dll\bin\Debug\GwHPLCAnalysis.dll"))
 
 
 def extract_frames(path):

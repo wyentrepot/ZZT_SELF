@@ -18,7 +18,7 @@
 
 ```bash
 # ZZT_SELF 目录，Python 3（用项目 venv 或系统 python3 均可）
-python hplc_web/run.py          # 默认监听 http://127.0.0.1:8765
+python -m module_log.run       # 模块日志/烧录，默认监听 http://127.0.0.1:8766
 ```
 
 浏览器打开 `http://127.0.0.1:8765/module-serial`（独立新标签页）。

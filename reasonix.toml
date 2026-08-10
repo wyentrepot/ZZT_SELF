@@ -1,2 +1,7 @@
 [permissions]
 allow = ["Bash=cd \"D:\\2-侦听台改造\" && PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe scripts/extract_concurrent_sample.py && PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \"import pathlib; p=pathlib.Path(r'测试文件/并发抄表-样本.txt'); lines=p.read_text(encoding='utf-8').splitlines(); print('lines=', len(lines)); print('sample=', lines[0][:80])\""]
+
+[[plugins]]
+name = "openviking"
+type = "http"
+url = "http://127.0.0.1:1933/mcp"
