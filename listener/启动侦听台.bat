@@ -1,10 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0.."
-title ä¾¦å¬å°ï¼ˆä¸²å£é‡‡é›† + æ—¥å¿—è§£æï¼‰
+title ÕìÌıÌ¨£¨´®¿Ú²É¼¯ + ÈÕÖ¾½âÎö£©
 
 echo.
-echo  ä¾¦å¬å°ï¼ˆListenerï¼‰
+echo  ÕìÌıÌ¨£¨Listener£©
 echo  =================
 echo.
 
@@ -15,46 +15,46 @@ where python >nul 2>&1
 if errorlevel 1 goto :missing_python
 
 if exist ".venv\Scripts\python.exe" goto :venv_ready
-echo [é¦–æ¬¡è¿è¡Œ] æ­£åœ¨åˆ›å»º Python ç¯å¢ƒ...
+echo [Ê×´ÎÔËĞĞ] ÕıÔÚ´´½¨ Python »·¾³...
 python -m venv ".venv"
 if errorlevel 1 goto :failed
 
 :venv_ready
 set "APP_PYTHON=.venv\Scripts\python.exe"
 if exist ".venv\.deps_listener" goto :launch
-"%APP_PYTHON%" -c "import fastapi, httpx, uvicorn, pyserial, pythonnet" >nul 2>&1
+"%APP_PYTHON%" -c "import fastapi, httpx, uvicorn, serial, pythonnet" >nul 2>&1
 if not errorlevel 1 (
   echo. > ".venv\.deps_listener"
   goto :launch
 )
-echo [é¦–æ¬¡è¿è¡Œ] æ­£åœ¨å®‰è£…ä¾èµ–ï¼Œè¯·ç¨å€™...
+echo [Ê×´ÎÔËĞĞ] ÕıÔÚ°²×°ÒÀÀµ£¬ÇëÉÔºò...
 "%APP_PYTHON%" -m pip install -r "listener\requirements.txt"
 if errorlevel 1 goto :failed
 echo. > ".venv\.deps_listener"
 
 :launch
 echo.
-echo [å¯åŠ¨] ä¾¦å¬å° ^-^> http://127.0.0.1:8765/
-echo å…³é—­æ­¤çª—å£å³åœæ­¢æœåŠ¡ã€‚
+echo [Æô¶¯] ÕìÌıÌ¨ ^-^> http://127.0.0.1:8765/
+echo ¹Ø±Õ´Ë´°¿Ú¼´Í£Ö¹·şÎñ¡£
 echo.
 "%APP_PYTHON%" -m listener.run
 if errorlevel 1 goto :failed
 exit /b 0
 
 :missing_dll
-echo [é”™è¯¯] æœªæ‰¾åˆ°è§£æåº“ï¼šshared\dll\bin\Debug\GwHPLCAnalysis.dll
-echo è¯·å…ˆç¼–è¯‘ C# å·¥ç¨‹ï¼ˆshared\dll\DLL_NwHPLCAnalysis.csprojï¼‰ã€‚
+echo [´íÎó] Î´ÕÒµ½½âÎö¿â£ºshared\dll\bin\Debug\GwHPLCAnalysis.dll
+echo ÇëÏÈ±àÒë C# ¹¤³Ì£¨shared\dll\DLL_NwHPLCAnalysis.csproj£©¡£
 pause
 exit /b 1
 
 :missing_python
-echo [é”™è¯¯] æœªåœ¨ PATH ä¸­æ‰¾åˆ° Pythonã€‚
-echo è¯·å®‰è£… Python 3 å¹¶å‹¾é€‰ "Add Python to PATH"ã€‚
+echo [´íÎó] Î´ÔÚ PATH ÖĞÕÒµ½ Python¡£
+echo Çë°²×° Python 3 ²¢¹´Ñ¡ "Add Python to PATH"¡£
 pause
 exit /b 1
 
 :failed
 echo.
-echo [é”™è¯¯] å¯åŠ¨å¤±è´¥ï¼Œè¯·ä¿æŒçª—å£æŸ¥çœ‹ä¸Šæ–¹ä¿¡æ¯ã€‚
+echo [´íÎó] Æô¶¯Ê§°Ü£¬Çë±£³Ö´°¿Ú²é¿´ÉÏ·½ĞÅÏ¢¡£
 pause
 exit /b 1

@@ -1,37 +1,37 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title ä¾¦å¬å° / æ¨¡å—æ—¥å¿— å¯åŠ¨å™¨
+title ÕìÌýÌ¨ / Ä£¿éÈÕÖ¾ Æô¶¯Æ÷
 
 echo.
-echo  ä¾¦å¬å°æ”¹é€  å¯åŠ¨å™¨
+echo  ÕìÌýÌ¨¸ÄÔì Æô¶¯Æ÷
 echo  ===================
-echo    1 = ä¾¦å¬å°ï¼ˆä¸²å£é‡‡é›† + æ—¥å¿—è§£æžï¼Œç«¯å£ 8765ï¼‰
-echo    2 = æ¨¡å—æ—¥å¿— / çƒ§å½•ï¼ˆç«¯å£ 8766ï¼‰
-echo    3 = å…¨éƒ¨å¯åŠ¨ï¼ˆ8765 + 8766ï¼‰
+echo    1 = ÕìÌýÌ¨£¨´®¿Ú²É¼¯ + ÈÕÖ¾½âÎö£¬¶Ë¿Ú 8765£©
+echo    2 = Ä£¿éÈÕÖ¾ / ÉÕÂ¼£¨¶Ë¿Ú 8766£©
+echo    3 = È«²¿Æô¶¯£¨8765 + 8766£©
 echo.
 set "HPLC_CHOICE="
-set /p "HPLC_CHOICE=è¯·è¾“å…¥ 1 / 2 / 3 åŽå›žè½¦: "
+set /p "HPLC_CHOICE=ÇëÊäÈë 1 / 2 / 3 ºó»Ø³µ: "
 if /i "%HPLC_CHOICE%"=="1" goto :listener
 if /i "%HPLC_CHOICE%"=="2" goto :module
 if /i "%HPLC_CHOICE%"=="3" goto :both
-echo è¾“å…¥æ— æ•ˆï¼Œé»˜è®¤å¯åŠ¨ä¾¦å¬å°(1)ã€‚
+echo ÊäÈëÎÞÐ§£¬Ä¬ÈÏÆô¶¯ÕìÌýÌ¨(1)¡£
 set "HPLC_CHOICE=1"
 goto :listener
 
 :listener
-call "%~dp0listener\å¯åŠ¨ä¾¦å¬å°.bat"
+call "%~dp0listener\Æô¶¯ÕìÌýÌ¨.bat"
 exit /b %errorlevel%
 
 :module
-call "%~dp0module_log\å¯åŠ¨æ¨¡å—æ—¥å¿—.bat"
+call "%~dp0module_log\Æô¶¯Ä£¿éÈÕÖ¾.bat"
 exit /b %errorlevel%
 
 :both
 echo.
-echo [START] å¯åŠ¨å…¨éƒ¨ï¼šä¾¦å¬å°(8765) + æ¨¡å—æ—¥å¿—(8766) ...
-echo ç»“æŸè¯·åœ¨ä»»åŠ¡ç®¡ç†å™¨ä¸­ç»ˆæ­¢å¯¹åº” python è¿›ç¨‹ã€‚
+echo [START] Æô¶¯È«²¿£ºÕìÌýÌ¨(8765) + Ä£¿éÈÕÖ¾(8766) ...
+echo ½áÊøÇëÔÚÈÎÎñ¹ÜÀíÆ÷ÖÐÖÕÖ¹¶ÔÓ¦ python ½ø³Ì¡£
 echo.
-start "ä¾¦å¬å°-8765" cmd /c "%~dp0listener\å¯åŠ¨ä¾¦å¬å°.bat"
-start "æ¨¡å—æ—¥å¿—-8766" cmd /c "%~dp0module_log\å¯åŠ¨æ¨¡å—æ—¥å¿—.bat"
+start "ÕìÌýÌ¨-8765" cmd /c "%~dp0listener\Æô¶¯ÕìÌýÌ¨.bat"
+start "Ä£¿éÈÕÖ¾-8766" cmd /c "%~dp0module_log\Æô¶¯Ä£¿éÈÕÖ¾.bat"
 exit /b 0
