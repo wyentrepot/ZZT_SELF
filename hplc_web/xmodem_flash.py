@@ -263,16 +263,16 @@ def flash(ser, bin_path: str, slot: int = 0,
           on_baud_change: Optional[Callable[[int], None]] = None) -> dict:
     """模块烧录主流程（与 ps1 主逻辑一致，但 handle 由调用方提供）。
 
-    波特率方案 baud_plan：默认 [9600, 115200, 9600]——按 ps1 原脚本语义，
-    模块日志口常用 9600 进入 bootloader、115200 传 XMODEM，再恢复 9600。
-    若串口已是目标速率（如页面用户已配好），传单元素列表 [baud] 跳过切换。
+    波特率：与烧录技能（flash_xmodem_module.ps1）一致，使用**单一波特率**
+    （默认 115200），不在导航/传输之间切换。调用方可传 baud_plan=[rate]
+    指定；传多元素列表时也只取首元素，保持与技能一致的单一速率语义。
 
     返回 {"status": "success", "log_events": n}。
     """
     import pathlib
 
-    if baud_plan is None:
-        baud_plan = [9600, 115200, 9600]
+    if baud_plan is None or not baud_plan:
+        baud_plan = [115200]
 
     fw = pathlib.Path(bin_path)
     if not fw.is_file():
@@ -291,11 +291,10 @@ def flash(ser, bin_path: str, slot: int = 0,
         time.sleep(0.05)  # 给接收方一点时间重锁波特率
 
     _log(f"Firmware: {bin_path} size={len(image)}")
-    _log(f"Baud plan: {baud_plan}")
+    _log(f"Baud: {baud_plan[0]}（单一速率，与烧录技能一致）")
 
-    # 波特率方案：第 1 段（导航）→ 第 2 段（传输）→ 第 3 段（恢复）
-    if len(baud_plan) >= 1:
-        _set_baud(baud_plan[0])
+    # 与烧录技能一致：单一波特率，只设一次，不切换
+    _set_baud(baud_plan[0])
 
     if not wait_bootloader_prompt(ser, enter_bootloader_command, log=log):
         raise RuntimeError("Bootloader prompt was not detected.")
@@ -308,14 +307,8 @@ def flash(ser, bin_path: str, slot: int = 0,
     _send_line(ser, "Y", log)
     _read_text_until_quiet(ser, 1500, 300, log)
 
-    if len(baud_plan) >= 2:
-        _set_baud(baud_plan[1])
-
     use_crc = wait_xmodem_request(ser, log=log)
     send_xmodem(ser, image, use_crc, log=log, progress=progress)
-
-    if len(baud_plan) >= 3:
-        _set_baud(baud_plan[2])
 
     result_text = _read_text_until_quiet(ser, 12000, 500, log)
     if not any(k in result_text for k in ("Image download OK", "download", "success")):
