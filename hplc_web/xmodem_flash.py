@@ -146,7 +146,14 @@ def _send_line(ser, line: str, log: Optional[Callable[[str], None]] = None) -> N
 
 
 def _test_bootloader_text(text: str) -> bool:
-    return "[image /]#" in text
+    """判断文本是否表明已进入 bootloader 就绪状态。
+
+    支持两种 bootloader 提示符：
+      - 传统 Linux root shell：[image /]#（原 ps1 检测）
+      - Unicorn Bootloader（venus8m 等）：出现 "You can input command 'help' or '?'"
+        （进入其交互式命令提示符），此时可直接发 download <slot>。
+    """
+    return "[image /]#" in text or "You can input command" in text or "enter bootloader mode" in text
 
 
 def _invoke_bootloader_navigation(ser, text: str,

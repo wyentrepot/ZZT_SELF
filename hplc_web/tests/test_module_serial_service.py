@@ -7,6 +7,27 @@ from hplc_web import xmodem_flash
 from hplc_web.module_serial_service import ModuleSerialService
 
 
+class BootloaderDetectTest(unittest.TestCase):
+    def test_detects_image_prompt(self):
+        # 传统 Linux root shell bootloader
+        self.assertTrue(xmodem_flash._test_bootloader_text("abc [image /]# def"))
+
+    def test_detects_unicorn_prompt(self):
+        # Unicorn Bootloader（venus8m 等真实设备）
+        self.assertTrue(
+            xmodem_flash._test_bootloader_text(
+                "You can input command 'help' or '?' to get help !"
+            )
+        )
+        self.assertTrue(
+            xmodem_flash._test_bootloader_text("enter bootloader mode: ")
+        )
+
+    def test_rejects_plain_text(self):
+        self.assertFalse(xmodem_flash._test_bootloader_text("just boot banner"))
+        self.assertFalse(xmodem_flash._test_bootloader_text("[node /]$ "))
+
+
 class Crc16XmodemTest(unittest.TestCase):
     def test_known_vector(self):
         # ps1 自检向量 0x31C3
