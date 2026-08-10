@@ -17,9 +17,9 @@
 - [x] 与 SerialCaptureService 完全分离，只新增不改现有
 
 ## 阶段 3：扩展 zzt API + 前端独立页面
-- [ ] app.py 新增路由 /api/module-serial/ports|status|start|stop|flash|write|baudrate|logs(?after=)
-- [ ] 烧录参数：.bin 路径（复用文件选择器）、slot、波特率方案、-NoRebootAfter 等价项
-- [ ] /module-serial 前端独立页面（新开标签）：800ms 增量轮询、日志+进度同屏、TX/RX 标记+事件行、页面按钮烧录
+- [x] app.py 新增路由 /api/module-serial/ports|status|start|stop|flash|write|baudrate|logs(?after=)
+- [x] 烧录参数：.bin 路径（复用文件选择器）、slot、波特率方案、-NoRebootAfter 等价项
+- [x] /module-serial 前端独立页面（新开标签）：800ms 增量轮询、日志+进度同屏、TX/RX 标记+事件行、页面按钮烧录
 
 ## 阶段 4：独立烧录脚本 + 新技能 serial-flash-session
 - [ ] flash_module.py 独立脚本：项目不在运行时自己 open COM → 复用 xmodem_flash.flash() → close
