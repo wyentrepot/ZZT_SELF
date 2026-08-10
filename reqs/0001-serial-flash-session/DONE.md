@@ -1,3 +1,8 @@
+## 2026-08-10 — 需求 0001 变更迭代补记
+- **做了什么**: 需求 0001 收尾后又发生 7 轮变更（一键启动双标签、字符显示、4缺陷修复、日志框高度、单切换按钮、铺满视口、原生文件选择器），按 req-mgmt 流程 C 补记为变更 3~9（只追加不覆盖），基线升至 v3
+- **为什么**: 之前修复阶段未按 req-mgmt 流程登记变更，导致 REQS.md 记录与实现脱节；用户质疑技能未被执行
+- **涉及文件**: reqs/0001-serial-flash-session/REQS.md（变更 3~9）、REQS-INDEX.md（状态改回 🔄 进行中）
+- **验证**: REQS.md 变更 3~9 齐全、版本 v3；INDEX 状态与实现一致
 ## 2026-08-10 — 阶段 2-4 实现完成
 - **做了什么**: 串口全程监控 + XMODEM 烧录一体化全部核心实现
   - 阶段 2：hplc_web/xmodem_flash.py（XMODEM 传输核心，flash(ser,..) 与 handle 解耦，CRC 自检 0x31C3）+ hplc_web/module_serial_service.py（ModuleSerialService 常驻独占 handle + RX 线程实时落盘 + 增量 buffer + write/动态波特率/烧录同 handle）
