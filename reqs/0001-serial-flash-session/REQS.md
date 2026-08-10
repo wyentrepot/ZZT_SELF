@@ -6,7 +6,7 @@
 
 ---
 
-## 当前生效基线（版本：v3，更新：2026-08-10）
+## 当前生效基线（版本：v4，更新：2026-08-10）
 
 ### 目标
 在 SPLC 模块烧录场景下，让一个「模块日志/烧录串口」被 ZZT_SELF 项目全程接管：原始字节流实时落盘、实时可看、可追溯；同一串口上可同时执行 XMODEM 烧录（文件传输），**不打断实时监控**；项目不在运行时也能独立烧录。
@@ -92,4 +92,11 @@ master
 - **为什么**: 用户找不到 WSL 路径，要求直接打开 Windows 文件管理器选真实盘符路径
 - **影响**: module-serial.html/js（删内置浏览器）, 依赖 app.py /api/fs/pick
 - **被取代**: 变更 5 中内置文件浏览器方案
+
+### 变更 10 ｜ 2026-08-10 ｜ 文件选择改用浏览器原生 file 上传
+- **改成什么**: 「选择文件…」改触发浏览器 <input type=file>（弹系统文件选择框，能选 Windows/WSL 路径文件），选中后 base64 上传后端 /api/module-serial/upload 保存到 LOG/uploads/ 返回路径；新增 xmodem_flash.resolve_bin_path 支持 WSL 路径（/mnt/d、/home 等）转换为 Windows 可读路径
+- **为什么**: 服务进程被 E-SafeNet 提升为 SYSTEM（Store Python），/api/fs/pick 的 PowerShell 原生对话框弹窗进不了用户桌面（两个页面都失效）；用户要求改用浏览器 file 上传且支持 WSL 路径
+- **影响**: hplc_web/app.py（upload 路由）、xmodem_flash.py（resolve_bin_path）、static/module-serial.html/js（file 上传）、tests
+- **被取代**: 变更 5、变更 9 的 /api/fs/pick 原生对话框方案
+
 
