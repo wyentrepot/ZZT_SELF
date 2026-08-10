@@ -20,7 +20,7 @@ if not errorlevel 1 goto :check_service_capability
 goto :bootstrap
 
 :check_service_capability
-powershell -NoProfile -Command "try { $version = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/api/version' -TimeoutSec 2; $api = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/openapi.json' -TimeoutSec 2; if ($version.picker_api_revision -eq 2 -and $version.minute_analysis_api_revision -eq 3 -and $version.frame_filter_api_revision -eq 2 -and $null -ne $api.paths.'/api/fs/pick' -and $null -ne $api.paths.'/api/logs/minute-analysis') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
+powershell -NoProfile -Command "try { $version = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/api/version' -TimeoutSec 2; $api = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/openapi.json' -TimeoutSec 2; if ($version.picker_api_revision -eq 2 -and $version.minute_analysis_api_revision -eq 3 -and $version.frame_filter_api_revision -eq 2 -and $version.module_serial_api_revision -eq 1 -and $null -ne $api.paths.'/api/fs/pick' -and $null -ne $api.paths.'/api/logs/minute-analysis' -and $null -ne $api.paths.'/api/module-serial/flash') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
 if not errorlevel 1 goto :already_running
 goto :restart_outdated_service
 
