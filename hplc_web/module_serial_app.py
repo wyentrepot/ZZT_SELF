@@ -6,7 +6,6 @@
 复用共享基础设施：hplc_web/ 下的模块服务、静态资源、DLL 解析库。
 启动：python -m hplc_web.module_serial_run（见 module_serial_run.py）。
 """
-from __future__ import annotations
 
 import base64
 import binascii
