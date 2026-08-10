@@ -99,8 +99,9 @@ class SerialCaptureService:
         self.bytesize = bytesize
         self.parity = parity
         self.stopbits = stopbits
-        # 串口数据落盘目录：默认项目根 LOG/（与 app 约定一致），不存在则创建
-        self.log_dir = Path(log_dir) if log_dir else (Path(__file__).resolve().parent.parent / "LOG")
+        # 串口数据落盘目录：默认项目根 LOG/侦听台/（侦听台日志独立子目录）
+        default_log_dir = Path(__file__).resolve().parent.parent / "LOG" / "侦听台"
+        self.log_dir = Path(log_dir) if log_dir else default_log_dir
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -114,6 +115,7 @@ class SerialCaptureService:
         self._minute_state = {}
         self._log_file = None  # 当前会话打开的日志文件对象
         self._log_path = None  # 当前 LOG 文件路径
+        self._log_day = None   # 当前 LOG 文件对应的日期（YYYYMMDD），用于跨天轮转
         self._status = self._empty_status()
 
     def _empty_status(self) -> dict:
@@ -185,6 +187,7 @@ class SerialCaptureService:
             port_safe = str(self.port).replace("\\", "").replace("/", "")
             path = self.log_dir / f"{port_safe}_{stamp}_自动保存.txt"
             handle = open(path, "a", encoding="utf-8", buffering=1)
+            self._log_day = time.strftime("%Y%m%d", time.localtime())
             return handle, path
         except OSError:
             return None, None
@@ -238,42 +241,62 @@ class SerialCaptureService:
             )
 
     def _on_chunk(self, chunk: bytes) -> None:
-        """处理串口到达的一块数据：并入缓冲、切出完整帧逐帧入库。
+        """处理串口到达的一块数据：并入缓冲、切出完整帧批量入库。
 
         缓冲跨块累积（bytearray），保证半帧在下一块到达后能合并成完整帧。
+        完整帧按块批量入库（单事务），避免逐帧提交的写放大。
         """
         self._buffer.extend(chunk)
         frames, tail = split_7e_frames(bytes(self._buffer))
         self._buffer = bytearray(tail)  # 保留未闭合尾部，保持 bytearray 类型
-        for frame in frames:
-            self._ingest(frame)
+        if frames:
+            self._ingest_batch(frames)
 
-    def _ingest(self, frame: bytes) -> None:
-        """切出的完整帧：加时间戳、落盘 LOG 文件、解析追加入库、更新计数。"""
-        self._sequence += 1
-        seq = f"{self._sequence:06d}"
-        ts = format_timestamp()
-        hex_frame = " ".join(f"{b:02X}" for b in frame)
-        # 1) 间接入库：先落盘 LOG 文件（[序号][时间]7E...7E，与日志索引格式一致）
-        self._write_log_line(f"[{seq}][{ts}]{hex_frame}")
-        # 2) 保留实时入库：写入 sqlite 供前端实时查看
+    def _ingest_batch(self, frames) -> None:
+        """批量切出帧：加时间戳、落盘 LOG 文件、批量追加入库、更新计数。"""
+        records = []
+        byte_total = 0
+        for frame in frames:
+            self._sequence += 1
+            seq = f"{self._sequence:06d}"
+            ts = format_timestamp()
+            hex_frame = " ".join(f"{b:02X}" for b in frame)
+            # 1) 间接入库：先落盘 LOG 文件（[序号][时间]7E...7E，与日志索引格式一致）
+            self._write_log_line(f"[{seq}][{ts}]{hex_frame}")
+            # 2) 实时入库：批量写入 sqlite 供前端实时查看
+            records.append((seq, ts, hex_frame))
+            byte_total += len(frame)
         try:
-            frame_id, simple = self.log_service.append_frame(
-                seq, ts, hex_frame, self._minute_state
-            )
+            self.log_service.append_frames(records, self._minute_state)
         except Exception:
-            self._replace_status(error_count=self._status.get("error_count", 0) + 1)
+            self._replace_status(
+                error_count=self._status.get("error_count", 0) + len(records)
+            )
             return
         self._replace_status(
             frame_count=self._sequence,
-            byte_count=self._status.get("byte_count", 0) + len(frame),
+            byte_count=self._status.get("byte_count", 0) + byte_total,
         )
 
+    def _ingest(self, frame: bytes) -> None:
+        """单帧入库（兼容旧接口/测试），委托批量实现。"""
+        self._ingest_batch([frame])
+
     def _write_log_line(self, line: str) -> None:
-        """追加一行到当前会话 LOG 文件；失败仅计数不中断采集。"""
+        """追加一行到当前会话 LOG 文件；失败仅计数不中断采集。
+
+        跨天（日期变化）时自动轮转到新文件，避免单个 LOG 文件随长时间
+        采集无限增长。轮转仅换文件句柄，不改变会话语义。
+        """
         if self._log_file is None:
             return
         try:
+            today = time.strftime("%Y%m%d", time.localtime())
+            if self._log_day is not None and today != self._log_day:
+                self._close_log_file()
+                self._log_file, self._log_path = self._open_log_file()
+                if self._log_file is None:
+                    return
             self._log_file.write(line + "\n")
         except OSError:
             self._replace_status(error_count=self._status.get("error_count", 0) + 1)

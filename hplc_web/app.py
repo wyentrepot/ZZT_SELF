@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from hplc_web.dotnet_parser import DotNetHplcParser
 from hplc_web.log_service import LogFileService
+from hplc_web.module_serial_service import ModuleSerialService
 from hplc_web.parser_service import FrameValidationError, ParserService
 from hplc_web.serial_service import SerialCaptureService
 
@@ -137,7 +138,7 @@ def _read_last_path() -> str:
         return ""
 
 
-def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
+def _pick_file_via_tkinter_dialog(initial_dir: str = "", timeout_s: int = 60) -> str:
     """调用 Windows 原生文件选择对话框，返回用户选中的文件路径。
 
     浏览器网页受安全沙箱限制无法读取本地路径，但后端运行在用户本机，
@@ -157,10 +158,10 @@ def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
             try:
                 path = filedialog.askopenfilename(
                     parent=root,
-                    title="选择日志文件",
+                    title="选择固件 .bin 文件",
                     initialdir=initial_dir or None,
                     filetypes=[
-                        ("日志文件", "*.txt *.log *.dat *.csv *.bin *.raw"),
+                        ("固件/日志文件", "*.bin *.txt *.log *.dat *.csv *.raw"),
                         ("所有文件", "*.*"),
                     ],
                 )
@@ -174,10 +175,10 @@ def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    thread.join(timeout=300)
+    thread.join(timeout=timeout_s)
     if thread.is_alive():
-        # 超时：对话框仍打开（用户长时间未操作），返回空串不阻塞请求；
-        # daemon 线程随后自然结束
+        # 超时：对话框仍打开（用户长时间未操作 / SYSTEM 无桌面会话弹不出），
+        # 返回空串不阻塞请求；daemon 线程随后自然结束
         return ""
     return result.get()
 
@@ -238,13 +239,19 @@ class OpenLogRequest(BaseModel):
     path: str = Field(..., max_length=1024)
 
 
-def create_app(service: ParserService, log_service=None, serial_service=None) -> FastAPI:
+def create_app(service: ParserService, log_service=None, serial_service=None,
+               module_serial_service=None) -> FastAPI:
     app = FastAPI(title="国网 HPLC 日志解析工具")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
     def index():
         return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/module-serial")
+    def module_serial_page():
+        """模块日志/烧录串口独立页面（新标签页，与侦听台互不干扰）。"""
+        return FileResponse(STATIC_DIR / "module-serial.html")
 
     @app.get("/api/version")
     def version():
@@ -254,6 +261,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             "minute_analysis_api_revision": 3,
             "frame_filter_api_revision": 2,
             "serial_api_revision": 1,
+            "module_serial_api_revision": 1,
         }
 
     @app.post("/api/parse")
@@ -322,15 +330,13 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
     def fs_pick():
         """弹出 Windows 原生文件选择对话框，返回用户选中的真实路径。
 
-        浏览器无法读取本地路径，由后端（同机进程）调用系统原生对话框；
-        取消选择时返回空路径。非 Windows 环境返回 501。
+        浏览器无法读取本地路径，由后端（同机进程）调用 tkinter 系统原生
+        对话框；取消、失败或超时返回空路径（前端可 fallback 到内置浏览器）。
+        非 Windows 环境返回 501。
         """
         if os.name != "nt":
             raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")
-        try:
-            path = _pick_file_via_native_dialog(_read_last_path())
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        path = _pick_file_via_tkinter_dialog(_read_last_path())
         return {"path": path}
 
     @app.get("/api/logs/frames")
@@ -341,6 +347,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
         start_time: str = Query("", max_length=12),
         end_time: str = Query("", max_length=12),
+        after_id: int | None = Query(None, ge=0),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
@@ -352,6 +359,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
                 nid=nid,
                 start_time=start_time,
                 end_time=end_time,
+                after_id=after_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -538,10 +546,140 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             raise HTTPException(status_code=503, detail="串口服务未启用")
         return serial_service.stop()
 
+    # ============ 模块日志/烧录串口（ModuleSerialService）============
+    # 与侦听台串口完全独立：常驻独占 handle，烧录=同 handle 文件传输，
+    # RX 监控线程全程不停。前端纯显示+发指令，一切下发走本组 API。
+
+    @app.get("/api/module-serial/ports")
+    def module_serial_ports():
+        """列出可用 COM 口（模块日志口）。"""
+        return {"ports": ModuleSerialService.list_available_ports()}
+
+    @app.get("/api/module-serial/status")
+    def module_serial_status():
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        return module_serial_service.status()
+
+    class ModuleSerialStartRequest(BaseModel):
+        port: str = Field(..., min_length=1, max_length=64)
+        baudrate: int = Field(115200, ge=300, le=921600)
+        bytesize: int = Field(8, ge=5, le=8)
+        parity: str = Field("N", min_length=1, max_length=1)
+        stopbits: int = Field(1, ge=1, le=2)
+        log_type: str = Field("cco", pattern=r"^(cco|sta)$")  # 模块日志归属 cco/sta，默认 cco
+
+    @app.post("/api/module-serial/start", status_code=202)
+    def module_serial_start(request: ModuleSerialStartRequest):
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        try:
+            return module_serial_service.start(
+                port=request.port,
+                baudrate=request.baudrate,
+                bytesize=request.bytesize,
+                parity=request.parity,
+                stopbits=request.stopbits,
+                log_type=request.log_type,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"模块串口启动失败：{exc}") from exc
+
+    @app.post("/api/module-serial/stop")
+    def module_serial_stop():
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        return module_serial_service.stop()
+
+    class ModuleSerialWriteRequest(BaseModel):
+        data: str = Field(..., min_length=1, max_length=8192)
+
+    @app.post("/api/module-serial/write")
+    def module_serial_write(request: ModuleSerialWriteRequest):
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        try:
+            return module_serial_service.write(request.data)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    class ModuleSerialBaudRequest(BaseModel):
+        baudrate: int = Field(..., ge=300, le=921600)
+
+    @app.post("/api/module-serial/baudrate")
+    def module_serial_baudrate(request: ModuleSerialBaudRequest):
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        try:
+            return module_serial_service.set_baudrate(request.baudrate)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    class ModuleSerialFlashRequest(BaseModel):
+        bin_path: str = Field(..., min_length=1, max_length=2048)
+        slot: int = Field(0, ge=0, le=15)
+        baud_plan: list[int] | None = Field(None, max_length=8)
+        no_reboot_after: bool = Field(False)
+
+    @app.post("/api/module-serial/flash")
+    def module_serial_flash(request: ModuleSerialFlashRequest):
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        try:
+            return module_serial_service.flash(
+                request.bin_path,
+                slot=request.slot,
+                baud_plan=request.baud_plan,
+                no_reboot_after=request.no_reboot_after,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/module-serial/logs")
+    def module_serial_logs(after: int = Query(-1, ge=-1)):
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        return module_serial_service.logs(after=after)
+
+    class ModuleSerialUploadRequest(BaseModel):
+        name: str = Field(..., min_length=1, max_length=255)
+        base64: str = Field(..., min_length=1)
+
+    @app.post("/api/module-serial/upload")
+    def module_serial_upload(request: ModuleSerialUploadRequest):
+        """接收浏览器上传的固件文件（base64），保存到 LOG/uploads/，返回可烧录路径。
+
+        浏览器 <input type=file> 出于沙箱不暴露真实绝对路径，故由后端保存到
+        本地可读目录，返回路径供烧录使用。
+        """
+        try:
+            data = base64.b64decode(request.base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="base64 解码失败") from exc
+        if not data:
+            raise HTTPException(status_code=422, detail="空文件")
+        uploads = _log_dir() / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        safe_name = os.path.basename(request.name) or "fw.bin"
+        path = uploads / safe_name
+        try:
+            path.write_bytes(data)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"固件保存失败：{exc}") from exc
+        return {"path": str(path)}
+
     return app
 
 
 parser_service = ParserService(DotNetHplcParser(DEFAULT_DLL))
 log_file_service = LogFileService(parser_service, DEFAULT_INDEX)
-serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir())
-app = create_app(parser_service, log_file_service, serial_capture_service)
+serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir() / "侦听台")
+module_serial_svc = ModuleSerialService(log_dir=_log_dir() / "模块")
+app = create_app(parser_service, log_file_service, serial_capture_service,
+                 module_serial_service=module_serial_svc)

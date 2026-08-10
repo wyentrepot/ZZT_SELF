@@ -386,5 +386,9 @@ dist/*/runtime/
 !dist/*/_internal/dll/bin/
 !dist/*/_internal/dll/bin/Debug/
 
+# 本机会话元数据与临时目录（不提交）
+.reasonix/
+tmp/
+
 # graphify 代码分析工具的运行时时间戳缓存（每次执行都会变化，不入库）
 graphify-out/cache/last_query_stamp
