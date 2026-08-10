@@ -1,5 +1,5 @@
 const DEFAULT_PAGE_SIZE = 100;
-const SAMPLE_PATH = "hplc_web\\tests\\data\\gw_log_sample.txt";
+const SAMPLE_PATH = "listener\\test_data\\gw_log_sample.txt";
 
 const state = {
   offset: 0,

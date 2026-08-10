@@ -26,4 +26,4 @@
 ## 阶段 4：验证与收尾
 - [x] 测试全绿无回归（152 测试仅 2 个既有失败）
 - [x] 部署 D:\zzt
-- [ ] req-mgmt 收尾（DONE.md 归档、REQS-INDEX 更新）
+- [x] req-mgmt 收尾（DONE.md 归档、REQS-INDEX 更新）
