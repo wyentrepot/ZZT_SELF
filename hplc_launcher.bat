@@ -1,36 +1,28 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title GW HPLC Log Parser
-
-if not defined HPLC_LAUNCH_MODE set "HPLC_LAUNCH_MODE=production"
-set "APP_URL=http://127.0.0.1:8765/"
-if /i "%HPLC_LAUNCH_MODE%"=="test" set "APP_URL=http://127.0.0.1:8765/?mode=test"
+title GW HPLC 侦听台 / 模块日志
 
 echo.
-echo  GW HPLC Log Parser
-echo  ==================
-echo  Mode: %HPLC_LAUNCH_MODE%
+echo  GW HPLC 侦听台 / 模块日志
+echo  ==============================
 echo.
 
 if not exist "dll\bin\Debug\GwHPLCAnalysis.dll" goto :missing_dll
 
-powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8765/api/version' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-if not errorlevel 1 goto :check_service_capability
-goto :bootstrap
-
-:check_service_capability
-powershell -NoProfile -Command "try { $version = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/api/version' -TimeoutSec 2; $api = Invoke-RestMethod -UseBasicParsing 'http://127.0.0.1:8765/openapi.json' -TimeoutSec 2; if ($version.picker_api_revision -eq 2 -and $version.minute_analysis_api_revision -eq 3 -and $version.frame_filter_api_revision -eq 2 -and $version.module_serial_api_revision -eq 1 -and $null -ne $api.paths.'/api/fs/pick' -and $null -ne $api.paths.'/api/logs/minute-analysis' -and $null -ne $api.paths.'/api/module-serial/flash') { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-if not errorlevel 1 goto :already_running
-goto :restart_outdated_service
-
-:restart_outdated_service
-echo [SERVICE_OUTDATED_RESTARTING] Restarting the local parser service...
-for /f "delims=" %%P in ('powershell -NoProfile -Command "$connection = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue; if ($connection) { $process = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $connection.OwningProcess); if ($process.Name -eq 'python.exe' -and $process.CommandLine -match 'hplc_web\.run') { [Console]::Write($process.ProcessId) } }"') do set "HPLC_SERVER_PID=%%P"
-if not defined HPLC_SERVER_PID goto :port_in_use
-taskkill /PID %HPLC_SERVER_PID% /T /F >nul 2>&1
-timeout /T 1 /NOBREAK >nul
-goto :bootstrap
+:choose_mode
+echo  请选择启动模式:
+echo    1 = 侦听台            (端口 8765)
+echo    2 = 模块日志/烧录      (端口 8766)
+echo    3 = 全部启动          (8765 + 8766)
+echo.
+set "HPLC_CHOICE="
+set /p HPLC_CHOICE="请输入 1 / 2 / 3 后回车: "
+if /i "%HPLC_CHOICE%"=="1" goto :start_listener
+if /i "%HPLC_CHOICE%"=="2" goto :start_module
+if /i "%HPLC_CHOICE%"=="3" goto :start_all
+echo  无效选择，默认启动侦听台(1)。
+goto :start_listener
 
 :bootstrap
 where python >nul 2>&1
@@ -43,35 +35,51 @@ if errorlevel 1 goto :failed
 
 :venv_ready
 set "APP_PYTHON=.venv\Scripts\python.exe"
-"%APP_PYTHON%" -c "import clr, fastapi, httpx, uvicorn" >nul 2>&1
-if not errorlevel 1 goto :dependencies_ready
+if exist ".venv\.deps_ready" goto :launch
+"%APP_PYTHON%" -c "import fastapi, httpx, uvicorn" >nul 2>&1
+if not errorlevel 1 (
+  echo. > ".venv\.deps_ready"
+  goto :launch
+)
 
 echo [FIRST RUN] Installing required packages. Please wait...
 "%APP_PYTHON%" -m pip install -r "hplc_web\requirements.txt"
 if errorlevel 1 goto :failed
+echo. > ".venv\.deps_ready"
 
-:dependencies_ready
-echo [READY] Opening %APP_URL%
-echo Close this window to stop the local service.
+:launch
+if /i "%HPLC_CHOICE%"=="2" goto :start_module
+if /i "%HPLC_CHOICE%"=="3" goto :start_all
+
+:start_listener
 echo.
-"%APP_PYTHON%" -m hplc_web.run
+echo [启动] 侦听台 -> http://127.0.0.1:8765/
+echo 关闭本窗口即停止服务.
+echo.
+"%APP_PYTHON%" -m hplc_web.listener_run
 if errorlevel 1 goto :failed
 exit /b 0
 
-:already_running
-echo [SERVICE_ALREADY_RUNNING] Opening %APP_URL%
-start "" "%APP_URL%"
+:start_module
+echo.
+echo [启动] 模块日志/烧录 -> http://127.0.0.1:8766/module-serial
+echo 关闭本窗口即停止服务.
+echo.
+"%APP_PYTHON%" -m hplc_web.module_serial_run
+if errorlevel 1 goto :failed
 exit /b 0
 
-:port_in_use
-echo [ERROR] Port 8765 is in use by a process that is not this parser service.
-echo Stop that process, then run this launcher again.
-pause
-exit /b 1
+:start_all
+echo.
+echo [启动] 侦听台(8765) + 模块日志(8766)...
+echo 关闭本窗口后，请到任务管理器结束 python 进程停止服务.
+echo.
+start "listener-8765" "%APP_PYTHON%" -m hplc_web.listener_run
+start "module-8766" "%APP_PYTHON%" -m hplc_web.module_serial_run
+exit /b 0
 
 :missing_dll
 echo [ERROR] dll\bin\Debug\GwHPLCAnalysis.dll was not found.
-echo Keep the launcher files in the repository root directory.
 pause
 exit /b 1
 

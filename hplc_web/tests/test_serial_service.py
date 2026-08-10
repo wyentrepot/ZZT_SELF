@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from hplc_web.log_service import LogFileService
 from hplc_web.serial_service import (
@@ -126,6 +127,26 @@ class SerialCaptureServiceTest(unittest.TestCase):
         self.assertIn("COM_TEST", path.name)
         self.assertTrue(path.is_file())
         handle.close()
+
+    def test_write_log_line_rotates_on_date_change(self):
+        """跨天时 _write_log_line 自动轮转到新 LOG 文件（按天切分）。"""
+        service, first_path = self._service_with_open_log(tempfile.mkdtemp())
+        first_name = first_path.name
+        # 先写一行（当天）
+        service._write_log_line("[1][00:00:00.001]7E")
+        with mock.patch(
+            "hplc_web.serial_service.time.strftime",
+            side_effect=["20260101", "20260102", "20260102"],
+        ):
+            # 跨天：_open_log_file 内 strftime(%Y%m%d_%H%M%S) 与 _write_log_line 内
+            # strftime(%Y%m%d) 各取一个返回值，模拟日期变化触发轮转
+            service._write_log_line("[2][00:00:01.001]7E")
+        # 轮转后应打开新文件，且仍可写
+        self.assertIsNotNone(service._log_file)
+        self.assertIsNotNone(service._log_path)
+        self.assertNotEqual(service._log_path, first_path)
+        self.assertNotEqual(service._log_path.name, first_name)
+        service._close_log_file()
 
     def _service_with_open_log(self, tmpdir):
         """构造服务并打开会话 LOG 文件，返回 (service, path)。"""

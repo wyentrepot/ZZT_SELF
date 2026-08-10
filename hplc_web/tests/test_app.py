@@ -31,7 +31,7 @@ class FakeLogService:
     def status(self):
         return {"state": "completed", "frame_count": 12, "progress": 1.0}
 
-    def list_frames(self, offset=0, limit=100, query="", nid="", start_time="", end_time=""):
+    def list_frames(self, offset=0, limit=100, query="", nid="", start_time="", end_time="", after_id=None):
         self.last_frames_query = {
             "offset": offset,
             "limit": limit,
@@ -39,12 +39,14 @@ class FakeLogService:
             "nid": nid,
             "start_time": start_time,
             "end_time": end_time,
+            "after_id": after_id,
         }
         return {
             "items": [{"id": 1, "sequence": "406727", "summary": {"帧类型": "SOF"}}],
             "offset": offset,
             "limit": limit,
             "total": 1,
+            "after_id": None,
         }
 
     def get_frame(self, frame_id):
@@ -378,7 +380,7 @@ class FsApiTests(unittest.TestCase):
     def test_pick_returns_selected_native_path(self):
         """/api/fs/pick 调用原生对话框函数并返回选中的路径。"""
         with mock.patch.object(
-            self.app_module, "_pick_file_via_native_dialog",
+            self.app_module, "_pick_file_via_tkinter_dialog",
             return_value=r"D:\logs\sample.txt",
         ):
             response = self.client.get("/api/fs/pick")
@@ -388,7 +390,7 @@ class FsApiTests(unittest.TestCase):
     def test_pick_returns_empty_when_cancelled(self):
         """用户在原生对话框中取消时返回空路径。"""
         with mock.patch.object(
-            self.app_module, "_pick_file_via_native_dialog", return_value=""
+            self.app_module, "_pick_file_via_tkinter_dialog", return_value=""
         ):
             response = self.client.get("/api/fs/pick")
         self.assertEqual(response.status_code, 200)
@@ -399,7 +401,7 @@ class FsApiTests(unittest.TestCase):
         with mock.patch.object(
             self.app_module, "_read_last_path", return_value=r"D:\logs\sample.txt"
         ), mock.patch.object(
-            self.app_module, "_pick_file_via_native_dialog",
+            self.app_module, "_pick_file_via_tkinter_dialog",
             return_value=r"D:\logs\sample.txt",
         ) as pick:
             self.client.get("/api/fs/pick")
@@ -431,15 +433,15 @@ class FsApiTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["env"]["HPLC_PICKER_INITIAL_DIR"], r"D:\logs")
         self.assertIn("ToBase64String", self.app_module._POWERSHELL_PICK_FILE_SCRIPT)
 
-    def test_pick_endpoint_returns_powershell_error(self):
+    def test_pick_endpoint_tkinter_unavailable_returns_empty(self):
+        """tkinter 原生框不可用（SYSTEM 无桌面会话）时返回空路径供前端兜底。"""
         with mock.patch.object(
-            self.app_module, "_pick_file_via_native_dialog",
-            side_effect=RuntimeError("dialog unavailable"),
+            self.app_module, "_pick_file_via_tkinter_dialog", return_value=""
         ):
             response = self.client.get("/api/fs/pick")
 
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("dialog unavailable", response.json()["detail"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["path"], "")
 
 
 class FakeLogMutex:

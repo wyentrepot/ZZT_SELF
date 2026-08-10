@@ -385,3 +385,7 @@ dist/*/runtime/
 !dist/*/_internal/clr_loader/ffi/dlls/x86/
 !dist/*/_internal/dll/bin/
 !dist/*/_internal/dll/bin/Debug/
+
+# 本机会话元数据与临时目录（不提交）
+.reasonix/
+tmp/

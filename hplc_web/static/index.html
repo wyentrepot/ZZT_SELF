@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>国网 HPLC 日志解析台</title>
-  <link rel="stylesheet" href="/static/styles.css?v=data-source-v1">
+  <link rel="stylesheet" href="/static/styles.css?v=serial-v2">
 </head>
 <body>
   <main class="app-shell">
@@ -113,6 +113,7 @@
             <span class="serial-params">8 数据位 · 无校验 · 1 停止位</span>
             <button id="serial-start" class="primary-button" type="button">启动采集</button>
             <button id="serial-stop" class="secondary-button" type="button" disabled>停止</button>
+            <button id="serial-refresh" class="secondary-button" type="button" disabled>刷新帧列表</button>
           </div>
           <p id="serial-message" class="serial-message">采集到的 HPLC 帧会自动加上实时时间戳并写入解析索引，可在上方帧索引中实时查看。</p>
         </div>
@@ -386,6 +387,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=data-source-v1"></script>
+  <script src="/static/app.js?v=serial-v2"></script>
 </body>
 </html>

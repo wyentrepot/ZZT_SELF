@@ -138,7 +138,7 @@ def _read_last_path() -> str:
         return ""
 
 
-def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
+def _pick_file_via_tkinter_dialog(initial_dir: str = "", timeout_s: int = 60) -> str:
     """调用 Windows 原生文件选择对话框，返回用户选中的文件路径。
 
     浏览器网页受安全沙箱限制无法读取本地路径，但后端运行在用户本机，
@@ -158,10 +158,10 @@ def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
             try:
                 path = filedialog.askopenfilename(
                     parent=root,
-                    title="选择日志文件",
+                    title="选择固件 .bin 文件",
                     initialdir=initial_dir or None,
                     filetypes=[
-                        ("日志文件", "*.txt *.log *.dat *.csv *.bin *.raw"),
+                        ("固件/日志文件", "*.bin *.txt *.log *.dat *.csv *.raw"),
                         ("所有文件", "*.*"),
                     ],
                 )
@@ -175,10 +175,10 @@ def _pick_file_via_tkinter_dialog(initial_dir: str = "") -> str:
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    thread.join(timeout=300)
+    thread.join(timeout=timeout_s)
     if thread.is_alive():
-        # 超时：对话框仍打开（用户长时间未操作），返回空串不阻塞请求；
-        # daemon 线程随后自然结束
+        # 超时：对话框仍打开（用户长时间未操作 / SYSTEM 无桌面会话弹不出），
+        # 返回空串不阻塞请求；daemon 线程随后自然结束
         return ""
     return result.get()
 
@@ -330,15 +330,13 @@ def create_app(service: ParserService, log_service=None, serial_service=None,
     def fs_pick():
         """弹出 Windows 原生文件选择对话框，返回用户选中的真实路径。
 
-        浏览器无法读取本地路径，由后端（同机进程）调用系统原生对话框；
-        取消选择时返回空路径。非 Windows 环境返回 501。
+        浏览器无法读取本地路径，由后端（同机进程）调用 tkinter 系统原生
+        对话框；取消、失败或超时返回空路径（前端可 fallback 到内置浏览器）。
+        非 Windows 环境返回 501。
         """
         if os.name != "nt":
             raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")
-        try:
-            path = _pick_file_via_native_dialog(_read_last_path())
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        path = _pick_file_via_tkinter_dialog(_read_last_path())
         return {"path": path}
 
     @app.get("/api/logs/frames")
@@ -569,6 +567,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None,
         bytesize: int = Field(8, ge=5, le=8)
         parity: str = Field("N", min_length=1, max_length=1)
         stopbits: int = Field(1, ge=1, le=2)
+        log_type: str = Field("cco", pattern=r"^(cco|sta)$")  # 模块日志归属 cco/sta，默认 cco
 
     @app.post("/api/module-serial/start", status_code=202)
     def module_serial_start(request: ModuleSerialStartRequest):
@@ -581,6 +580,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None,
                 bytesize=request.bytesize,
                 parity=request.parity,
                 stopbits=request.stopbits,
+                log_type=request.log_type,
             )
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -679,7 +679,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None,
 
 parser_service = ParserService(DotNetHplcParser(DEFAULT_DLL))
 log_file_service = LogFileService(parser_service, DEFAULT_INDEX)
-serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir())
-module_serial_svc = ModuleSerialService(log_dir=_log_dir())
+serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir() / "侦听台")
+module_serial_svc = ModuleSerialService(log_dir=_log_dir() / "模块")
 app = create_app(parser_service, log_file_service, serial_capture_service,
                  module_serial_service=module_serial_svc)

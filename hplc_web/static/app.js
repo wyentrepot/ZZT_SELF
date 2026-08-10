@@ -12,6 +12,7 @@ const state = {
   selectedId: null,
   pollTimer: null,
   lastFrameCount: -1,
+  loadToken: 0,
   detail: null,
   pageCache: new Map(),
 };
@@ -56,6 +57,7 @@ const elements = {
   serialBaud: $("#serial-baud"),
   serialStart: $("#serial-start"),
   serialStop: $("#serial-stop"),
+  serialRefresh: $("#serial-refresh"),
   serialState: $("#serial-state"),
   serialMessage: $("#serial-message"),
 };
@@ -457,16 +459,19 @@ async function loadFrames() {
     requestAnimationFrame(() => setFrameLoading(false));
     return;
   }
+  // 防重入令牌：丢弃过期响应，避免串口轮询触发的请求堆积
+  const token = ++state.loadToken;
   setFrameLoading(true);
   try {
     const page = await request(`/api/logs/frames?${params}`);
+    if (token !== state.loadToken) return; // 已有更新的请求发出，丢弃本次过期结果
     state.pageCache.set(cacheKey, page);
     renderFrames(page);
     elements.pageCacheHint.textContent = `${state.pageCache.size} 页已缓存`;
   } catch (error) {
-    showError(error.message);
+    if (token === state.loadToken) showError(error.message);
   } finally {
-    setFrameLoading(false);
+    if (token === state.loadToken) setFrameLoading(false);
   }
 }
 
@@ -1253,6 +1258,7 @@ async function refreshSerialStatus() {
     if (status.state === "running") {
       elements.serialState.textContent = `采集中 · ${status.frame_count || 0} 帧`;
       elements.serialState.className = "serial-state running";
+      state.lastFrameCount = status.frame_count || 0;
     } else if (status.state === "error") {
       elements.serialState.className = "serial-state error";
       elements.serialState.textContent = "错误";
@@ -1273,13 +1279,21 @@ async function refreshSerialStatus() {
 function startSerialPolling() {
   if (serialPollTimer) clearInterval(serialPollTimer);
   const tick = async () => {
+    const prevCount = state.lastFrameCount;
     await refreshSerialStatus();
-    // 串口新帧实时写入同一 frames 表，激活期间清缓存并周期性刷新帧列表
-    state.pageCache.clear();
-    loadFrames();
+    const nowCount = state.lastFrameCount;
+    // 仅在「帧数变化」且「停在首页（offset=0）」时清缓存并自动刷新帧列表。
+    // 防重入令牌保证同参数请求只发一次、过期响应被丢弃，不会堆积。
+    // 深翻页/筛选中暂停自动刷新，由「刷新帧列表」按钮手动触发。
+    const onFirstPage = state.offset === 0;
+    if (onFirstPage && nowCount !== prevCount) {
+      state.pageCache.clear();
+      loadFrames();
+    }
   };
   tick();
-  serialPollTimer = setInterval(tick, 1000);
+  // 节流：安静期（无新帧）降低轮询频率，减少无效请求
+  serialPollTimer = setInterval(tick, 1500);
 }
 
 function stopSerialPolling() {
@@ -1301,6 +1315,7 @@ async function startSerial() {
       body: JSON.stringify({ port, baudrate: baud }),
     });
     elements.serialMessage.textContent = `正在监听 ${port} (${baud}, N, 8, 1)`;
+    elements.serialRefresh.disabled = false;
     startSerialPolling();
   } catch (error) {
     elements.serialMessage.textContent = error.message;
@@ -1312,6 +1327,7 @@ async function stopSerial() {
   try {
     await request("/api/serial/stop", { method: "POST" });
     elements.serialMessage.textContent = "正在停止串口采集...";
+    elements.serialRefresh.disabled = true;
     stopSerialPolling();
     await refreshSerialStatus();
   } catch (error) {
@@ -1321,6 +1337,11 @@ async function stopSerial() {
 
 elements.serialStart.addEventListener("click", startSerial);
 elements.serialStop.addEventListener("click", stopSerial);
+elements.serialRefresh.addEventListener("click", () => {
+  // 手动刷新：清缓存后重新加载当前页，供深翻页/筛选中使用
+  state.pageCache.clear();
+  loadFrames();
+});
 loadSerialPorts();
 
 // ---------- 数据源二选一：日志文件分析 / 串口实时监听 ----------

@@ -91,6 +91,13 @@
             <option value="921600">921600</option>
           </select>
         </div>
+        <div class="field">
+          <label for="ms-log-type">日志归属</label>
+          <select id="ms-log-type" style="width:100px">
+            <option value="cco" selected>cco</option>
+            <option value="sta">sta</option>
+          </select>
+        </div>
         <button id="ms-refresh" class="text-button" type="button">刷新端口</button>
         <button id="ms-toggle" class="primary-button" type="button">启动</button>
       </div>
@@ -104,10 +111,9 @@
       <div class="ms-toolbar">
         <div class="field">
           <label for="ms-bin">固件 .bin 路径</label>
-          <input id="ms-bin" class="ms-file" type="text" placeholder="选择文件上传，或输入 Windows/WSL 路径">
+          <input id="ms-bin" class="ms-file" type="text" placeholder="输入 Windows/WSL 路径，或点选择文件…">
         </div>
         <button id="ms-pick" class="text-button" type="button">选择文件…</button>
-        <input id="ms-file-input" type="file" accept=".bin,.BIN,application/octet-stream" style="display:none">
         <div class="field">
           <label for="ms-slot">image</label>
           <select id="ms-slot" style="width:90px">
@@ -140,6 +146,31 @@
       </div>
       <div id="ms-log-box" class="ms-log-box"></div>
     </section>
+  </div>
+
+  <!-- 文件选择对话框（兜底）：通过后端 /api/fs/* 浏览服务器本地 Windows 目录 -->
+  <div id="ms-file-picker" class="file-picker-overlay" hidden>
+    <div class="file-picker" role="dialog" aria-modal="true" aria-label="选择固件文件">
+      <div class="file-picker-header">
+        <h3>选择固件文件</h3>
+        <button id="ms-picker-close" class="icon-button" type="button" title="关闭">×</button>
+      </div>
+      <div class="file-picker-toolbar">
+        <button id="ms-picker-up" class="secondary-button" type="button" disabled>上一级</button>
+        <span id="ms-picker-path" class="file-picker-path" title=""></span>
+      </div>
+      <div class="file-picker-roots" id="ms-picker-roots"></div>
+      <div class="file-picker-list" id="ms-picker-list" tabindex="0">
+        <div class="file-picker-empty">加载中…</div>
+      </div>
+      <div class="file-picker-footer">
+        <span id="ms-picker-selected" class="file-picker-selected"></span>
+        <div>
+          <button id="ms-picker-cancel" class="secondary-button" type="button">取消</button>
+          <button id="ms-picker-confirm" class="primary-button" type="button" disabled>选择此文件</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/static/module-serial.js?v=module-serial-v1"></script>

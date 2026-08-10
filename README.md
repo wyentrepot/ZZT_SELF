@@ -31,9 +31,15 @@
 侦听台改造/
 ├── dll/                    # C# 解析动态库源码（DLL_NwHPLCAnalysis），输出 GwHPLCAnalysis.dll
 ├── use/                    # C# 测试工程（DLL_Test）
-├── hplc_web/               # Python Web 服务（FastAPI），入口 run.py，监听 127.0.0.1:8765
+├── hplc_web/               # Python Web 服务（FastAPI），拆分为两个独立应用
+│   ├── listener_app.py     #   侦听台应用（端口 8765），listener_run.py 为入口
+│   ├── module_serial_app.py#   模块日志/烧录应用（端口 8766），module_serial_run.py 为入口
+│   └── ...                 #   共享服务（serial_service / module_serial_service / log_service 等）
 ├── parser_lib/             # Python 解析库（adapters / core）
 ├── scripts/                # 辅助脚本
+├── LOG/                    # 日志目录（分类存储）
+│   ├── 侦听台/              #   侦听台串口采集日志
+│   └── 模块/                #   模块日志（下分 cco/ 与 sta/，文件名 时间_[cco].log）
 ├── 侦听台文档/              # 协议规范与接口说明文档
 │   ├── 南网协议/            # 南方电网宽带载波通信规约
 │   ├── 国网协议/            # 国网双模通信互联互通技术规范
@@ -41,9 +47,8 @@
 │   └── 侦听台报文格式.docx
 ├── doc/  docs/             # 其他文档
 ├── DLL.sln / NwHplcDll.sln # 解决方案文件
-├── 启动解析工具.bat          # 生产模式启动
-├── 启动解析工具-测试模式.bat  # 测试模式启动
-└── hplc_launcher.bat         # 启动器核心脚本
+├── 启动解析工具.bat          # 启动器（用户选择 1=侦听台 / 2=模块日志 / 3=全部）
+└── hplc_launcher.bat         # 启动器核心脚本（含模式选择）
 ```
 
 ## 五、环境要求

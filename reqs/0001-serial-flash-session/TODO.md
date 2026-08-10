@@ -30,3 +30,26 @@
 - [x] loopback 模拟串口验证 XMODEM 移植（对照 ps1 CRC 自检 0x31C3）
 - [x] zzt 现有 pytest 全绿无回归
 - [x] 使用说明 + 权威设计文档/产物齐全确认 + req-mgmt 收尾（DONE.md 归档、REQS-INDEX.md 置 ✅）
+
+## 阶段 6：真机烧录并发读竞争修复（变更 12）
+- [x] 定位真机烧录失败根因：烧录线程 ser.read() 与常驻 RX 线程并发抢读同一 handle，RX 抢走 ACK → 超时重传 → Xmodem Download failed -2
+- [x] 重构：RX 线程保持唯一 reader，烧录期间把设备应答喂入 _flash_resp_q，flash 经 _FlashReader（read 走队列、write 委托真实 ser）收发——烧录也走串口模块
+- [x] 回归测试：FlashReaderUnitTest（队列消费/write 委托）+ FlashReaderRegressionTest（RX 线程并发下完整驱动 XMODEM 烧录 BURN SUCCESS）
+- [x] 验证：test_module_serial_service 20 测试全绿；AST 全部通过
+
+## 阶段 6：真机烧录失败修复（并发读串口竞争）
+- [x] 定位根因：RX 监控线程与烧录线程并发 ser.read 抢 ACK → Xmodem Download failed: -2
+- [x] 修复：RX 线程保持唯一 reader，烧录期间应答经 _FlashReader 队列喂给烧录线程
+- [x] 回归测试：_FlashReader 单元测试 + 回环完整烧录驱动测试（20 测试全绿）
+
+## 阶段 7：真机复测三问题（变更 13）
+- [x] 问题 3 烧录仍失败：D:\zzt 部署的是旧 module_serial_service.py（变更 12 修复未同步）→ 重新部署 + 验证明文
+- [x] 问题 1 启动慢：python 进程冷启动 ~6s + launcher 重复依赖检查(~14s) → .deps_ready 标记跳过 + 去 clr + 合并探测为一次 PowerShell
+- [x] 问题 2 文件选择慢：整包 base64 上传 → 改 /api/fs/pick（tkinter 原生框只取路径）+ 内置浏览器兜底，移除上传
+- [x] 验证：test_launcher / FsApiTests pick 测试全绿；全量仅 2 个既有"测试文件"目录缺失失败（与本次无关）
+
+## 阶段 8：烧录提速 + 修复（变更 14，按 460800upgrade.py）
+- [x] XMODEM-1K：STX 0x02 + 1024 字节/包，build_xmodem_packet/send_xmodem 支持 block_size
+- [x] flash() 重构：reboot → 等正常系统 → config 切波特率 230400→460800（双保险确认）→ image → XMODEM 1K
+- [x] 测试：1K 包结构 + selftest 128/1K + 回环完整烧录新流程全绿（21 测试）
+- [x] 部署 D:\zzt + 全量 151 测试仅 2 个既有失败（测试数据缺失，与本次无关）

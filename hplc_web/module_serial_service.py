@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import queue
 import threading
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -24,6 +25,48 @@ def format_event_timestamp(ts: float) -> str:
     """毫秒级时间戳，格式 YYYYMMDD-HH:MM:SS:mmm（用户要求）。"""
     dt = datetime.datetime.fromtimestamp(ts)
     return dt.strftime("%Y%m%d-%H:%M:%S") + f":{int((ts - int(ts)) * 1000):03d}"
+
+
+class _FlashReader:
+    """烧录应答 reader：唯一 reader（RX 线程）把设备回显喂入队列，本代理从此消费。
+
+    供 xmodem_flash.flash() 作为 ser 传入：read/in_waiting 走烧录应答队列
+    （由 RX 线程在烧录期间喂入），write/baudrate 委托真实 pyserial 对象。
+    这样烧录线程与 RX 线程不并发 read 同一 handle，根除抢读竞争。
+    """
+
+    def __init__(self, real_ser, resp_queue: "queue.Queue"):
+        self._ser = real_ser
+        self._q = resp_queue
+
+    # ---- 读侧：来自烧录应答队列（RX 线程烧录期间喂入）----
+    def read(self, n=1):
+        if n is None or n <= 0:
+            n = 1
+        out = bytearray()
+        while len(out) < n:
+            try:
+                b = self._q.get(timeout=0.05)
+            except queue.Empty:
+                break
+            out.append(b)
+        return bytes(out)
+
+    @property
+    def in_waiting(self) -> int:
+        return self._q.qsize()
+
+    # ---- 写侧：委托真实串口 ----
+    def write(self, data):
+        return self._ser.write(data)
+
+    @property
+    def baudrate(self):
+        return self._ser.baudrate
+
+    @baudrate.setter
+    def baudrate(self, value):
+        self._ser.baudrate = value
 
 
 class ModuleSerialService:
@@ -38,8 +81,10 @@ class ModuleSerialService:
         self._bytesize = 8
         self._parity = "N"
         self._stopbits = 1
-        self._log_dir = Path(log_dir) if log_dir else Path("LOG")
+        # 模块日志根目录：LOG/模块/{cco,sta}/，文件名 时间_[cco].log
+        self._log_dir = Path(log_dir) if log_dir else (Path("LOG") / "模块")
         self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._log_type = "cco"  # cco | sta，前端下拉框选择，默认 cco
         self._log_file: Optional[Path] = None
         self._log_handle = None  # 文本文件句柄（追加写）
         self._log_lock = threading.Lock()
@@ -57,6 +102,7 @@ class ModuleSerialService:
             "error": None,
         }
         self._flash_lock = threading.RLock()  # 烧录线程串行化（含 write 互斥）
+        self._flash_resp_q: Optional["queue.Queue"] = None  # 烧录期间设备应答队列
 
     # ---------- 基础查询 ----------
     @staticmethod
@@ -86,7 +132,8 @@ class ModuleSerialService:
 
     # ---------- 生命周期 ----------
     def start(self, port: str, baudrate: int = 115200, bytesize: int = 8,
-              parity: str = "N", stopbits: int = 1) -> dict:
+              parity: str = "N", stopbits: int = 1,
+              log_type: str = "cco") -> dict:
         with self._lock:
             if self._state == "running":
                 return {"state": self._state, "port": self._port}
@@ -105,10 +152,11 @@ class ModuleSerialService:
             self._bytesize = bytesize
             self._parity = parity
             self._stopbits = stopbits
+            self._log_type = log_type if log_type in ("cco", "sta") else "cco"
             self._state = "running"
             self._stop_event.clear()
             self._open_log_file()
-            self._append_line("EVENT", f"串口 {port} 打开 @{baudrate} 8{parity[0]}1，模块日志口常驻独占")
+            self._append_line("EVENT", f"串口 {port} 打开 @{baudrate} 8{parity[0]}1，模块日志口常驻独占（{self._log_type}）")
             self._rx_thread = threading.Thread(
                 target=self._rx_loop, name="module-serial-rx", daemon=True
             )
@@ -141,9 +189,12 @@ class ModuleSerialService:
 
     # ---------- 日志落盘 ----------
     def _open_log_file(self) -> None:
+        """在 LOG/模块/{cco|sta}/ 下新建日志文件，命名 {时间}_[{type}].log。"""
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        safe_port = "".join(c for c in self._port if c.isalnum())
-        path = self._log_dir / f"MODCOM{safe_port}_{stamp}_模块日志.txt"
+        sub = self._log_type if self._log_type in ("cco", "sta") else "cco"
+        dirpath = self._log_dir / sub
+        dirpath.mkdir(parents=True, exist_ok=True)
+        path = dirpath / f"{stamp}_[{sub}].log"
         self._log_file = path
         self._log_handle = open(path, "a", encoding="utf-8", buffering=1)
 
@@ -213,8 +264,16 @@ class ModuleSerialService:
             try:
                 if ser.in_waiting > 0:
                     chunk = ser.read(ser.in_waiting)
-                    if chunk:
-                        self._ingest_char_stream("RX", chunk)
+                    if not chunk:
+                        continue
+                    # 烧录期间：RX 线程保持唯一 reader，把设备应答喂给烧录线程
+                    # 消费（不落盘/不入前端，XMODEM 应答不是人类可读日志）。
+                    q = self._flash_resp_q
+                    if q is not None:
+                        for b in chunk:
+                            q.put(b)
+                        continue
+                    self._ingest_char_stream("RX", chunk)
                 else:
                     self._stop_event.wait(0.05)
             except Exception as exc:
@@ -280,6 +339,12 @@ class ModuleSerialService:
             )
             self._append_line("EVENT", f"开始烧录：{bin_path} slot={slot}")
 
+            # 烧录期间：RX 线程保持唯一 reader，设备应答喂入此队列，
+            # flash 通过 _FlashReader 消费（read 走队列、write 委托真实 ser）。
+            resp_q: "queue.Queue" = queue.Queue()
+            self._flash_resp_q = resp_q
+            reader = _FlashReader(ser, resp_q)
+
             def _log(msg: str) -> None:
                 self._append_line("EVENT", msg)
 
@@ -292,7 +357,7 @@ class ModuleSerialService:
 
             try:
                 result = xmodem_flash.flash(
-                    ser, bin_path, slot=slot, baud_plan=baud_plan,
+                    reader, bin_path, slot=slot, baud_plan=baud_plan,
                     no_reboot_after=no_reboot_after,
                     log=_log, progress=_progress,
                     on_baud_change=lambda r: self._append_line("EVENT", f"波特率 → {r}"),
@@ -312,6 +377,9 @@ class ModuleSerialService:
                     )
                 self._append_line("EVENT", f"烧录失败：{exc}")
                 raise
+            finally:
+                # 清除烧录应答队列，RX 线程恢复实时落盘/入前端
+                self._flash_resp_q = None
 
     # ---------- 增量读取 ----------
     def logs(self, after: int = 0) -> dict:
