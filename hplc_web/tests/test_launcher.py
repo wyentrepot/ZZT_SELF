@@ -25,10 +25,10 @@ class LauncherScriptTests(unittest.TestCase):
         """启动脚本支持用户选择 1=侦听台 / 2=模块日志 / 3=全部。"""
         content = SHARED_LAUNCHER.read_text(encoding="utf-8")
 
-        self.assertIn("1 = 侦听台", content)
-        self.assertIn("2 = 模块日志", content)
-        self.assertIn("3 = 全部", content)
-        self.assertIn("set /p HPLC_CHOICE", content)
+        self.assertIn("1 = Listener", content)
+        self.assertIn("2 = Module log", content)
+        self.assertIn("3 = Start both", content)
+        self.assertIn('set /p "HPLC_CHOICE', content)
 
         # 两个独立应用入口
         self.assertIn("hplc_web.listener_run", content)

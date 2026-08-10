@@ -1,28 +1,29 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title GW HPLC 侦听台 / 模块日志
+title GW HPLC Listener / Module
 
 echo.
-echo  GW HPLC 侦听台 / 模块日志
-echo  ==============================
+echo  GW HPLC Listener / Module Log
+echo  ================================
 echo.
 
 if not exist "dll\bin\Debug\GwHPLCAnalysis.dll" goto :missing_dll
 
 :choose_mode
-echo  请选择启动模式:
-echo    1 = 侦听台            (端口 8765)
-echo    2 = 模块日志/烧录      (端口 8766)
-echo    3 = 全部启动          (8765 + 8766)
+echo  Select startup mode:
+echo    1 = Listener (serial capture, port 8765)
+echo    2 = Module log / flash (port 8766)
+echo    3 = Start both (8765 + 8766)
 echo.
 set "HPLC_CHOICE="
-set /p HPLC_CHOICE="请输入 1 / 2 / 3 后回车: "
-if /i "%HPLC_CHOICE%"=="1" goto :start_listener
-if /i "%HPLC_CHOICE%"=="2" goto :start_module
-if /i "%HPLC_CHOICE%"=="3" goto :start_all
-echo  无效选择，默认启动侦听台(1)。
-goto :start_listener
+set /p "HPLC_CHOICE=Enter 1 / 2 / 3 and press Enter: "
+if /i "%HPLC_CHOICE%"=="1" goto :bootstrap
+if /i "%HPLC_CHOICE%"=="2" goto :bootstrap
+if /i "%HPLC_CHOICE%"=="3" goto :bootstrap
+echo  Invalid choice, default to Listener(1).
+set "HPLC_CHOICE=1"
+goto :bootstrap
 
 :bootstrap
 where python >nul 2>&1
@@ -53,8 +54,8 @@ if /i "%HPLC_CHOICE%"=="3" goto :start_all
 
 :start_listener
 echo.
-echo [启动] 侦听台 -> http://127.0.0.1:8765/
-echo 关闭本窗口即停止服务.
+echo [START] Listener -> http://127.0.0.1:8765/
+echo Close this window to stop the service.
 echo.
 "%APP_PYTHON%" -m hplc_web.listener_run
 if errorlevel 1 goto :failed
@@ -62,8 +63,8 @@ exit /b 0
 
 :start_module
 echo.
-echo [启动] 模块日志/烧录 -> http://127.0.0.1:8766/module-serial
-echo 关闭本窗口即停止服务.
+echo [START] Module log/flash -> http://127.0.0.1:8766/module-serial
+echo Close this window to stop the service.
 echo.
 "%APP_PYTHON%" -m hplc_web.module_serial_run
 if errorlevel 1 goto :failed
@@ -71,8 +72,8 @@ exit /b 0
 
 :start_all
 echo.
-echo [启动] 侦听台(8765) + 模块日志(8766)...
-echo 关闭本窗口后，请到任务管理器结束 python 进程停止服务.
+echo [START] Listener(8765) + Module(8766) ...
+echo To stop, end the python processes in Task Manager.
 echo.
 start "listener-8765" "%APP_PYTHON%" -m hplc_web.listener_run
 start "module-8766" "%APP_PYTHON%" -m hplc_web.module_serial_run

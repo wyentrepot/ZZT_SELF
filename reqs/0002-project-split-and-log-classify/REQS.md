@@ -5,7 +5,7 @@
 
 ---
 
-## 当前生效基线（版本：v2，更新：2026-08-10）
+## 当前生效基线（版本：v3，更新：2026-08-10）
 
 ### 目标
 把当前 ZZT_SELF 仓库里「侦听台」与「模块日志/烧录」两个功能**解耦拆分成两个独立可运行的应用**，互不干扰；同时把日志文件**按功能、按模块类型分类存储**，前端可选日志归属（cco/sta）；更新 README 与启动脚本（用户选择启动模式）。
@@ -50,6 +50,12 @@ master
 - **为什么**: 当前项目文件冗杂、模块日志与侦听台功能耦合；需解耦拆分并分类日志。
 - **影响**: 全部（项目结构、日志服务、前端、启动脚本、README）
 - **被取代**: 无（初始版本）
+
+### 变更 3 ｜ 2026-08-10 ｜ 侦听台应用修复（复用 create_app）+ launcher CRLF
+- **改成什么**: 真机启动验证发现：手工重写的 `listener_app.py` 有缺陷（`log_service.query_frames` 方法名不存在、漏了 task-config/delete-config 等大量侦听台路由），导致侦听台页面/接口报错（AttributeError/404/500），用户反馈"无法启动"。修复：`listener_app.py` **复用已验证的 `app.create_app` 工厂**（完整侦听台功能 + 解析），模块路由因 module_serial_service=None 返回 503；`module_serial_app.py` 保持独立（核心 /api/module-serial/* 全 200，侦听台路由 404 正确解耦）。另修复 `hplc_launcher.bat` 用 LF 换行导致 cmd 解析错乱（改 CRLF）+ 中文乱码（提示改英文）+ 流程顺序 bug（选择后未先设 APP_PYTHON）。
+- **为什么**: 拆分时手工重写 listener_app 引入方法名/漏路由 bug，真机启动失败；launcher LF 换行导致 cmd 报错。
+- **影响**: hplc_web/listener_app.py（复用 create_app）、hplc_launcher.bat（CRLF+英文+流程）、部署 D:\zzt
+- **被取代**: 变更 2 中手工重写的 listener_app.py（方法名错误/漏路由）
 
 ### 变更 2 ｜ 2026-08-10 ｜ 日志分类 + 项目拆分实现
 - **改成什么**: 实现日志分类存储与项目拆分。①日志分类：`LOG/侦听台/`（SerialCaptureService 落盘）+ `LOG/模块/{cco,sta}/`（ModuleSerialService 按 log_type 落盘，命名 时间_[cco].log）；模块日志页前端加「日志归属」下拉框选 cco/sta（默认 cco），start 接口加 log_type 参数。②项目拆分：新建两个独立 FastAPI 应用——`hplc_web/listener_app.py`（侦听台，端口 8765，入口 listener_run.py）+ `hplc_web/module_serial_app.py`（模块日志/烧录，端口 8766，入口 module_serial_run.py），共享服务模块/静态资源/DLL；验证两应用可同时加载、路由完全隔离（listener 的 /module-serial 返回 404，module 返回 200）。③启动脚本改为用户选择：1=侦听台，2=模块日志，3=全部；更新 README。
