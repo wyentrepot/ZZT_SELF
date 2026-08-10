@@ -71,7 +71,9 @@
       for (const line of data.lines) {
         const cls = line.dir === "RX" ? "rx" : line.dir === "TX" ? "tx" : "ev";
         const div = document.createElement("div");
-        div.innerHTML = `<span class="t">[${line.ts}]</span> [${line.dir}] <span class="${cls}">${escapeHtml(line.text)}</span>`;
+        // 每行一个独立 div（天然换行）；去掉行尾换行符，避免多余回车字符
+        const text = String(line.text).replace(/\r?\n/g, "").replace(/\r/g, "");
+        div.innerHTML = `<span class="t">[${line.ts}]</span> [${line.dir}] <span class="${cls}">${escapeHtml(text)}</span>`;
         box.appendChild(div);
       }
       if (autoscroll) box.scrollTop = box.scrollHeight;

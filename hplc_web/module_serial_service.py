@@ -21,9 +21,9 @@ from hplc_web import xmodem_flash
 
 
 def format_event_timestamp(ts: float) -> str:
-    """毫秒级时间戳，如 14:03:02.123。"""
+    """毫秒级时间戳，格式 YYYYMMDD-HH:MM:SS:mmm（用户要求）。"""
     dt = datetime.datetime.fromtimestamp(ts)
-    return dt.strftime("%H:%M:%S") + f".{int((ts - int(ts)) * 1000):03d}"
+    return dt.strftime("%Y%m%d-%H:%M:%S") + f":{int((ts - int(ts)) * 1000):03d}"
 
 
 class ModuleSerialService:
@@ -45,6 +45,9 @@ class ModuleSerialService:
         self._log_lock = threading.Lock()
         self._lines: List[dict] = []  # 增量 buffer：[{seq, ts, dir, text}]
         self._next_seq = 0
+        # 按换行切行的缓冲（跨 chunk 累积，遇 \n/\r\n 切出完整行）
+        self._rx_line_buf = bytearray()  # RX 未闭合行
+        self._tx_line_buf = bytearray()  # TX 未闭合行
         self._flash_state = {  # 烧录进行时状态
             "flashing": False,
             "packet": 0,
@@ -121,6 +124,10 @@ class ModuleSerialService:
             self._rx_thread = None
             if thread is not None and thread.is_alive():
                 thread.join(timeout=2.0)
+            try:
+                self._flush_char_buf("TX")
+            except Exception:
+                pass
             if self._ser is not None:
                 try:
                     if self._ser.is_open:
@@ -171,8 +178,34 @@ class ModuleSerialService:
             if self._log_handle is not None:
                 self._log_handle.write(f"[{ts}] [{direction}] {text}\n")
 
+    def _ingest_char_stream(self, direction: str, data: bytes) -> None:
+        """按换行切字符行：跨 chunk 累积到行缓冲，遇 \\n/\\r\\n 切出完整行。
+
+        每个完整行带时间标签落盘/入前端；未闭合的行保留缓冲等待下一块。
+        （用户要求：全部按字符显示，有换行符时每行前加时间标签）
+        """
+        buf = self._rx_line_buf if direction == "RX" else self._tx_line_buf
+        buf.extend(data)
+        # 按 \n 切行（兼容 \r\n：切行时保留 \r 于行内容，前端可清洗）
+        while True:
+            idx = buf.find(b"\n")
+            if idx == -1:
+                break
+            line = bytes(buf[: idx + 1])  # 含换行符
+            del buf[: idx + 1]
+            self._append_line(direction, line.decode("utf-8", errors="replace"))
+
+    def _flush_char_buf(self, direction: str) -> None:
+        """停止时把未闭合行缓冲刷出（若有内容）。"""
+        buf = self._rx_line_buf if direction == "RX" else self._tx_line_buf
+        if buf:
+            line = bytes(buf)
+            buf.clear()
+            self._append_line(direction, line.decode("utf-8", errors="replace"))
+
+
     def _rx_loop(self) -> None:
-        """常驻 RX 线程：原始字节实时落盘，绝不停。"""
+        """常驻 RX 线程：原始字节实时按换行切字符行落盘，绝不停。"""
         while not self._stop_event.is_set():
             ser = self._ser
             if ser is None:
@@ -181,8 +214,7 @@ class ModuleSerialService:
                 if ser.in_waiting > 0:
                     chunk = ser.read(ser.in_waiting)
                     if chunk:
-                        hex_text = chunk.hex(" ").upper()
-                        self._append_line("RX", hex_text)
+                        self._ingest_char_stream("RX", chunk)
                 else:
                     self._stop_event.wait(0.05)
             except Exception as exc:
@@ -190,6 +222,11 @@ class ModuleSerialService:
                     self._state = "error"
                 self._append_line("EVENT", f"RX 读取异常：{exc}")
                 break
+        # 停止时把未闭合的 RX 行刷出
+        try:
+            self._flush_char_buf("RX")
+        except Exception:
+            pass
 
     # ---------- 下发（写字节） ----------
     def write(self, data_hex: str) -> dict:
@@ -203,7 +240,7 @@ class ModuleSerialService:
                 raise RuntimeError("烧录进行中，禁止手动写串口")
             data = bytes.fromhex(data_hex.replace(" ", "").replace(",", " "))
             ser.write(data)
-            self._append_line("TX", data.hex(" ").upper())
+            self._ingest_char_stream("TX", data)
             return {"sent": len(data)}
 
     def set_baudrate(self, baudrate: int) -> dict:
