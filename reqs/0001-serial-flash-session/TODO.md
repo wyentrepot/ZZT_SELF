@@ -22,9 +22,9 @@
 - [x] /module-serial 前端独立页面（新开标签）：800ms 增量轮询、日志+进度同屏、TX/RX 标记+事件行、页面按钮烧录
 
 ## 阶段 4：独立烧录脚本 + 新技能 serial-flash-session
-- [ ] flash_module.py 独立脚本：项目不在运行时自己 open COM → 复用 xmodem_flash.flash() → close
-- [ ] department-ai-skills/skills/serial-flash-session/：SKILL.md 编排层
-- [ ] 继承原技能安全规则（未确认 COM 不烧、dry-run 不算硬件证据、须 bootloader 确认文本）
+- [x] flash_module.py 独立脚本：项目不在运行时自己 open COM → 复用 xmodem_flash.flash() → close
+- [x] department-ai-skills/skills/serial-flash-session/：SKILL.md 编排层
+- [x] 继承原技能安全规则（未确认 COM 不烧、dry-run 不算硬件证据、须 bootloader 确认文本）
 
 ## 阶段 5：无硬件自测 + 回归 + 文档/进度同步
 - [ ] loopback 模拟串口验证 XMODEM 移植（对照 ps1 CRC 自检 0x31C3）
