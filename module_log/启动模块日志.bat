@@ -19,16 +19,16 @@ if errorlevel 1 goto :failed
 
 :venv_ready
 set "APP_PYTHON=.venv\Scripts\python.exe"
-if exist ".venv\.deps_ready" goto :launch
+if exist ".venv\.deps_module" goto :launch
 "%APP_PYTHON%" -c "import fastapi, httpx, uvicorn, pyserial" >nul 2>&1
 if not errorlevel 1 (
-  echo. > ".venv\.deps_ready"
+  echo. > ".venv\.deps_module"
   goto :launch
 )
 echo [首次运行] 正在安装依赖，请稍候...
 "%APP_PYTHON%" -m pip install -r "module_log\requirements.txt"
 if errorlevel 1 goto :failed
-echo. > ".venv\.deps_ready"
+echo. > ".venv\.deps_module"
 
 :launch
 echo.

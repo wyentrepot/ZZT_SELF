@@ -85,6 +85,11 @@ def _pick_file_via_tkinter_dialog(initial_dir: str = "", timeout_s: int = 60) ->
     return infra.pick_file_via_tkinter_dialog(initial_dir, timeout_s=timeout_s)
 
 
+# 以下 _POWERSHELL_PICK_FILE_SCRIPT 与 _pick_file_via_native_dialog 与
+# shared/infra.py 存在重复实现。保留原因为测试（test_native_picker_*）
+# 通过 inspect.getsource 断言源码结构，封装到 infra 后 getsource 不可见。
+# 路由 _fs_pick 实际调用的是 _pick_file_via_tkinter_dialog（封装 infra），
+# 不经过此函数；仅测试引用。
 _POWERSHELL_PICK_FILE_SCRIPT = r"""
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog

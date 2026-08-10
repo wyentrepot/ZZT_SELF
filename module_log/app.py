@@ -140,7 +140,7 @@ def create_app(module_serial_service=None) -> FastAPI:
 
     class ModuleSerialUploadRequest(BaseModel):
         name: str = Field(..., min_length=1, max_length=255)
-        base64: str = Field(..., min_length=1)
+        base64: str = Field(..., min_length=1, max_length=10485760)  # 10 MB 上限
 
     @app.post("/api/module-serial/upload")
     def module_serial_upload(request: ModuleSerialUploadRequest):
@@ -163,7 +163,11 @@ def create_app(module_serial_service=None) -> FastAPI:
     # ---- 固件选择（复用 shared.infra，仅 pick 选固件路径）----
     @app.get("/api/fs/roots")
     def fs_roots():
-        return infra.windows_drives()
+        drives = infra.windows_drives()
+        if drives:
+            return {"roots": drives}
+        home = str(Path(__file__).resolve().parent.parent)
+        return {"roots": [{"name": home, "path": home}]}
 
     @app.get("/api/fs/list")
     def fs_list(path: str = Query("", max_length=1024)):
@@ -171,7 +175,10 @@ def create_app(module_serial_service=None) -> FastAPI:
 
     @app.get("/api/fs/pick")
     def fs_pick():
-        return {"path": infra.pick_file_via_tkinter_dialog(infra.read_last_path(Path(__file__).resolve().parent.parent / "runtime" / "last_path.txt"))}
+        if os.name != "nt":
+            raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")
+        last_path = infra.read_last_path(Path(__file__).resolve().parent / "runtime" / "last_path.txt")
+        return {"path": infra.pick_file_via_tkinter_dialog(last_path)}
 
     return app
 

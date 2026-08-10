@@ -8,8 +8,8 @@ if not exist ".venv\Scripts\python.exe" (
     pause
     exit /b 1
 )
-if not exist "dll\bin\Debug\GwHPLCAnalysis.dll" (
-    echo [ERROR] dll\bin\Debug\GwHPLCAnalysis.dll not found. Build the C# project first.
+if not exist "shared\dll\bin\Debug\GwHPLCAnalysis.dll" (
+    echo [ERROR] shared\dll\bin\Debug\GwHPLCAnalysis.dll not found. Build the C# project first.
     pause
     exit /b 1
 )
