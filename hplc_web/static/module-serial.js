@@ -34,6 +34,8 @@
         ? `烧录中 ${st.flash.packet}/${st.flash.total || "?"} ${st.flash.message || ""}`
         : (st.flash && st.flash.phase ? st.flash.phase : "-");
       $("ms-server-state").textContent = "已连接";
+      // 启动/停止切换按钮：根据状态更新文本与样式
+      updateToggleButton(st.state);
       // 烧录进行中禁用重复触发
       $("ms-flash").disabled = !!(st.flash && st.flash.flashing);
       // 进度条
@@ -118,30 +120,40 @@
   }
 
   // ---------- 动作 ----------
-  async function startSerial() {
-    const port = $("ms-port-select").value;
-    if (!port) { alert("请先选择串口"); return; }
-    const baud = parseInt($("ms-baud-select").value, 10);
-    try {
-      await request("/api/module-serial/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ port, baudrate: baud, bytesize: 8, parity: "N", stopbits: 1 }),
-      });
-      lastSeq = -1; // 重新拉取
-      $("ms-log-box").innerHTML = "";
-      refreshStatus();
-    } catch (err) {
-      alert("启动失败：" + err.message);
-    }
+  function updateToggleButton(state) {
+    const btn = $("ms-toggle");
+    const running = state === "running" || state === "starting";
+    btn.textContent = running ? "停止" : "启动";
+    btn.classList.toggle("secondary-button", running);
+    btn.classList.toggle("primary-button", !running);
+    btn.disabled = false;
   }
 
-  async function stopSerial() {
+  async function toggleSerial() {
+    const port = $("ms-port-select").value;
+    if (!port) { alert("请先选择串口"); return; }
+    const btn = $("ms-toggle");
+    btn.disabled = true; // 防连点
     try {
-      await request("/api/module-serial/stop", { method: "POST" });
-      refreshStatus();
+      // 根据当前按钮状态决定启动或停止
+      const isStop = btn.textContent === "停止";
+      if (isStop) {
+        await request("/api/module-serial/stop", { method: "POST" });
+      } else {
+        const baud = parseInt($("ms-baud-select").value, 10);
+        await request("/api/module-serial/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ port, baudrate: baud, bytesize: 8, parity: "N", stopbits: 1 }),
+        });
+        lastSeq = -1; // 重新拉取
+        $("ms-log-box").innerHTML = "";
+      }
+      await refreshStatus();
     } catch (err) {
-      alert("停止失败：" + err.message);
+      alert((isStop ? "停止失败：" : "启动失败：") + err.message);
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -295,8 +307,7 @@
   // ---------- 绑定 ----------
   function bind() {
     $("ms-refresh").addEventListener("click", refreshPorts);
-    $("ms-start").addEventListener("click", startSerial);
-    $("ms-stop").addEventListener("click", stopSerial);
+    $("ms-toggle").addEventListener("click", toggleSerial);
     $("ms-pick").addEventListener("click", pickFile);
     $("ms-flash").addEventListener("click", startFlash);
     $("ms-clear").addEventListener("click", () => {
