@@ -6,7 +6,7 @@
 
 ---
 
-## 当前生效基线（版本：v4，更新：2026-08-10）
+## 当前生效基线（版本：v5，更新：2026-08-10）
 
 ### 目标
 在 SPLC 模块烧录场景下，让一个「模块日志/烧录串口」被 ZZT_SELF 项目全程接管：原始字节流实时落盘、实时可看、可追溯；同一串口上可同时执行 XMODEM 烧录（文件传输），**不打断实时监控**；项目不在运行时也能独立烧录。
@@ -98,5 +98,12 @@ master
 - **为什么**: 服务进程被 E-SafeNet 提升为 SYSTEM（Store Python），/api/fs/pick 的 PowerShell 原生对话框弹窗进不了用户桌面（两个页面都失效）；用户要求改用浏览器 file 上传且支持 WSL 路径
 - **影响**: hplc_web/app.py（upload 路由）、xmodem_flash.py（resolve_bin_path）、static/module-serial.html/js（file 上传）、tests
 - **被取代**: 变更 5、变更 9 的 /api/fs/pick 原生对话框方案
+
+### 变更 11 ｜ 2026-08-10 ｜ 烧录闭环：兼容 Unicorn Bootloader 就绪检测
+- **改成什么**: _test_bootloader_text 在 [image /]# 之外，兼容真实设备 Unicorn Bootloader（venus8m）的 "You can input command help or ?" / "enter bootloader mode" 就绪信号
+- **为什么**: 真机烧录实测（iap_cco 固件）：设备 Unicorn Bootloader 按 d 进入的是交互式命令提示符（You can input command），无 [image /]#，导致 Bootloader prompt was not detected 烧录失败
+- **影响**: hplc_web/xmodem_flash.py（_test_bootloader_text）、tests
+- **被取代**: 无（修复闭环）
+
 
 
