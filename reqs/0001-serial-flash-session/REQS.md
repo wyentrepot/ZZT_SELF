@@ -24,13 +24,13 @@
 - **原技能处置**：D10——原 xmodem-module-flash 先禁用、作备份保留。
 
 ### 验收标准
-- [ ] ModuleSerialService 实现：start/stop/status/write/flash/baudrate，常驻独占 handle，RX 线程实时落盘 + 增量 buffer
-- [ ] XMODEM 移植通过 loopback 自测（对照 ps1 CRC 自检 0x31C3）
-- [ ] /api/module-serial/* 路由 + /module-serial 前端独立页面（新开标签，800ms 增量轮询，日志+进度同屏）
-- [ ] flash_module.py 独立脚本：项目不在运行时自己 open COM 复用同一核心完成烧录
-- [ ] serial-flash-session 技能 SKILL.md 编排层落盘于 department-ai-skills/skills/
-- [ ] 原 xmodem-module-flash 已禁用（reasonix doctor 验证不再加载），部门目录备份保留
-- [ ] zzt 现有 pytest 全绿无回归
+- [x] ModuleSerialService 实现：start/stop/status/write/flash/baudrate，常驻独占 handle，RX 线程实时落盘 + 增量 buffer
+- [x] XMODEM 移植通过 loopback 自测（对照 ps1 CRC 自检 0x31C3）
+- [x] /api/module-serial/* 路由 + /module-serial 前端独立页面（新开标签，800ms 增量轮询，日志+进度同屏）
+- [x] flash_module.py 独立脚本：项目不在运行时自己 open COM 复用同一核心完成烧录
+- [x] serial-flash-session 技能 SKILL.md 编排层落盘于 department-ai-skills/skills/
+- [x] 原 xmodem-module-flash 已禁用（reasonix doctor 验证不再加载），部门目录备份保留
+- [x] zzt 现有 pytest 全绿无回归
 
 ### 所属分支
 master

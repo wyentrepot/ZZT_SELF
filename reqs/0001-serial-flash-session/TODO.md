@@ -27,6 +27,6 @@
 - [x] 继承原技能安全规则（未确认 COM 不烧、dry-run 不算硬件证据、须 bootloader 确认文本）
 
 ## 阶段 5：无硬件自测 + 回归 + 文档/进度同步
-- [ ] loopback 模拟串口验证 XMODEM 移植（对照 ps1 CRC 自检 0x31C3）
-- [ ] zzt 现有 pytest 全绿无回归
-- [ ] 使用说明 + 权威设计文档/产物齐全确认 + req-mgmt 收尾（DONE.md 归档、REQS-INDEX.md 置 ✅）
+- [x] loopback 模拟串口验证 XMODEM 移植（对照 ps1 CRC 自检 0x31C3）
+- [x] zzt 现有 pytest 全绿无回归
+- [x] 使用说明 + 权威设计文档/产物齐全确认 + req-mgmt 收尾（DONE.md 归档、REQS-INDEX.md 置 ✅）
