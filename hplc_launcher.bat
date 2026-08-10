@@ -54,7 +54,7 @@ if /i "%HPLC_CHOICE%"=="3" goto :start_all
 
 :start_listener
 echo.
-echo [START] Listener -> http://127.0.0.1:8765/
+echo [START] Listener ^-^> http://127.0.0.1:8765/
 echo Close this window to stop the service.
 echo.
 "%APP_PYTHON%" -m hplc_web.listener_run
@@ -63,7 +63,7 @@ exit /b 0
 
 :start_module
 echo.
-echo [START] Module log/flash -> http://127.0.0.1:8766/module-serial
+echo [START] Module log/flash ^-^> http://127.0.0.1:8766/module-serial
 echo Close this window to stop the service.
 echo.
 "%APP_PYTHON%" -m hplc_web.module_serial_run

@@ -2,6 +2,12 @@
 
 > 只追加，最新在上。记录做了什么、为什么、改了哪些文件（req-mgmt 决策 #1）。
 
+## 2026-08-10 — 变更 4：启动脚本 echo 的 > 触发 cmd 重定向修复
+- **做了什么**: 真机启动脚本（选择 1/2/3）报"文件名、目录名或卷标语法不正确"。根因：launcher 里 `echo [START] Listener -> http://...` 的 `>` 被 cmd 当重定向符（重定向到无效文件 http:）→ 报错并中断。修复：`->` 转义为 `^-^>`，清理调试代码。验证选择 1/2/3 均正常（8765+8766 同时 Listen）。
+- **为什么**: cmd echo 中 `>` 是重定向符，URL 的 `->` 需转义。
+- **涉及文件**: hplc_launcher.bat（`->`→`^-^>`）、reqs/0002/REQS.md（变更 4，基线 v4）、部署 D:\zzt
+- **验证**: 选择 1→8765 Listen、2→8766 Listen、3→双端口 Listen 均正常；无"文件名"错误
+
 ## 2026-08-10 — 变更 3：侦听台应用修复 + launcher CRLF
 - **做了什么**: 真机启动验证发现手工重写的 `listener_app.py` 有缺陷（`log_service.query_frames` 方法名不存在、漏 task-config/delete-config 等大量侦听台路由），导致侦听台接口报错、用户反馈"无法启动"。修复：listener_app 复用已验证的 `app.create_app`（完整侦听台功能），模块路由 503；module_serial_app 独立（核心 API 200，侦听台路由 404 正确解耦）。另修 hplc_launcher.bat：LF→CRLF（cmd 解析错乱）、中文提示改英文（避免 GBK 乱码）、流程顺序（选择后先设 APP_PYTHON）。
 - **为什么**: 拆分时手工重写 listener_app 引入方法名/漏路由 bug；launcher LF 换行导致 cmd 报错。
