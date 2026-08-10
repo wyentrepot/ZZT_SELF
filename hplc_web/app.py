@@ -647,6 +647,33 @@ def create_app(service: ParserService, log_service=None, serial_service=None,
             raise HTTPException(status_code=503, detail="模块串口服务未启用")
         return module_serial_service.logs(after=after)
 
+    class ModuleSerialUploadRequest(BaseModel):
+        name: str = Field(..., min_length=1, max_length=255)
+        base64: str = Field(..., min_length=1)
+
+    @app.post("/api/module-serial/upload")
+    def module_serial_upload(request: ModuleSerialUploadRequest):
+        """接收浏览器上传的固件文件（base64），保存到 LOG/uploads/，返回可烧录路径。
+
+        浏览器 <input type=file> 出于沙箱不暴露真实绝对路径，故由后端保存到
+        本地可读目录，返回路径供烧录使用。
+        """
+        try:
+            data = base64.b64decode(request.base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="base64 解码失败") from exc
+        if not data:
+            raise HTTPException(status_code=422, detail="空文件")
+        uploads = _log_dir() / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        safe_name = os.path.basename(request.name) or "fw.bin"
+        path = uploads / safe_name
+        try:
+            path.write_bytes(data)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"固件保存失败：{exc}") from exc
+        return {"path": str(path)}
+
     return app
 
 

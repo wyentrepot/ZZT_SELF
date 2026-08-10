@@ -158,129 +158,52 @@
   }
 
 
-  // ---------- 内置文件浏览器（/api/fs/* 浏览 Windows 盘符 C:\\ D:\\）----------
-  const picker = {
-    overlay: null, close: null, cancel: null, up: null, path: null,
-    roots: null, list: null, selected: null, confirm: null,
-    currentDir: null, chosenFile: null,
-  };
-
-  function formatFileSize(bytes) {
-    if (bytes == null) return "";
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+  // ---------- 文件选择：浏览器原生 file 选择框 + 上传后端 ----------
+  async function pickFile() {
+    $("ms-file-input").click();  // 触发浏览器原生文件选择框（能选 Windows/WSL 路径文件）
   }
 
-  function pickerClose() {
-    picker.overlay.hidden = true;
-  }
-
-  function pickerOpen() {
-    picker.overlay.hidden = false;
-    pickerRoots();
-  }
-
-  async function pickerRoots() {
+  async function onFilePicked(event) {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = "";  // 允许重复选同一文件
+    if (!file) return;
+    const btn = $("ms-pick");
+    btn.disabled = true;
+    btn.textContent = "上传中…";
     try {
-      const data = await request("/api/fs/roots");
-      picker.roots.textContent = "";
-      data.roots.forEach((root) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "picker-root-button";
-        button.textContent = root.name;
-        button.addEventListener("click", () => pickerList(root.path));
-        picker.roots.appendChild(button);
+      // FileReader 读 base64，POST 上传到后端保存，返回可烧录路径
+      const base64 = await readFileAsBase64(file);
+      const data = await request("/api/module-serial/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, base64: base64 }),
       });
-    } catch (error) {
-      pickerList(picker.currentDir || "");
-    }
-  }
-
-  async function pickerList(path) {
-    if (!path) return;
-    picker.path.textContent = path;
-    picker.path.title = path;
-    picker.currentDir = path;
-    picker.list.innerHTML = '<div class="file-picker-empty">加载中…</div>';
-    picker.chosenFile = null;
-    picker.confirm.disabled = true;
-    picker.selected.textContent = "";
-    try {
-      const data = await request(`/api/fs/list?path=${encodeURIComponent(path)}`);
-      picker.up.disabled = !data.parent;
-      picker.list.textContent = "";
-      if (!data.dirs.length && !data.files.length) {
-        const empty = document.createElement("div");
-        empty.className = "file-picker-empty";
-        empty.textContent = "该目录没有子目录或文件";
-        picker.list.appendChild(empty);
-        return;
+      if (data && data.path) {
+        $("ms-bin").value = data.path;
+        alert("固件已上传：" + data.path);
+      } else {
+        throw new Error("上传未返回路径");
       }
-      data.dirs.forEach((dir) => picker.list.appendChild(pickerDirRow(dir)));
-      data.files.forEach((file) => picker.list.appendChild(pickerFileRow(file)));
-    } catch (error) {
-      picker.list.textContent = "";
-      const empty = document.createElement("div");
-      empty.className = "file-picker-empty";
-      empty.textContent = error.message;
-      picker.list.appendChild(empty);
-      picker.up.disabled = true;
+    } catch (err) {
+      alert("文件选择失败：" + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "选择文件…";
     }
   }
 
-  function pickerDirRow(dir) {
-    const row = document.createElement("div");
-    row.className = "file-picker-row file-picker-dir";
-    row.innerHTML = '<span class="picker-icon">📁</span>';
-    const name = document.createElement("span");
-    name.className = "picker-name";
-    name.textContent = dir.name;
-    row.appendChild(name);
-    row.addEventListener("click", () => pickerList(dir.path));
-    row.addEventListener("dblclick", () => pickerList(dir.path));
-    return row;
-  }
-
-  function pickerFileRow(file) {
-    const row = document.createElement("div");
-    row.className = "file-picker-row file-picker-file";
-    row.innerHTML = '<span class="picker-icon">📄</span>';
-    const name = document.createElement("span");
-    name.className = "picker-name";
-    name.textContent = file.name;
-    const size = document.createElement("span");
-    size.className = "picker-size";
-    size.textContent = formatFileSize(file.size);
-    row.appendChild(name);
-    row.appendChild(size);
-    const select = () => {
-      picker.list.querySelectorAll(".file-picker-row.selected").forEach((node) => {
-        node.classList.remove("selected");
-      });
-      row.classList.add("selected");
-      picker.chosenFile = file.path;
-      picker.selected.textContent = file.path;
-      picker.confirm.disabled = false;
-    };
-    row.addEventListener("click", select);
-    row.addEventListener("dblclick", () => {
-      select();
-      pickerConfirm();
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        // 去掉 data:...;base64, 前缀
+        const result = String(reader.result || "");
+        const idx = result.indexOf(",");
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+      reader.readAsDataURL(file);
     });
-    return row;
-  }
-
-  function pickerConfirm() {
-    if (!picker.chosenFile) return;
-    $("ms-bin").value = picker.chosenFile;
-    pickerClose();
-  }
-
-  function pickFile() {
-    pickerOpen();
   }
 
   async function startFlash() {
@@ -316,30 +239,8 @@
       $("ms-lines").textContent = "0";
     });
 
-    // 内置文件浏览器事件绑定
-    picker.overlay = $("ms-file-picker");
-    picker.close = $("ms-picker-close");
-    picker.cancel = $("ms-picker-cancel");
-    picker.up = $("ms-picker-up");
-    picker.path = $("ms-picker-path");
-    picker.roots = $("ms-picker-roots");
-    picker.list = $("ms-picker-list");
-    picker.selected = $("ms-picker-selected");
-    picker.confirm = $("ms-picker-confirm");
-    picker.close.addEventListener("click", pickerClose);
-    picker.cancel.addEventListener("click", pickerClose);
-    picker.overlay.addEventListener("click", (event) => {
-      if (event.target === picker.overlay) pickerClose();
-    });
-    picker.up.addEventListener("click", () => {
-      if (!picker.currentDir) return;
-      request(`/api/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
-        .then((data) => {
-          if (data.parent) pickerList(data.parent);
-        })
-        .catch(() => {});
-    });
-    picker.confirm.addEventListener("click", pickerConfirm);
+    // 浏览器原生文件选择框：选中后上传
+    $("ms-file-input").addEventListener("change", onFilePicked);
   }
 
   function boot() {

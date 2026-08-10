@@ -12,6 +12,7 @@ flash_xmodem_module.ps1 移植，纯 Python，无 pyserial 之外的依赖）。
 """
 from __future__ import annotations
 
+import pathlib
 import time
 from typing import Callable, List, Optional
 
@@ -29,6 +30,36 @@ DEFAULT_PROMPT_TIMEOUT_MS = 3000
 DEFAULT_BOOT_TIMEOUT_MS = 12000
 DEFAULT_XMODEM_TIMEOUT_MS = 30000
 DEFAULT_RESPONSE_TIMEOUT_MS = 10000
+
+
+def resolve_bin_path(bin_path: str) -> pathlib.Path:
+    """解析固件路径，支持 Windows 路径、UNC WSL 路径、WSL 内部路径。
+
+    服务运行在 Windows 侧，WSL 内部路径（/mnt/d/...、/home/...）Windows
+    Python 无法直接访问，这里转换为 Windows 可读路径：
+      - /mnt/d/... → D:\\...
+      - /mnt/c/... → C:\\...
+      - /home/... 、/root/... 等 WSL 内部 → \\\\wsl.localhost\\Ubuntu-22.04\\...
+      - 其他（Windows 路径 D:\\、UNC \\\\wsl.localhost\\）原样使用
+    返回的 Path 指向存在的文件；不存在则抛 FileNotFoundError。
+    """
+    p = bin_path.replace("\\", "/")
+    resolved: str | None = None
+    # WSL 挂载盘符：/mnt/<盘符>/...
+    if p.startswith("/mnt/") and len(p) > 5 and p[5].isalpha() and p[6] == "/":
+        drive = p[5].upper()
+        resolved = drive + ":\\" + p[7:].replace("/", "\\")
+    # WSL 内部路径（home/root 等）
+    elif p.startswith("/home/") or p.startswith("/root/") or p.startswith("/usr/") or p.startswith("/opt/"):
+        resolved = "\\\\wsl.localhost\\Ubuntu-22.04" + p.replace("/", "\\")
+    # Windows 路径 / UNC，原样
+    else:
+        resolved = bin_path
+
+    fw = pathlib.Path(resolved)
+    if not fw.is_file():
+        raise FileNotFoundError(f"Firmware image not found: {bin_path} (resolved: {resolved})")
+    return fw
 
 
 def crc16_xmodem(data: bytes, offset: int = 0, count: Optional[int] = None) -> int:
@@ -269,14 +300,10 @@ def flash(ser, bin_path: str, slot: int = 0,
 
     返回 {"status": "success", "log_events": n}。
     """
-    import pathlib
-
     if baud_plan is None or not baud_plan:
         baud_plan = [115200]
 
-    fw = pathlib.Path(bin_path)
-    if not fw.is_file():
-        raise FileNotFoundError(f"Firmware image not found: {bin_path}")
+    fw = resolve_bin_path(bin_path)
     image = fw.read_bytes()
 
     def _log(msg: str) -> None:

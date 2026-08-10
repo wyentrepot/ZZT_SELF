@@ -138,6 +138,29 @@ class ModuleSerialApiTest(unittest.TestCase):
         resp = self.client.get("/api/module-serial/logs?after=1")
         self.assertEqual(resp.json()["lines"], [])
 
+    def test_upload_saves_and_returns_path(self):
+        import base64
+
+        data = b"\x11\xE2\x00\x00\x01\x02\x03"
+        resp = self.client.post(
+            "/api/module-serial/upload",
+            json={"name": "fw.bin", "base64": base64.b64encode(data).decode()},
+        )
+        self.assertEqual(resp.status_code, 200)
+        path = resp.json()["path"]
+        self.assertTrue(path.endswith("fw.bin"))
+        # 文件确实写入（Path 应存在）
+        from pathlib import Path
+
+        self.assertTrue(Path(path).is_file())
+
+    def test_upload_rejects_bad_base64(self):
+        resp = self.client.post(
+            "/api/module-serial/upload",
+            json={"name": "fw.bin", "base64": "!!!not-base64!!!"},
+        )
+        self.assertEqual(resp.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()
