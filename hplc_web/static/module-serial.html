@@ -141,6 +141,31 @@
     </section>
   </div>
 
+  <!-- 文件选择对话框：通过后端 /api/fs/* 浏览服务器本地 Windows 目录（C:\、D:\） -->
+  <div id="ms-file-picker" class="file-picker-overlay" hidden>
+    <div class="file-picker" role="dialog" aria-modal="true" aria-label="选择固件文件">
+      <div class="file-picker-header">
+        <h3>选择固件文件</h3>
+        <button id="ms-picker-close" class="icon-button" type="button" title="关闭">×</button>
+      </div>
+      <div class="file-picker-toolbar">
+        <button id="ms-picker-up" class="secondary-button" type="button" disabled>上一级</button>
+        <span id="ms-picker-path" class="file-picker-path" title=""></span>
+      </div>
+      <div class="file-picker-roots" id="ms-picker-roots"></div>
+      <div class="file-picker-list" id="ms-picker-list" tabindex="0">
+        <div class="file-picker-empty">加载中…</div>
+      </div>
+      <div class="file-picker-footer">
+        <span id="ms-picker-selected" class="file-picker-selected"></span>
+        <div>
+          <button id="ms-picker-cancel" class="secondary-button" type="button">取消</button>
+          <button id="ms-picker-confirm" class="primary-button" type="button" disabled>选择此文件</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/module-serial.js?v=module-serial-v1"></script>
 </body>
 </html>

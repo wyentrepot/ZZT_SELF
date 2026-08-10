@@ -158,20 +158,129 @@
   }
 
 
-  function pickFile() {
-    // 仿照 zzt 原工程：调 /api/fs/pick 弹出 Windows 原生文件管理器选真实路径
-    const btn = $("ms-pick");
-    btn.disabled = true;
-    request("/api/fs/pick")
-      .then((data) => {
-        if (data && data.path) $("ms-bin").value = data.path;
-      })
-      .catch((err) => {
-        alert("选择文件失败：" + err.message);
-      })
-      .finally(() => {
-        btn.disabled = false;
+  // ---------- 内置文件浏览器（/api/fs/* 浏览 Windows 盘符 C:\\ D:\\）----------
+  const picker = {
+    overlay: null, close: null, cancel: null, up: null, path: null,
+    roots: null, list: null, selected: null, confirm: null,
+    currentDir: null, chosenFile: null,
+  };
+
+  function formatFileSize(bytes) {
+    if (bytes == null) return "";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
+  }
+
+  function pickerClose() {
+    picker.overlay.hidden = true;
+  }
+
+  function pickerOpen() {
+    picker.overlay.hidden = false;
+    pickerRoots();
+  }
+
+  async function pickerRoots() {
+    try {
+      const data = await request("/api/fs/roots");
+      picker.roots.textContent = "";
+      data.roots.forEach((root) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "picker-root-button";
+        button.textContent = root.name;
+        button.addEventListener("click", () => pickerList(root.path));
+        picker.roots.appendChild(button);
       });
+    } catch (error) {
+      pickerList(picker.currentDir || "");
+    }
+  }
+
+  async function pickerList(path) {
+    if (!path) return;
+    picker.path.textContent = path;
+    picker.path.title = path;
+    picker.currentDir = path;
+    picker.list.innerHTML = '<div class="file-picker-empty">加载中…</div>';
+    picker.chosenFile = null;
+    picker.confirm.disabled = true;
+    picker.selected.textContent = "";
+    try {
+      const data = await request(`/api/fs/list?path=${encodeURIComponent(path)}`);
+      picker.up.disabled = !data.parent;
+      picker.list.textContent = "";
+      if (!data.dirs.length && !data.files.length) {
+        const empty = document.createElement("div");
+        empty.className = "file-picker-empty";
+        empty.textContent = "该目录没有子目录或文件";
+        picker.list.appendChild(empty);
+        return;
+      }
+      data.dirs.forEach((dir) => picker.list.appendChild(pickerDirRow(dir)));
+      data.files.forEach((file) => picker.list.appendChild(pickerFileRow(file)));
+    } catch (error) {
+      picker.list.textContent = "";
+      const empty = document.createElement("div");
+      empty.className = "file-picker-empty";
+      empty.textContent = error.message;
+      picker.list.appendChild(empty);
+      picker.up.disabled = true;
+    }
+  }
+
+  function pickerDirRow(dir) {
+    const row = document.createElement("div");
+    row.className = "file-picker-row file-picker-dir";
+    row.innerHTML = '<span class="picker-icon">📁</span>';
+    const name = document.createElement("span");
+    name.className = "picker-name";
+    name.textContent = dir.name;
+    row.appendChild(name);
+    row.addEventListener("click", () => pickerList(dir.path));
+    row.addEventListener("dblclick", () => pickerList(dir.path));
+    return row;
+  }
+
+  function pickerFileRow(file) {
+    const row = document.createElement("div");
+    row.className = "file-picker-row file-picker-file";
+    row.innerHTML = '<span class="picker-icon">📄</span>';
+    const name = document.createElement("span");
+    name.className = "picker-name";
+    name.textContent = file.name;
+    const size = document.createElement("span");
+    size.className = "picker-size";
+    size.textContent = formatFileSize(file.size);
+    row.appendChild(name);
+    row.appendChild(size);
+    const select = () => {
+      picker.list.querySelectorAll(".file-picker-row.selected").forEach((node) => {
+        node.classList.remove("selected");
+      });
+      row.classList.add("selected");
+      picker.chosenFile = file.path;
+      picker.selected.textContent = file.path;
+      picker.confirm.disabled = false;
+    };
+    row.addEventListener("click", select);
+    row.addEventListener("dblclick", () => {
+      select();
+      pickerConfirm();
+    });
+    return row;
+  }
+
+  function pickerConfirm() {
+    if (!picker.chosenFile) return;
+    $("ms-bin").value = picker.chosenFile;
+    pickerClose();
+  }
+
+  function pickFile() {
+    pickerOpen();
   }
 
   async function startFlash() {
@@ -206,6 +315,31 @@
       $("ms-log-box").innerHTML = "";
       $("ms-lines").textContent = "0";
     });
+
+    // 内置文件浏览器事件绑定
+    picker.overlay = $("ms-file-picker");
+    picker.close = $("ms-picker-close");
+    picker.cancel = $("ms-picker-cancel");
+    picker.up = $("ms-picker-up");
+    picker.path = $("ms-picker-path");
+    picker.roots = $("ms-picker-roots");
+    picker.list = $("ms-picker-list");
+    picker.selected = $("ms-picker-selected");
+    picker.confirm = $("ms-picker-confirm");
+    picker.close.addEventListener("click", pickerClose);
+    picker.cancel.addEventListener("click", pickerClose);
+    picker.overlay.addEventListener("click", (event) => {
+      if (event.target === picker.overlay) pickerClose();
+    });
+    picker.up.addEventListener("click", () => {
+      if (!picker.currentDir) return;
+      request(`/api/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
+        .then((data) => {
+          if (data.parent) pickerList(data.parent);
+        })
+        .catch(() => {});
+    });
+    picker.confirm.addEventListener("click", pickerConfirm);
   }
 
   function boot() {
