@@ -7,6 +7,7 @@
 | # | 标题 | 状态 |
 |---|------|------|
 | 1 | 项目拆分为 listener / module_log 双应用 + shared 共享库 | ✅ 生效 |
+| 2 | module_log 打包为本地桌面 exe（pywebview 内嵌窗口），保留网页模式 | ✅ 生效 |
 
 ---
 
@@ -25,3 +26,26 @@
   - 启动脚本：根目录 `启动工具.bat`（菜单 1/2/3）+ 各项目独立启动 bat。
   - 测试保持在各项目内（`listener/test_*.py`、`module_log/test_*.py`、`shared/test_*.py`、`parser_lib/.../tests/`），全量 `pytest listener module_log shared parser_lib` 通过（290 passed / 66 skipped）。
 - **被取代**：无（首次记录）。
+
+---
+
+## ADR-2 module_log 打包为本地桌面 exe（pywebview 内嵌窗口），保留网页模式
+
+- **日期**：2026-08-11
+- **状态**：✅ 生效
+- **决定**：将 `module_log`（模块日志/烧录，端口 8766）打包为本地桌面软件 exe（`dist/模块日志/模块日志.exe`），用 **pywebview 内嵌窗口**加载 `/module-serial` 页面；同时**保留网页模式**（`python -m module_log.run` + 浏览器）两套启动方式并存。
+- **理由**：
+  - 用户希望网页功能在本地 app 内运行，但前端（`module-serial.html/js/css`）零重写。
+  - 串口由后端 Python（`pyserial`）独占读写，前端仅 `fetch` HTTP 轮询，UI 框架不影响串口性能，故无需 Qt 重写前端。
+  - `module_log` 仅依赖 `shared.infra` 的通用函数（无 pythonnet/C# DLL，比 listener 简单），打包难度低。
+  - 本机已装 WebView2 runtime，pywebview 内嵌窗口可开箱即用。
+- **影响**：
+  - `module_log/app.py` 新增 frozen 路径处理（`_is_frozen`/`_base_dir`/`_runtime_dir`/`_log_dir`/`STATIC_DIR`/`RUNTIME_DIR`/`LAST_PATH_FILE`），frozen 下静态资源指向 `_MEIPASS/static`，LOG 与 runtime 落在 exe 同目录。
+  - 新增 `module_log/desktop.py`（pywebview 内嵌窗口入口）：后台线程起 Uvicorn(8766) → 主线程 pywebview 开窗；未装 pywebview 时回退浏览器模式。
+  - 新增 `packaging/module_log.spec`（PyInstaller onedir，console=False）+ `packaging/build_exe.bat module` 构建命令。
+  - `启动工具.bat` 菜单新增选项 4（模块日志本地软件），保留 1/2/3。
+  - `.gitignore` 新增忽略 `dist/*/LOG/`、`dist/*/*.WebView2/`（运行时产物），打包产物 `dist/模块日志/` 入库与 `dist/侦听台/` 一致。
+  - 打包依赖：`pywebview`（含 bottle/proxy_tools）、`pyinstaller`。
+- **被取代**：无（补充 ADR-1 的启动菜单，不取代）。
+
+

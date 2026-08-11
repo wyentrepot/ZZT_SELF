@@ -22,15 +22,39 @@ from pydantic import BaseModel, Field
 from shared import infra
 from module_log.module_serial_service import CHANNELS, ModuleSerialService
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+def _is_frozen() -> bool:
+    return getattr(sys, "frozen", False)
+
+
+def _base_dir() -> Path:
+    """打包数据根：frozen 下为 PyInstaller _MEIPASS，否则为 module_log 包目录。"""
+    if _is_frozen():
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent
+
+
+def _runtime_dir() -> Path:
+    """运行时数据目录：frozen 下为 exe 同目录 runtime/，否则为包内 runtime/。"""
+    if _is_frozen():
+        return Path(sys.executable).resolve().parent / "runtime"
+    return _base_dir() / "runtime"
 
 
 def _log_dir() -> Path:
-    """模块日志根目录：项目根 LOG/模块。"""
-    root = Path(__file__).resolve().parent.parent
+    """模块日志根目录：frozen 下为 exe 同目录 LOG/模块，否则为项目根 LOG/模块。"""
+    if _is_frozen():
+        root = Path(sys.executable).resolve().parent
+    else:
+        root = Path(__file__).resolve().parent.parent
     d = root / "LOG" / "模块"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+BASE_DIR = _base_dir()
+STATIC_DIR = BASE_DIR / "static"
+RUNTIME_DIR = _runtime_dir()
+LAST_PATH_FILE = RUNTIME_DIR / "last_path.txt"
 
 def create_app(module_serial_service=None) -> FastAPI:
     app = FastAPI(title="模块日志 / 烧录串口")
@@ -191,7 +215,7 @@ def create_app(module_serial_service=None) -> FastAPI:
         drives = infra.windows_drives()
         if drives:
             return {"roots": drives}
-        home = str(Path(__file__).resolve().parent.parent)
+        home = str(_base_dir().parent)
         return {"roots": [{"name": home, "path": home}]}
 
     @app.get("/api/fs/list")
@@ -202,7 +226,7 @@ def create_app(module_serial_service=None) -> FastAPI:
     def fs_pick():
         if os.name != "nt":
             raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")
-        last_path = infra.read_last_path(Path(__file__).resolve().parent / "runtime" / "last_path.txt")
+        last_path = infra.read_last_path(LAST_PATH_FILE)
         return {"path": infra.pick_file_via_tkinter_dialog(last_path)}
 
     return app
