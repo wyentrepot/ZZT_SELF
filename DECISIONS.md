@@ -8,6 +8,7 @@
 |---|------|------|
 | 1 | 项目拆分为 listener / module_log 双应用 + shared 共享库 | ✅ 生效 |
 | 2 | module_log 打包为本地桌面 exe（pywebview 内嵌窗口），保留网页模式 | ✅ 生效 |
+| 3 | 侦听台打包为本地桌面 exe（pywebview 内嵌窗口）+ 统一菜单式打包脚本 | ✅ 生效 |
 
 ---
 
@@ -47,5 +48,27 @@
   - `.gitignore` 新增忽略 `dist/*/LOG/`、`dist/*/*.WebView2/`（运行时产物），打包产物 `dist/模块日志/` 入库与 `dist/侦听台/` 一致。
   - 打包依赖：`pywebview`（含 bottle/proxy_tools）、`pyinstaller`。
 - **被取代**：无（补充 ADR-1 的启动菜单，不取代）。
+
+---
+
+## ADR-3 侦听台打包为本地桌面 exe（pywebview 内嵌窗口）+ 统一菜单式打包脚本
+
+- **日期**：2026-08-11
+- **状态**：✅ 生效
+- **决定**：将 `listener`（侦听台，端口 8765）打包为本地桌面软件 exe（`dist/侦听台桌面/侦听台桌面.exe`），用 **pywebview 内嵌窗口**加载 `/` 页面；保留网页模式（`python -m listener.run` + 浏览器）两套启动方式并存。同时将 `packaging/build_exe.bat` 改为**菜单式统一打包脚本**（选择应用与形态）。
+- **理由**：
+  - 与 ADR-2 的 module_log 桌面化一致，前端（`index.html/app.js/styles.css`）零重写，串口/DLL 由后端 Python 独占。
+  - 侦听台已具备 frozen 路径处理（`_is_frozen`/`_base_dir`/`_runtime_dir`/`_log_dir`/`DEFAULT_DLL`），比 module_log 当时更省事。
+  - 唯一差异是依赖 pythonnet + C# DLL（`GwHPLCAnalysis.dll`），但现有 `hplc_parser.spec` 已处理，桌面版 spec 复用即可。
+  - 用户希望一键打包脚本能同时产出网页版与桌面版，依赖一次性装齐。
+- **影响**：
+  - 新增 `listener/desktop.py`（pywebview 内嵌窗口入口，照搬 module_log/desktop.py 模式，端口 8765 加载 `/`，未装 pywebview 回退浏览器）。
+  - 新增 `packaging/hplc_parser_desktop.spec`（基于 hplc_parser.spec：入口改 desktop.py、console=False、额外 collect_all("webview")、保留 pythonnet+DLL，输出 `dist/侦听台桌面/`）。
+  - `packaging/build_exe.bat` 改为菜单式：1=侦听台网页版 / 2=侦听台桌面版 / 3=模块日志桌面版，统一安装 pyinstaller+pywebview 依赖一次到位。
+  - `启动工具.bat` 菜单新增选项 5（侦听台本地软件），保留 1/2/3/4。
+  - `listener/test_launcher.py` 读取 bat 编码由 utf-8 改为 gbk（匹配项目「bat 用 GBK」约定，修复既有解码失败）。
+  - 新增 `listener/test_desktop.py` 单元测试（5 用例，mock 验证服务地址/窗口 URL/回退分支/listener.app:app 解析含 DLL 初始化）。
+  - 打包产物 `dist/侦听台桌面/` 入库与既有 `dist/*/` 约定一致（`.gitignore` 已忽略 `dist/*/LOG/`、`dist/*/*.WebView2/`）。
+- **被取代**：无（补充 ADR-2 的桌面化范围与 ADR-1 的启动菜单）。
 
 
