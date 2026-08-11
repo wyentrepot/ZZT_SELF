@@ -137,6 +137,9 @@
     btn.classList.toggle("secondary-button", running);
     btn.classList.toggle("primary-button", !running);
     btn.disabled = false;
+    // 串口运行中，端口/波特率不可更改；停止后才能重新选择
+    $(`#ms-port-${ch}`).disabled = running;
+    $(`#ms-baud-${ch}`).disabled = running;
   }
 
   async function toggleSerial(ch) {

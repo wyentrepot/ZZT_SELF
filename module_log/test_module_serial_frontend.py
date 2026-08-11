@@ -115,9 +115,21 @@ var document = {
 """.replace("__IDS__", ids_json).replace("__CREATES__", creates_js)
 
 
-def _fetch_stub_js(ports):
+def _fetch_stub_js(ports, running_channels=None):
     ports_json = json.dumps(ports)
+    running_json = json.dumps(running_channels or [])
     return r"""
+function __makeChannels() {
+  var chs = {
+    cco:{state:"idle",port:"",baudrate:115200,flash:{flashing:false}},
+    sta:{state:"idle",port:"",baudrate:115200,flash:{flashing:false}}
+  };
+  var run = __RUNNING__;
+  for (var i=0;i<run.length;i++){
+    chs[run[i]] = {state:"running",port:"COM4",baudrate:115200,flash:{flashing:false}};
+  }
+  return chs;
+}
 function __fetchStub(url, options) {
   window.__requests = window.__requests || [];
   window.__requests.push({ url: url, options: options || {} });
@@ -125,9 +137,7 @@ function __fetchStub(url, options) {
   if (url.indexOf("/api/module-serial/ports") >= 0) {
     body = { ports: __PORTS__ };
   } else if (url.indexOf("/api/module-serial/status") >= 0) {
-    body = { state:"idle", channels:{
-      cco:{state:"idle",port:"",baudrate:115200,flash:{flashing:false}},
-      sta:{state:"idle",port:"",baudrate:115200,flash:{flashing:false}} } };
+    body = { state:"idle", channels: __makeChannels() };
   } else if (url.indexOf("/api/module-serial/logs") >= 0) {
     body = { lines: [], last_seq: -1 };
   } else {
@@ -143,22 +153,23 @@ var setInterval = function(fn, ms){ window.__interval = {fn:fn, ms:ms}; return 1
 var setTimeout = function(fn, ms){ return 1; };
 var clearInterval = function(){};
 var console = { log: function(){}, error: function(){}, warn: function(){} };
-""".replace("__PORTS__", ports_json)
+""".replace("__PORTS__", ports_json).replace("__RUNNING__", running_json)
 
 
 class FrontendHarness:
     """加载真实 module-serial.js 到 V8，提供 DOM/fetch stub，暴露断言接口。"""
 
-    def __init__(self, ports=None):
+    def __init__(self, ports=None, running_channels=None):
         self.ctx = MiniRacer()
         self.ports = ports if ports is not None else ["COM4", "COM23", "COM3"]
+        self.running_channels = running_channels
         self._load()
 
     def _load(self):
         elements = _parse_elements()
         stub = _build_dom_stub_js(elements)
         self.ctx.eval(stub)
-        self.ctx.eval(_fetch_stub_js(self.ports))
+        self.ctx.eval(_fetch_stub_js(self.ports, self.running_channels))
         js = JS_PATH.read_text(encoding="utf-8")
         self.ctx.eval(js)
         self.flush()
@@ -187,6 +198,12 @@ class FrontendHarness:
 
     def port_select_value(self, channel):
         return self.ctx.eval("__byId['ms-port-%s'].value" % channel)
+
+    def port_disabled(self, channel):
+        return bool(self.ctx.eval("__byId['ms-port-%s'].disabled" % channel))
+
+    def baud_disabled(self, channel):
+        return bool(self.ctx.eval("__byId['ms-baud-%s'].disabled" % channel))
 
     def alerts(self):
         raw = self.ctx.eval("JSON.stringify(window.__alert ? window.__alert : [])")
@@ -333,6 +350,26 @@ class ModuleSerialFrontendTest(unittest.TestCase):
         self.assertFalse(h._eval_str("__byId['ms-sender-showbar'].hidden"))
         h.click("#ms-sender-show")
         self.assertFalse(h._eval_str("__byId['ms-sender'].hidden"))
+
+    def test_port_baud_disabled_while_running(self):
+        """串口运行时，端口与波特率下拉框应禁用；停止后恢复可用。"""
+        h = FrontendHarness(ports=["COM4"], running_channels=["cco"])
+        h.flush()
+        # cco 处于 running：端口与波特率应被禁用
+        self.assertTrue(h.port_disabled("cco"), "串口运行时端口下拉框应禁用")
+        self.assertTrue(h.baud_disabled("cco"), "串口运行时波特率下拉框应禁用")
+        # sta 处于 idle：不应被禁用
+        self.assertFalse(h.port_disabled("sta"), "未运行时端口下拉框应可用")
+        self.assertFalse(h.baud_disabled("sta"), "未运行时波特率下拉框应可用")
+
+    def test_port_baud_enabled_when_idle(self):
+        """串口空闲时，端口与波特率下拉框应为可用状态。"""
+        h = FrontendHarness(ports=["COM4"])
+        h.flush()
+        self.assertFalse(h.port_disabled("cco"))
+        self.assertFalse(h.baud_disabled("cco"))
+        self.assertFalse(h.port_disabled("sta"))
+        self.assertFalse(h.baud_disabled("sta"))
 
 
 if __name__ == "__main__":
