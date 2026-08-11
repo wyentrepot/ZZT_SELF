@@ -1,13 +1,13 @@
-"""模块日志串口服务（需求 0001 serial-flash-session）。
+"""模块日志串口服务（双通道：cco + sta 同时监控，各自独立烧录）。
 
-设计要点（REQS.md 变更 2，串口单一模块模型）：
-- 本模块是唯一持有「模块日志/烧录串口」handle 的地方。
-- start 时 open COM 一次、stop 才 close：常驻独占，绝无重开。
-- RX 线程常驻读原始字节 → ① 追加写 LOG/MODCOM{port}_{ts}_模块日志.txt
-  （跨天轮转）② 内存增量 buffer（供前端 ?after= 增量轮询）。
+设计要点（REQS.md 变更，模块串口双通道模型）：
+- 固定两路通道 cco / sta，各自持有独立 COM handle。
+- start(channel) 时 open COM 一次、stop(channel) 才 close：常驻独占，绝无重开。
+- 每路 RX 线程常驻读原始字节 → ① 追加写 LOG/模块/{name}/*.log（跨天轮转）
+  ② 内存增量 buffer（供前端 ?after= 增量轮询）。
 - 烧录 = 同一 handle 上由独立线程执行 XMODEM 文件传输 + 动态切波特率，
   RX 线程全程不停（pyserial read/write 线程安全）；TX 行/事件行共用同一份日志。
-- 与 SerialCaptureService（侦听台）完全独立：两套串口、两套处理，互不干扰。
+- 前端固定两个面板各自选串口、各自启动/停止/烧录；底部发送框选择目标通道下发。
 """
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ import os
 import queue
 import threading
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 from module_log import xmodem_flash
+
+CHANNELS = ("cco", "sta")  # 固定双通道顺序
 
 
 def format_event_timestamp(ts: float) -> str:
@@ -67,12 +69,17 @@ class _FlashReader:
     @baudrate.setter
     def baudrate(self, value):
         self._ser.baudrate = value
+class _SerialChannel:
+    """单路串口通道（cco 或 sta）：常驻独占一个 COM handle。
 
+    每通道独立持有：pyserial handle / RX 线程 / 增量 buffer / 日志文件 /
+    烧录状态。所有实例方法线程安全（内部 RLock）。
+    """
 
-class ModuleSerialService:
-    def __init__(self, log_dir: Optional[Path | str] = None):
+    def __init__(self, name: str, log_dir: Path):
+        self.name = name  # cco | sta
         self._lock = threading.RLock()
-        self._ser = None  # 常驻独占的 pyserial 对象
+        self._ser = None
         self._rx_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._state = "idle"  # idle | running | error
@@ -81,65 +88,31 @@ class ModuleSerialService:
         self._bytesize = 8
         self._parity = "N"
         self._stopbits = 1
-        # 模块日志根目录：LOG/模块/{cco,sta}/，文件名 时间_[cco].log
-        self._log_dir = Path(log_dir) if log_dir else (Path("LOG") / "模块")
+        self._log_dir = log_dir
         self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._log_type = "cco"  # cco | sta，前端下拉框选择，默认 cco
         self._log_file: Optional[Path] = None
-        self._log_handle = None  # 文本文件句柄（追加写）
+        self._log_handle = None
         self._log_lock = threading.Lock()
-        self._lines: List[dict] = []  # 增量 buffer：[{seq, ts, dir, text}]
+        self._lines: List[dict] = []
         self._next_seq = 0
-        # 按换行切行的缓冲（跨 chunk 累积，遇 \n/\r\n 切出完整行）
-        self._rx_line_buf = bytearray()  # RX 未闭合行
-        self._tx_line_buf = bytearray()  # TX 未闭合行
-        self._flash_state = {  # 烧录进行时状态
-            "flashing": False,
-            "packet": 0,
-            "total": 0,
-            "phase": "",
-            "message": "",
-            "error": None,
+        self._rx_line_buf = bytearray()
+        self._tx_line_buf = bytearray()
+        self._flash_state = {
+            "flashing": False, "packet": 0, "total": 0,
+            "phase": "", "message": "", "error": None,
         }
-        self._flash_lock = threading.RLock()  # 烧录线程串行化（含 write 互斥）
-        self._flash_resp_q: Optional["queue.Queue"] = None  # 烧录期间设备应答队列
-
-    # ---------- 基础查询 ----------
-    @staticmethod
-    def list_available_ports() -> List[str]:
-        """列出可用 COM 口；无 pyserial 时返回空列表。"""
-        try:
-            import serial.tools.list_ports  # noqa: PLC0415
-
-            return [p.device for p in serial.tools.list_ports.comports()]
-        except Exception:
-            return []
-
-    def status(self) -> dict:
-        with self._lock:
-            return {
-                "state": self._state,
-                "port": self._port,
-                "baudrate": self._baudrate,
-                "bytesize": self._bytesize,
-                "parity": self._parity,
-                "stopbits": self._stopbits,
-                "log_dir": str(self._log_dir),
-                "log_file": str(self._log_file) if self._log_file else None,
-                "lines": len(self._lines),
-                "flash": dict(self._flash_state),
-            }
+        self._flash_lock = threading.RLock()
+        self._flash_resp_q: Optional["queue.Queue"] = None
 
     # ---------- 生命周期 ----------
     def start(self, port: str, baudrate: int = 115200, bytesize: int = 8,
-              parity: str = "N", stopbits: int = 1,
-              log_type: str = "cco") -> dict:
+              parity: str = "N", stopbits: int = 1) -> dict:
         with self._lock:
             if self._state == "running":
-                return {"state": self._state, "port": self._port}
+                return {"state": self._state, "port": self._port, "channel": self.name}
             try:
                 import serial  # noqa: PLC0415
-            except ImportError as exc:  # pragma: no cover - 与 serial_service 一致
+            except ImportError as exc:
                 raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial") from exc
 
             ser = serial.Serial(
@@ -152,16 +125,16 @@ class ModuleSerialService:
             self._bytesize = bytesize
             self._parity = parity
             self._stopbits = stopbits
-            self._log_type = log_type if log_type in ("cco", "sta") else "cco"
             self._state = "running"
             self._stop_event.clear()
             self._open_log_file()
-            self._append_line("EVENT", f"串口 {port} 打开 @{baudrate} 8{parity[0]}1，模块日志口常驻独占（{self._log_type}）")
+            self._append_line("EVENT", f"串口 {port} 打开 @{baudrate} 8{parity[0]}1，模块日志口常驻独占（{self.name}）")
             self._rx_thread = threading.Thread(
-                target=self._rx_loop, name="module-serial-rx", daemon=True
+                target=self._rx_loop, name=f"module-serial-rx-{self.name}", daemon=True
             )
             self._rx_thread.start()
-            return {"state": self._state, "port": self._port, "log_file": str(self._log_file)}
+            return {"state": self._state, "port": self._port, "channel": self.name,
+                    "log_file": str(self._log_file)}
 
     def stop(self) -> dict:
         with self._lock:
@@ -185,19 +158,18 @@ class ModuleSerialService:
                     pass
                 self._ser = None
             self._close_log_file()
-            return {"state": self._state, "port": self._port, "was_running": was_running}
+            return {"state": self._state, "port": self._port,
+                    "channel": self.name, "was_running": was_running}
 
     # ---------- 日志落盘 ----------
     def _open_log_file(self) -> None:
-        """在 LOG/模块/{cco|sta}/ 下新建日志文件，命名 {时间}_[{type}].log。"""
         stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        sub = self._log_type if self._log_type in ("cco", "sta") else "cco"
+        sub = self.name if self.name in ("cco", "sta") else "cco"
         dirpath = self._log_dir / sub
         dirpath.mkdir(parents=True, exist_ok=True)
         path = dirpath / f"{stamp}_[{sub}].log"
         self._log_file = path
         self._log_handle = open(path, "a", encoding="utf-8", buffering=1)
-
     def _close_log_file(self) -> None:
         if self._log_handle is not None:
             try:
@@ -209,7 +181,6 @@ class ModuleSerialService:
             self._log_file = None
 
     def _rotate_if_needed(self) -> None:
-        """跨天轮转：日期变化时开新文件。"""
         now = datetime.date.today()
         if self._log_file is not None:
             mtime = datetime.date.fromtimestamp(self._log_file.stat().st_mtime)
@@ -219,7 +190,6 @@ class ModuleSerialService:
         self._open_log_file()
 
     def _append_line(self, direction: str, text: str) -> None:
-        """追加一行到内存增量 buffer + 日志文件（RX/TX/EVENT 共用，时间线连续）。"""
         ts = format_event_timestamp(datetime.datetime.now().timestamp())
         entry = {"seq": self._next_seq, "ts": ts, "dir": direction, "text": text}
         self._next_seq += 1
@@ -230,33 +200,24 @@ class ModuleSerialService:
                 self._log_handle.write(f"[{ts}] [{direction}] {text}\n")
 
     def _ingest_char_stream(self, direction: str, data: bytes) -> None:
-        """按换行切字符行：跨 chunk 累积到行缓冲，遇 \\n/\\r\\n 切出完整行。
-
-        每个完整行带时间标签落盘/入前端；未闭合的行保留缓冲等待下一块。
-        （用户要求：全部按字符显示，有换行符时每行前加时间标签）
-        """
         buf = self._rx_line_buf if direction == "RX" else self._tx_line_buf
         buf.extend(data)
-        # 按 \n 切行（兼容 \r\n：切行时保留 \r 于行内容，前端可清洗）
         while True:
             idx = buf.find(b"\n")
             if idx == -1:
                 break
-            line = bytes(buf[: idx + 1])  # 含换行符
+            line = bytes(buf[: idx + 1])
             del buf[: idx + 1]
             self._append_line(direction, line.decode("utf-8", errors="replace"))
 
     def _flush_char_buf(self, direction: str) -> None:
-        """停止时把未闭合行缓冲刷出（若有内容）。"""
         buf = self._rx_line_buf if direction == "RX" else self._tx_line_buf
         if buf:
             line = bytes(buf)
             buf.clear()
             self._append_line(direction, line.decode("utf-8", errors="replace"))
 
-
     def _rx_loop(self) -> None:
-        """常驻 RX 线程：原始字节实时按换行切字符行落盘，绝不停。"""
         while not self._stop_event.is_set():
             ser = self._ser
             if ser is None:
@@ -266,8 +227,6 @@ class ModuleSerialService:
                     chunk = ser.read(ser.in_waiting)
                     if not chunk:
                         continue
-                    # 烧录期间：RX 线程保持唯一 reader，把设备应答喂给烧录线程
-                    # 消费（不落盘/不入前端，XMODEM 应答不是人类可读日志）。
                     q = self._flash_resp_q
                     if q is not None:
                         for b in chunk:
@@ -281,57 +240,71 @@ class ModuleSerialService:
                     self._state = "error"
                 self._append_line("EVENT", f"RX 读取异常：{exc}")
                 break
-        # 停止时把未闭合的 RX 行刷出
         try:
             self._flush_char_buf("RX")
         except Exception:
             pass
-
     # ---------- 下发（写字节） ----------
     def write(self, data_hex: str) -> dict:
-        """向已持有的 handle 发送原始字节（十六进制字符串）。烧录期间拒绝。"""
         with self._lock:
             if self._state != "running":
-                raise RuntimeError("串口未运行")
+                raise RuntimeError(f"[{self.name}] 串口未运行")
             ser = self._ser
         with self._flash_lock:
             if self._flash_state["flashing"]:
-                raise RuntimeError("烧录进行中，禁止手动写串口")
+                raise RuntimeError(f"[{self.name}] 烧录进行中，禁止手动写串口")
             data = bytes.fromhex(data_hex.replace(" ", "").replace(",", " "))
             ser.write(data)
             self._ingest_char_stream("TX", data)
-            return {"sent": len(data)}
+            return {"sent": len(data), "channel": self.name}
 
-    def set_baudrate(self, baudrate: int) -> dict:
-        """动态修改波特率（SetCommState，不关句柄不清缓冲），RX 线程不停。"""
+    def write_text(self, text: str, append_newline: bool = True) -> dict:
+        """发送文本（UTF-8，默认末尾补 CRLF \\r\\n）。
+
+        append_newline=True（默认）：任何发送数据末尾自动携带回车换行。
+        与 CRT / 烧录 _send_line 行为一致：模块命令行以 \\r 作为回车命令结束符，
+        \\n 单独可能不被识别。故补 \\r\\n 而非仅 \\n。
+        append_newline=False：原样发送，不补。
+        """
         with self._lock:
             if self._state != "running":
-                raise RuntimeError("串口未运行")
+                raise RuntimeError(f"[{self.name}] 串口未运行")
             ser = self._ser
         with self._flash_lock:
             if self._flash_state["flashing"]:
-                raise RuntimeError("烧录进行中，禁止修改波特率")
+                raise RuntimeError(f"[{self.name}] 烧录进行中，禁止手动写串口")
+            data = text.encode("utf-8")
+            if append_newline:
+                if not (data.endswith(b"\r\n") or data.endswith(b"\r") or data.endswith(b"\n")):
+                    data += b"\r\n"
+            ser.write(data)
+            self._ingest_char_stream("TX", data)
+            return {"sent": len(data), "channel": self.name, "append_newline": append_newline}
+
+    def set_baudrate(self, baudrate: int) -> dict:
+        with self._lock:
+            if self._state != "running":
+                raise RuntimeError(f"[{self.name}] 串口未运行")
+            ser = self._ser
+        with self._flash_lock:
+            if self._flash_state["flashing"]:
+                raise RuntimeError(f"[{self.name}] 烧录进行中，禁止修改波特率")
             ser.baudrate = baudrate
             self._baudrate = baudrate
             self._append_line("EVENT", f"波特率变更 → {baudrate}")
-            return {"baudrate": baudrate}
+            return {"baudrate": baudrate, "channel": self.name}
 
     # ---------- 烧录 ----------
     def flash(self, bin_path: str, slot: int = 0,
               baud_plan: Optional[List[int]] = None,
               no_reboot_after: bool = False) -> dict:
-        """在同一 handle 上执行 XMODEM 烧录；RX 线程全程不停。
-
-        通过 _flash_lock 串行化烧录与手动 write/set_baudrate；完成后状态复位。
-        烧录在独立线程执行，不阻塞请求。
-        """
         with self._lock:
             if self._state != "running":
-                raise RuntimeError("串口未运行")
+                raise RuntimeError(f"[{self.name}] 串口未运行")
             ser = self._ser
         with self._flash_lock:
             if self._flash_state["flashing"]:
-                raise RuntimeError("烧录已在执行中")
+                raise RuntimeError(f"[{self.name}] 烧录已在执行中")
 
             self._flash_state.update(
                 flashing=True, packet=0, total=0, phase="starting",
@@ -339,8 +312,6 @@ class ModuleSerialService:
             )
             self._append_line("EVENT", f"开始烧录：{bin_path} slot={slot}")
 
-            # 烧录期间：RX 线程保持唯一 reader，设备应答喂入此队列，
-            # flash 通过 _FlashReader 消费（read 走队列、write 委托真实 ser）。
             resp_q: "queue.Queue" = queue.Queue()
             self._flash_resp_q = resp_q
             reader = _FlashReader(ser, resp_q)
@@ -368,7 +339,7 @@ class ModuleSerialService:
                         message=result.get("status", "success"),
                     )
                 self._append_line("EVENT", "烧录完成：BURN SUCCESS")
-                return {"status": "success"}
+                return {"status": "success", "channel": self.name}
             except Exception as exc:
                 with self._lock:
                     self._flash_state.update(
@@ -378,16 +349,118 @@ class ModuleSerialService:
                 self._append_line("EVENT", f"烧录失败：{exc}")
                 raise
             finally:
-                # 清除烧录应答队列，RX 线程恢复实时落盘/入前端
                 self._flash_resp_q = None
 
     # ---------- 增量读取 ----------
     def logs(self, after: int = 0) -> dict:
-        """返回 seq > after 的新增日志行；after=-1 返回全部。"""
         with self._lock:
             if after < 0:
                 lines = list(self._lines)
             else:
                 lines = [e for e in self._lines if e["seq"] > after]
             last_seq = self._next_seq - 1 if self._lines else after
-            return {"lines": lines, "last_seq": last_seq}
+            return {"lines": lines, "last_seq": last_seq, "channel": self.name}
+
+    def status(self) -> dict:
+        with self._lock:
+            return {
+                "channel": self.name,
+                "state": self._state,
+                "port": self._port,
+                "baudrate": self._baudrate,
+                "bytesize": self._bytesize,
+                "parity": self._parity,
+                "stopbits": self._stopbits,
+                "log_dir": str(self._log_dir),
+                "log_file": str(self._log_file) if self._log_file else None,
+                "lines": len(self._lines),
+                "flash": dict(self._flash_state),
+            }
+
+class ModuleSerialService:
+    """双通道模块串口服务：cco 与 sta 两路可同时监控、独立烧录。
+
+    向后兼容：start/stop/write/logs/flash 等默认作用于 cco 通道（channel="cco"），
+    保持旧测试与旧调用可用；新增 channel 参数可指定目标通道。
+    """
+
+    def __init__(self, log_dir: Optional[Path | str] = None):
+        base = Path(log_dir) if log_dir else (Path("LOG") / "模块")
+        base.mkdir(parents=True, exist_ok=True)
+        self._channels: dict = {
+            name: _SerialChannel(name=name, log_dir=base) for name in CHANNELS
+        }
+
+    def channel(self, name: str) -> _SerialChannel:
+        if name not in self._channels:
+            raise RuntimeError(f"未知通道：{name}（可选 {CHANNELS}）")
+        return self._channels[name]
+
+    @property
+    def channels(self) -> dict:
+        return dict(self._channels)
+
+    @staticmethod
+    def list_available_ports() -> List[str]:
+        """列出可用 COM 口；无 pyserial 时返回空列表。"""
+        try:
+            import serial.tools.list_ports  # noqa: PLC0415
+
+            return [p.device for p in serial.tools.list_ports.comports()]
+        except Exception:
+            return []
+
+    # ---- 兼容旧调用：默认 cco 通道 ----
+    def start(self, port: str, baudrate: int = 115200, bytesize: int = 8,
+              parity: str = "N", stopbits: int = 1,
+              log_type: str = "cco", channel: Optional[str] = None) -> dict:
+        ch = channel or log_type or "cco"
+        return self.channel(ch).start(port, baudrate, bytesize, parity, stopbits)
+
+    def stop(self, channel: Optional[str] = None) -> dict:
+        ch = channel or "cco"
+        return self.channel(ch).stop()
+
+    def write(self, data_hex: str, channel: Optional[str] = None) -> dict:
+        ch = channel or "cco"
+        return self.channel(ch).write(data_hex)
+
+    def write_text(self, text: str, channel: str = "cco", append_newline: bool = True) -> dict:
+        return self.channel(channel).write_text(text, append_newline=append_newline)
+
+    def set_baudrate(self, baudrate: int, channel: Optional[str] = None) -> dict:
+        ch = channel or "cco"
+        return self.channel(ch).set_baudrate(baudrate)
+
+    def flash(self, bin_path: str, slot: int = 0,
+              baud_plan: Optional[List[int]] = None,
+              no_reboot_after: bool = False,
+              channel: Optional[str] = None) -> dict:
+        ch = channel or "cco"
+        return self.channel(ch).flash(bin_path, slot, baud_plan, no_reboot_after)
+
+    def logs(self, after: int = -1, channel: Optional[str] = None) -> dict:
+        ch = channel or "cco"
+        return self.channel(ch).logs(after=after)
+
+    def status(self) -> dict:
+        """聚合两路状态。channels 含每路详情；顶层保留 cco 字段以兼容旧前端。"""
+        chs = {name: self._channels[name].status() for name in CHANNELS}
+        cco = chs["cco"]
+        return {
+            "state": cco["state"],
+            "port": cco["port"],
+            "baudrate": cco["baudrate"],
+            "bytesize": cco["bytesize"],
+            "parity": cco["parity"],
+            "stopbits": cco["stopbits"],
+            "log_dir": cco["log_dir"],
+            "log_file": cco["log_file"],
+            "lines": cco["lines"],
+            "flash": cco["flash"],
+            "channels": chs,
+        }
+    # ---- 便捷方法（兼容旧测试/旧调用：默认 cco 通道）----
+    def _append_line(self, direction: str, text: str, channel: str = "cco") -> None:
+        """向指定通道追加一行（默认 cco）。等价于 channel(channel)._append_line。"""
+        self.channel(channel)._append_line(direction, text)

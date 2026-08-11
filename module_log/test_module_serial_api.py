@@ -50,7 +50,7 @@ class ModuleSerialApiTest(unittest.TestCase):
 
     def test_version_includes_module_serial(self):
         data = self.client.get("/api/version").json()
-        self.assertEqual(data["module_serial_api_revision"], 1)
+        self.assertEqual(data["module_serial_api_revision"], 2)
 
     def test_page_served(self):
         resp = self.client.get("/module-serial")
@@ -153,6 +153,119 @@ class ModuleSerialApiTest(unittest.TestCase):
             json={"name": "fw.bin", "base64": "!!!not-base64!!!"},
         )
         self.assertEqual(resp.status_code, 422)
+
+
+
+class ModuleSerialDualChannelApiTest(unittest.TestCase):
+    """双通道 API：cco 与 sta 各自独立启动/停止/烧录/日志/发送。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.svc = ModuleSerialService(log_dir=Path(self.tmpdir) / "LOG")
+        self.client = TestClient(create_app(module_serial_service=self.svc))
+
+    def test_status_returns_both_channels(self):
+        data = self.client.get("/api/module-serial/status").json()
+        self.assertIn("channels", data)
+        self.assertIn("cco", data["channels"])
+        self.assertIn("sta", data["channels"])
+        self.assertEqual(data["channels"]["cco"]["state"], "idle")
+        self.assertEqual(data["channels"]["sta"]["state"], "idle")
+
+    def test_start_stop_each_channel_independently(self):
+        fake_cco = FakeSerial()
+        fake_sta = FakeSerial()
+        with mock.patch("serial.Serial", side_effect=[fake_cco, fake_sta]):
+            r1 = self.client.post("/api/module-serial/start",
+                                  json={"port": "COM_CCO", "baudrate": 115200, "channel": "cco"})
+            r2 = self.client.post("/api/module-serial/start",
+                                  json={"port": "COM_STA", "baudrate": 9600, "channel": "sta"})
+        self.assertEqual(r1.status_code, 202)
+        self.assertEqual(r2.status_code, 202)
+        st = self.client.get("/api/module-serial/status").json()
+        self.assertEqual(st["channels"]["cco"]["port"], "COM_CCO")
+        self.assertEqual(st["channels"]["sta"]["port"], "COM_STA")
+        self.assertEqual(st["channels"]["cco"]["state"], "running")
+        self.assertEqual(st["channels"]["sta"]["state"], "running")
+        # 只停 cco，sta 仍在运行
+        r = self.client.post("/api/module-serial/stop", json={"channel": "cco"})
+        self.assertEqual(r.json()["state"], "idle")
+        st = self.client.get("/api/module-serial/status").json()
+        self.assertEqual(st["channels"]["cco"]["state"], "idle")
+        self.assertEqual(st["channels"]["sta"]["state"], "running")
+
+    def test_write_targets_channel(self):
+        fake_cco = FakeSerial()
+        fake_sta = FakeSerial()
+        with mock.patch("serial.Serial", side_effect=[fake_cco, fake_sta]):
+            self.client.post("/api/module-serial/start",
+                             json={"port": "COM_CCO", "channel": "cco"})
+            self.client.post("/api/module-serial/start",
+                             json={"port": "COM_STA", "channel": "sta"})
+        # 往 sta 发送
+        resp = self.client.post("/api/module-serial/write",
+                                json={"data": "AA BB", "channel": "sta"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["sent"], 2)
+        self.assertEqual(fake_sta.written, bytes([0xAA, 0xBB]))
+        self.assertEqual(fake_cco.written, b"")
+
+    def test_write_text_appends_newline_and_targets_channel(self):
+        fake_cco = FakeSerial()
+        fake_sta = FakeSerial()
+        with mock.patch("serial.Serial", side_effect=[fake_cco, fake_sta]):
+            self.client.post("/api/module-serial/start",
+                             json={"port": "COM_CCO", "channel": "cco"})
+            self.client.post("/api/module-serial/start",
+                             json={"port": "COM_STA", "channel": "sta"})
+        resp = self.client.post("/api/module-serial/write_text",
+                                json={"text": "reboot", "channel": "sta"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(fake_sta.written, b"reboot\r\n")
+        self.assertEqual(fake_cco.written, b"")
+
+    def test_write_text_append_newline_off(self):
+        """append_newline=false 时不补换行，原样发送。"""
+        fake_cco = FakeSerial()
+        with mock.patch("serial.Serial", return_value=fake_cco):
+            self.client.post("/api/module-serial/start",
+                             json={"port": "COM_CCO", "channel": "cco"})
+        resp = self.client.post("/api/module-serial/write_text",
+                                json={"text": "reboot", "channel": "cco",
+                                      "append_newline": False})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(fake_cco.written, b"reboot")
+
+    def test_write_text_blank_sends_newline(self):
+        """空文本 + 默认 append_newline=true → 发送一个换行。"""
+        fake_cco = FakeSerial()
+        with mock.patch("serial.Serial", return_value=fake_cco):
+            self.client.post("/api/module-serial/start",
+                             json={"port": "COM_CCO", "channel": "cco"})
+        resp = self.client.post("/api/module-serial/write_text",
+                                json={"text": "", "channel": "cco"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(fake_cco.written, b"\r\n")
+
+    def test_write_text_rejected_when_channel_not_running(self):
+        resp = self.client.post("/api/module-serial/write_text",
+                                json={"text": "hello", "channel": "sta"})
+        self.assertEqual(resp.status_code, 409)
+
+    def test_logs_per_channel(self):
+        self.svc.channel("cco")._append_line("RX", "CCO LINE")
+        self.svc.channel("sta")._append_line("RX", "STA LINE")
+        cco = self.client.get("/api/module-serial/logs?after=-1&channel=cco").json()
+        sta = self.client.get("/api/module-serial/logs?after=-1&channel=sta").json()
+        self.assertEqual(len(cco["lines"]), 1)
+        self.assertEqual(cco["lines"][0]["text"], "CCO LINE")
+        self.assertEqual(len(sta["lines"]), 1)
+        self.assertEqual(sta["lines"][0]["text"], "STA LINE")
+
+    def test_flash_rejects_when_channel_not_running(self):
+        resp = self.client.post("/api/module-serial/flash",
+                                json={"bin_path": "/nope.bin", "channel": "sta"})
+        self.assertEqual(resp.status_code, 409)
 
 
 if __name__ == "__main__":

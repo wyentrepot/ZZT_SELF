@@ -1,12 +1,26 @@
-// 模块日志/烧录串口独立页面逻辑（ModuleSerialService）
-// 与侦听台 app.js 完全独立：新标签页运行，800ms 增量轮询日志 + 状态。
+// 模块日志/烧录串口独立页面逻辑（ModuleSerialService · 双通道）
+// 与侦听台 app.js 完全独立：新标签页运行，800ms 增量轮询两路日志 + 状态。
+// 双通道：cco / sta 固定两路，各自独立串口/启动/停止/烧录/日志；
+// 底部发送框选择目标通道，回车即发送当前行。
 (function () {
   "use strict";
 
-  const $ = (id) => document.getElementById(id);
-  let lastSeq = -1; // 增量轮询游标（-1 = 首次拉全部）
+  // 统一选择器：以 . / # / [ 开头视为 CSS 选择器（querySelector），否则视为元素 id。
+  // 单通道旧版只支持 getElementById；双通道改造后大量使用类/属性选择器，
+  // 若仍用 getElementById 会返回 null 导致 bind() 抛错、串口下拉无法填充。
+  const $ = (sel) =>
+    sel.startsWith(".") || sel.startsWith("#") || sel.startsWith("[")
+      ? document.querySelector(sel)
+      : document.getElementById(sel);
+  const CHANNELS = ["cco", "sta"];
+  // 日志刷新速度三档：快/中/慢（毫秒）。默认中。
+  const REFRESH_SPEED_MS = { fast: 100, medium: 500, slow: 800 };
+  const DEFAULT_REFRESH_SPEED = "medium";
+  // 每路独立增量游标
+  const lastSeq = { cco: -1, sta: -1 };
   let pollTimer = null;
-  let portRefreshing = false;
+  const portRefreshing = { cco: false, sta: false };
+  let pickerChannel = "cco"; // 文件选择当前归属通道
 
   async function request(url, options) {
     const resp = await fetch(url, options);
@@ -25,35 +39,35 @@
   async function refreshStatus() {
     try {
       const st = await request("/api/module-serial/status");
-      $("ms-state").textContent = st.state;
-      $("ms-port").textContent = st.port || "-";
-      $("ms-baud").textContent = st.baudrate;
-      $("ms-logfile").textContent = st.log_file || "-";
-      $("ms-lines").textContent = st.lines;
-      $("ms-flash-state").textContent = st.flash && st.flash.flashing
-        ? `烧录中 ${st.flash.packet}/${st.flash.total || "?"} ${st.flash.message || ""}`
-        : (st.flash && st.flash.phase ? st.flash.phase : "-");
       $("ms-server-state").textContent = "已连接";
-      // 启动/停止切换按钮：根据状态更新文本与样式
-      updateToggleButton(st.state);
-      // 烧录进行中禁用重复触发
-      $("ms-flash").disabled = !!(st.flash && st.flash.flashing);
-      // 进度条
-      const total = st.flash && st.flash.total ? st.flash.total : 0;
-      const pkt = st.flash ? st.flash.packet : 0;
-      if (st.flash && st.flash.flashing && total > 0) {
-        const pct = Math.round((pkt * 100) / total);
-        $("ms-progress-bar").style.width = pct + "%";
-        $("ms-progress-text").textContent = `传输中 ${pkt}/${total} (${pct}%)`;
-      } else if (st.flash && st.flash.phase === "done") {
-        $("ms-progress-bar").style.width = "100%";
-        $("ms-progress-text").textContent = "烧录完成";
-      } else if (st.flash && st.flash.phase === "error") {
-        $("ms-progress-bar").style.width = "0%";
-        $("ms-progress-text").textContent = "烧录失败：" + (st.flash.message || "");
-      } else {
-        $("ms-progress-text").textContent = st.flash && st.flash.message ? st.flash.message : "未开始";
-      }
+      const chs = st.channels || {};
+      CHANNELS.forEach((ch) => {
+        const c = chs[ch] || {};
+        $(`ms-status-${ch}`).textContent =
+          `${c.state} · ${c.port || "-"} · ${c.baudrate || "-"}` +
+          (c.flash && c.flash.flashing ? ` · 烧录 ${c.flash.packet}/${c.flash.total || "?"}` : "");
+        updateToggleButton(ch, c.state);
+        $(`.ms-flash[data-channel="${ch}"]`).disabled = !!(c.flash && c.flash.flashing);
+        // 进度
+        const bar = $(`.ms-progress-bar[data-channel="${ch}"]`);
+        const txt = $(`.ms-progress-text[data-channel="${ch}"]`);
+        const total = c.flash && c.flash.total ? c.flash.total : 0;
+        const pkt = c.flash ? c.flash.packet : 0;
+        if (c.flash && c.flash.flashing && total > 0) {
+          const pct = Math.round((pkt * 100) / total);
+          bar.style.width = pct + "%";
+          txt.textContent = `传输中 ${pkt}/${total} (${pct}%)`;
+        } else if (c.flash && c.flash.phase === "done") {
+          bar.style.width = "100%";
+          txt.textContent = "烧录完成";
+        } else if (c.flash && c.flash.phase === "error") {
+          bar.style.width = "0%";
+          txt.textContent = "烧录失败：" + (c.flash.message || "");
+        } else {
+          bar.style.width = "0%";
+          txt.textContent = c.flash && c.flash.message ? c.flash.message : "未开始";
+        }
+      });
       return st;
     } catch (err) {
       $("ms-server-state").textContent = "连接失败：" + err.message;
@@ -63,39 +77,35 @@
 
   // ---------- 日志增量轮询 ----------
   async function pollLogs() {
-    try {
-      const data = await request(`/api/module-serial/logs?after=${lastSeq}`);
-      if (!data.lines || data.lines.length === 0) {
-        return;
-      }
-      const box = $("ms-log-box");
-      const autoscroll = $("ms-autoscroll").checked;
-      for (const line of data.lines) {
-        const cls = line.dir === "RX" ? "rx" : line.dir === "TX" ? "tx" : "ev";
-        const div = document.createElement("div");
-        // 每行一个独立 div（天然换行）；去掉行尾换行符，避免多余回车字符
-        const text = String(line.text).replace(/\r?\n/g, "").replace(/\r/g, "");
-        div.innerHTML = `<span class="t">[${line.ts}]</span> [${line.dir}] <span class="${cls}">${escapeHtml(text)}</span>`;
-        box.appendChild(div);
-      }
-      if (autoscroll) box.scrollTop = box.scrollHeight;
-      lastSeq = data.last_seq >= 0 ? data.last_seq : lastSeq;
-      // 行数显示取 status 更准，这里简单用 DOM 计数
-      $("ms-lines").textContent = box.childElementCount;
-    } catch (_) { /* 下次再试 */ }
+    for (const ch of CHANNELS) {
+      try {
+        const data = await request(`/api/module-serial/logs?after=${lastSeq[ch]}&channel=${ch}`);
+        if (!data.lines || data.lines.length === 0) continue;
+        const box = $(`.ms-log-box[data-channel="${ch}"]`);
+        const autoscroll = $(`.ms-autoscroll[data-channel="${ch}"]`).checked;
+        for (const line of data.lines) {
+          const cls = line.dir === "RX" ? "rx" : line.dir === "TX" ? "tx" : "ev";
+          const div = document.createElement("div");
+          const text = String(line.text).replace(/\r?\n/g, "").replace(/\r/g, "");
+          div.innerHTML = `<span class="t">[${line.ts}]</span> [${line.dir}] <span class="${cls}">${escapeHtml(text)}</span>`;
+          box.appendChild(div);
+        }
+        if (autoscroll) box.scrollTop = box.scrollHeight;
+        if (data.last_seq >= 0) lastSeq[ch] = data.last_seq;
+      } catch (_) { /* 下次再试 */ }
+    }
   }
 
   function escapeHtml(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
-
   // ---------- 端口 ----------
-  async function refreshPorts() {
-    if (portRefreshing) return;
-    portRefreshing = true;
+  async function refreshPorts(ch) {
+    if (portRefreshing[ch]) return;
+    portRefreshing[ch] = true;
     try {
       const data = await request("/api/module-serial/ports");
-      const sel = $("ms-port-select");
+      const sel = $(`#ms-port-${ch}`);
       const current = sel.value;
       sel.replaceChildren();
       if (!data.ports || data.ports.length === 0) {
@@ -113,15 +123,15 @@
       }
       if (data.ports.includes(current)) sel.value = current;
     } catch (err) {
-      console.error("refreshPorts:", err);
+      console.error(`refreshPorts(${ch}):`, err);
     } finally {
-      portRefreshing = false;
+      portRefreshing[ch] = false;
     }
   }
 
   // ---------- 动作 ----------
-  function updateToggleButton(state) {
-    const btn = $("ms-toggle");
+  function updateToggleButton(ch, state) {
+    const btn = $(`.ms-toggle[data-channel="${ch}"]`);
     const running = state === "running" || state === "starting";
     btn.textContent = running ? "停止" : "启动";
     btn.classList.toggle("secondary-button", running);
@@ -129,26 +139,28 @@
     btn.disabled = false;
   }
 
-  async function toggleSerial() {
-    const port = $("ms-port-select").value;
-    if (!port) { alert("请先选择串口"); return; }
-    const btn = $("ms-toggle");
-    btn.disabled = true; // 防连点
+  async function toggleSerial(ch) {
+    const port = $(`#ms-port-${ch}`).value;
+    if (!port) { alert(`请先选择 ${ch.toUpperCase()} 串口`); return; }
+    const btn = $(`.ms-toggle[data-channel="${ch}"]`);
+    btn.disabled = true;
     try {
-      // 根据当前按钮状态决定启动或停止
       const isStop = btn.textContent === "停止";
       if (isStop) {
-        await request("/api/module-serial/stop", { method: "POST" });
+        await request("/api/module-serial/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: ch }),
+        });
       } else {
-        const baud = parseInt($("ms-baud-select").value, 10);
-        const logType = $("ms-log-type").value || "cco";
+        const baud = parseInt($(`#ms-baud-${ch}`).value, 10);
         await request("/api/module-serial/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ port, baudrate: baud, bytesize: 8, parity: "N", stopbits: 1, log_type: logType }),
+          body: JSON.stringify({ port, baudrate: baud, bytesize: 8, parity: "N", stopbits: 1, channel: ch }),
         });
-        lastSeq = -1; // 重新拉取
-        $("ms-log-box").innerHTML = "";
+        lastSeq[ch] = -1;
+        $(`.ms-log-box[data-channel="${ch}"]`).innerHTML = "";
       }
       await refreshStatus();
     } catch (err) {
@@ -157,33 +169,29 @@
       btn.disabled = false;
     }
   }
-
-
-  // ---------- 文件选择：先试系统原生对话框（/api/fs/pick，只返回路径）----------
-  // 失败/超时（如 SYSTEM 服务无桌面会话弹不出）则兜底到内置目录浏览器。
-  async function pickFile() {
-    const btn = $("ms-pick");
+  // ---------- 文件选择：先试系统原生对话框（/api/fs/pick）----------
+  async function pickFile(ch) {
+    pickerChannel = ch;
+    const btn = $(`.ms-pick[data-channel="${ch}"]`);
     btn.disabled = true;
     btn.textContent = "选择中…";
     try {
       const data = await request("/api/fs/pick");
       const path = data && data.path;
       if (path) {
-        $("ms-bin").value = path;
+        $(`#ms-bin-${ch}`).value = path;
       } else {
-        // 原生框取消/超时/弹不出 → 内置浏览器兜底（只取路径，不上传）
         pickerOpen();
       }
     } catch (err) {
-      // 原生框失败（非 Windows / 500 等）→ 内置浏览器兜底
       pickerOpen();
     } finally {
       btn.disabled = false;
-      btn.textContent = "选择文件…";
+      btn.textContent = "选择…";
     }
   }
 
-  // ---------- 内置目录浏览器兜底（/api/fs/roots + /api/fs/list，只返回路径）----------
+  // ---------- 内置目录浏览器兜底 ----------
   const picker = {
     overlay: null, close: null, cancel: null, up: null, path: null,
     roots: null, list: null, selected: null, confirm: null,
@@ -198,9 +206,7 @@
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
   }
 
-  function pickerClose() {
-    picker.overlay.hidden = true;
-  }
+  function pickerClose() { picker.overlay.hidden = true; }
 
   function pickerOpen() {
     picker.overlay.hidden = false;
@@ -291,50 +297,101 @@
       picker.confirm.disabled = false;
     };
     row.addEventListener("click", select);
-    row.addEventListener("dblclick", () => {
-      select();
-      pickerConfirm();
-    });
+    row.addEventListener("dblclick", () => { select(); pickerConfirm(); });
     return row;
   }
 
   function pickerConfirm() {
     if (!picker.chosenFile) return;
-    $("ms-bin").value = picker.chosenFile;
+    $(`#ms-bin-${pickerChannel}`).value = picker.chosenFile;
     pickerClose();
   }
-
-  async function startFlash() {
-    const binPath = $("ms-bin").value.trim();
-    if (!binPath) { alert("请先选择 .bin 固件路径"); return; }
-    const slot = parseInt($("ms-slot").value || "0", 10);
-    const noReboot = $("ms-no-reboot").checked;
-    if (!confirm(`确认向 ${$("ms-port-select").value} 烧录 ${binPath}？\nimage=${slot} 波特率=当前串口波特率`)) {
+  async function startFlash(ch) {
+    const binPath = $(`#ms-bin-${ch}`).value.trim();
+    if (!binPath) { alert(`请先选择 ${ch.toUpperCase()} 固件 .bin 路径`); return; }
+    const slot = parseInt($(`#ms-slot-${ch}`).value || "0", 10);
+    const noReboot = $(`.ms-no-reboot[data-channel="${ch}"]`).checked;
+    if (!confirm(`确认向 ${ch.toUpperCase()} (${$(`#ms-port-${ch}`).value}) 烧录 ${binPath}？\nimage=${slot}`)) {
       return;
     }
-    $("ms-progress-bar").style.width = "0%";
-    $("ms-progress-text").textContent = "开始烧录…";
+    const bar = $(`.ms-progress-bar[data-channel="${ch}"]`);
+    const txt = $(`.ms-progress-text[data-channel="${ch}"]`);
+    bar.style.width = "0%";
+    txt.textContent = "开始烧录…";
     try {
       await request("/api/module-serial/flash", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bin_path: binPath, slot, baud_plan: null, no_reboot_after: noReboot }),
+        body: JSON.stringify({ bin_path: binPath, slot, baud_plan: null, no_reboot_after: noReboot, channel: ch }),
       });
-      // 烧录在线程中执行：这里立即返回，进度靠状态轮询体现
     } catch (err) {
-      $("ms-progress-text").textContent = "烧录失败：" + err.message;
+      txt.textContent = "烧录失败：" + err.message;
     }
+  }
+
+  // ---------- 底部发送框：回车即发送当前行 ----------
+  // 任何发送数据默认自动携带换行（append_newline，默认开，可勾选关闭）。
+  // “换行”按钮只发送一个换行符；直接按换行（空输入）也是发送一个换行。
+  function sendText() {
+    const text = $("ms-send-text").value;
+    const ch = $("ms-send-channel").value;
+    const appendNl = $("ms-send-append-nl").checked;
+    // 空内容也发送：空输入 + 自动补换行 = 发送一个换行
+    request("/api/module-serial/write_text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, channel: ch, append_newline: appendNl }),
+    })
+      .then(() => { $("ms-send-text").value = ""; })
+      .catch((err) => alert("发送失败：" + err.message));
+  }
+
+  // 发送一个换行符（“携带换行符作为一个按键”）
+  function sendNewline() {
+    const ch = $("ms-send-channel").value;
+    request("/api/module-serial/write_text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "", channel: ch, append_newline: true }),
+    })
+      .catch((err) => alert("发送失败：" + err.message));
   }
 
   // ---------- 绑定 ----------
   function bind() {
-    $("ms-refresh").addEventListener("click", refreshPorts);
-    $("ms-toggle").addEventListener("click", toggleSerial);
-    $("ms-pick").addEventListener("click", pickFile);
-    $("ms-flash").addEventListener("click", startFlash);
-    $("ms-clear").addEventListener("click", () => {
-      $("ms-log-box").innerHTML = "";
-      $("ms-lines").textContent = "0";
+    CHANNELS.forEach((ch) => {
+      $(`.ms-refresh[data-channel="${ch}"]`).addEventListener("click", () => refreshPorts(ch));
+      $(`.ms-toggle[data-channel="${ch}"]`).addEventListener("click", () => toggleSerial(ch));
+      $(`.ms-pick[data-channel="${ch}"]`).addEventListener("click", () => pickFile(ch));
+      $(`.ms-flash[data-channel="${ch}"]`).addEventListener("click", () => startFlash(ch));
+      $(`.ms-clear[data-channel="${ch}"]`).addEventListener("click", () => {
+        $(`.ms-log-box[data-channel="${ch}"]`).innerHTML = "";
+      });
+      refreshPorts(ch);
+    });
+
+    // 发送框：回车发送（Shift+Enter 换行）；按钮发送；清空；隐藏/显示
+    $("ms-send-text").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendText();
+      }
+    });
+    $("ms-send-btn").addEventListener("click", sendText);
+    $("ms-send-newline").addEventListener("click", sendNewline);
+    $("ms-send-clear").addEventListener("click", () => { $("ms-send-text").value = ""; });
+    $("ms-sender-hide").addEventListener("click", () => {
+      $("ms-sender").hidden = true;
+      $("ms-sender-showbar").hidden = false;
+    });
+    $("ms-sender-show").addEventListener("click", () => {
+      $("ms-sender").hidden = false;
+      $("ms-sender-showbar").hidden = true;
+    });
+
+    // 日志刷新速度切换
+    $("ms-refresh-speed").addEventListener("change", (e) => {
+      setRefreshSpeed(e.target.value);
     });
 
     // 内置文件浏览器事件绑定（兜底）
@@ -355,23 +412,36 @@
     picker.up.addEventListener("click", () => {
       if (!picker.currentDir) return;
       request(`/api/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
-        .then((data) => {
-          if (data.parent) pickerList(data.parent);
-        })
+        .then((data) => { if (data.parent) pickerList(data.parent); })
         .catch(() => {});
     });
     picker.confirm.addEventListener("click", pickerConfirm);
   }
 
-  function boot() {
-    bind();
-    refreshPorts();
-    refreshStatus();
-    pollLogs();
+  // ---------- 刷新速度：变更时重建轮询定时器 ----------
+  function startPolling(ms) {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
     pollTimer = setInterval(() => {
       refreshStatus();
       pollLogs();
-    }, 800);
+    }, ms);
+    window.__pollIntervalMs = ms;
+  }
+
+  function setRefreshSpeed(speed) {
+    const ms = REFRESH_SPEED_MS[speed] || REFRESH_SPEED_MS[DEFAULT_REFRESH_SPEED];
+    startPolling(ms);
+    return ms;
+  }
+
+  function boot() {
+    bind();
+    refreshStatus();
+    pollLogs();
+    setRefreshSpeed(DEFAULT_REFRESH_SPEED);
   }
 
   if (document.readyState === "loading") {

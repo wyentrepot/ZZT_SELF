@@ -1,0 +1,3 @@
+# 模块日志前端单测依赖（test_module_serial_frontend.py 需要）
+# 安装：.venv\Scripts\python.exe -m pip install -r module_log\requirements-test.txt
+py_mini_racer

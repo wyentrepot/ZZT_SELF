@@ -386,5 +386,63 @@ class FlashReaderRegressionTest(unittest.TestCase):
         svc.stop()
 
 
+
+class DualChannelServiceTest(unittest.TestCase):
+    """双通道服务：cco / sta 各自独立启动、停止、独立日志、独立烧录互不影响。"""
+
+    def test_two_channels_start_stop_independently(self):
+        base = Path(tempfile.mkdtemp())
+        svc = ModuleSerialService(log_dir=base / "LOG")
+        fake_cco = FakeSerial()
+        fake_sta = FakeSerial()
+        with mock.patch("serial.Serial", side_effect=[fake_cco, fake_sta]):
+            svc.start("COM_CCO", baudrate=115200, channel="cco")
+            svc.start("COM_STA", baudrate=9600, channel="sta")
+        self.assertEqual(svc.channel("cco").status()["state"], "running")
+        self.assertEqual(svc.channel("sta").status()["state"], "running")
+        # 只停 sta，cco 保持运行
+        svc.stop(channel="sta")
+        self.assertEqual(svc.channel("sta").status()["state"], "idle")
+        self.assertEqual(svc.channel("cco").status()["state"], "running")
+        svc.stop(channel="cco")
+
+    def test_write_text_to_channel(self):
+        base = Path(tempfile.mkdtemp())
+        svc = ModuleSerialService(log_dir=base / "LOG")
+        fake = FakeSerial()
+        with mock.patch("serial.Serial", return_value=fake):
+            svc.start("COM_CCO", baudrate=115200, channel="cco")
+        svc.write_text("reboot", channel="cco")
+        self.assertEqual(fake.written, b"reboot\r\n")
+        svc.stop()
+
+    def test_channels_log_into_separate_subdirs(self):
+        base = Path(tempfile.mkdtemp())
+        svc = ModuleSerialService(log_dir=base)
+        fake_cco = FakeSerial()
+        fake_sta = FakeSerial()
+        with mock.patch("serial.Serial", side_effect=[fake_cco, fake_sta]):
+            svc.start("COM_CCO", baudrate=9600, channel="cco")
+            svc.start("COM_STA", baudrate=9600, channel="sta")
+        svc.channel("cco")._append_line("RX", "CCO DATA")
+        svc.channel("sta")._append_line("RX", "STA DATA")
+        svc.stop(channel="cco")
+        svc.stop(channel="sta")
+        cco_files = list((base / "cco").glob("*.log"))
+        sta_files = list((base / "sta").glob("*.log"))
+        self.assertEqual(len(cco_files), 1)
+        self.assertEqual(len(sta_files), 1)
+        self.assertIn("[RX] CCO DATA", cco_files[0].read_text(encoding="utf-8"))
+        self.assertIn("[RX] STA DATA", sta_files[0].read_text(encoding="utf-8"))
+
+    def test_status_contains_both_channels(self):
+        base = Path(tempfile.mkdtemp())
+        svc = ModuleSerialService(log_dir=base / "LOG")
+        st = svc.status()
+        self.assertIn("channels", st)
+        self.assertIn("cco", st["channels"])
+        self.assertIn("sta", st["channels"])
+
+
 if __name__ == "__main__":
     unittest.main()

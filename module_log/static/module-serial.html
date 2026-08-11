@@ -4,12 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>模块日志 / 烧录串口</title>
-  <link rel="stylesheet" href="/static/styles.css?v=module-serial-v1">
+  <link rel="stylesheet" href="/static/styles.css?v=module-serial-v2">
   <style>
     /* 模块串口独立页面专属样式（与侦听台共用基础变量/按钮/面板） */
-    .ms-shell { width: 100%; max-width: 1200px; margin: 0 auto; padding: 18px 20px 20px; box-sizing: border-box;
+    .ms-shell { width: 100%; max-width: 1320px; margin: 0 auto; padding: 18px 20px 20px; box-sizing: border-box;
       height: 100vh; }  /* 铺满视口高度（.app-shell 已是 flex column） */
-    .ms-toolbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; margin: 10px 0 14px; }
+    .ms-channels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .ms-channel-panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel, #0e1a26);
+      border: 1px solid var(--line, #22384b); border-radius: 8px; padding: 12px; }
+    .ms-channel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .ms-channel-badge { font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; color: #061018; }
+    .ms-channel-badge.cco { background: #4cc2ff; }
+    .ms-channel-badge.sta { background: #f0a45a; }
+    .ms-channel-title { font-size: 13px; color: var(--text, #e6eef5); font-weight: bold; }
+    .ms-channel-status { font-size: 11px; color: var(--muted, #8ba3b8); margin-left: auto; }
+    .ms-toolbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; margin: 6px 0 8px; }
     .ms-toolbar .field { display: flex; flex-direction: column; gap: 4px; }
     .ms-toolbar label { font-size: 11px; color: var(--muted, #8ba3b8); }
     .ms-toolbar input, .ms-toolbar select {
@@ -17,12 +26,8 @@
       border: 1px solid var(--line, #22384b); border-radius: 6px;
       padding: 6px 8px; font-size: 12px; font-family: Consolas, monospace;
     }
-    .ms-status-line { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted, #8ba3b8); margin-bottom: 10px; }
-    .ms-status-line strong { color: var(--text, #e6eef5); }
-    /* 日志面板：flex 吃掉剩余空间，撑满视口不留白 */
-    .ms-log-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
     .ms-log-box {
-      flex: 1 1 auto; min-height: 0; height: auto;
+      flex: 1 1 auto; min-height: 0; height: 260px;
       background: #0a1118; border: 1px solid var(--line, #22384b); border-radius: 8px;
       overflow-y: auto; padding: 10px 12px;
       font: 11px/1.55 Consolas, Menlo, monospace; white-space: pre-wrap;
@@ -32,120 +37,202 @@
     .ms-log-box .tx { color: #e8c66b; }
     .ms-log-box .ev { color: #8fb8e8; }
     .ms-log-box .err { color: #ff7b72; font-weight: bold; }
-    .ms-progress { margin: 8px 0 12px; }
+    .ms-progress { margin: 8px 0 6px; }
     .ms-hint { font-size: 11px; color: var(--faint, #5c7388); margin-top: 4px; }
-    .ms-file { width: 100%; min-width: 220px; max-width: 420px; }
+    .ms-file { width: 100%; min-width: 180px; max-width: 320px; }
     .ms-log-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--faint, #5c7388); margin-bottom: 6px; }
-    /* 窄屏自适应：工具行单列堆叠 */
-    @media (max-width: 720px) {
+    /* 底部发送框 */
+    .ms-sender { border-top: 1px solid var(--line, #22384b); padding-top: 10px; }
+    .ms-refresh-bar { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; }
+    .ms-sender-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .ms-sender-head h2 { font-size: 13px; margin: 0; }
+    .ms-sender-box { display: flex; gap: 8px; align-items: flex-start; }
+    .ms-sender-box textarea {
+      flex: 1 1 auto; min-height: 56px; resize: vertical;
+      background: #0a1118; color: var(--text, #e6eef5);
+      border: 1px solid var(--line, #22384b); border-radius: 6px;
+      padding: 8px; font: 12px/1.5 Consolas, Menlo, monospace;
+    }
+    .ms-sender-side { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+    @media (max-width: 900px) {
+      .ms-channels { grid-template-columns: 1fr; }
       .ms-shell { padding: 12px 12px 20px; }
-      .ms-toolbar { flex-direction: column; align-items: stretch; }
-      .ms-toolbar .field { width: 100%; }
-      .ms-file { max-width: none; }
-      .ms-toolbar input, .ms-toolbar select, .ms-toolbar button { width: 100% !important; }
     }
   </style>
-</head>
-<body>
+</head><body>
   <div class="app-shell ms-shell">
     <header class="app-header">
       <div class="brand">
         <span class="brand-mark"></span>
         <div>
           <p>模块日志 / 烧录串口</p>
-          <span class="brand-sub">ModuleSerialService · 与侦听台独立 · 常驻独占</span>
+          <span class="brand-sub">ModuleSerialService · CCO + STA 双通道 · 常驻独占</span>
         </div>
       </div>
       <div class="dll-status"><span id="ms-server-state">未连接</span></div>
     </header>
 
-    <div class="ms-status-line">
-      <span>状态：<strong id="ms-state">idle</strong></span>
-      <span>串口：<strong id="ms-port">-</strong></span>
-      <span>波特率：<strong id="ms-baud">-</strong></span>
-      <span>日志文件：<strong id="ms-logfile">-</strong></span>
-      <span>行数：<strong id="ms-lines">0</strong></span>
-      <span>烧录：<strong id="ms-flash-state">-</strong></span>
+    <div class="ms-refresh-bar">
+      <label for="ms-refresh-speed" style="font-size:11px;color:var(--muted,#8ba3b8);">日志刷新速度</label>
+      <select id="ms-refresh-speed" style="width:120px;">
+        <option value="fast">快 (100ms)</option>
+        <option value="medium" selected>中 (500ms)</option>
+        <option value="slow">慢 (800ms)</option>
+      </select>
     </div>
 
-    <section class="operation-panel">
-      <div class="panel-title-row">
-        <h2>串口连接</h2>
-        <div class="section-kicker">常驻独占，start 打开、stop 关闭</div>
+    <!-- 两路通道面板：CCO / STA -->
+    <div class="ms-channels">
+      <!-- CCO 通道 -->
+      <section class="ms-channel-panel" id="ms-panel-cco">
+        <div class="ms-channel-head">
+          <span class="ms-channel-badge cco">CCO</span>
+          <span class="ms-channel-title">协调器通道</span>
+          <span class="ms-channel-status" id="ms-status-cco">idle</span>
+        </div>
+        <div class="ms-toolbar">
+          <div class="field">
+            <label for="ms-port-cco">串口</label>
+            <select id="ms-port-cco" style="width:140px"></select>
+          </div>
+          <div class="field">
+            <label for="ms-baud-cco">波特率</label>
+            <select id="ms-baud-cco" style="width:120px">
+              <option value="9600">9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+              <option value="57600">57600</option>
+              <option value="115200" selected>115200</option>
+              <option value="230400">230400</option>
+              <option value="460800">460800</option>
+              <option value="921600">921600</option>
+            </select>
+          </div>
+          <button class="text-button ms-refresh" data-channel="cco" type="button">刷新端口</button>
+          <button class="primary-button ms-toggle" data-channel="cco" type="button">启动</button>
+        </div>
+        <div class="ms-toolbar">
+          <div class="field" style="flex:1">
+            <label for="ms-bin-cco">固件 .bin 路径</label>
+            <input id="ms-bin-cco" class="ms-file" type="text" placeholder="输入或选择文件…">
+          </div>
+          <button class="text-button ms-pick" data-channel="cco" type="button">选择…</button>
+          <div class="field">
+            <label for="ms-slot-cco">image</label>
+            <select id="ms-slot-cco" style="width:90px">
+              <option value="0">image 0</option>
+              <option value="1">image 1</option>
+            </select>
+          </div>
+          <label class="field" style="flex-direction:row; align-items:center; gap:6px; cursor:pointer;">
+            <input class="ms-no-reboot" data-channel="cco" type="checkbox" style="width:auto">
+            <span style="font-size:11px">烧录后不重启</span>
+          </label>
+          <button class="primary-button ms-flash" data-channel="cco" type="button">开始烧录</button>
+        </div>
+        <div class="ms-progress">
+          <div class="progress-track"><span class="ms-progress-bar" data-channel="cco" style="width:0%"></span></div>
+          <div class="progress-copy"><strong class="ms-progress-text" data-channel="cco">未开始</strong></div>
+        </div>
+        <div class="ms-log-meta">
+          <span class="ms-log-path" data-channel="cco">-</span>
+          <span>自动滚动：<input class="ms-autoscroll" data-channel="cco" type="checkbox" checked style="width:auto; vertical-align:middle;"></span>
+          <button class="text-button ms-clear" data-channel="cco" type="button">清屏</button>
+        </div>
+        <div class="ms-log-box" data-channel="cco"></div>
+      </section>
+
+      <!-- STA 通道 -->
+      <section class="ms-channel-panel" id="ms-panel-sta">
+        <div class="ms-channel-head">
+          <span class="ms-channel-badge sta">STA</span>
+          <span class="ms-channel-title">终端通道</span>
+          <span class="ms-channel-status" id="ms-status-sta">idle</span>
+        </div>
+        <div class="ms-toolbar">
+          <div class="field">
+            <label for="ms-port-sta">串口</label>
+            <select id="ms-port-sta" style="width:140px"></select>
+          </div>
+          <div class="field">
+            <label for="ms-baud-sta">波特率</label>
+            <select id="ms-baud-sta" style="width:120px">
+              <option value="9600">9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+              <option value="57600">57600</option>
+              <option value="115200" selected>115200</option>
+              <option value="230400">230400</option>
+              <option value="460800">460800</option>
+              <option value="921600">921600</option>
+            </select>
+          </div>
+          <button class="text-button ms-refresh" data-channel="sta" type="button">刷新端口</button>
+          <button class="primary-button ms-toggle" data-channel="sta" type="button">启动</button>
+        </div>
+        <div class="ms-toolbar">
+          <div class="field" style="flex:1">
+            <label for="ms-bin-sta">固件 .bin 路径</label>
+            <input id="ms-bin-sta" class="ms-file" type="text" placeholder="输入或选择文件…">
+          </div>
+          <button class="text-button ms-pick" data-channel="sta" type="button">选择…</button>
+          <div class="field">
+            <label for="ms-slot-sta">image</label>
+            <select id="ms-slot-sta" style="width:90px">
+              <option value="0">image 0</option>
+              <option value="1">image 1</option>
+            </select>
+          </div>
+          <label class="field" style="flex-direction:row; align-items:center; gap:6px; cursor:pointer;">
+            <input class="ms-no-reboot" data-channel="sta" type="checkbox" style="width:auto">
+            <span style="font-size:11px">烧录后不重启</span>
+          </label>
+          <button class="primary-button ms-flash" data-channel="sta" type="button">开始烧录</button>
+        </div>
+        <div class="ms-progress">
+          <div class="progress-track"><span class="ms-progress-bar" data-channel="sta" style="width:0%"></span></div>
+          <div class="progress-copy"><strong class="ms-progress-text" data-channel="sta">未开始</strong></div>
+        </div>
+        <div class="ms-log-meta">
+          <span class="ms-log-path" data-channel="sta">-</span>
+          <span>自动滚动：<input class="ms-autoscroll" data-channel="sta" type="checkbox" checked style="width:auto; vertical-align:middle;"></span>
+          <button class="text-button ms-clear" data-channel="sta" type="button">清屏</button>
+        </div>
+        <div class="ms-log-box" data-channel="sta"></div>
+      </section>
+    </div>
+    <!-- 底部发送框：可隐藏/显示，目标通道选择 + 换行即发送 -->
+    <section class="operation-panel ms-sender" id="ms-sender">
+      <div class="ms-sender-head">
+        <h2>串口发送</h2>
+        <div class="section-kicker">按 Enter 发送当前行；Shift+Enter 换行</div>
+        <button id="ms-sender-hide" class="text-button" type="button" style="margin-left:auto">隐藏</button>
       </div>
-      <div class="ms-toolbar">
-        <div class="field">
-          <label for="ms-port-select">串口</label>
-          <select id="ms-port-select" style="width:150px"></select>
-        </div>
-        <div class="field">
-          <label for="ms-baud-select">波特率</label>
-          <select id="ms-baud-select" style="width:130px">
-            <option value="9600">9600</option>
-            <option value="19200">19200</option>
-            <option value="38400">38400</option>
-            <option value="57600">57600</option>
-            <option value="115200" selected>115200</option>
-            <option value="230400">230400</option>
-            <option value="460800">460800</option>
-            <option value="921600">921600</option>
+      <div class="ms-sender-box">
+        <div class="ms-sender-side">
+          <label for="ms-send-channel" style="font-size:11px;color:var(--muted,#8ba3b8)">目标</label>
+          <select id="ms-send-channel" style="width:110px">
+            <option value="cco">CCO</option>
+            <option value="sta">STA</option>
           </select>
         </div>
-        <div class="field">
-          <label for="ms-log-type">日志归属</label>
-          <select id="ms-log-type" style="width:100px">
-            <option value="cco" selected>cco</option>
-            <option value="sta">sta</option>
-          </select>
+        <textarea id="ms-send-text" placeholder="输入要发送的指令，回车即发送…"></textarea>
+        <div class="ms-sender-side">
+          <button id="ms-send-btn" class="primary-button" type="button">发送</button>
+          <button id="ms-send-newline" class="text-button" type="button" title="只发送一个换行符">换行</button>
+          <label style="display:flex; align-items:center; gap:4px; cursor:pointer; font-size:11px; color:var(--muted,#8ba3b8);">
+            <input id="ms-send-append-nl" type="checkbox" checked style="width:auto; margin:0;">
+            自动补换行
+          </label>
+          <button id="ms-send-clear" class="text-button" type="button">清空</button>
         </div>
-        <button id="ms-refresh" class="text-button" type="button">刷新端口</button>
-        <button id="ms-toggle" class="primary-button" type="button">启动</button>
       </div>
     </section>
 
-    <section class="operation-panel">
-      <div class="panel-title-row">
-        <h2>烧录（XMODEM）</h2>
-        <div class="section-kicker">同一串口句柄传输文件，实时监控不停</div>
-      </div>
-      <div class="ms-toolbar">
-        <div class="field">
-          <label for="ms-bin">固件 .bin 路径</label>
-          <input id="ms-bin" class="ms-file" type="text" placeholder="输入 Windows/WSL 路径，或点选择文件…">
-        </div>
-        <button id="ms-pick" class="text-button" type="button">选择文件…</button>
-        <div class="field">
-          <label for="ms-slot">image</label>
-          <select id="ms-slot" style="width:90px">
-            <option value="0">image 0</option>
-            <option value="1">image 1</option>
-          </select>
-        </div>
-        <label class="field" style="flex-direction:row; align-items:center; gap:6px; cursor:pointer;">
-          <input id="ms-no-reboot" type="checkbox" style="width:auto">
-          <span style="font-size:11px">烧录后不重启</span>
-        </label>
-        <button id="ms-flash" class="primary-button" type="button">开始烧录</button>
-      </div>
-      <div class="ms-hint">烧录波特率 = 当前串口波特率（与烧录技能一致，单一速率 115200）；image 可选 image 0 / image 1。</div>
-      <div class="ms-progress">
-        <div class="progress-track"><span id="ms-progress-bar" style="width:0%"></span></div>
-        <div class="progress-copy"><strong id="ms-progress-text">未开始</strong></div>
-      </div>
-    </section>
-
-    <section class="operation-panel ms-log-panel">
-      <div class="panel-title-row">
-        <h2>实时日志（800ms 增量轮询）</h2>
-        <div class="section-kicker">RX / TX / 事件 同一条时间线</div>
-      </div>
-      <div class="ms-log-meta">
-        <span id="ms-log-path">-</span>
-        <span>自动滚动：<input id="ms-autoscroll" type="checkbox" checked style="width:auto; vertical-align:middle;"></span>
-        <button id="ms-clear" class="text-button" type="button">清屏</button>
-      </div>
-      <div id="ms-log-box" class="ms-log-box"></div>
-    </section>
+    <!-- 隐藏发送框的占位按钮（发送框隐藏时显示，用于重新展开） -->
+    <div id="ms-sender-showbar" hidden style="margin-top:8px">
+      <button id="ms-sender-show" class="text-button" type="button">显示发送框</button>
+    </div>
   </div>
 
   <!-- 文件选择对话框（兜底）：通过后端 /api/fs/* 浏览服务器本地 Windows 目录 -->
@@ -173,6 +260,6 @@
     </div>
   </div>
 
-  <script src="/static/module-serial.js?v=module-serial-v1"></script>
+  <script src="/static/module-serial.js?v=module-serial-v2"></script>
 </body>
 </html>
