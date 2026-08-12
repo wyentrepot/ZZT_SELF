@@ -8,8 +8,9 @@
   <style>
     /* 模块串口独立页面专属样式（与侦听台共用基础变量/按钮/面板） */
     .ms-shell { width: 100%; max-width: 1320px; margin: 0 auto; padding: 18px 20px 20px; box-sizing: border-box;
-      height: 100vh; }  /* 铺满视口高度（.app-shell 已是 flex column） */
-    .ms-channels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+      height: 100vh; overflow-x: hidden; overflow-y: auto; }  /* 铺满视口高度；极端小窗口下仅纵向可滚动兜底（.app-shell 已是 flex column） */
+    .ms-channels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px;
+      flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); }  /* 弹性占满剩余高度 */
     .ms-channel-panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel, #0e1a26);
       border: 1px solid var(--line, #22384b); border-radius: 8px; padding: 12px; }
     .ms-channel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -27,7 +28,7 @@
       padding: 6px 8px; font-size: 12px; font-family: Consolas, monospace;
     }
     .ms-log-box {
-      flex: 1 1 auto; min-height: 0; height: 260px;
+      flex: 1 1 auto; min-height: 60px;
       background: #0a1118; border: 1px solid var(--line, #22384b); border-radius: 8px;
       overflow-y: auto; padding: 10px 12px;
       font: 11px/1.55 Consolas, Menlo, monospace; white-space: pre-wrap;
