@@ -1,32 +1,32 @@
 @echo off
 setlocal
 cd /d "%~dp0.."
-title æ‰“åŒ…å·¥å…·ï¼ˆä¾¦å¬å° / æ¨¡å—æ—¥å¿—ï¼‰
+title ´ò°ü¹¤¾ß£¨ÕìÌıÌ¨ / Ä£¿éÈÕÖ¾£©
 
 if not exist ".venv\Scripts\python.exe" (
-    echo [ERROR] .venv not found. Run å¯åŠ¨å·¥å…·.bat once first to create it.
+    echo [ERROR] .venv not found. Run Æô¶¯¹¤¾ß.bat once first to create it.
     pause
     exit /b 1
 )
 
 echo.
-echo  HPLC æ‰“åŒ…å·¥å…·
+echo  HPLC ´ò°ü¹¤¾ß
 echo  ============
-echo    1 = ä¾¦å¬å°ç½‘é¡µç‰ˆï¼ˆæ§åˆ¶å°ï¼Œdist\ä¾¦å¬å°ï¼‰
-echo    2 = ä¾¦å¬å°æ¡Œé¢ç‰ˆï¼ˆpywebview å†…åµŒçª—å£ï¼Œdist\ä¾¦å¬å°æ¡Œé¢ï¼‰
-echo    3 = æ¨¡å—æ—¥å¿—æ¡Œé¢ç‰ˆï¼ˆpywebview å†…åµŒçª—å£ï¼Œdist\æ¨¡å—æ—¥å¿—ï¼‰
+echo    1 = ÕìÌıÌ¨ÍøÒ³°æ£¨¿ØÖÆÌ¨£¬dist\ÕìÌıÌ¨£©
+echo    2 = ÕìÌıÌ¨×ÀÃæ°æ£¨pywebview ÄÚÇ¶´°¿Ú£¬dist\ÕìÌıÌ¨×ÀÃæ£©
+echo    3 = Ä£¿éÈÕÖ¾×ÀÃæ°æ£¨pywebview ÄÚÇ¶´°¿Ú£¬dist\Ä£¿éÈÕÖ¾£©
 echo.
 set "PKG_CHOICE="
-set /p "PKG_CHOICE=è¯·è¾“å…¥ 1 / 2 / 3 åå›è½¦: "
+set /p "PKG_CHOICE=ÇëÊäÈë 1 / 2 / 3 ºó»Ø³µ: "
 if /i "%PKG_CHOICE%"=="1" goto :listener_web
 if /i "%PKG_CHOICE%"=="2" goto :listener_desktop
 if /i "%PKG_CHOICE%"=="3" goto :module_desktop
-echo è¾“å…¥æ— æ•ˆï¼Œé»˜è®¤æ‰“åŒ…ä¾¦å¬å°ç½‘é¡µç‰ˆ(1)ã€‚
+echo ÊäÈëÎŞĞ§£¬Ä¬ÈÏ´ò°üÕìÌıÌ¨ÍøÒ³°æ(1)¡£
 set "PKG_CHOICE=1"
 goto :listener_web
 
 :install_deps
-echo [1/3] å®‰è£…ä¾èµ–ï¼ˆpyinstaller + pywebviewï¼‰...
+echo [1/3] °²×°ÒÀÀµ£¨pyinstaller + pywebview£©...
 ".venv\Scripts\python.exe" -m pip install pyinstaller pywebview
 if errorlevel 1 goto :failed
 exit /b 0
@@ -38,12 +38,12 @@ if not exist "shared\dll\bin\Debug\GwHPLCAnalysis.dll" (
     exit /b 1
 )
 call :install_deps
-echo [2/3] æ‰“åŒ…ä¾¦å¬å°ç½‘é¡µç‰ˆï¼ˆPyInstaller onedirï¼‰...
+echo [2/3] ´ò°üÕìÌıÌ¨ÍøÒ³°æ£¨PyInstaller onedir£©...
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm packaging\hplc_parser.spec
 if errorlevel 1 goto :failed
-echo [3/3] å®Œæˆã€‚
-echo è¾“å‡º: %CD%\dist\ä¾¦å¬å°\
-echo å†’çƒŸ: .venv\Scripts\python.exe scripts\smoke_test_packaged.py
+echo [3/3] Íê³É¡£
+echo Êä³ö: %CD%\dist\ÕìÌıÌ¨\
+echo Ã°ÑÌ: .venv\Scripts\python.exe scripts\smoke_test_packaged.py
 exit /b 0
 
 :listener_desktop
@@ -53,24 +53,24 @@ if not exist "shared\dll\bin\Debug\GwHPLCAnalysis.dll" (
     exit /b 1
 )
 call :install_deps
-echo [2/3] æ‰“åŒ…ä¾¦å¬å°æ¡Œé¢ç‰ˆï¼ˆpywebview windowedï¼‰...
+echo [2/3] ´ò°üÕìÌıÌ¨×ÀÃæ°æ£¨pywebview windowed£©...
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm packaging\hplc_parser_desktop.spec
 if errorlevel 1 goto :failed
-echo [3/3] å®Œæˆã€‚
-echo è¾“å‡º: %CD%\dist\ä¾¦å¬å°æ¡Œé¢\
+echo [3/3] Íê³É¡£
+echo Êä³ö: %CD%\dist\ÕìÌıÌ¨×ÀÃæ\
 exit /b 0
 
 :module_desktop
 call :install_deps
-echo [2/3] æ‰“åŒ…æ¨¡å—æ—¥å¿—æ¡Œé¢ç‰ˆï¼ˆpywebview windowedï¼‰...
+echo [2/3] ´ò°üÄ£¿éÈÕÖ¾×ÀÃæ°æ£¨pywebview windowed£©...
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm packaging\module_log.spec
 if errorlevel 1 goto :failed
-echo [3/3] å®Œæˆã€‚
-echo è¾“å‡º: %CD%\dist\æ¨¡å—æ—¥å¿—\
+echo [3/3] Íê³É¡£
+echo Êä³ö: %CD%\dist\Ä£¿éÈÕÖ¾\
 exit /b 0
 
 :failed
 echo.
-echo [ERROR] æ‰“åŒ…å¤±è´¥ã€‚è¯·æŸ¥çœ‹ä¸Šæ–¹ä¿¡æ¯ã€‚
+echo [ERROR] ´ò°üÊ§°Ü¡£Çë²é¿´ÉÏ·½ĞÅÏ¢¡£
 pause
 exit /b 1

@@ -35,8 +35,14 @@ echo.
 echo [启动] 模块日志/烧录 本地软件（内嵌窗口，源码直跑）
 echo 关闭窗口即停止服务。开发模式无需打包 exe。
 echo.
-"%APP_PYTHON%" -m module_log.desktop
-if errorlevel 1 goto :failed
+REM 把输出和报错写入日志，方便排查看不到的黑框报错
+set "LOG_FILE=%~dp0..\LOG\desktop_launch.log"
+if not exist "%~dp0..\LOG" mkdir "%~dp0..\LOG"
+echo [%date% %time%] 启动 desktop.py ... >> "%LOG_FILE%"
+"%APP_PYTHON%" -m module_log.desktop >> "%LOG_FILE%" 2>&1
+set "RC=%errorlevel%"
+echo [%date% %time%] 退出码=%RC% >> "%LOG_FILE%"
+if not "%RC%"=="0" goto :failed
 exit /b 0
 
 :missing_python
@@ -47,6 +53,7 @@ exit /b 1
 
 :failed
 echo.
-echo [错误] 启动失败，请保持窗口查看上方信息。
+echo [错误] 启动失败，详情见 LOG\desktop_launch.log
+echo 请保持窗口查看上方信息。
 pause
 exit /b 1

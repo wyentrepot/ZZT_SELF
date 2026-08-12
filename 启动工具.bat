@@ -61,4 +61,3 @@ echo.
 start "侦听台-8765" cmd /c "%~dp0listener\启动侦听台.bat"
 start "模块日志-8766" cmd /c "%~dp0module_log\启动模块日志.bat"
 exit /b 0
-

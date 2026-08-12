@@ -14,6 +14,7 @@
 | 6 | module_log 新增「对照解析」页签：事件解析与原始日志双向绑定联动 | ✅ 生效 |
 | 7 | 对照解析页来源卡片化（串口/导入文件互斥二选一）+ 深色终端精致化美化 | ✅ 生效 |
 | 8 | module_log exe 打包修正：spec 补 loghooks 模块 + rules 数据文件 | ✅ 生效 |
+| 9 | 一键启动脚本统一为 GBK + CRLF 编码，修复中文 cmd 下乱码一闪而过 | ✅ 生效 |
 
 ---
 
@@ -187,6 +188,22 @@
   - 启动脚本 `启动工具.bat` 选项 4 指向的 exe 现为最新版，含对照解析。
 - **被取代**：无（补充 ADR-4/6/7 的打包落地）。
 
+---
+
+## ADR-9 一键启动脚本统一为 GBK + CRLF 编码，修复中文 cmd 下乱码一闪而过
+
+- **日期**：2026-08-13
+- **状态**：✅ 生效
+- **决定**：将全部启动/打包 .bat 文件统一为 **GBK 编码 + CRLF 行尾**（`启动工具.bat`、`listener/启动侦听台.bat`、`module_log/启动模块日志.bat`、`packaging/build_exe.bat`），与 ADR-3 既有「bat 用 GBK」约定一致。
+- **理由**：
+  - 中文 Windows cmd 默认按 GBK（代码页 936）解析 .bat；若文件是 **UTF-8 无 BOM**，中文汉字字节被按 GBK 拆解，导致 `set /p "HPLC_CHOICE=请输入..."` 的变量名被截断成 `LC_CHOICE`、菜单 `echo` 中的 `exe` 被误判为独立命令，脚本立即报错崩溃——即「一闪而过，没有启动程序」。
+  - git HEAD 中 4 个 bat 本就为 GBK，但工作区里 `module_log/启动模块日志.bat` 与 `packaging/build_exe.bat` 被改成了 UTF-8（git 报 M），是本次故障直接原因。
+  - 统一 CRLF 行尾以匹配 `.gitattributes`（`*.bat eol=crlf`）并兼容 cmd。
+- **影响**：
+  - 4 个 .bat 全部为 GBK + CRLF（LF-only=0）。
+  - 实测：`启动工具.bat` 菜单正常显示中文、`set /p` 变量名完整、无 `LC_CHOICE`/`ktop` 崩溃错误，`uvicorn` 在 8765 端口正常启动、前端 API 返回 200。
+  - 后续新增/修改 .bat 一律保存为 **GBK + CRLF**，勿用 UTF-8。
+- **被取代**：无（落地 ADR-3 的「bat 用 GBK」约定）。
 
 
 
