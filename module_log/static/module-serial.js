@@ -440,8 +440,370 @@
     return ms;
   }
 
+  // ---------- 对照解析页 ----------
+  const cmp = {
+    source: "file", module: "cco", events: [], lines: [],
+    selectedEvent: -1, selectedLine: -1, realtimeTimer: null,
+  };
+  const CMP_ICONS = { join: "🛜", collect: "📊", send: "⬆️", beacon: "📡", state: "⚙️", flash: "⚡", error: "⚠️", other: "🔍" };
+  const CMP_LEVELS = { info: "info", warn: "warn", error: "error" };
+
+  function cmpSetMeta(text) { $("cmp-meta").textContent = text || ""; }
+
+  async function cmpScan() {
+    const module = cmp.module;
+    const runBtn = cmp.source === "file" ? $("cmp-run-file") : $("cmp-run-realtime");
+    if (runBtn) runBtn.disabled = true;
+    cmpSetMeta("解析中…");
+    try {
+      let data;
+      if (cmp.source === "file") {
+        const path = $("cmp-file").value.trim();
+        if (!path) { alert("请先选择日志文件或目录"); return; }
+        data = await request(`/api/loghooks/scan?path=${encodeURIComponent(path)}&module=${module}&limit=8000`);
+      } else {
+        data = await request(`/api/loghooks/realtime?channel=${module}&limit=8000`);
+      }
+      cmp.events = data.events || [];
+      // 右侧全量日志行：直接用后端返回的 lines（带 file/line/raw）
+      cmp.lines = (data.lines || []).map((ln) => ({
+        key: (ln.file || "") + ":" + ln.line,
+        line: ln.line,
+        file: ln.file || "",
+        raw: ln.raw,
+      }));
+      // 给事件补充 __key（用于点击跳转到对应日志行）
+      cmp.events.forEach((ev, i) => {
+        ev.__i = i;
+        ev.__key = (ev.file || "") + ":" + ev.line;
+      });
+      cmp.selectedEvent = -1;
+      cmp.selectedLine = -1;
+      cmpRenderEvents();
+      cmpRenderLog();
+      // 统计条
+      cmpUpdateStats(data, module);
+      cmpSetMeta(data.module ? `${module.toUpperCase()} 来源` : "");
+      if (cmp.source === "realtime") cmpStartRealtime();
+    } catch (err) {
+      cmpSetMeta("解析失败");
+      alert("解析失败：" + err.message);
+    } finally {
+      if (runBtn) runBtn.disabled = false;
+    }
+  }
+
+  function cmpUpdateStats(data, module) {
+    $("cmp-stats").hidden = false;
+    $("cmp-stat-events").textContent = (data.event_count || 0);
+    $("cmp-stat-lines").textContent = (data.total_lines || 0);
+    const files = (data.files && data.files.length) ? data.files.length : (data.module ? 1 : 0);
+    $("cmp-stat-files").textContent = files;
+    const drifts = (data.events || []).filter((e) => e.line_drift).length;
+    $("cmp-stat-drift").textContent = drifts;
+    // 来源文件显示
+    const logFile = $("cmp-log-file");
+    if (data.files && data.files.length) logFile.textContent = data.files.length === 1 ? data.files[0] : `${data.files.length} 个文件`;
+    else logFile.textContent = data.module ? `${module.toUpperCase()} 实时` : "";
+  }
+
+  function cmpRenderEvents() {
+    const list = $("cmp-event-list");
+    list.innerHTML = "";
+    if (!cmp.events.length) { list.innerHTML = '<div class="cmp-empty">未解析到事件</div>'; return; }
+    cmp.events.forEach((ev) => {
+      const bar = document.createElement("div");
+      bar.className = "cmp-ev-bar " + (CMP_LEVELS[ev.level] || "info");
+      const icon = document.createElement("div");
+      icon.className = "cmp-ev-icon";
+      icon.textContent = CMP_ICONS[ev.category] || "🔍";
+      const label = document.createElement("span");
+      label.className = "cmp-ev-label";
+      label.textContent = ev.label || ev.type;
+      const time = document.createElement("span");
+      time.className = "cmp-ev-time";
+      time.textContent = ev.time;
+      const typeTag = document.createElement("span");
+      typeTag.className = "cmp-ev-type";
+      typeTag.textContent = ev.type;
+      const head = document.createElement("div");
+      head.className = "cmp-ev-head";
+      head.appendChild(label);
+      head.appendChild(typeTag);
+      head.appendChild(time);
+      const msg = document.createElement("div");
+      msg.className = "cmp-ev-msg";
+      msg.textContent = ev.message;
+      const body = document.createElement("div");
+      body.className = "cmp-ev-body";
+      body.appendChild(head);
+      body.appendChild(msg);
+      const card = document.createElement("div");
+      card.className = "cmp-ev";
+      card.dataset.ev = ev.__i;
+      card.appendChild(bar);
+      card.appendChild(icon);
+      card.appendChild(body);
+      card.addEventListener("click", () => cmpSelectEvent(ev.__i));
+      list.appendChild(card);
+    });
+  }
+
+// 虚拟滚动：右侧日志全量渲染但只画可视行
+  const CMP_ROW_H = 18; // 固定行高（与 CSS .cmp-log-line 一致）
+
+  function cmpLineKey(line) { return line.key; }
+
+  function cmpBuildLineHTML(raw) {
+    const m = raw.match(/^\[([^\]]*)\]\s*\[(RX|TX|EVENT)\]\s*(.*)$/);
+    if (m) {
+      const dir = m[2];
+      const cls = dir === "RX" ? "rx" : dir === "TX" ? "tx" : "ev";
+      return `<span class="t">[${escapeHtml(m[1])}]</span> [${dir}] <span class="${cls}">${escapeHtml(m[3])}</span>`;
+    }
+    return escapeHtml(raw);
+  }
+
+  function cmpRenderLog() {
+    const list = $("cmp-log-list");
+    const spacer = $("cmp-log-spacer");
+    const window = $("cmp-log-window");
+    cmp.virtStart = -1; cmp.virtEnd = -1; // 强制重绘
+    list.innerHTML = "";
+    list.appendChild(spacer);
+    list.appendChild(window);
+    if (!cmp.lines.length) {
+      window.innerHTML = '<div class="cmp-empty">暂无日志行</div>';
+      spacer.style.height = "0px";
+      return;
+    }
+    // 撑起总高（虚拟滚动必需）
+    spacer.style.height = (cmp.lines.length * CMP_ROW_H) + "px";
+    // 移除旧滚动监听，绑定新的一次
+    if (list.__virtBound) list.removeEventListener("scroll", cmpVirtUpdate);
+    list.addEventListener("scroll", cmpVirtUpdate);
+    list.__virtBound = true;
+    cmpVirtUpdate();
+  }
+
+  function cmpVirtUpdate() {
+    const list = $("cmp-log-list");
+    const window = $("cmp-log-window");
+    if (!cmp.lines.length) return;
+    const scrollTop = list.scrollTop;
+    const viewH = list.clientHeight;
+    // 可视范围（含缓冲 10 行）
+    let start = Math.max(0, Math.floor(scrollTop / CMP_ROW_H) - 10);
+    let end = Math.min(cmp.lines.length, Math.ceil((scrollTop + viewH) / CMP_ROW_H) + 10);
+    // 只重绘当范围变化时
+    if (cmp.virtStart === start && cmp.virtEnd === end) return;
+    cmp.virtStart = start; cmp.virtEnd = end;
+    const frag = document.createDocumentFragment();
+    for (let i = start; i < end; i++) {
+      const ln = cmp.lines[i];
+      const div = document.createElement("div");
+      div.className = "cmp-log-line";
+      div.style.top = (i * CMP_ROW_H) + "px";
+      div.dataset.key = ln.key;
+      div.dataset.line = i;
+      div.innerHTML = cmpBuildLineHTML(ln.raw);
+      if (cmp.selectedLine >= 0 && cmp.selectedLine === i && cmp.lines[i].file === (cmp.selectedFile || "")) {
+        div.classList.add("selected");
+      }
+      div.addEventListener("click", () => cmpSelectLine(ln.key));
+      frag.appendChild(div);
+    }
+    window.innerHTML = "";
+    window.appendChild(frag);
+  }
+
+  // 定位到某行（file:line）——事件点击入口
+  function cmpScrollToLine(key, select) {
+    // key 形如 "file:line"，找到对应行索引
+    const idx = cmp.lines.findIndex((ln) => ln.key === key);
+    if (idx < 0) return;
+    const list = $("cmp-log-list");
+    // 记录选中（按行索引 + file）
+    const ln = cmp.lines[idx];
+    cmp.selectedLine = idx;
+    cmp.selectedFile = ln.file || "";
+    // 滚动容器到目标行位置（居中）
+    const targetScroll = idx * CMP_ROW_H - (list.clientHeight - CMP_ROW_H) / 2;
+    list.scrollTop = Math.max(0, targetScroll);
+    cmpVirtUpdate();
+    // 高亮该行（重新标记）
+    $("cmp-log-window").querySelectorAll(".cmp-log-line").forEach((el) => {
+      el.classList.toggle("selected", parseInt(el.dataset.line, 10) === idx);
+    });
+  }
+
+  // 点击左侧事件卡片：高亮左栏 + 跳转右侧对应日志行
+  function cmpSelectEvent(i) {
+    cmp.selectedEvent = i;
+    const ev = cmp.events[i];
+    // 左栏高亮
+    $("cmp-event-list").querySelectorAll(".cmp-ev").forEach((el) => {
+      el.classList.toggle("selected", parseInt(el.dataset.ev, 10) === i);
+    });
+    if (ev) {
+      cmpScrollToLine(ev.__key, true);
+      cmp.selectedLine = ev.line;
+    }
+  }
+
+  function cmpSelectLine(key) {
+    const idx = cmp.lines.findIndex((ln) => ln.key === key);
+    if (idx >= 0) {
+      const ln = cmp.lines[idx];
+      cmp.selectedLine = idx;
+      cmp.selectedFile = ln.file || "";
+      cmpVirtUpdate();
+    }
+    // 联动左栏事件
+    const evIdx = cmp.events.findIndex((e) => e.__key === key);
+    if (evIdx >= 0) {
+      cmp.selectedEvent = evIdx;
+      const evEl = $("cmp-event-list").querySelector(`.cmp-ev[data-ev="${evIdx}"]`);
+      if (evEl) {
+        $("cmp-event-list").querySelectorAll(".cmp-ev").forEach((el) => el.classList.remove("selected"));
+        evEl.classList.add("selected");
+        evEl.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+
+  function cmpStartRealtime() {
+    cmpStopRealtime();
+    cmp.realtimeTimer = setInterval(() => {
+      const module = cmp.module;
+      request(`/api/loghooks/realtime?channel=${module}&limit=8000`)
+        .then((data) => {
+          cmp.events = data.events || [];
+          cmpRenderEvents();
+          // 实时模式下日志也在增长，更新全量行 + 虚拟滚动
+          cmp.lines = (data.lines || []).map((ln) => ({
+            key: (ln.file || "") + ":" + ln.line,
+            line: ln.line,
+            file: ln.file || "",
+            raw: ln.raw,
+          }));
+          cmpRenderLog();
+          cmpUpdateStats(data, module);
+          cmpSetMeta(`${module.toUpperCase()} 实时`);
+        })
+        .catch(() => {});
+    }, 2000);
+  }
+  function cmpStopRealtime() {
+    if (cmp.realtimeTimer) { clearInterval(cmp.realtimeTimer); cmp.realtimeTimer = null; }
+  }
+
+  function cmpSetSource(src) {
+    cmp.source = src;
+    cmpStopRealtime();
+    document.querySelectorAll(".cmp-srccard").forEach((c) => {
+      c.classList.toggle("active", c.dataset.src === src);
+    });
+    $("cmp-cfg-file").hidden = src !== "file";
+    $("cmp-cfg-realtime").hidden = src !== "realtime";
+    $("cmp-stats").hidden = true;
+    cmpSetMeta("");
+  }
+
+  async function cmpPickFile() {
+    try {
+      const data = await request("/api/fs/pick");
+      if (data && data.path) { $("cmp-file").value = data.path; }
+    } catch (_) { alert("无法打开文件选择器，请手动输入路径"); }
+  }
+
+  async function cmpPickDir() {
+    // 打开目录：复用 fs/pick 选一个文件，取其所在目录；或提示手动输入目录
+    try {
+      const data = await request("/api/fs/pick");
+      if (data && data.path) {
+        const idx = data.path.lastIndexOf(/[\/]/.source);
+        const dir = idx > 0 ? data.path.slice(0, idx) : data.path;
+        $("cmp-file").value = dir;
+      }
+    } catch (_) { alert("无法打开目录选择器，请手动输入目录路径"); }
+  }
+
+  async function cmpRefreshSerialStatus() {
+    try {
+      const st = await request("/api/module-serial/status");
+      const ch = (st.channels && st.channels[cmp.module]) || {};
+      const running = ch.state === "running" || ch.state === "starting";
+      const el = $("cmp-rt-status");
+      if (running) {
+        el.textContent = `${cmp.module.toUpperCase()} · ${ch.port || "-"} · ${ch.baudrate || "-"} · 采集中`;
+        el.classList.add("on");
+        $("cmp-src-realtime-status").textContent = "运行中";
+        $("cmp-run-realtime").textContent = "重新解析";
+      } else {
+        el.textContent = `${cmp.module.toUpperCase()} 串口未运行`;
+        el.classList.remove("on");
+        $("cmp-src-realtime-status").textContent = "空闲";
+        $("cmp-run-realtime").textContent = "开始解析";
+      }
+    } catch (_) {
+      $("cmp-rt-status").textContent = "无法获取串口状态";
+      $("cmp-rt-status").classList.remove("on");
+    }
+  }
+
+  function cmpBind() {
+    // 页签切换
+    document.querySelectorAll(".ms-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".ms-tab").forEach((t) => t.classList.toggle("active", t === tab));
+        const name = tab.dataset.tab;
+        $("ms-tab-live").hidden = name !== "live";
+        $("ms-tab-compare").hidden = name !== "compare";
+        if (name === "live") cmpStopRealtime();
+        if (name === "compare") cmpRefreshSerialStatus();
+      });
+    });
+
+    // 来源卡片（互斥二选一）
+    document.querySelectorAll(".cmp-srccard").forEach((card) => {
+      card.addEventListener("click", () => {
+        cmpSetSource(card.dataset.src);
+        if (card.dataset.src === "realtime") cmpRefreshSerialStatus();
+      });
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cmpSetSource(card.dataset.src); }
+      });
+    });
+
+    // 模块分段控件
+    document.querySelectorAll(".cmp-modseg-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".cmp-modseg-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        cmp.module = btn.dataset.mod;
+        cmpRefreshSerialStatus();
+        if (cmp.source === "realtime") cmpScan();
+      });
+    });
+
+    // 文件来源动作
+    $("cmp-pick-file").addEventListener("click", cmpPickFile);
+    $("cmp-pick-dir").addEventListener("click", cmpPickDir);
+    $("cmp-run-file").addEventListener("click", cmpScan);
+    $("cmp-file").addEventListener("keydown", (e) => { if (e.key === "Enter") cmpScan(); });
+
+    // 串口来源动作
+    $("cmp-run-realtime").addEventListener("click", cmpScan);
+
+    // 默认：实时串口来源
+    cmp.source = "realtime";
+    cmp.module = "cco";
+    cmpSetSource("realtime");
+    cmpRefreshSerialStatus();
+  }
   function boot() {
     bind();
+    cmpBind();
     refreshStatus();
     pollLogs();
     setRefreshSpeed(DEFAULT_REFRESH_SPEED);

@@ -1,6 +1,6 @@
 # loghooks：配置驱动的日志运行状态钩子 —— 设计方案
 
-> 状态：**待确认**（本文档用于对齐设计，尚未实现）
+> 状态：**已确认**（设计与需求方对齐完毕，待实现）
 > 适用范围：`listener`（侦听台）/ `module_log`（模块日志）双来源日志
 > 目标：让 AI 在改代码、烧录验证时，能通过一组**钩子规则**抓出日志中的关键运行状态事件（入网、采集上报、往网络层发送等），生成摘要 JSON 供 AI 核查功能逻辑，排除海量轮询/状态机噪音。
 
@@ -75,6 +75,12 @@ module_log/
 ## 4. 核心概念：钩子 = 声明式规则
 
 每个钩子是**一条 JSON 规则**，描述"在哪种来源、匹配什么、归为哪类事件、提取哪些字段"。新增省份 = 新增一份规则文件，无需写 Python 类。
+
+### 4.0 关键设计原则：代码变更不中断规则
+
+- **匹配主锚是消息内容（正则/字段值）**，不是行号。源码新增/删除行不会导致规则失效。
+- 行号作为**可选软约束**（见 5.1 `line`/`line_tolerance`）：行号漂移时事件照常命中，仅标记漂移，不影响烧录验证结果。
+- 规则更新通过 `rules diff` 工具（见 12 节）半自动化完成，不依赖人工掌握源码变更细节。
 
 ### 4.1 两种匹配原语
 
@@ -175,7 +181,7 @@ module_log/
 | `scope` | str | ✅ | `common`（所有分支）/ `province`（省份专属） |
 | `province` | str | 当 scope=province | 省名，如 `anhui` |
 | `source` | list | ✅ | 适用的来源：`module_log`/`listener` |
-| `match` | obj | 二选一 | 单行触发规则（mode=text 或 field） |
+| `match` | obj | 二选一 | 单行触发规则（mode=text 或 field）。可选 `file`/`line`/`line_tolerance` 作软约束 |
 | `sequence` | list | 二选一 | 跨行状态流规则（与 match 互斥） |
 | `capture` | obj | | 从匹配组/字段提取的事件字段 |
 | `event` | obj | ✅ | 事件类型/标签/消息模板 |
@@ -186,6 +192,19 @@ module_log/
 ```json
 {"mode": "text", "pattern": "onnet cnt = (\\d+)", "flags": ["i"]}
 ```
+
+**额外可选字段（两模式共用）**：
+```json
+{
+  "mode": "text",
+  "pattern": "onnet cnt = (\\d+)",
+  "file": "aps_ioctrl_nwk.c",   // 可选：源文件约束
+  "line": 950,                   // 可选：来源行号（来自扫描结果）
+  "line_tolerance": 10           // 可选：行号容差 ±N 行，默认 10
+}
+```
+- `line`/`line_tolerance` 是**弱约束**：内容正则命中是硬条件，行号在容差内为正常命中；超出容差时**仍命中事件**，但标记 `line_drift: true`，摘要汇总漂移清单。
+- 此举确保源码增删行不中断规则匹配，同时**自动暴露"需要更新规则"的信号**。
 
 **`mode: "field"`**（simple dict 字段，侦听台帧）：
 ```json
@@ -204,11 +223,11 @@ module_log/
 
 ---
 
-## 5.5 规则加载与自动识别（多 json 同时支持）
+## 5.3 规则加载与自动识别（多 json 同时支持）
 
 **核心诉求**：不强制用户每次指定省份；默认**加载全部规则文件 + 自动识别适用规则**，让"全部省份一起跑、能命中就命中"成为默认行为。
 
-### 5.5.1 目录即规则源，全部加载
+### 5.3.1 目录即规则源，全部加载
 
 ```
 loghooks/rules/
@@ -223,7 +242,7 @@ loghooks/rules/
 - 规则通过 `scope` / `province` 字段**自带归属**，引擎加载后按其归属组织，而不是按目录区分运行与否。
 - `--province` 仍是**可选过滤器**：不传 = 全部加载；传了 = 只保留该省的 province 规则 + 全部 common 规则。
 
-### 5.5.2 自动识别省份（无需指定）
+### 5.3.2 自动识别省份（无需指定）
 
 每条规则命中时，引擎自动记录**命中的 `scope`/`province`**。扫描结束后，根据命中分布自动给出"这份日志疑似来自哪个省份"的判定：
 
@@ -238,13 +257,13 @@ loghooks/rules/
 - 只命中 common 规则 → 判定"无省份特征"（common-only）。
 - 多条省份规则同时命中不同省 → 全部列出，由上层（AI/人）决定，**不武断二选一**。
 
-### 5.5.3 多 json 带来的规则冲突与隔离
+### 5.3.3 多 json 带来的规则冲突与隔离
 
 - **ID 全局唯一**：加载时校验所有 json 的 `id` 不重复，冲突直接报 schema 错误（而不是静默覆盖）。
 - **优先级**：若同名事件类型来自 common 与 province，province 规则**覆盖/补充** common 的同 `event.type` 标签与消息（province 更具体），但两者都计入命中统计。
 - **命名空间**：建议 `id` 前缀体现来源，如 `common.*` / `anhui.*` / `henan.*`，便于日志里溯源是哪个规则命中。
 
-### 5.5.4 供 CLI 的交互
+### 5.3.4 供 CLI 的交互
 
 ```
 python -m loghooks scan <log>
@@ -379,6 +398,10 @@ AI 验证时，模块日志与侦听台是**同一时间段**采集的。关联�
      "message": "入网节点数 = 1", "source_line": "[2026...] [RX] ... onnet cnt = 1"}
   ],
   "correlations": [...],
+  "rule_drifts": [
+    {"rule_id": "common.join_onnet", "file": "aps_ioctrl_nwk.c",
+     "expected_line": 950, "actual_line": 962, "tolerance": 10}
+  ],
   "unmatched_unknown": 0
 }
 ```
@@ -421,7 +444,62 @@ _append_line(direction, text)  →  写原始日志（现有）  +  run_loghooks
 
 ---
 
-## 12. 后续可扩展（不在首版）
+## 12. 规则更新工作流（源码变更后维护规则）
+
+> 决策依据：源码会持续变更，规则不能因为行号漂移或新增打印语句而失效或遗漏。
+> 匹配主锚是消息内容，行号漂移不阻断命中；但偏离旧规则的行号需要**暴露出来**，提示更新。
+
+### 12.1 源码变更 → 更新规则的闭环
+
+```
+源码变更
+  ↓ ① 工程 AI 重跑扫描（用 docs/loghooks-source-scan-prompt.md）
+  ↓    产出新 cco_print_scan.json
+  ↓ ② python -m loghooks rules diff --old <旧扫描结果> --new <新扫描结果>
+  ↓    自动检出：新增打印 / 删除打印 / 行号漂移 / msg 变化
+  ↓ ③ 按 diff 更新规则文件（漂移的直接改 line，新增的补规则）
+  ↓ ④ 回归：python -m loghooks scan <真实日志> 比对命中率
+```
+
+### 12.2 `rules diff` 子命令
+
+`python -m loghooks rules diff` 比较新旧扫描结果（`loghooks/rules_source/`），输出：
+
+```
+=== 新增打印（需要补规则）===  (23 条)
+  aps_ioctrl_nwk.c:950  onnet cnt = %d
+  ...
+
+=== 删除打印（规则可废弃）===  (5 条)
+  bps_check.c:123  bpsCheck_state0 trycnt %d
+  ...
+
+=== 行号漂移（规则需更新 line）===  (12 条)
+  aps_ioctrl_nwk.c:950 → 962  onnet cnt = %d
+  ...
+
+=== msg 变更（规则需重审）===  (3 条)
+  old: nwk disc done  new: nwk discovery done
+  ...
+```
+
+- 对比基准：每条扫描记录按 `(file, msg)` 去重，作为稳定标识（msg 极少变，是跨版本的稳定锚）。
+- 行号漂移：同一 `(file, msg)` 在两份扫描结果中的 line 相差 > 5（默认灵敏度），即报告漂移。
+- 首版实现 diff 工具，后续可扩展为 `rules refresh`（自动更新规则文件中的 line 字段）。
+
+### 12.3 源文件（rules_source）与规则文件（rules/）的关系
+
+| 组件 | 路径 | 维护者 | 更新频率 |
+|------|------|--------|----------|
+| 扫描结果（原材料） | `loghooks/rules_source/` | 工程侧 AI | 源码变更时 |
+| 规则文件（消费方） | `loghooks/rules/common.json`、`provinces/*.json` | 本侧工程 | 扫描结果更新后 |
+
+- 扫描结果由工程侧 AI 按 `docs/loghooks-source-scan-prompt.md` 提示词执行，**不在此项目代码仓库内**（产出于 `D:\zzt\loghooks\rules_source\`），但维护者负责将更新后的结果同步到本仓库。
+- 规则文件基于扫描结果编写，两者通过 `(file, msg)` 稳定关联。
+
+---
+
+## 13. 后续可扩展（不在首版）
 
 - 侦听台深度关联可视化（在现有 listener 界面加"运行状态"页）。
 - 更多省份规则（河南/重庆等，随需求添加）。
@@ -430,7 +508,7 @@ _append_line(direction, text)  →  写原始日志（现有）  +  run_loghooks
 
 ---
 
-## 13. 待确认/风险点
+## 14. 待确认/风险点
 
 1. **时基对齐**：模块日志（模块时钟）与侦听台（PC 时钟）存在时钟偏差风险，跨来源关联以业务锚点（NID/MAC/冻结时刻）+ 宽松时间窗为主。若同一验证批次中两边时钟一致，可进一步精确对齐。
 2. **规则匹配误报**：`trycnt` 等高频轮询行的正则可能误命中，需在规则里用"源文件 + 消息"双重约束降低误报。
@@ -438,4 +516,4 @@ _append_line(direction, text)  →  写原始日志（现有）  +  run_loghooks
 
 ---
 
-*本文档为设计方案，待你确认后进入实现。*
+*本文档为设计方案，已与需求方对齐确认，进入实现阶段。*

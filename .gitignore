@@ -375,19 +375,9 @@ __pycache__/
 
 # PyInstaller 中间产物
 build/
-# 每个 onedir 分发包根目录下的 runtime/（冒烟生成的索引），不入库
-# 注意不能用 dist/**/runtime/：会误伤 _internal/pythonnet/runtime/（pythonnet 自带的 .NET 运行时）
-dist/*/runtime/
-# 运行时产物不入库：exe 生成的日志目录与 pywebview WebView2 用户数据目录
-dist/*/LOG/
-dist/*/*.WebView2/
-# 豁免：pythonnet 自带的 .NET 运行时目录（被上方 runtime/ 规则误伤的 dist 深层 runtime）
-!dist/*/_internal/pythonnet/runtime/
-# 豁免：VS 通用 .gitignore 的 x86/、[Bb]in/ 规则误伤的打包必需文件
-# （clr_loader 的 x86 版 ClrLoader.dll、hplc_parser 的 C# 库 GwHPLCAnalysis.dll/Newtonsoft.Json.dll）
-!dist/*/_internal/clr_loader/ffi/dlls/x86/
-!dist/*/_internal/dll/bin/
-!dist/*/_internal/dll/bin/Debug/
+# 打包产物 dist/ 整体不入库：exe 为本地/发布时用 PyInstaller 生成，源码已入库
+# （C# 解析库源码在 shared/dll/src/，编译产物在 shared/dll/bin/，均可本地重建）
+dist/
 
 # 本机会话元数据与临时目录（不提交）
 .reasonix/

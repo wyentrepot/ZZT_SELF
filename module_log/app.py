@@ -222,6 +222,46 @@ def create_app(module_serial_service=None) -> FastAPI:
     def fs_list(path: str = Query("", max_length=1024)):
         return infra.list_directory(path)
 
+    # ---- loghooks 对照解析 ----
+    @app.get("/api/loghooks/scan")
+    def loghooks_scan(path: str = Query(..., max_length=2048),
+                      module: str = Query("", pattern=r"^(cco|sta|)$"),
+                      limit: int = Query(2000, ge=1, le=20000)):
+        """扫描日志文件/目录，返回事件 + 原始日志行绑定。"""
+        from module_log import loghooks_api
+        from pathlib import Path
+        res = loghooks_api.scan_log_file(Path(path), module or None, limit=limit)
+        if "error" in res:
+            raise HTTPException(status_code=404, detail=res["error"])
+        return res
+
+    @app.get("/api/loghooks/realtime")
+    def loghooks_realtime(channel: str = Query("cco", pattern=r"^(cco|sta)$"),
+                          limit: int = Query(2000, ge=1, le=20000)):
+        """扫描实时串口内存日志，返回事件 + 原始行绑定。"""
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        from module_log import loghooks_api
+        logs = module_serial_service.logs(after=-1, channel=channel)
+        lines = logs.get("lines", []) if isinstance(logs, dict) else []
+        return loghooks_api.scan_realtime(lines, module=channel, limit=limit)
+
+    @app.get("/api/loghooks/sources")
+    def loghooks_sources():
+        """列出模块日志根目录下可扫描的日志文件（按模块分组）。"""
+        from module_log import loghooks_api
+        root = _log_dir()
+        groups = {"cco": [], "sta": []}
+        if root.exists():
+            for sub in ("cco", "sta"):
+                d = root / sub
+                if d.exists():
+                    for f in sorted(d.iterdir(), reverse=True):
+                        if f.is_file() and f.suffix in (".log", ".txt"):
+                            groups[sub].append({"path": str(f), "name": f.name, "size": f.stat().st_size})
+        return {"root": str(root), "groups": groups}
+
+
     @app.get("/api/fs/pick")
     def fs_pick():
         if os.name != "nt":

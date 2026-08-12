@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>模块日志 / 烧录串口</title>
-  <link rel="stylesheet" href="/static/styles.css?v=module-serial-v2">
+  <link rel="stylesheet" href="/static/styles.css?v=module-serial-v3">
   <style>
     /* 覆盖全局 body min-width 限制，允许窗口缩小时自适应 */
     body { min-width: unset; }
@@ -62,7 +62,147 @@
       .ms-shell { padding: 10px 12px 12px; }
       body { min-width: unset; }
     }
-  </style>
+  
+    /* ===== 页签栏 ===== */
+    /* ===== 页签栏 ===== */
+    .ms-tabs { display: flex; gap: 4px; padding: 4px 4px 0; border-bottom: 1px solid var(--line, #1d2c3b); margin-bottom: 14px; }
+    .ms-tab {
+      background: transparent; border: none; color: var(--muted, #8ba3b8);
+      font-size: 13px; font-weight: 600; padding: 9px 20px; cursor: pointer;
+      border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+      margin-bottom: -1px; position: relative; transition: color .18s ease, background .18s ease;
+    }
+    .ms-tab:hover { color: var(--ink, #e8f0f7); background: rgba(69,224,194,.05); }
+    .ms-tab.active {
+      color: var(--cyan, #45e0c2); background: var(--panel, #0d1722);
+      border-color: var(--line, #1d2c3b); border-bottom-color: transparent;
+    }
+    .ms-tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--cyan, #45e0c2); }
+    .ms-tabpane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+    /* ===== 来源卡片 ===== */
+    .cmp-srcbar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .cmp-srccard {
+      display: flex; align-items: center; gap: 14px; padding: 14px 16px; cursor: pointer;
+      background: linear-gradient(to bottom, var(--panel, #0d1722), #0a131d);
+      border: 1px solid var(--line, #1d2c3b); border-radius: 10px;
+      transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+      position: relative; overflow: hidden;
+    }
+    .cmp-srccard::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 15% 0%, rgba(90,148,255,.10), transparent 60%); opacity: 0; transition: opacity .2s; }
+    .cmp-srccard:hover { border-color: var(--line-strong, #2a3d50); transform: translateY(-1px); }
+    .cmp-srccard:hover::before { opacity: 1; }
+    .cmp-srccard.active { border-color: var(--cyan, #45e0c2); box-shadow: 0 0 0 1px var(--cyan, #45e0c2), 0 8px 24px rgba(69,224,194,.08); }
+    .cmp-srccard.active::before { opacity: 1; }
+    .cmp-srccard-ico {
+      flex: 0 0 42px; height: 42px; display: flex; align-items: center; justify-content: center;
+      font-size: 20px; border-radius: 10px; background: var(--panel-raised, #111e2b);
+      border: 1px solid var(--line, #1d2c3b);
+    }
+    .cmp-srccard.active .cmp-srccard-ico { background: var(--cyan-soft, rgba(69,224,194,.1)); border-color: rgba(69,224,194,.3); }
+    .cmp-srccard-body { flex: 1 1 auto; min-width: 0; }
+    .cmp-srccard-title { font-size: 14px; font-weight: 700; color: var(--ink, #e8f0f7); }
+    .cmp-srccard-desc { font-size: 11px; color: var(--muted, #8ba3b8); margin-top: 3px; }
+    .cmp-srccard-status { font-size: 11px; color: var(--faint, #536678); font-weight: 600; white-space: nowrap; }
+    .cmp-srccard.active .cmp-srccard-status { color: var(--cyan, #45e0c2); }
+    .cmp-srccard-check {
+      flex: 0 0 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+      border: 1.5px solid var(--line-strong, #2a3d50); border-radius: 50%;
+      color: transparent; font-size: 13px; font-weight: 700;
+    }
+    .cmp-srccard.active .cmp-srccard-check { border-color: var(--cyan, #45e0c2); color: var(--cyan, #45e0c2); background: var(--cyan-soft, rgba(69,224,194,.1)); }
+
+    /* ===== 配置区 ===== */
+    .cmp-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 4px 0 14px; }
+    .cmp-modseg { display: inline-flex; background: var(--panel, #0d1722); border: 1px solid var(--line, #1d2c3b); border-radius: 8px; padding: 3px; gap: 3px; }
+    .cmp-modseg-btn {
+      background: transparent; border: none; color: var(--muted, #8ba3b8);
+      font-size: 12px; font-weight: 700; padding: 6px 18px; border-radius: 6px; cursor: pointer;
+      transition: background .15s ease, color .15s ease;
+    }
+    .cmp-modseg-btn:hover { color: var(--ink, #e8f0f7); }
+    .cmp-modseg-btn.active { background: var(--cyan, #45e0c2); color: #061018; }
+    .cmp-cfg { display: flex; gap: 8px; align-items: center; }
+    .cmp-filepick { display: flex; gap: 6px; align-items: center; }
+    #cmp-file { width: 320px; background: var(--panel, #0d1722); color: var(--ink, #e8f0f7); border: 1px solid var(--line-strong, #2a3d50); border-radius: 6px; padding: 7px 10px; font-size: 12px; font-family: Consolas, monospace; }
+    .cmp-rt-status { font-size: 12px; color: var(--muted, #8ba3b8); padding: 4px 8px; border-radius: 6px; background: var(--panel, #0d1722); border: 1px solid var(--line, #1d2c3b); }
+    .cmp-rt-status.on { color: var(--cyan, #45e0c2); border-color: rgba(69,224,194,.3); }
+    .cmp-meta { font-size: 11px; color: var(--faint, #536678); margin-left: auto; }
+
+    /* ===== 统计条 ===== */
+    .cmp-stats { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .cmp-stat {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      padding: 8px 18px; background: var(--panel, #0d1722); border: 1px solid var(--line, #1d2c3b);
+      border-radius: 8px; min-width: 72px;
+    }
+    .cmp-stat-num { font-size: 20px; font-weight: 800; color: var(--ink, #e8f0f7); font-family: Consolas, monospace; }
+    .cmp-stat-label { font-size: 10px; color: var(--faint, #536678); letter-spacing: .5px; }
+    .cmp-stat-drift .cmp-stat-num { color: var(--warning, #f5b95d); }
+
+    /* ===== 主体分栏 ===== */
+    .cmp-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 12px; }
+    .cmp-pane {
+      flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0;
+      background: linear-gradient(to bottom, var(--panel-soft, #0a141e), #080f17);
+      border: 1px solid var(--line, #1d2c3b); border-radius: 10px; overflow: hidden;
+    }
+    .cmp-events { flex: 0 0 42%; }
+    .cmp-pane-head {
+      display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+      border-bottom: 1px solid var(--line, #1d2c3b); flex: 0 0 auto;
+      background: linear-gradient(to right, rgba(69,224,194,.05), transparent 70%);
+    }
+    .cmp-pane-title { font-size: 12px; font-weight: 800; color: var(--ink, #e8f0f7); letter-spacing: .4px; }
+    .cmp-pane-legend { margin-left: auto; font-size: 10px; color: var(--faint, #536678); display: flex; align-items: center; gap: 4px; }
+    .cmp-pane-legend .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 2px 0 6px; }
+    .cmp-pane-legend .dot.info { background: var(--blue, #5a94ff); }
+    .cmp-pane-legend .dot.warn { background: var(--warning, #f5b95d); }
+    .cmp-pane-legend .dot.error { background: var(--danger, #ff7385); }
+    .cmp-pane-file { font-size: 10px; color: var(--faint, #536678); font-family: Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; max-width: 60%; }
+    .cmp-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; }
+    .cmp-empty { color: var(--faint, #536678); font-size: 12px; text-align: center; padding: 40px 16px; }
+
+    /* 事件卡片 */
+    .cmp-ev {
+      display: flex; gap: 10px; padding: 9px 10px 9px 4px; border-radius: 8px;
+      cursor: pointer; position: relative; margin-bottom: 2px;
+      transition: background .14s ease;
+    }
+    .cmp-ev:hover { background: rgba(90,148,255,.06); }
+    .cmp-ev.selected { background: linear-gradient(to right, rgba(69,224,194,.12), rgba(69,224,194,.03)); }
+    .cmp-ev-bar { width: 3px; align-self: stretch; border-radius: 2px; flex: 0 0 3px; }
+    .cmp-ev-bar.info { background: var(--blue, #5a94ff); }
+    .cmp-ev-bar.warn { background: var(--warning, #f5b95d); }
+    .cmp-ev-bar.error { background: var(--danger, #ff7385); }
+    .cmp-ev-icon { flex: 0 0 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 13px; border-radius: 7px; background: var(--panel-raised, #111e2b); border: 1px solid var(--line, #1d2c3b); margin-top: 1px; }
+    .cmp-ev.selected .cmp-ev-icon { background: var(--cyan-soft, rgba(69,224,194,.1)); border-color: rgba(69,224,194,.25); }
+    .cmp-ev-body { flex: 1 1 auto; min-width: 0; }
+    .cmp-ev-head { display: flex; align-items: baseline; gap: 8px; }
+    .cmp-ev-label { font-size: 12px; font-weight: 700; color: var(--ink, #e8f0f7); }
+    .cmp-ev-time { font-size: 10px; color: var(--faint, #536678); font-family: Consolas, monospace; margin-left: auto; white-space: nowrap; }
+    .cmp-ev-msg { font-size: 11px; color: var(--muted, #8ba3b8); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cmp-ev-type { font-size: 9px; color: var(--faint, #536678); font-family: Consolas, monospace; background: rgba(83,102,120,.16); padding: 1px 6px; border-radius: 4px; }
+    .cmp-ev-rule { font-size: 9px; color: var(--faint, #536678); font-family: Consolas, monospace; }
+
+    /* 日志列表 */
+    .cmp-log-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; font: 11px/1.6 Consolas, Menlo, monospace; }
+    .cmp-log-spacer { position: absolute; top: 0; left: 0; width: 1px; }
+    .cmp-log-window { position: absolute; top: 0; left: 0; right: 0; }
+    .cmp-log-line {
+      position: absolute; left: 0; right: 0; height: 18px; line-height: 18px;
+      padding: 0 16px; color: #a9bfd0; white-space: pre; overflow-x: hidden;
+      border-left: 2px solid transparent; cursor: pointer; transition: background .12s ease;
+      box-sizing: border-box;
+    }
+    .cmp-log-line:hover { background: rgba(90,148,255,.05); }
+    .cmp-log-line.selected { background: linear-gradient(to right, rgba(69,224,194,.14), transparent); border-left-color: var(--cyan, #45e0c2); color: var(--ink); }
+    .cmp-log-line .t { color: #5f7d94; }
+    .cmp-log-line .rx { color: #6fd3a8; }
+    .cmp-log-line .tx { color: #e8c66b; }
+    .cmp-log-line .ev { color: #8fb8e8; }
+    .cmp-log-line .err { color: #ff7b72; font-weight: bold; }
+</style>
 </head><body>
   <div class="app-shell ms-shell">
     <header class="app-header">
@@ -76,6 +216,13 @@
       <div class="dll-status"><span id="ms-server-state">未连接</span></div>
     </header>
 
+    <!-- 页签栏：实时日志 / 对照解析 -->
+    <nav class="ms-tabs">
+      <button class="ms-tab active" data-tab="live" type="button">实时日志</button>
+      <button class="ms-tab" data-tab="compare" type="button">对照解析</button>
+    </nav>
+
+<div id="ms-tab-live" class="ms-tabpane">
     <div class="ms-refresh-bar">
       <label for="ms-refresh-speed" style="font-size:11px;color:var(--muted,#8ba3b8);">日志刷新速度</label>
       <select id="ms-refresh-speed" style="width:120px;">
@@ -237,6 +384,91 @@
     <div id="ms-sender-showbar" hidden style="margin-top:8px">
       <button id="ms-sender-show" class="text-button" type="button">显示发送框</button>
     </div>
+    </div>
+    <!-- 对照解析页：左事件 + 右日志，双向绑定 -->
+<div id="ms-tab-compare" class="ms-tabpane" hidden>
+      <!-- 来源卡片：串口 / 导入文件（互斥二选一） -->
+      <div class="cmp-srcbar">
+        <div class="cmp-srccard" data-src="realtime" id="cmp-card-realtime" tabindex="0">
+          <div class="cmp-srccard-ico">🔌</div>
+          <div class="cmp-srccard-body">
+            <div class="cmp-srccard-title">实时串口</div>
+            <div class="cmp-srccard-desc">解析当前串口采集中日志（CCO / STA）</div>
+          </div>
+          <div class="cmp-srccard-status" id="cmp-src-realtime-status">空闲</div>
+          <div class="cmp-srccard-check">✓</div>
+        </div>
+        <div class="cmp-srccard" data-src="file" id="cmp-card-file" tabindex="0">
+          <div class="cmp-srccard-ico">📂</div>
+          <div class="cmp-srccard-body">
+            <div class="cmp-srccard-title">导入日志文件</div>
+            <div class="cmp-srccard-desc">打开历史日志文件或整个目录扫描</div>
+          </div>
+          <div class="cmp-srccard-status" id="cmp-src-file-status">未选择</div>
+          <div class="cmp-srccard-check">✓</div>
+        </div>
+      </div>
+
+      <!-- 配置区（随来源切换） -->
+      <div class="cmp-toolbar">
+        <div class="cmp-modseg" id="cmp-module" role="tablist">
+          <button class="cmp-modseg-btn active" data-mod="cco" type="button">CCO</button>
+          <button class="cmp-modseg-btn" data-mod="sta" type="button">STA</button>
+        </div>
+
+        <!-- 导入文件配置 -->
+        <div class="cmp-cfg" id="cmp-cfg-file" hidden>
+          <div class="cmp-filepick">
+            <input id="cmp-file" type="text" placeholder="选择日志文件或目录…">
+            <button id="cmp-pick-file" class="text-button" type="button">打开文件</button>
+            <button id="cmp-pick-dir" class="text-button" type="button">打开目录</button>
+          </div>
+          <button id="cmp-run-file" class="primary-button" type="button">解析日志</button>
+        </div>
+
+        <!-- 串口配置 -->
+        <div class="cmp-cfg" id="cmp-cfg-realtime" hidden>
+          <span class="cmp-rt-status" id="cmp-rt-status">串口未运行</span>
+          <button id="cmp-run-realtime" class="primary-button" type="button">开始解析</button>
+        </div>
+
+        <span id="cmp-meta" class="cmp-meta"></span>
+      </div>
+
+      <!-- 统计条 -->
+      <div class="cmp-stats" id="cmp-stats" hidden>
+        <div class="cmp-stat"><span class="cmp-stat-num" id="cmp-stat-events">0</span><span class="cmp-stat-label">事件</span></div>
+        <div class="cmp-stat"><span class="cmp-stat-num" id="cmp-stat-lines">0</span><span class="cmp-stat-label">日志行</span></div>
+        <div class="cmp-stat"><span class="cmp-stat-num" id="cmp-stat-files">0</span><span class="cmp-stat-label">来源</span></div>
+        <div class="cmp-stat cmp-stat-drift"><span class="cmp-stat-num" id="cmp-stat-drift">0</span><span class="cmp-stat-label">行号漂移</span></div>
+      </div>
+
+      <div class="cmp-body">
+        <!-- 左：事件流 -->
+        <div class="cmp-pane cmp-events">
+          <div class="cmp-pane-head">
+            <span class="cmp-pane-title">事件解析</span>
+            <span class="cmp-pane-legend">
+              <i class="dot info"></i>info <i class="dot warn"></i>warn <i class="dot error"></i>error
+            </span>
+          </div>
+          <div id="cmp-event-list" class="cmp-list">
+            <div class="cmp-empty">请选择来源并开始解析</div>
+          </div>
+        </div>
+        <!-- 右：日志 -->
+        <div class="cmp-pane cmp-log">
+          <div class="cmp-pane-head">
+            <span class="cmp-pane-title">原始日志</span>
+            <span class="cmp-pane-file" id="cmp-log-file"></span>
+          </div>
+          <div id="cmp-log-list" class="cmp-log-list">
+            <div id="cmp-log-spacer" class="cmp-log-spacer"></div>
+            <div id="cmp-log-window" class="cmp-log-window"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 文件选择对话框（兜底）：通过后端 /api/fs/* 浏览服务器本地 Windows 目录 -->
@@ -264,6 +496,6 @@
     </div>
   </div>
 
-  <script src="/static/module-serial.js?v=module-serial-v2"></script>
+  <script src="/static/module-serial.js?v=module-serial-v3"></script>
 </body>
 </html>

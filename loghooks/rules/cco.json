@@ -1,0 +1,134 @@
+[
+  {
+    "id": "common.join_onnet",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "onnet cnt = (\\d+)",
+      "flags": ["i"],
+      "file": "aps_ioctrl_nwk.c",
+      "line": 950,
+      "line_tolerance": 10
+    },
+    "capture": {"node_count": 1},
+    "event": {
+      "type": "network.onnet",
+      "label": "入网节点数",
+      "message": "入网节点数 = {node_count}"
+    }
+  },
+  {
+    "id": "common.join_onnet_again",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "ONNET\\((\\d+)\\)\\s+devtype\\s+(\\d+)\\s+IdChanged\\s+(\\d+)",
+      "flags": ["i"],
+      "file": "aps_intf.c",
+      "line": 1425,
+      "line_tolerance": 10
+    },
+    "capture": {"onnet_count": 1, "devtype": 2},
+    "event": {
+      "type": "network.onnet_again",
+      "label": "重新入网",
+      "message": "重新入网 ONNET({onnet_count}) devtype={devtype}"
+    }
+  },
+  {
+    "id": "common.join_assoc_success",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "normal assoc tei=([0-9a-fA-F]+) phase=(\\d+)",
+      "flags": ["i"],
+      "file": "assoc.c",
+      "line": 1932,
+      "line_tolerance": 10
+    },
+    "capture": {"tei": 1, "phase": 2},
+    "event": {
+      "type": "join.assoc.normal",
+      "label": "关联成功",
+      "message": "关联成功 TEI={tei} phase={phase}"
+    }
+  },
+  {
+    "id": "common.join_assoc_req",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "assocreq send ok",
+      "flags": ["i"],
+      "file": "assoc.c",
+      "line": 1608,
+      "line_tolerance": 10
+    },
+    "capture": {},
+    "event": {
+      "type": "join.assoc.req",
+      "label": "关联请求发送",
+      "message": "关联请求发送成功"
+    }
+  },
+  {
+    "id": "common.join_assoc_err",
+    "category": "join",
+    "level": "warn",
+    "scope": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "assoc err",
+      "flags": ["i"],
+      "file": "assoc.c",
+      "line": 1562,
+      "line_tolerance": 10
+    },
+    "capture": {},
+    "event": {
+      "type": "join.assoc.err",
+      "label": "关联错误",
+      "message": "关联失败"
+    }
+  },
+  {
+    "id": "common.send_onnet_count",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "onnet_count:(\\d+) total_count:(\\d+)",
+      "flags": ["i"],
+      "file": "aps_ioctrl_nwk.c",
+      "line": 877,
+      "line_tolerance": 10
+    },
+    "capture": {"onnet_count": 1, "total_count": 2},
+    "event": {
+      "type": "network.onnet_count",
+      "label": "入网统计",
+      "message": "入网 {onnet_count}/{total_count}"
+    }
+  }
+]

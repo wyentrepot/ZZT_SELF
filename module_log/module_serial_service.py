@@ -198,6 +198,16 @@ class _SerialChannel:
         with self._log_lock:
             if self._log_handle is not None:
                 self._log_handle.write(f"[{ts}] [{direction}] {text}\n")
+        # loghooks 运行时接入点（可选，异步 + 失败静默降级，不拖慢主链路）
+        self._run_loghooks_hook(direction, text)
+
+    def _run_loghooks_hook(self, direction: str, text: str) -> None:
+        """可选调用 run_loghooks；异常一律吞掉，绝不影响日志主链路。"""
+        try:
+            from loghooks.runtime import run_loghooks
+            run_loghooks(self.name, direction, text)
+        except Exception:
+            pass
 
     def _ingest_char_stream(self, direction: str, data: bytes) -> None:
         buf = self._rx_line_buf if direction == "RX" else self._tx_line_buf

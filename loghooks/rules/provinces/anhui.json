@@ -1,0 +1,48 @@
+[
+  {
+    "id": "anhui.collect.e4_frame",
+    "category": "collect",
+    "level": "info",
+    "scope": "province",
+    "province": "anhui",
+    "source": ["listener"],
+    "match": {
+      "mode": "field",
+      "field": "APP_ID",
+      "op": "==",
+      "value": "00E4"
+    },
+    "capture": {
+      "cco_tei": "FINL_D",
+      "source_mac": "application.fields.#源MAC地址.value",
+      "report_count": "application.fields.#上报数量.raw"
+    },
+    "event": {
+      "type": "collect.minute.e4",
+      "label": "分钟采集数据上报",
+      "message": "分钟采集上报 CCO={cco_tei} 源MAC={source_mac} 上报数={report_count}"
+    }
+  },
+  {
+    "id": "anhui.collect.e2_frame",
+    "category": "collect",
+    "level": "info",
+    "scope": "province",
+    "province": "anhui",
+    "source": ["listener"],
+    "match": {
+      "mode": "field",
+      "field": "APP_ID",
+      "op": "==",
+      "value": "00E2"
+    },
+    "capture": {
+      "cco_tei": "FINL_D"
+    },
+    "event": {
+      "type": "collect.minute.e2",
+      "label": "分钟采集任务下发",
+      "message": "分钟采集任务下发 CCO={cco_tei}"
+    }
+  }
+]

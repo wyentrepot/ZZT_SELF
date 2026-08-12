@@ -9,6 +9,11 @@
 | 1 | 项目拆分为 listener / module_log 双应用 + shared 共享库 | ✅ 生效 |
 | 2 | module_log 打包为本地桌面 exe（pywebview 内嵌窗口），保留网页模式 | ✅ 生效 |
 | 3 | 侦听台打包为本地桌面 exe（pywebview 内嵌窗口）+ 统一菜单式打包脚本 | ✅ 生效 |
+| 4 | loghooks 日志运行状态钩子：配置驱动 + 内容匹配为主 + 行号弱约束 + 定期更新闭环 | ✅ 生效 |
+| 5 | loghooks 规则按 cco/sta 模块隔离，不能通用 | ✅ 生效 |
+| 6 | module_log 新增「对照解析」页签：事件解析与原始日志双向绑定联动 | ✅ 生效 |
+| 7 | 对照解析页来源卡片化（串口/导入文件互斥二选一）+ 深色终端精致化美化 | ✅ 生效 |
+| 8 | module_log exe 打包修正：spec 补 loghooks 模块 + rules 数据文件 | ✅ 生效 |
 
 ---
 
@@ -70,5 +75,120 @@
   - 新增 `listener/test_desktop.py` 单元测试（5 用例，mock 验证服务地址/窗口 URL/回退分支/listener.app:app 解析含 DLL 初始化）。
   - 打包产物 `dist/侦听台桌面/` 入库与既有 `dist/*/` 约定一致（`.gitignore` 已忽略 `dist/*/LOG/`、`dist/*/*.WebView2/`）。
 - **被取代**：无（补充 ADR-2 的桌面化范围与 ADR-1 的启动菜单）。
+
+---
+
+## ADR-4 loghooks 日志运行状态钩子：配置驱动 + 内容匹配为主 + 行号弱约束 + 定期更新闭环
+
+- **日期**：2026-08-12
+- **状态**：✅ 生效
+- **决定**：
+  - 新增独立 `loghooks/` 包（`engine/sequence/matchers/rules/sources/correlate/output/cli`），以**声明式 JSON 规则**从 `module_log`（文本行）与 `listener`（simple dict）双来源抓取关键运行状态事件（入网/采集/发送），产出摘要 JSON 供 AI 烧录验证核查；规则表结构不变，第三来源 `concentrator_10376`（13762 帧）预留注册位。
+  - **匹配主锚是消息内容**（text 正则 / field 字段值），**不依赖行号**；`match` 可选携带 `file`/`line`/`line_tolerance`（默认 ±10）作**弱约束**：行号超出容差时**仍命中事件**，但标记 `line_drift: true` 并在摘要汇总 `rule_drifts` 漂移清单。
+  - 规则**全部 json 同时加载 + 自动识别省份**（`--province` 仅作可选过滤），`detected_provinces` 给出命中判定。
+  - 规则更新走**半自动闭环**：工程 AI 重跑扫描（`docs/loghooks-source-scan-prompt.md`）→ `python -m loghooks rules diff --old <旧> --new <新>` 检出新增/删除/行号漂移/msg 变更 → 按清单更新规则文件 → 真实日志回归命中率。对比基准为 `(file, msg)` 稳定标识。
+  - module_log 运行时接入为**可选调用点**（异步队列 + `LOG_HOOKS_ENABLED` 开关 + 失败静默降级），不侵入现有解析链路。
+- **理由**：
+  - 模块日志被海量轮询/状态机噪音淹没，AI 核查烧录结果难以聚焦关键事件；侦听台帧可深度解析出结构化字段，两者形态完全不同，需要统一声明式框架。
+  - 工程侧源码会持续变更，行号必然漂移，但**关键打印语句内容相对稳定**——故匹配以内容为主锚、行号仅作弱约束且漂移不阻断事件，保证源码变更不中断烧录验证。
+  - 省份/分支差异用"一份规则文件"承载，新省份 = 新增 json，无需改 Python 代码。
+- **影响**：
+  - 新增 `loghooks/` 包及 `rules/common.json`、`rules/provinces/anhui.json` 规则文件；`docs/loghooks-design.md` 为设计定稿（状态：已确认）。
+  - `module_log/module_serial_service.py` 是**唯一现有代码改动**（可选 run_loghooks 调用点）。
+  - **不改动**：`listener` 现有解析链路、`shared`、`parser_lib`、DLL。
+  - `loghooks/rules_source/` 已由工程侧 AI 产出扫描结果（`cco_print_scan.json` 2806 条），作为规则编写素材。
+- **被取代**：无（首次记录 loghooks）。
+
+---
+
+## ADR-5 loghooks 规则按 cco/sta 模块隔离，不能通用
+
+- **日期**：2026-08-12
+- **状态**：✅ 生效
+- **决定**：
+  - 规则 schema 新增 `module` 字段（`cco`/`sta`/`common`），用于标识该打印规则适用的模块。
+  - 规则文件按模块拆分：`loghooks/rules/cco.json`（CCO 专属）、`loghooks/rules/sta.json`（STA 专属）、`loghooks/rules/common.json`（真·跨模块通用，如 `bcn crc check err`）、`loghooks/rules/provinces/`（省份专属，跨模块适用）。
+  - `RuleLoader` 按文件自动推断 module：`cco.json`→cco、`sta.json`→sta、`common.json`→common；`filter_by_module(module)` 返回「该模块专属 + common 通用」的规则集。
+  - CLI `scan` 新增 `--module cco|sta|common` 参数（不传 = 仅通用 common 规则）。
+  - module_log 运行时接入 `run_loghooks(module, direction, text)` 传入通道名（cco/sta），按 module 过滤规则。
+  - 修复 sequence 超时判定 bug：超时用**日志绝对时间戳**而非行计数（此前按行数×1000ms 当时间，日志行多时误报超时）。
+- **理由**：
+  - CCO 与 STA 是不同固件工程，打印语句完全不同（CCO 有 `onnet cnt`/`assocreq send ok`，STA 有 `recv bcn`/`nwk disc done`/`nwk assoc ok`），不能互相套用规则。
+  - 此前只有 CCO 扫描结果（`cco_print_scan.json`），STA 未扫描；STA 规则暂从真实测试日志逆向提取。
+  - 用同一规则集匹配两类日志会导致 STA 日志去匹配 CCO 规则（逻辑错误、误报）。
+- **影响**：
+  - `loghooks/rules/` 从单一 `common.json` 拆分为 `cco.json`（6 条）+ `sta.json`（7 条）+ `common.json`（1 条）+ `provinces/anhui.json`（2 条）。
+  - CLI 用法：`python -m loghooks scan <cco日志> --module cco` / `python -m loghooks scan <sta日志> --module sta`。
+  - 全量测试 110 passed（新增 module 隔离 2 用例）。
+- **被取代**：无（补充 ADR-4 的规则组织方式）。
+
+---
+
+## ADR-6 module_log 新增「对照解析」页签：事件解析与原始日志双向绑定联动
+
+- **日期**：2026-08-12
+- **状态**：✅ 生效
+- **决定**：
+  - 在 `module_log` 前端（`module-serial.html/js`）新增顶部**页签栏**：「实时日志」与「对照解析」，同页面切换、不另开路由。
+  - 「对照解析」页左右分栏：**左栏事件流**（等级色条 + 分类图标 + 含义 + 时间，卡片式）、**右栏原始日志**（等宽可滚动）。
+  - **双向联动**：点击左栏事件 → 右栏滚动定位并高亮对应日志行；点击右栏日志行 → 左栏高亮对应事件。
+  - **来源**：打开日志文件/目录（`/api/loghooks/scan`）与 实时串口端口（`/api/loghooks/realtime`）两套都支持，前端可切换；实时模式 2s 定时刷新。
+  - 后端新增 `module_log/loghooks_api.py`：`scan_log_file` 复用 loghooks 引擎按模块（cco/sta）解析，返回**事件 + 原始日志行绑定**（含行号/时间/文本）；`scan_realtime` 扫内存日志缓冲。路由挂到 `/api/loghooks/*`。
+  - `loghooks/engine.py` 的 `Event` 新增 `source_line_idx`（原始日志行序号），供前端定位绑定。
+- **理由**：
+  - 用户需要直观看到"解析出的事件对应日志里的哪一行"，便于核查烧录/入网结果时快速定位原文。
+  - 双向联动避免人肉在事件与日志间来回找行。
+  - 实时端口与历史文件两种来源覆盖"采集中实时看"与"事后复盘"两个场景。
+- **影响**：
+  - 前端新增页签 + 对照解析页（HTML/CSS/JS），实时日志页签内原功能不变。
+  - 后端新增 3 个 API：`/api/loghooks/scan`、`/api/loghooks/realtime`、`/api/loghooks/sources`。
+  - 新增测试 `module_log/test_loghooks_api.py`（4 用例）；全量测试 117 passed。
+  - **不改动**：listener、shared、parser_lib、DLL。
+- **被取代**：无（loghooks 能力的应用内可视化补充）。
+---
+
+## ADR-7 对照解析页来源卡片化（串口/导入文件互斥二选一）+ 深色终端精致化美化
+
+- **日期**：2026-08-12
+- **状态**：✅ 生效
+- **决定**：
+  - 对照解析页**来源二选一（互斥）**，用**卡片式选择**呈现：`🔌 实时串口` 与 `📂 导入日志文件` 两张卡片，选中高亮带 ✓ 标识。
+  - **串口来源**：复用模块日志已接入串口的实时内存日志（`/api/loghooks/realtime`），页内展示串口状态（模块/COM/波特率/运行中）；与导入文件互斥，不能同时。
+  - **导入文件来源**：支持"打开文件"与"打开目录"（复用 `/api/fs/pick` + `/api/loghooks/scan`），可扫描历史日志。
+  - 模块切换（CCO/STA）用**分段控件 pill**（非下拉）。
+  - 新增**统计条**：事件数 / 日志行数 / 来源文件数 / 行号漂移数。
+  - **美化风格**：延续深色终端风，精致化为来源卡片（渐变+微光效+圆角+浮起 hover）、事件卡片（等级色条+图标底色）、日志行联动高亮、图例、分段控件。
+- **理由**：
+  - 实时串口与导入文件是**互斥来源**（同一时刻只能解析一个），卡片化让用户直观理解二选一语义。
+  - 用户要求"来源可以是串口，也可以是导入文件"，且要求美化前端；深色终端精致化保持与现有界面主题统一。
+- **影响**：
+  - `module-serial.html`：来源卡片区、配置区、统计条、图例；`module-serial.js`：`cmpSetSource/cmpPickFile/cmpPickDir/cmpRefreshSerialStatus/cmpUpdateStats` 及来源卡片/分段控件绑定；`<style>`：新增 `.cmp-srcbar/.cmp-srccard/.cmp-modseg/.cmp-stats` 等。
+  - 后端不改动（复用既有 `/api/loghooks/scan`、`/api/loghooks/realtime`、`/api/module-serial/status`、`/api/fs/pick`）。
+  - 全量测试 119 passed。
+- **被取代**：无（ADR-6 的对照解析页交互与视觉升级）。
+---
+
+## ADR-8 module_log exe 打包修正：spec 补 loghooks 模块 + rules 数据文件
+
+- **日期**：2026-08-12
+- **状态**：✅ 生效
+- **决定**：
+  - 修正 `packaging/module_log.spec`，确保桌面 exe（`dist/模块日志/模块日志.exe`）包含 loghooks 对照解析全部能力：
+    - `hiddenimports` 补充 `module_log.loghooks_api` 及 `loghooks` 全部子模块（`engine/rules/sources/matchers/sequence/correlate/output/runtime/cli`）——app.py 在函数内动态 import，PyInstaller 静态分析检测不到。
+    - `datas` 补充 `collect_data_files("loghooks")`——loghooks 的**规则 .json 数据文件**（`rules/*.json`）PyInstaller 不会自动打包，缺失会导致 RuleLoader 加载不到规则、事件解析为 0。
+  - 重新打包 exe，并实机验证。
+- **理由**：
+  - 桌面 exe 是 PyInstaller 打包快照，不跟随源码自动更新；此前 exe 是 08-11 旧产物，不含对照解析页。
+  - 首次打包后发现 exe 内 loghooks `.py` 进了 PYZ 但**规则 json 缺失**，`/api/loghooks/scan` 事件数为 0；补 `collect_data_files` 后修复。
+- **影响**：
+  - `packaging/module_log.spec`：hiddenimports +8、datas +collect_data_files("loghooks")。
+  - 重新打包 `dist/模块日志/`（exe、static、base_library 更新 + 新增 `_internal/loghooks/rules/*.json`）。
+  - 实机验证：exe `/api/loghooks/scan` 返回 `events=1305`、`files=5`、`lines=113844`，与网页版一致。
+  - 启动脚本 `启动工具.bat` 选项 4 指向的 exe 现为最新版，含对照解析。
+- **被取代**：无（补充 ADR-4/6/7 的打包落地）。
+
+
+
+
 
 

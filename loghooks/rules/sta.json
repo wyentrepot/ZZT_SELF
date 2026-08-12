@@ -1,0 +1,164 @@
+[
+  {
+    "id": "sta.join_disc_done",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "nwk disc done",
+      "flags": ["i"],
+      "file": "nwk_nsm.c",
+      "line": 752,
+      "line_tolerance": 10
+    },
+    "capture": {},
+    "event": {
+      "type": "join.disc.done",
+      "label": "网络发现完成",
+      "message": "STA 网络发现完成"
+    }
+  },
+  {
+    "id": "sta.join_assoc_success",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "assoc success!? tei=([0-9a-fA-F]+),? pco=([0-9a-fA-F]+)",
+      "flags": ["i"],
+      "file": "nwk_mmsg.c",
+      "line": 457,
+      "line_tolerance": 10
+    },
+    "capture": {"tei": 1, "pco": 2},
+    "event": {
+      "type": "join.assoc.success",
+      "label": "关联成功",
+      "message": "STA 关联成功 TEI={tei} PCO={pco}"
+    }
+  },
+  {
+    "id": "sta.join_assoc_ok",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "nwk assoc ok",
+      "flags": ["i"],
+      "file": "nwk_assoc.c",
+      "line": 233,
+      "line_tolerance": 10
+    },
+    "capture": {},
+    "event": {
+      "type": "join.assoc.ok",
+      "label": "入网成功",
+      "message": "STA 入网成功"
+    }
+  },
+  {
+    "id": "sta.join_track_succ",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "nwk track done ind\\([0-9]+\\)\\s*,\\s*succ",
+      "flags": ["i"],
+      "file": "nwk_assoc.c",
+      "line": 841,
+      "line_tolerance": 10
+    },
+    "capture": {},
+    "event": {
+      "type": "join.track.succ",
+      "label": "入网跟踪成功",
+      "message": "STA 入网跟踪成功"
+    }
+  },
+  {
+    "id": "sta.beacon_recv",
+    "category": "beacon",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "recv bcn,.*NID=0x([0-9a-fA-F]+)",
+      "flags": ["i"],
+      "file": "nwk_bcn.c",
+      "line": 217,
+      "line_tolerance": 10
+    },
+    "capture": {"nid": 1},
+    "event": {
+      "type": "beacon.recv",
+      "label": "接收信标",
+      "message": "STA 接收信标 NID=0x{nid}"
+    }
+  },
+  {
+    "id": "sta.network_manage_msg",
+    "category": "send",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "mac send reslut:OK, nwk manage message:(\\d+)",
+      "flags": ["i"]
+    },
+    "capture": {"msg_id": 1},
+    "event": {
+      "type": "send.network_manage",
+      "label": "网络管理消息",
+      "message": "STA 网络管理消息 #{msg_id} 发送成功"
+    }
+  },
+  {
+    "id": "sta.join_flow",
+    "category": "join",
+    "level": "info",
+    "scope": "common",
+    "module": "sta",
+    "province": null,
+    "source": ["module_log"],
+    "event": {"type": "join.sta", "label": "STA 入网流程"},
+    "sequence": [
+      {"step": "disc_done", "pattern": "nwk disc done"},
+      {"step": "assoc_start", "pattern": "start nwk assoc"},
+      {"step": "track_succ", "pattern": "nwk track done ind\\([0-9]+\\)\\s*,\\s*succ"},
+      {"step": "assoc_ok", "pattern": "nwk assoc ok"}
+    ],
+    "capture": {},
+    "window_ms": 30000,
+    "on_complete": {
+      "type": "join.sta.ok",
+      "label": "STA 入网流程完成",
+      "message": "STA 入网流程完整完成（disc→assoc→track→assoc ok）"
+    },
+    "on_timeout": {
+      "type": "join.sta.timeout",
+      "level": "warn"
+    }
+  }
+]

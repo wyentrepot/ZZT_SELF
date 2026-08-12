@@ -32,10 +32,10 @@ echo. > ".venv\.deps_module"
 
 :launch
 echo.
-echo [启动] 模块日志/烧录 ^-^> http://127.0.0.1:8766/module-serial
-echo 关闭此窗口即停止服务。
+echo [启动] 模块日志/烧录 本地软件（内嵌窗口，源码直跑）
+echo 关闭窗口即停止服务。开发模式无需打包 exe。
 echo.
-"%APP_PYTHON%" -m module_log.run
+"%APP_PYTHON%" -m module_log.desktop
 if errorlevel 1 goto :failed
 exit /b 0
 

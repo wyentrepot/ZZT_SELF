@@ -13,14 +13,15 @@ from pathlib import Path
 SPEC_DIR = Path(SPECPATH)  # PyInstaller 6.x 下 spec 在 exec 时无 __file__，改用 SPECPATH（spec 所在目录）
 ROOT = SPEC_DIR.parent  # 仓库根（packaging/ 的上级）
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 # pywebview：收集其前端资源（bottle 等）
 web_datas, web_binaries, web_hiddenimports = collect_all("webview")
 
 datas = [
     (str(ROOT / "module_log" / "static"), "static"),
-] + list(web_datas)
+    # loghooks 规则文件（.json 数据文件，PyInstaller 不会自动打包，需显式收集）
+] + collect_data_files("loghooks") + list(web_datas)
 
 binaries = list(web_binaries)
 
@@ -45,6 +46,18 @@ hiddenimports = [
     # 串口
     "serial",
     "serial.tools.list_ports",
+    # 对照解析（loghooks）：app.py 函数内动态 import，需显式声明
+    "module_log.loghooks_api",
+    "loghooks",
+    "loghooks.engine",
+    "loghooks.rules",
+    "loghooks.sources",
+    "loghooks.matchers",
+    "loghooks.sequence",
+    "loghooks.correlate",
+    "loghooks.output",
+    "loghooks.runtime",
+    "loghooks.cli",
 ] + list(web_hiddenimports)
 
 a = Analysis(

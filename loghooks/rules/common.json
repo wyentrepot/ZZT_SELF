@@ -1,0 +1,22 @@
+[
+  {
+    "id": "common.beacon_crc_err",
+    "category": "beacon",
+    "level": "warn",
+    "scope": "common",
+    "module": "common",
+    "province": null,
+    "source": ["module_log"],
+    "match": {
+      "mode": "text",
+      "pattern": "bcn crc check err",
+      "flags": ["i"]
+    },
+    "capture": {},
+    "event": {
+      "type": "beacon.crc_err",
+      "label": "信标 CRC 错误",
+      "message": "信标 CRC 校验错误"
+    }
+  }
+]
