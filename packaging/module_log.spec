@@ -46,6 +46,18 @@ hiddenimports = [
     # 串口
     "serial",
     "serial.tools.list_ports",
+    # 模拟集中器（第三页签）：module_log/app.py 在 create_app 内 import，需显式声明
+    "sim_concentrator",
+    "sim_concentrator.api",
+    "sim_concentrator.runner",
+    "sim_concentrator.responder",
+    "sim_concentrator.serial_io",
+    "sim_concentrator.frame_codec",
+    "sim_concentrator.matcher",
+    "sim_concentrator.cli",
+    # sim_concentrator 依赖 parser_lib（adapter_10376 构帧/解析）
+    "parser_lib",
+    "parser_lib.adapters.adapter_10376",
     # 对照解析（loghooks）：app.py 函数内动态 import，需显式声明
     "module_log.loghooks_api",
     "loghooks",
@@ -69,7 +81,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "tests", "listener", "parser_lib"],
+    excludes=["pytest", "tests", "listener"],
     noarchive=False,
     optimize=0,
 )

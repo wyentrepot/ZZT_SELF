@@ -60,6 +60,11 @@ def create_app(module_serial_service=None) -> FastAPI:
     app = FastAPI(title="模块日志 / 烧录串口")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    # 模拟集中器验证工具（第三页签后端）：挂载独立子应用到 /api/simcon
+    # 子应用路由用相对路径（prefix=""），避免 mount 前缀 + 路由前缀双前缀
+    from sim_concentrator.api import create_simcon_app
+    app.mount("/api/simcon", create_simcon_app(prefix=""), name="simcon")
+
     @app.get("/module-serial")
     def module_serial_page():
         return FileResponse(STATIC_DIR / "module-serial.html")

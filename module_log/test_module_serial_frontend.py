@@ -140,6 +140,18 @@ function __fetchStub(url, options) {
     body = { state:"idle", channels: __makeChannels() };
   } else if (url.indexOf("/api/module-serial/logs") >= 0) {
     body = { lines: [], last_seq: -1 };
+  } else if (url.indexOf("/api/simcon/ports") >= 0) {
+    body = { ports: __PORTS__ };
+  } else if (url.indexOf("/api/simcon/status") >= 0) {
+    body = { open: false, port: null, pending_frames: 0 };
+  } else if (url.indexOf("/api/simcon/responders") >= 0) {
+    body = { rules: [
+      { id: "builtin.01xx_init", builtin: true, match: { afn: 1 }, reply: { afn: 129 } }
+    ] };
+  } else if (url.indexOf("/api/simcon/verify") >= 0) {
+    body = { task_id: "t", port: "COM4", baudrate: 115200,
+      steps: [{ name: "s1", result: "pass", sent_hex: "68..", matched: "recv", reason: "" }],
+      summary: { total: 1, pass: 1, fail: 0, verdict: "pass" } };
   } else {
     body = {};
   }
@@ -370,6 +382,67 @@ class ModuleSerialFrontendTest(unittest.TestCase):
         self.assertFalse(h.baud_disabled("cco"))
         self.assertFalse(h.port_disabled("sta"))
         self.assertFalse(h.baud_disabled("sta"))
+
+    # ---------- 模拟集中器（第三页签） ----------
+    def test_simcon_tab_button_present(self):
+        """应有「模拟集中器」页签按钮，且第三页签面板存在。"""
+        h = FrontendHarness(ports=["COM4"])
+        h.flush()
+        # 第三页签面板存在（有 id，可被 DOM stub 解析）
+        self.assertEqual(h._eval_str("!!__byId['ms-tab-simcon']"), True)
+        # 页签按钮 data-tab="simcon" 在真实 HTML 中声明
+        html = HTML_PATH.read_text(encoding="utf-8")
+        self.assertIn('data-tab="simcon"', html)
+        self.assertIn("模拟集中器", html)
+
+    def test_simcon_ports_populated_and_requests_issued(self):
+        """模拟集中器页：应填充 simcon-port 下拉框并发出 status/ports/responders 请求。"""
+        ports = ["COM4", "COM23"]
+        h = FrontendHarness(ports=ports)
+        h.flush()
+        # simcon-port 下拉被填充
+        options = json.loads(
+            h._eval_str("JSON.stringify(__byId['simcon-port'].options.map(function(o){return o.value;}))")
+        )
+        self.assertEqual(options, ports)
+        # 已发出 simcon 相关请求
+        urls = [r["url"] for r in h.requests()]
+        self.assertTrue(any("/api/simcon/status" in u for u in urls))
+        self.assertTrue(any("/api/simcon/ports" in u for u in urls))
+        self.assertTrue(any("/api/simcon/responders" in u for u in urls))
+        # 未连接时打开按钮可用、关闭按钮禁用
+        self.assertFalse(h._eval_str("__byId['simcon-open'].disabled"))
+        self.assertTrue(h._eval_str("__byId['simcon-close'].disabled"))
+
+    def test_simcon_open_sends_open_request(self):
+        """点击「打开串口」应向 /api/simcon/open POST 串口与波特率。"""
+        h = FrontendHarness(ports=["COM4"])
+        h.flush()
+        h.ctx.eval("__byId['simcon-port'].value = 'COM4';")
+        h.ctx.eval("__byId['simcon-baud'].value = '115200';")
+        h.click("#simcon-open")
+        h.flush()
+        reqs = h.requests()
+        op = [r for r in reqs if "simcon/open" in r["url"]]
+        self.assertTrue(op, "应发起 /api/simcon/open 请求")
+        body = op[-1]["options"]["body"]
+        self.assertIn("COM4", body)
+        self.assertIn("115200", body)
+
+    def test_simcon_run_task_renders_verdict(self):
+        """执行验证任务后应渲染结论（通过 + 步骤）。"""
+        h = FrontendHarness(ports=["COM4"])
+        h.flush()
+        h.ctx.eval(
+            "__byId['simcon-task-input'].value = JSON.stringify({id:'t', port:'COM4', steps:[{name:'s1', send:{afn:0}}]});"
+        )
+        h.click("#simcon-run-task")
+        h.flush()
+        # 结论区应显示（fetch stub 返回 verdict=pass）
+        self.assertFalse(h._eval_str("__byId['simcon-result'].hidden"))
+        verdict_html = h._eval_str("__byId['simcon-result'].innerHTML")
+        self.assertIn("通过", verdict_html)
+        self.assertIn("1 通过", verdict_html)
 
 
 if __name__ == "__main__":

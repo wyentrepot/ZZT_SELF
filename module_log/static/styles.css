@@ -1093,3 +1093,195 @@ tbody tr.selected td { color: #e5eff6; }
 [data-mode="serial"] { display: none; }
 body[data-source="serial"] [data-mode="log"] { display: none; }
 body[data-source="serial"] [data-mode="serial"] { display: block; }
+
+/* ==================== 模拟集中器（第三页签） ==================== */
+.simcon-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(13, 22, 32, 0.55);
+}
+.simcon-serial {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.simcon-status {
+  font-size: 12px;
+  color: var(--muted, #8ba3b8);
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  margin-left: 4px;
+}
+.simcon-status.on {
+  color: var(--cyan);
+  border-color: rgba(69, 224, 194, 0.45);
+  background: var(--cyan-soft);
+}
+.simcon-body {
+  display: grid;
+  grid-template-columns: minmax(300px, 2fr) minmax(380px, 3fr);
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.simcon-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(13, 22, 32, 0.55);
+  overflow: hidden;
+}
+.simcon-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.simcon-pane-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.simcon-pane-hint {
+  font-size: 10px;
+  color: var(--muted, #8ba3b8);
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+.simcon-rule-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.simcon-rule {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.simcon-rule-id {
+  font-size: 12px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: var(--cyan);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.simcon-rule-badge {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted, #8ba3b8);
+}
+.simcon-rule-detail {
+  font-size: 11px;
+  color: #9db3c6;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  word-break: break-all;
+  line-height: 1.5;
+}
+.simcon-task {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.simcon-task-input {
+  flex: 1 1 auto;
+  min-height: 180px;
+  margin: 10px 12px;
+  padding: 10px;
+  background: #0a131c;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #b8d4e8;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.simcon-task-input:focus {
+  outline: none;
+  border-color: var(--cyan-strong);
+}
+.simcon-task-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 10px;
+  flex-wrap: wrap;
+}
+.simcon-task-tip {
+  font-size: 11px;
+  color: var(--muted, #8ba3b8);
+}
+.simcon-result {
+  margin: 0 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #0a131c;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.simcon-running {
+  color: var(--muted, #8ba3b8);
+  font-size: 12px;
+}
+.simcon-err {
+  color: #ff7b72;
+  font-size: 12px;
+}
+.simcon-verdict {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.simcon-verdict.pass { color: var(--cyan); background: var(--cyan-soft); }
+.simcon-verdict.fail { color: #ff7b72; background: rgba(255, 123, 114, 0.1); }
+.simcon-steps { display: flex; flex-direction: column; gap: 6px; }
+.simcon-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.simcon-step.pass { border-color: rgba(69, 224, 194, 0.35); }
+.simcon-step.fail { border-color: rgba(255, 123, 114, 0.45); }
+.simcon-step-mark { font-weight: 700; }
+.simcon-step.pass .simcon-step-mark { color: var(--cyan); }
+.simcon-step.fail .simcon-step-mark { color: #ff7b72; }
+.simcon-step-name { color: var(--ink); }
+.simcon-step-detail {
+  font-size: 11px;
+  color: #9db3c6;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  word-break: break-all;
+  padding-left: 28px;
+}
+.simcon-empty {
+  color: var(--muted, #8ba3b8);
+  font-size: 12px;
+  padding: 12px;
+}
