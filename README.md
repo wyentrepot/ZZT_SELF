@@ -11,6 +11,35 @@
 
 两者各自独立运行、互不依赖，仅通过仓库根 `启动工具.bat` 一键选择启动。
 
+## 〇、根目录速览
+
+> 打开仓库先看这里：哪些是代码、哪些是文档、哪些是本地噪音（不需要关注）。
+
+| 顶层项 | 类型 | 说明 |
+|--------|------|------|
+| `listener/` | ✅ 应用 | 侦听台（8765）：串口采集 + HPLC 报文解析 + 日志索引/分钟分析 |
+| `module_log/` | ✅ 应用 | 模块日志/烧录（8766）：串口日志 + XMODEM 烧录 + 对照解析 + 模拟集中器页签 |
+| `shared/` | 📦 库 | 共享基础设施（infra / dotnet_parser / parser_service / application_service / dll） |
+| `parser_lib/` | 📦 库 | 独立解析库（adapters：10376 / 645 / 698 / 双模43） |
+| `loghooks/` | 📦 库 | 事件监控引擎（配置驱动的日志运行状态钩子，规则在 `loghooks/rules/`） |
+| `sim_concentrator/` | 📦 库 | 模拟集中器（13762 帧激励/应答/验证任务，可独立跑 8781） |
+| `docs/` | 📄 文档 | 使用手册 / 设计方案 / 需求进度（含本文档族） |
+| `侦听台文档/` | 📄 文档 | 协议规范（国网/南网 PDF、报文格式、DLL 接口说明） |
+| `data/` | 📄 数据 | 数据与代码分析输出（`data/graphify-out/`） |
+| `legacy/` | 🗄 归档 | 历史遗留（C# 测试工程、编译产物快照） |
+| `packaging/` | 🔧 工具 | PyInstaller spec 与打包脚本 |
+| `scripts/` | 🔧 工具 | 辅助脚本（OAD 覆盖分析、冒烟测试等） |
+| `reqs/` | 📄 需求 | 需求会话归档（配合 `REQS-INDEX.md`） |
+| `DLL.sln` | 🔧 工程 | C# 解决方案（`shared/dll` + `legacy/use` 两个工程） |
+| `启动工具.bat` | 🚀 入口 | 一键启动（1=侦听台 / 2=模块日志 / 3=全部） |
+| `build/ dist/` | 🚫 本地噪音 | PyInstaller 中间/发布产物（gitignore，可随时重建） |
+| `LOG/` | 🚫 本地噪音 | 运行时日志（gitignore） |
+| `packages/` | 🚫 本地噪音 | NuGet 还原包（gitignore，`shared/dll` 构建时自动还原） |
+| `测试文件/` | 🚫 本地噪音 | 本地大体积测试数据（gitignore） |
+| `.venv/` `.pytest_cache/` | 🚫 本地噪音 | Python 虚拟环境 / pytest 缓存（gitignore） |
+
+> **目录演进**：目标布局（阶段一归组 / 阶段二 apps+libs 分层）见 `docs/01-第一待开发需求/AI闭环平台项目设计需求文档.md` §6.2。
+
 ## 一、项目简介
 
 侦听台是一款面向电力线载波（HPLC，High-speed Power Line Communication）抄表场景的**通信报文侦听与分析工具**。它可以捕获智能电表与集中器之间的 HPLC 通信帧，依据**国网 / 南网**两套协议规范对原始报文进行解析，并提供分钟级报表分析、报文文件筛选等能力。
