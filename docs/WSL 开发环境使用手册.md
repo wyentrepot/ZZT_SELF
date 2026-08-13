@@ -60,19 +60,44 @@ networkingMode=nat
 autoProxy=false
 
 [serialports]
+COM3 = /dev/ttyS3
+COM23 = /dev/ttyS23
 COM4 = /dev/ttyS4
 COM24 = /dev/ttyS24
 ```
+
+> 本项目实际烧录/采集使用 **COM3 / COM23**（COM4/COM24 为备用 CP210x，一并映射以防切换）。
 
 **生效方式**：执行 `wsl --shutdown` 后重新打开 WSL。
 
 验证：
 ```bash
-python3 -c "import serial; s=serial.Serial('/dev/ttyS4',115200,timeout=0.5); print('OK',s.name); s.close()"
+python3 -c "import serial; s=serial.Serial('/dev/ttyS3',115200,timeout=0.5); print('OK',s.name); s.close()"
+python3 -c "import serial; s=serial.Serial('/dev/ttyS23',115200,timeout=0.5); print('OK',s.name); s.close()"
 ```
 
 > 若某台机器 COM 口不同，改 `.wslconfig` 的 `[serialports]` 段再重启即可。
 > 若串口无法直通（如 COM 号超限），回退方案：Windows 侧跑 TCP 串口代理，WSL 连 TCP。
+
+### 原理：WSL 串口直通是怎么做的
+
+**一句话**：在 `.wslconfig` 里声明"把 Windows 的哪个 COM 口暴露给 WSL"，WSL 启动时把该物理串口"直通"进 Linux 内核，在 `/dev/ttyS{n}` 上挂一个虚拟串口节点，两端读写完全透传。
+
+**三步机制**：
+
+1. **配置声明**：`[serialports]` 段，左侧 `COM{n}` 是 Windows 串口名，右侧 `/dev/ttyS{n}` 是 WSL 里的 Linux 设备路径（习惯同名）。
+2. **WSL 启动时桥接**：`wsl --shutdown` 后重新打开时，WSL 驱动打开 Windows 侧对应 COM 口句柄，通过虚拟串口通道在 WSL 内核挂出 `ttyS{n}` 节点。
+3. **数据透传**：WSL 里 `write` 的数据物理上从 USB 串口芯片发出；外部设备回的数据 WSL 里 `read` 能收到。两侧字节流完全一致。
+
+**关键细节**：
+- **不是复制/模拟**：是同一物理串口的两个视图。
+- **独占**：同一时刻只能一端打开。WSL 持有 COM3 时，Windows 侧其他程序再开会 `access denied`，反之亦然。
+- **不抢 Windows**：不映射时 WSL 碰不到 COM 口；映射只是"多一个入口"，Windows 侧程序不受影响。
+- **默认 ttyS0-7 是占位**：没配 `[serialports]` 时打开报 `Input/output error`（无真实后端）。
+- **COM{n} 与 /dev/ttyS{n} 一一对应**：WSL2 是轻量 VM，Linux 侧本无 Windows 串口，`[serialports]` 本质是把 Windows 串口对象以 Linux tty 设备形式桥接进 VM（与 `networkingMode=nat` 桥接网络同理）。
+
+**排查**：若映射后仍打不开，先确认该 COM 未被 Windows 侧程序占用（`Access denied`），或设备未插（`Input/output error`）。
+
 
 ## 哪些留 Windows
 
