@@ -15,6 +15,10 @@
 | 7 | 对照解析页来源卡片化（串口/导入文件互斥二选一）+ 深色终端精致化美化 | ✅ 生效 |
 | 8 | module_log exe 打包修正：spec 补 loghooks 模块 + rules 数据文件 | ✅ 生效 |
 | 9 | 一键启动脚本统一为 GBK + CRLF 编码，修复中文 cmd 下乱码一闪而过 | ✅ 生效 |
+| 10 | 新增 sim_concentrator 模拟集中器模块：统一用 adapter_10376，独立可读写串口，REST/CLI 验证任务闭环 | ✅ 生效 |
+| 11 | module_log 启动脚本编码修正回 GBK（ADR-9 落地补漏）+ test_launcher 断言同步 | ✅ 生效 |
+| 12 | OpenViking 记忆后端 embedding/VLM 切换到火山方舟（doubao-embedding-vision + doubao-seed-code） | ✅ 生效 |
+| 13 | 模拟集中器前端可视化：module_log 新增第三页签「模拟集中器」，挂载 simcon 子应用 | ✅ 生效 |
 
 ---
 
@@ -209,3 +213,96 @@
 
 
 
+
+---
+
+## ADR-10 新增 sim_concentrator 模拟集中器模块：统一用 adapter_10376，独立可读写串口，REST/CLI 验证任务闭环
+
+- **日期**：2026-08-13
+- **状态**：✅ 生效
+- **决定**：
+  - 在侦听台仓库内新增**独立模块 `sim_concentrator/`**（模拟集中器上位机），不侵入 listener 现有采集流程，也不依赖 GW-CASS 工程。
+  - **帧格式统一走 `parser_lib.adapters.adapter_10376`**（Q/GDW 10376.2 信封：AFN/SEQ/RTUA/MSAA/PW + 用户数据 + 嵌套 645/698）：`frame_codec.build_13762_frame` 构帧、`QGDW103762Adapter.decode` 解析，保证构帧与解析口径一致（不混用 GW-CASS BasicFeature 的 DL/T 1376.2 结构）。
+  - **串口通道可读写**（`serial_io.SerialIO`：读线程按 1376.2 帧结构切帧入队 + 写锁发送），区别于 listener 的只读监听。
+  - **应答引擎**（`responder.Responder`）：内置常见 AFN 应答规则表 + 验证任务可传入覆盖规则；模块上行帧 → 自动回下行帧。
+  - **验证闭环**（`runner.execute_task`）：下发 → 接收 → 匹配（`matcher.match_frame`，按 AFN/信封字段/嵌套字段断言）→ 解析 → 逐步判定 Pass/Fail → 汇总结论 JSON。
+  - **对外入口**：FastAPI 子应用（`api.create_simcon_app`，独立端口 8781，可挂载到侦听台 create_app）+ CLI（`python -m sim_concentrator verify <task.json>`），共用同一执行核心。
+  - **填上 loghooks 预留的第三来源**：`loghooks/sources.py` 的 `parse_concentrator_10376` 由占位（返回 None）改为真实现，接入 `sim_concentrator.frame_codec.decode_frame`。
+- **理由**：
+  - 需求（用户 2026-08-13）：① 模块上行数据，模拟集中器可主动应答；② 模拟集中器下发数据，能匹配接收并解析；③ 支持插入方法自动化验证流程——AI 烧录后把待验证方法交给工具，工具返回结论。
+  - 用户确认：帧格式统一用 adapter_10376；部署在侦听台内独立模块；AI 验证接口用 HTTP REST API；应答逻辑内置模板 + 用例覆盖结合；结论粒度逐步判定 + 汇总。
+  - GW-CASS 的 `docs/13762构帧测试工具设计.md` 只规划了 CLI 构帧工具（4 个脚本均未实现），且其 `web_gateway` 自动化运行中 tx_hex 被禁、无按用例下发+匹配+判定闭环，不适合作为 AI 验证入口；侦听台侧 adapter_10376 + loghooks 预留位更贴近烧录验证闭环。
+- **影响**：
+  - 新增 `sim_concentrator/`：frame_codec / serial_io / responder / matcher / runner / api / cli + 测试（35 用例）。
+  - `loghooks/sources.py`：`parse_concentrator_10376` 占位 → 真实现（+ 6 测试）。
+  - 仓库 pytest 全绿无回归（loghooks + sim_concentrator = 62 用例）。
+  - 依赖：复用 parser_lib（adapter_10376）、pyserial、fastapi、uvicorn；不新增第三方。
+  - 后续扩展：内置应答规则表按需补充；验证任务 JSON 格式见 `docs/模拟集中器验证工具使用手册.md`。
+- **被取代**：无（新增模块，不取代既有 ADR）。
+
+---
+
+## ADR-11 module_log 启动脚本编码修正回 GBK（ADR-9 落地补漏）+ test_launcher 断言同步
+
+- **日期**：2026-08-13
+- **状态**：✅ 生效
+- **决定**：
+  - 将 `module_log/启动模块日志.bat` 从 **UTF-8 + chcp 65001** 改回 **GBK + CRLF**（符合 ADR-9：bat 一律 GBK），并移除 `chcp 65001` 行——GBK 编码下 cmd 默认代码页 936 即可正确解析中文，`chcp 65001` 反而会让 GBK 字节在 UTF-8 代码页下乱码。
+  - 同步更新 `listener/test_launcher.py` 的 `test_module_launcher_bootstraps`：原断言（`python -m venv` / `requirements.txt` / `module_log.run`）对应源码直跑旧逻辑，已被提交 9e84f2e 改为「启动 dist 内 exe」取代；新断言匹配实际脚本（检查 `dist\模块日志\模块日志.exe`、`build_exe.bat`、`start ""` 启动 exe）。
+  - 本补充记录**不取代 ADR-9**，仅落地 ADR-9 在 module_log 启动脚本上的遗漏。
+- **理由**：
+  - 全量 pytest 中 `listener/test_launcher.py` 2 个用例失败：① bat 是 UTF-8 导致 `read_text(encoding="gbk")` 抛 UnicodeDecodeError（编码偏差）；② 编码修复暴露后，`test_module_launcher_bootstraps` 断言的是 9e84f2e 之前的源码直跑逻辑（测试过期）。
+  - 修复编码后 cmd 双击/菜单调用时中文路径匹配正常（与 `启动工具.bat`、`listener/启动侦听台.bat` 一致）。
+- **影响**：
+  - `module_log/启动模块日志.bat`：UTF-8 → GBK（CRLF、无 BOM、无 chcp 65001）。
+  - `listener/test_launcher.py`：module 用例断言更新为「启动 exe」语义。
+  - 全量 pytest：`398 passed, 66 skipped`（原 396 passed + 2 failed 全部修复）。
+- **被取代**：无（补充 ADR-9）。
+
+---
+
+## ADR-12 OpenViking 记忆后端 embedding/VLM 切换到火山方舟（doubao-embedding-vision + doubao-seed-code）
+
+- **日期**：2026-08-13
+- **状态**：✅ 生效
+- **决定**：
+  - 工作区 `D:\2-侦听台改造\ov.conf` 的 OpenViking 记忆后端配置从 **Ollama（nomic-embed-text）** 切换为**火山方舟**：
+    - `embedding.dense`：`provider=volcengine`，`model=doubao-embedding-vision`，`api_base=https://ark.cn-beijing.volces.com/api/coding/v3`，`dimension=2048`，`input=text`。
+    - `vlm`：`provider=volcengine`，`model=doubao-seed-code-250915`，同一 `api_base` 与 API Key。
+    - API Key 为 Coding Plan 的 `ARK_API_KEY_PLACEHOLDER`（Coding Plan 不含通用模型/通用 embedding，`doubao-embedding-vision` 与 `doubao-seed-code` 系列在 coding/v3 下可用，实测验证）。
+  - server 启动方式：`openviking-server.exe --config "D:\2-侦听台改造\ov.conf" --host 127.0.0.1 --port 1933`（用 `--config` 指向工作区配置，因沙盒不能写 `~/.openviking/`）。
+  - Reasonix 接入：`reasonix.toml` 的 `[[plugins]] openviking` HTTP MCP 指向 `http://127.0.0.1:1933/mcp`。
+- **理由**：
+  - 原 Ollama embedding 不可用：本机 Ollama 未运行且未安装（11434 connection refused），OpenViking 记忆写入/提取实际失败。
+  - 用户明确要求接入火山大模型的向量模型，并提供 Coding Plan 凭据；实测 `doubao-embedding-vision` 返回 2048 维向量（中文经 UTF-8 body 正常），`doubao-seed-code-250915` 对话可用。
+  - 仅配 embedding 不够：OpenViking 的 remember 记忆提取流程依赖 vlm（LLM）生成摘要/抽取，vlm 不可用则消息不落库、检索不到，故 vlm 一并切换。
+- **影响**：
+  - `ov.conf`：embedding 与 vlm 均改为 volcengine provider + coding/v3 base_url + Coding Plan Key；dimension 与既有向量集合对齐（2048）。
+  - 端到端验证通过：remember 写入中文事实 → vlm 提取出 `memories/preferences/小明/向量模型偏好.md` → embedding 向量化 → `find` 语义检索 66% 命中；验证产生的测试记忆已用 forget 清理。
+  - 服务器需常驻运行（当前由后台 job bash-3 保持，PID 7364）；机器重启后需重新启动（`启动工具.bat` 或手动命令）。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-13 模拟集中器前端可视化：module_log 新增第三页签「模拟集中器」，挂载 simcon 子应用
+
+- **日期**：2026-08-13
+- **状态**：✅ 生效
+- **决定**：
+  - 在 module_log（模块日志/烧录，8766）前端新增**第三页签「模拟集中器」**（页签栏：实时日志 / 对照解析 / 模拟集中器），把 sim_concentrator 的 AI 验证能力可视化：AI 可继续通过 REST/CLI 接管串口，同时人工能看到并操作同一串口。
+  - 后端：`module_log/app.py` 的 `create_app` 内 `app.mount("/api/simcon", create_simcon_app(prefix=""), name="simcon")`，挂载 sim_concentrator 子应用；子应用路由用**相对路径（prefix=""）**避免 mount 前缀 + 路由前缀双前缀。
+  - `create_simcon_app` 增加 `prefix` 参数：默认 `/api/simcon`（独立运行 8781 不变），挂载时传 `""`。
+  - sim_concentrator API 增强：`open` 改为 POST body（`OpenSpec`）、open/verify 串口异常统一转 409 HTTP 错误（前端 alert 弹窗展示可读 detail）。
+  - 新增 `sim_concentrator/__main__.py`，补上 CLI 入口，`python -m sim_concentrator verify/responders/ports` 可用。
+  - 前端第三页：串口控制（端口/波特率/打开/关闭/状态）、应答规则列表（/api/simcon/responders）、验证任务 JSON 编辑 + 执行 + 逐步结论渲染（/api/simcon/verify）。
+  - 打包：`packaging/module_log.spec` hiddenimports 补 sim_concentrator 全部子模块 + parser_lib.adapters.adapter_10376，**excludes 移除 parser_lib**（simcon 依赖其构帧/解析）。
+- **理由**：
+  - 用户需求：AI 接管串口的同时，人工需要可视化界面；用户要求集成到模块日志/烧录的第三页签。
+  - 挂载子应用（而非并入路由）保持 sim_concentrator 独立可测（延续 ADR-10 独立模块定位）。
+  - 串口冲突不做后端互斥锁：调用失败后端返回 409、前端 alert 弹窗提示即可（用户确认）。
+  - spec 排除 parser_lib 是 module_log 未依赖它时的旧设定，simcon 引入 adapter_10376 依赖后必须移除（否则桌面 exe 第三页会崩）。
+- **影响**：
+  - `module_log/app.py`（挂载）、`module_log/static/module-serial.{html,js,css}`（第三页签，JS v4）、`sim_concentrator/api.py`（prefix + OpenSpec + 409）、`sim_concentrator/__main__.py`（新增）、`packaging/module_log.spec`（hiddenimports/excludes）、`module_log/test_module_serial_frontend.py`（+4 前端测试）。
+  - 测试：全量 pytest 402 passed / 66 skipped（+sim_concentrator 35 +前端 4）；node --check 前端 JS 通过。
+  - 桌面 exe 需重新打包才含第三页签；网页模式立即生效。
+- **被取代**：无（补充 ADR-10 的可视化界面）。
