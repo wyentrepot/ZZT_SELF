@@ -378,6 +378,9 @@ build/
 # 打包产物 dist/ 整体不入库：exe 为本地/发布时用 PyInstaller 生成，源码已入库
 # （C# 解析库源码在 shared/dll/src/，编译产物在 shared/dll/bin/，均可本地重建）
 dist/
+# E-SafeNet 加密环境下从 git 导出的明文构建副本（build_exe.bat 临时使用）
+.build_plain/
+.build_out/
 
 # 本机会话元数据与临时目录（不提交）
 .reasonix/

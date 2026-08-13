@@ -1,0 +1,3 @@
+# 打包构建专用依赖（build_exe.bat 使用）
+pyinstaller
+pywebview
