@@ -147,7 +147,7 @@ def parse_listener_frame(
 
 
 # ---------------------------------------------------------------------------
-# 预留：concentrator_10376
+# 来源：concentrator_10376（模拟集中器下发的 13762 帧）
 # ---------------------------------------------------------------------------
 
 
@@ -155,12 +155,60 @@ def parse_concentrator_10376(
     line: str,
     adapter_callback: Optional[Callable[[str], dict]] = None,
 ) -> Optional[ParsedLine]:
-    """预留：集中器模拟脚本下发的 13762 帧解析。
+    """解析集中器模拟脚本下发的 13762 帧行，返回 ParsedLine（fields 模式）。
 
-    首版仅返回 None，预留接口供后续接入。
+    输入行形如：`[ts] TX 68...16` 或纯 hex 帧文本；提取 1376.2 帧后用
+    sim_concentrator.frame_codec.decode_frame 解出信封字段 + 嵌套 645/698。
+
+    兼容 adapter_callback：若传入，优先用它（帧 hex → dict），否则走内置
+    decode_frame。
     """
-    # 首版未实现，返回 None
-    return None
+    m = _CONCENTRATOR_LINE.match(line.strip())
+    frame_text = line.strip()
+    if m:
+        frame_text = m.group("frame").strip()
+
+    hex_bytes = re.findall(r"(?i)\b[0-9a-f]{2}\b", frame_text)
+    if not hex_bytes or hex_bytes[0].upper() != "68":
+        return None
+    # 找到结尾 16
+    last = len(hex_bytes) - 1 - next(
+        (i for i, h in enumerate(reversed(hex_bytes)) if h.upper() == "16"),
+        len(hex_bytes),
+    )
+    if last < 0:
+        return None
+    frame_hex = " ".join(h.upper() for h in hex_bytes[: last + 1])
+
+    fields = None
+    try:
+        if adapter_callback is not None:
+            res = adapter_callback(frame_hex)
+            fields = res if isinstance(res, dict) else None
+        else:
+            from sim_concentrator.frame_codec import hex_to_bytes, decode_frame
+
+            raw = hex_to_bytes(frame_hex)
+            fields = decode_frame(raw)
+    except Exception:
+        fields = None
+
+    return ParsedLine(
+        source="concentrator_10376",
+        raw=line,
+        time=m.group("ts") if m else None,
+        direction="TX",
+        text=frame_hex,
+        fields=fields,
+        metadata={"frame_hex": frame_hex},
+    )
+
+
+_CONCENTRATOR_LINE = re.compile(
+    r"^\[(?P<ts>\d{4}[-/]?\d{2}[-/]?\d{2}[ T]?\d{2}:\d{2}:\d{2}(?:\.\d{3})?)\]\s*"
+    r"(?:\[(?P<dir>TX|RX)\]\s*)?(?P<frame>.*)$",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
