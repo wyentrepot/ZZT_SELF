@@ -1,59 +1,44 @@
 @echo off
+chcp 65001 >nul
 setlocal
 cd /d "%~dp0.."
-title ģ����־ / ��¼
+title 模块日志 / 烧录
 
 echo.
-echo  ģ����־ / ��¼��Module Log ^& Flash��
+echo  模块日志 / 烧录(Module Log ^& Flash)
 echo  ====================================
 echo.
 
-:check_python
-where python >nul 2>&1
-if errorlevel 1 goto :missing_python
+REM =====================================================================
+REM 启动模块日志桌面软件（内嵌窗口 exe）。
+REM
+REM 注意：本工作区源码受 E-SafeNet 透明加密（.py 为密文），
+REM 源码直跑（python -m module_log.desktop）在当前环境必然失败，
+REM 因此统一改为启动已构建的 dist\模块日志\模块日志.exe。
+REM 如需从源码开发/测试，请到 WSL 工作区（见 docs\开发指南.md）。
+REM
+REM 编码说明：本文件为 UTF-8 编码 + chcp 65001，保证中文路径
+REM 在 cmd（含双击与非交互调用）中均可正确匹配。
+REM =====================================================================
 
-if exist ".venv\Scripts\python.exe" goto :venv_ready
-echo [�״�����] ���ڴ��� Python ����...
-python -m venv ".venv"
-if errorlevel 1 goto :failed
-
-:venv_ready
-set "APP_PYTHON=.venv\Scripts\python.exe"
-if exist ".venv\.deps_module" goto :launch
-"%APP_PYTHON%" -c "import fastapi, httpx, uvicorn, serial" >nul 2>&1
-if not errorlevel 1 (
-  echo. > ".venv\.deps_module"
-  goto :launch
-)
-echo [�״�����] ���ڰ�װ���������Ժ�...
-"%APP_PYTHON%" -m pip install -r "module_log\requirements.txt"
-if errorlevel 1 goto :failed
-echo. > ".venv\.deps_module"
-
-:launch
-echo.
-echo [����] ģ����־/��¼ ������������Ƕ���ڣ�Դ��ֱ�ܣ�
-echo �رմ��ڼ�ֹͣ���񡣿���ģʽ������ exe��
-echo.
-REM ������ͱ���д����־�������Ų鿴�����ĺڿ򱨴�
-set "LOG_FILE=%~dp0..\LOG\desktop_launch.log"
-if not exist "%~dp0..\LOG" mkdir "%~dp0..\LOG"
-echo [%date% %time%] ���� desktop.py ... >> "%LOG_FILE%"
-"%APP_PYTHON%" -m module_log.desktop >> "%LOG_FILE%" 2>&1
-set "RC=%errorlevel%"
-echo [%date% %time%] �˳���=%RC% >> "%LOG_FILE%"
-if not "%RC%"=="0" goto :failed
-exit /b 0
-
-:missing_python
-echo [����] δ�� PATH ���ҵ� Python��
-echo �밲װ Python 3 ����ѡ "Add Python to PATH"��
+:check_exe
+if exist "%~dp0..\dist\模块日志\模块日志.exe" goto :launch
+echo [错误] 未找到 dist\模块日志\模块日志.exe。
+echo 请先执行 packaging\build_exe.bat 构建(选 3)。
+echo 或使用 WSL 工作区源码开发(docs\开发指南.md)。
 pause
 exit /b 1
 
+:launch
+echo.
+echo [启动] 模块日志本地软件(内嵌窗口 exe)...
+echo 关闭窗口即停止服务。
+echo.
+start "" "%~dp0..\dist\模块日志\模块日志.exe"
+exit /b 0
+
 :failed
 echo.
-echo [����] ����ʧ�ܣ������ LOG\desktop_launch.log
-echo �뱣�ִ��ڲ鿴�Ϸ���Ϣ��
+echo [错误] 启动失败，请保持窗口查看上方信息。
 pause
 exit /b 1
