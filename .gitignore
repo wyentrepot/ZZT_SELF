@@ -387,4 +387,8 @@ dist/
 tmp/
 
 # graphify 代码分析工具的运行时时间戳缓存（每次执行都会变化，不入库）
-graphify-out/cache/last_query_stamp
+data/graphify-out/cache/last_query_stamp
+# 历史遗留 graphify-out 工作区残留（被进程锁定待清理，已迁移至 data/，不重新入库）
+graphify-out/
+# 历史遗留 use/ 工作区残留（被进程锁定待清理，已迁移至 legacy/use，不重新入库）
+use/

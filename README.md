@@ -72,11 +72,16 @@
 │   ├── dll/                 #   C# 解析动态库源码，输出 GwHPLCAnalysis.dll
 │   └── test_*.py            #   共享解析链路测试
 ├── parser_lib/              # 独立共享解析库（adapters / core），未来可被其他项目引用
+├── loghooks/                # 配置驱动的日志运行状态钩子（模块日志关键事件解析）
+├── sim_concentrator/        # 模拟集中器验证工具（模拟 1376.2 集中器模块）
 ├── scripts/                 # 辅助脚本
-├── LOG/                     # 日志目录（分类存储：侦听台/、模块/）
+├── docs/                    # 项目文档（使用手册 / 设计方案 / 历史 AI 会话计划 specs）
 ├── 侦听台文档/               # 协议规范与接口说明文档
-├── doc/  docs/              # 其他文档
-├── DLL.sln / NwHplcDll.sln  # C# 解决方案文件
+├── data/graphify-out/       # graphify 代码分析工具输出（graph.json / manifest / cache）
+├── legacy/                  # 历史遗留归档（use/ C# 测试工程、dll_Tesll/ 编译产物快照）
+├── LOG/                     # 日志目录（分类存储：侦听台/、模块/）
+├── build/  dist/            # PyInstaller 中间产物 / 打包产物（git 忽略）
+├── DLL.sln                  # C# 解决方案文件（shared/dll + legacy/use 两个工程）
 ├── 启动工具.bat              # 总启动入口（1=侦听台 / 2=模块日志 / 3=全部）
 └── conftest.py              # 仓库级 pytest 配置（包路径）
 ```
