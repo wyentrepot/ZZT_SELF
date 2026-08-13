@@ -1,44 +1,42 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0.."
-title 模块日志 / 烧录
+title ģ����־ / ��¼
 
 echo.
-echo  模块日志 / 烧录(Module Log ^& Flash)
+echo  ģ����־ / ��¼(Module Log ^& Flash)
 echo  ====================================
 echo.
 
 REM =====================================================================
-REM 启动模块日志桌面软件（内嵌窗口 exe）。
+REM ����ģ����־������������Ƕ���� exe����
 REM
-REM 注意：本工作区源码受 E-SafeNet 透明加密（.py 为密文），
-REM 源码直跑（python -m module_log.desktop）在当前环境必然失败，
-REM 因此统一改为启动已构建的 dist\模块日志\模块日志.exe。
-REM 如需从源码开发/测试，请到 WSL 工作区（见 docs\开发指南.md）。
+REM ע�⣺��������Դ���� E-SafeNet ͸�����ܣ�.py Ϊ���ģ���
+REM Դ��ֱ�ܣ�python -m module_log.desktop���ڵ�ǰ������Ȼʧ�ܣ�
+REM ���ͳһ��Ϊ�����ѹ����� dist\ģ����־\ģ����־.exe��
+REM �����Դ�뿪��/���ԣ��뵽 WSL ���������� docs\����ָ��.md����
 REM
-REM 编码说明：本文件为 UTF-8 编码 + chcp 65001，保证中文路径
-REM 在 cmd（含双击与非交互调用）中均可正确匹配。
+REM �� cmd����˫����ǽ������ã��о�����ȷƥ�䡣
 REM =====================================================================
 
 :check_exe
-if exist "%~dp0..\dist\模块日志\模块日志.exe" goto :launch
-echo [错误] 未找到 dist\模块日志\模块日志.exe。
-echo 请先执行 packaging\build_exe.bat 构建(选 3)。
-echo 或使用 WSL 工作区源码开发(docs\开发指南.md)。
+if exist "%~dp0..\dist\ģ����־\ģ����־.exe" goto :launch
+echo [����] δ�ҵ� dist\ģ����־\ģ����־.exe��
+echo ����ִ�� packaging\build_exe.bat ����(ѡ 3)��
+echo ��ʹ�� WSL ������Դ�뿪��(docs\����ָ��.md)��
 pause
 exit /b 1
 
 :launch
 echo.
-echo [启动] 模块日志本地软件(内嵌窗口 exe)...
-echo 关闭窗口即停止服务。
+echo [����] ģ����־��������(��Ƕ���� exe)...
+echo �رմ��ڼ�ֹͣ����
 echo.
-start "" "%~dp0..\dist\模块日志\模块日志.exe"
+start "" "%~dp0..\dist\ģ����־\ģ����־.exe"
 exit /b 0
 
 :failed
 echo.
-echo [错误] 启动失败，请保持窗口查看上方信息。
+echo [����] ����ʧ�ܣ��뱣�ִ��ڲ鿴�Ϸ���Ϣ��
 pause
 exit /b 1

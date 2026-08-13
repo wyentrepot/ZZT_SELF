@@ -33,14 +33,15 @@ class LauncherScriptTests(unittest.TestCase):
         self.assertIn("8765", content)
 
     def test_module_launcher_bootstraps(self):
-        """模块日志脚本自建 venv、装依赖、启动 module_log.run。"""
+        """模块日志脚本（E-SafeNet 环境）启动已构建的桌面 exe。"""
         self.assertTrue(MODULE_LAUNCHER.exists(), "module_log 应提供启动脚本")
         content = MODULE_LAUNCHER.read_text(encoding="gbk")
 
-        self.assertIn("python -m venv", content)
-        self.assertIn("requirements.txt", content)
-        self.assertIn("module_log.run", content)
-        self.assertIn("8766", content)
+        # E-SafeNet 加密下源码直跑失败，脚本统一改为启动 dist 内 exe
+        self.assertIn(r"dist\模块日志\模块日志.exe", content)
+        self.assertIn("build_exe.bat", content)
+        # 实际执行走 start 启动 exe（注释可能提及 python -m 但执行不用）
+        self.assertIn('start ""', content)
 
     def test_no_reference_to_old_launcher_names(self):
         """新脚本不应再引用旧 hplc_web / hplc_launcher 命名。"""
