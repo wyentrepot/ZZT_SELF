@@ -369,6 +369,15 @@
 
   // ---------- 绑定 ----------
   function bind() {
+    // 禁用浏览器原生中键自动滚动（autoscroll）：鼠标中键按下时不再进入滚动模式，
+    // 避免在日志/事件行上按中键后移动鼠标导致页面自行下拉。
+    document.addEventListener("mousedown", (e) => {
+      if (e.button === 1) e.preventDefault();
+    });
+    document.addEventListener("auxclick", (e) => {
+      if (e.button === 1) e.preventDefault();
+    });
+
     CHANNELS.forEach((ch) => {
       $(`.ms-refresh[data-channel="${ch}"]`).addEventListener("click", () => refreshPorts(ch));
       $(`.ms-toggle[data-channel="${ch}"]`).addEventListener("click", () => toggleSerial(ch));

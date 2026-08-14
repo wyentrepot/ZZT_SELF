@@ -39,7 +39,7 @@ def _to_int(v, base: int = 16):
     return v
 
 
-def build_send_frame(send: dict) -> bytes:
+def build_send_frame(send: Optional[dict] = None) -> bytes:
     """按 send 参数构造一帧。
 
     send = {
@@ -50,7 +50,10 @@ def build_send_frame(send: dict) -> bytes:
         "pw": 0,
         "userdata": "00 01 68..." | "000168..." | [bytes],
     }
+
+    rtsa 缺省时用 6 字节零地址（模拟场景下未指定终端地址的兜底，避免构帧崩溃）。
     """
+    send = send or {}
     afn = _to_int(send.get("afn", 0x00))
     seq = _to_int(send.get("seq", 0), 10)
     msaa = _to_int(send.get("msaa", 0x01))
@@ -59,6 +62,8 @@ def build_send_frame(send: dict) -> bytes:
     rtsa_raw = send.get("rtsa")
     if isinstance(rtsa_raw, str):
         rtsa = bytes.fromhex(rtsa_raw.replace(" ", ""))[::-1][:6]  # 人读顺序 → 线上字节
+    elif rtsa_raw is None:
+        rtsa = bytes(6)  # 未指定终端地址：全零兜底
     else:
         rtsa = bytes(rtsa_raw)[:6]
 
