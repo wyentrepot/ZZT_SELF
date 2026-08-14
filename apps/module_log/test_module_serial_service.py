@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from module_log import xmodem_flash
-from module_log.module_serial_service import ModuleSerialService, _FlashReader
+from module_log.module_serial_service import MAX_MEMORY_LINES, ModuleSerialService, _FlashReader
 
 
 class BootloaderDetectTest(unittest.TestCase):
@@ -150,6 +150,24 @@ class ModuleSerialServiceTest(unittest.TestCase):
         self.assertEqual(inc["lines"][0]["dir"], "EVENT")
         # 空 buffer 时 last_seq 保持传入值
         self.assertEqual(svc.logs(after=2)["last_seq"], 2)
+
+    def test_memory_logs_ring_trimmed(self):
+        """内存日志缓冲有上限：超过 MAX_MEMORY_LINES 后丢弃最旧行（防整夜 OOM）。"""
+        svc = self._service()
+        ch = svc.channel("cco")
+        total = MAX_MEMORY_LINES + 100
+        for i in range(total):
+            ch._append_line("RX", f"line {i}")
+        # 内存缓冲裁剪到上限
+        self.assertEqual(len(ch._lines), MAX_MEMORY_LINES)
+        # 保留最新：第一条 seq 为被丢弃的首行之后
+        self.assertEqual(ch._lines[0]["seq"], total - MAX_MEMORY_LINES)
+        # 全量读取（after=-1）也返回最近窗口，不拖全量
+        self.assertEqual(len(ch.logs(after=-1)["lines"]), MAX_MEMORY_LINES)
+        # 增量读取 seq 单调：last_seq 仍为最新
+        self.assertEqual(ch.logs(after=total - 1)["last_seq"], total - 1)
+        # 被裁剪掉的旧 seq 不应再返回
+        self.assertEqual(ch.logs(after=-1)["lines"][0]["seq"], total - MAX_MEMORY_LINES)
 
     def test_log_file_written_on_rx(self):
         base = Path(tempfile.mkdtemp())

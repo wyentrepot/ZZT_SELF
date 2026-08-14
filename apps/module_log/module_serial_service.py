@@ -22,6 +22,11 @@ from module_log import xmodem_flash
 
 CHANNELS = ("cco", "sta")  # 固定双通道顺序
 
+# 每路内存增量日志缓冲上限（环形裁剪）：超过后丢弃最旧行。
+# 前端按 seq 增量轮询 + 日志框上限裁剪，历史日志始终落盘在 LOG/模块/<ch>/*.log，
+# 内存只保留最近窗口，避免整夜监听后后端内存与每轮 O(n) 扫描无限增长。
+MAX_MEMORY_LINES = 5000
+
 
 def format_event_timestamp(ts: float) -> str:
     """毫秒级时间戳，格式 YYYYMMDD-HH:MM:SS:mmm（用户要求）。"""
@@ -195,6 +200,8 @@ class _SerialChannel:
         self._next_seq += 1
         with self._lock:
             self._lines.append(entry)
+            if len(self._lines) > MAX_MEMORY_LINES:
+                del self._lines[: len(self._lines) - MAX_MEMORY_LINES]
         with self._log_lock:
             if self._log_handle is not None:
                 self._log_handle.write(f"[{ts}] [{direction}] {text}\n")
@@ -366,7 +373,11 @@ class _SerialChannel:
         with self._lock:
             if after < 0:
                 lines = list(self._lines)
+                # 全部行存在时（after<0）返回最近的窗口，避免整夜后拖全量
+                if len(lines) > MAX_MEMORY_LINES:
+                    lines = lines[-MAX_MEMORY_LINES:]
             else:
+                # 环形裁剪后 seq 不再连续：只取 seq > after 的新增行
                 lines = [e for e in self._lines if e["seq"] > after]
             last_seq = self._next_seq - 1 if self._lines else after
             return {"lines": lines, "last_seq": last_seq, "channel": self.name}

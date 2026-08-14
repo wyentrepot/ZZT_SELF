@@ -395,3 +395,6 @@ graphify-out/
 data/graphify-out/
 # 历史遗留 use/ 工作区残留（已于 2026-08-14 清理；C# 测试工程在 legacy/use，规则保留防误入库）
 use/
+
+# 本地工具目录（node_modules 等运行时产物不入库）
+.kilo/

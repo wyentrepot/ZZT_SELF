@@ -73,9 +73,11 @@ function makeEl(id, channel, cls) {
     style: { width: "" },
     classList: { toggle: function(c,f){}, add: function(){}, remove: function(){} },
     children: [], options: [], dataset: {}, scrollTop: 0, scrollHeight: 0, childElementCount: 0,
+    get firstElementChild(){ return this.children.length ? this.children[0] : null; },
     replaceChildren: function(){ this.children=[]; this.options=[]; this.childElementCount=0; },
     appendChild: function(o){ this.children.push(o); this.childElementCount=this.children.length;
       if(o){ if(o.tagName==='OPTION'||o.__option){ this.options.push(o); } } },
+    removeChild: function(child){ var i=this.children.indexOf(child); if(i>=0){ this.children.splice(i,1); this.childElementCount=this.children.length; } return child; },
     addEventListener: function(t,f){ (this.__events=this.__events||{})[t]=f; },
     querySelectorAll: function(){ return []; },
   };
@@ -115,9 +117,10 @@ var document = {
 """.replace("__IDS__", ids_json).replace("__CREATES__", creates_js)
 
 
-def _fetch_stub_js(ports, running_channels=None):
+def _fetch_stub_js(ports, running_channels=None, log_lines=None):
     ports_json = json.dumps(ports)
     running_json = json.dumps(running_channels or [])
+    logs_json = json.dumps(log_lines or [])
     return r"""
 function __makeChannels() {
   var chs = {
@@ -139,7 +142,16 @@ function __fetchStub(url, options) {
   } else if (url.indexOf("/api/module-serial/status") >= 0) {
     body = { state:"idle", channels: __makeChannels() };
   } else if (url.indexOf("/api/module-serial/logs") >= 0) {
-    body = { lines: [], last_seq: -1 };
+    // 模拟增量：第一轮返回全部 __LOGS__，之后每轮返回 __LOG_BATCHES__ 中对应批次
+    window.__logPollCount = (window.__logPollCount || 0) + 1;
+    if (window.__logPollCount === 1) {
+      body = { lines: __LOGS__, last_seq: (__LOGS__.length ? __LOGS__[__LOGS__.length-1].seq : -1) };
+    } else if (window.__logBatches && window.__logBatches.length) {
+      var b = window.__logBatches.shift();
+      body = { lines: b, last_seq: (b.length ? b[b.length-1].seq : -1) };
+    } else {
+      body = { lines: [], last_seq: (__LOGS__.length ? __LOGS__[__LOGS__.length-1].seq : -1) };
+    }
   } else if (url.indexOf("/api/simcon/ports") >= 0) {
     body = { ports: __PORTS__ };
   } else if (url.indexOf("/api/simcon/status") >= 0) {
@@ -165,23 +177,24 @@ var setInterval = function(fn, ms){ window.__interval = {fn:fn, ms:ms}; return 1
 var setTimeout = function(fn, ms){ return 1; };
 var clearInterval = function(){};
 var console = { log: function(){}, error: function(){}, warn: function(){} };
-""".replace("__PORTS__", ports_json).replace("__RUNNING__", running_json)
+""".replace("__PORTS__", ports_json).replace("__RUNNING__", running_json).replace("__LOGS__", logs_json)
 
 
 class FrontendHarness:
     """加载真实 module-serial.js 到 V8，提供 DOM/fetch stub，暴露断言接口。"""
 
-    def __init__(self, ports=None, running_channels=None):
+    def __init__(self, ports=None, running_channels=None, log_lines=None):
         self.ctx = MiniRacer()
         self.ports = ports if ports is not None else ["COM4", "COM23", "COM3"]
         self.running_channels = running_channels
+        self.log_lines = log_lines
         self._load()
 
     def _load(self):
         elements = _parse_elements()
         stub = _build_dom_stub_js(elements)
         self.ctx.eval(stub)
-        self.ctx.eval(_fetch_stub_js(self.ports, self.running_channels))
+        self.ctx.eval(_fetch_stub_js(self.ports, self.running_channels, self.log_lines))
         js = JS_PATH.read_text(encoding="utf-8")
         self.ctx.eval(js)
         self.flush()
@@ -227,9 +240,52 @@ class FrontendHarness:
         )
 
 
-
 class ModuleSerialFrontendTest(unittest.TestCase):
     """模拟前端页面功能（真实执行 module-serial.js）。"""
+
+    # ---------- 实时日志显示框：动态缓存裁剪（整夜监听防崩溃） ----------
+    def test_log_box_keeps_most_recent_rows(self):
+        """日志框只保留最近 MAX_LOG_ROWS 行，超出的最旧行被裁剪。"""
+        lines = [
+            {"seq": i, "ts": f"20260814-12:00:00:{i:03d}", "dir": "RX", "text": f"line {i}"}
+            for i in range(5000)
+        ]
+        h = FrontendHarness(ports=["COM4"], log_lines=lines)
+        h.flush()
+        # MAX_LOG_ROWS = 3000：5000 行日志应被裁剪到 3000
+        count = h._eval_str('document.querySelector(".ms-log-box[data-channel=\\"cco\\"]").childElementCount')
+        self.assertEqual(count, 3000)
+
+    def test_log_box_cap_applied_on_incremental_poll(self):
+        """增量轮询追加超过上限后，最旧行应被移除（DOM 不再无限增长）。"""
+        lines = [
+            {"seq": i, "ts": "t", "dir": "RX", "text": f"line {i}"}
+            for i in range(2000)
+        ]
+        h = FrontendHarness(ports=["COM4"], log_lines=lines)
+        h.flush()
+        # 注入第二批增量日志（2000 → 追加 1500 → 3500 超过上限 3000）
+        batch = [
+            {"seq": 2000 + i, "ts": "t", "dir": "RX", "text": f"extra {i}"}
+            for i in range(1500)
+        ]
+        h.ctx.eval("window.__logBatches = %s;" % json.dumps([batch]))
+        # 触发一次增量轮询：追加后应裁剪到 3000（丢最旧 500 行）
+        h.ctx.eval("window.__logPollCount = 1; window.__interval.fn();")
+        h.flush()
+        count = h._eval_str('document.querySelector(".ms-log-box[data-channel=\\"cco\\"]").childElementCount')
+        self.assertEqual(count, 3000)
+
+    def test_log_box_shows_rows_within_cap(self):
+        """日志行数未超上限时全部显示。"""
+        lines = [
+            {"seq": i, "ts": "t", "dir": "RX", "text": f"line {i}"}
+            for i in range(10)
+        ]
+        h = FrontendHarness(ports=["COM4"], log_lines=lines)
+        h.flush()
+        count = h._eval_str('document.querySelector(".ms-log-box[data-channel=\\"cco\\"]").childElementCount')
+        self.assertEqual(count, 10)
 
     def test_refresh_ports_populates_both_channel_dropdowns(self):
         """串口获取：/api/module-serial/ports 返回的串口应填入 cco 与 sta 两个下拉框。"""

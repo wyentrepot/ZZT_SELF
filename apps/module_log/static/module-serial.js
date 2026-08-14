@@ -16,6 +16,9 @@
   // 日志刷新速度三档：快/中/慢（毫秒）。默认中。
   const REFRESH_SPEED_MS = { fast: 100, medium: 500, slow: 800 };
   const DEFAULT_REFRESH_SPEED = "medium";
+  // 每路日志显示框最多保留的行数：超过后丢弃最旧行，防止整夜监听后
+  // DOM 节点无限增长导致浏览器卡死/崩溃。历史日志完整落盘在 LOG/模块/<ch>/。
+  const MAX_LOG_ROWS = 3000;
   // 每路独立增量游标
   const lastSeq = { cco: -1, sta: -1 };
   let pollTimer = null;
@@ -89,6 +92,10 @@
           const text = String(line.text).replace(/\r?\n/g, "").replace(/\r/g, "");
           div.innerHTML = `<span class="t">[${line.ts}]</span> [${line.dir}] <span class="${cls}">${escapeHtml(text)}</span>`;
           box.appendChild(div);
+        }
+        // 动态缓存裁剪：只保留最近 MAX_LOG_ROWS 行，超出的最旧行直接移除
+        while (box.childElementCount > MAX_LOG_ROWS) {
+          box.removeChild(box.firstElementChild);
         }
         if (autoscroll) box.scrollTop = box.scrollHeight;
         if (data.last_seq >= 0) lastSeq[ch] = data.last_seq;
