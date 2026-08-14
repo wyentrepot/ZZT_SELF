@@ -107,7 +107,7 @@ python3 -c "import serial; s=serial.Serial('/dev/ttyS23',115200,timeout=0.5); pr
 | 串口烧录（`module_serial_service`/`xmodem_flash`/`flash_module`） | 依赖真实 COM 口（或用映射后的 `/dev/ttyS*`） |
 | `listener/serial_service.py` | 侦听台串口采集 |
 | `shared/dll`（C# 解析库） | .NET 编译产物 |
-| `packaging/`（打包脚本） | 产 Windows exe |
+| `tools/packaging/`（打包脚本） | 产 Windows exe |
 
 ## 哪些在 WSL
 
@@ -122,5 +122,5 @@ python3 -c "import serial; s=serial.Serial('/dev/ttyS23',115200,timeout=0.5); pr
 ## 注意
 
 1. **WSL 不要读 `/mnt/d` 上的项目源码**——那是 E-SafeNet 密文，会乱码。只用自己的 ext4 副本。
-2. **桌面 exe 只能在 Windows 打包**（`packaging/build_exe.bat`），产物 `dist\` 不入 git。
+2. **桌面 exe 只能在 Windows 打包**（`tools/packaging/build_exe.bat`），产物 `dist\` 不入 git。
 3. **WSL 里 git push 需要 SSH key**（`~/.ssh/id_ed25519`），若未配置改用 HTTPS + token。

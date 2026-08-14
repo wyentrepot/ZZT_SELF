@@ -12,8 +12,8 @@
 
 | 来源 | 目录 | 行格式 | 内容形态 | 解析能力 |
 |------|------|--------|----------|----------|
-| **模块日志** `module_log` | `LOG/模块/{cco|sta}/` | `[YYYYMMDD-HH:MM:SS:mmm] [RX|TX|EVENT] 内容` | 文本行，如 `序列号 | info | 文件.c (行号) | 消息` | 靠正则/关键词抠 |
-| **侦听台** `listener` | `LOG/侦听台/{port}_{stamp}_自动保存.txt` | `[序号][HH:MM:SS.mmm]7E...7E` | hex 帧 | 可经 `parse_summary` 深度解析出结构化 `simple` dict |
+| **模块日志** `module_log` | `data/logs/模块/{cco|sta}/` | `[YYYYMMDD-HH:MM:SS:mmm] [RX|TX|EVENT] 内容` | 文本行，如 `序列号 | info | 文件.c (行号) | 消息` | 靠正则/关键词抠 |
+| **侦听台** `listener` | `data/logs/侦听台/{port}_{stamp}_自动保存.txt` | `[序号][HH:MM:SS.mmm]7E...7E` | hex 帧 | 可经 `parse_summary` 深度解析出结构化 `simple` dict |
 
 ### 1.2 现有解析链路（不侵入）
 
@@ -386,7 +386,7 @@ AI 验证时，模块日志与侦听台是**同一时间段**采集的。关联�
 ```json
 {
   "source": "module_log",
-  "files": ["LOG/模块/cco/xxx.log"],
+  "files": ["data/logs/模块/cco/xxx.log"],
   "province": "anhui",
   "summary": {
     "join": {"count": 3, "last": {"time": "...", "node_count": 1}},
@@ -420,7 +420,7 @@ _append_line(direction, text)  →  写原始日志（现有）  +  run_loghooks
 
 设计约束：
 - **异步 + 队列**消费（不阻塞串口写盘、不拖慢日志采集）。
-- 事件实时落盘到 `LOG/模块/事件/<channel>/*.jsonl`（每行一条事件），与原始日志分离。
+- 事件实时落盘到 `data/logs/模块/事件/<channel>/*.jsonl`（每行一条事件），与原始日志分离。
 - **可开关**：配置/环境变量 `LOG_HOOKS_ENABLED`，默认开但**失败静默降级**——绝不影响现有日志主链路。
 - 规则从 `loghooks/rules/` 自动加载，加省份规则 = 放一个 json，无需改 module_log 代码（接入点是通用的，规则是配置的）。
 

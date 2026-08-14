@@ -364,8 +364,8 @@ FodyWeavers.xsd
 # Local runtime artifacts
 .venv/
 runtime/
-# 串口采集落盘数据（项目根 LOG/），不入库
-LOG/
+# 串口采集落盘数据（项目根 data/logs/），不入库
+data/logs/
 packages/
 __pycache__/
 *.pyc
@@ -377,6 +377,7 @@ __pycache__/
 build/
 # 打包产物 dist/ 整体不入库：exe 为本地/发布时用 PyInstaller 生成，源码已入库
 # （C# 解析库源码在 shared/dll/src/，编译产物在 shared/dll/bin/，均可本地重建）
+# dist 产物说明：dist/侦听台/（网页版）、dist/侦听台桌面/（pywebview）、dist/模块日志/（pywebview）
 dist/
 # E-SafeNet 加密环境下从 git 导出的明文构建副本（build_exe.bat 临时使用）
 .build_plain/
@@ -390,5 +391,7 @@ tmp/
 data/graphify-out/cache/last_query_stamp
 # 历史遗留 graphify-out/ 工作区残留（已于 2026-08-14 清理，规则保留防误入库）
 graphify-out/
+# data/ 下的 graphify-out 分析输出（已 git rm，规则补漏防再次入库）
+data/graphify-out/
 # 历史遗留 use/ 工作区残留（已于 2026-08-14 清理；C# 测试工程在 legacy/use，规则保留防误入库）
 use/

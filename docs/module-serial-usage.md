@@ -7,7 +7,7 @@
 ## 一、功能概览
 
 - **串口全程实时监控**：一个「模块日志口」被 `ModuleSerialService` 常驻独占，
-  原始字节流实时落盘 `LOG/MODCOM{port}_{ts}_模块日志.txt`，前端新标签页
+  原始字节流实时落盘 `data/logs/MODCOM{port}_{ts}_模块日志.txt`，前端新标签页
   `/module-serial` 800ms 增量轮询实时查看。
 - **同一串口上烧录**：XMODEM 烧录在**同一个已持有的 handle** 上传输文件 +
   动态切波特率，RX 监控线程全程不停、不关串口、不重开。

@@ -349,11 +349,11 @@ platform/
 | 顶层项 | git 跟踪 | 性质 |
 |--------|---------|------|
 | `listener/ module_log/ shared/ parser_lib/ loghooks/ sim_concentrator/` | ✅ | 6 个顶层代码包，**互相以绝对导入引用**（仓库根即 sys.path，全仓 143 处 `from shared/...`、`from parser_lib/...` 等） |
-| `docs/` `侦听台文档/` | ✅ | 项目文档 / 协议规范（国网、南网 PDF、报文格式、DLL 接口） |
+| `docs/` `docs/协议/` | ✅ | 项目文档 / 协议规范（国网、南网 PDF、报文格式、DLL 接口） |
 | `data/`（含 `graphify-out/`） | ✅ | 数据与代码分析输出 |
 | `legacy/` | ✅ | 历史归档（`use/` C# 测试工程、`dll_Tesll/` 编译产物快照） |
-| `packaging/ scripts/ reqs/` | ✅ | 打包 / 辅助脚本 / 需求会话 |
-| 根文件 | ✅ | README / DECISIONS / REQS-INDEX / oad_todo / conftest / DLL.sln / ov.conf / reasonix.toml / 启动工具.bat / .git* |
+| `tools/`（原 `packaging/` `scripts/`） `reqs/` | ✅ | 打包 / 辅助脚本 / 需求会话 |
+| 根文件 | ✅ | README / DECISIONS / REQS-INDEX / oad_todo(→docs/) / conftest / DLL.sln / ov.conf / reasonix.toml / 启动工具.bat / .git* |
 | `build/ dist/ LOG/ packages/ use/ graphify-out/ 测试文件/ .venv/ .pytest_cache/ __pycache__/` | ❌ 全部未跟踪 | PyInstaller 中间/发布产物、运行时日志、NuGet 还原包、历史遗留（`use/`、`graphify-out/` 已在 .gitignore 标注"待清理"）、本地测试大文件、虚拟环境 |
 
 **结论**：git 视角的根目录并不乱（15 项顶层）；"乱"主要来自**本地磁盘上大量未跟踪噪音目录与代码目录混杂**（资源管理器视角），以及 6 个顶层代码包平铺、无法一眼区分"应用"与"库"。
@@ -362,41 +362,51 @@ platform/
 
 1. 顶层 6 个代码包平铺，分不清"应用（可独立运行）"与"库（被引用）"。
 2. 本地噪音目录（build/dist/LOG/packages/use/graphify-out/测试文件）与代码混杂。
-3. 文档分散三处（docs/、侦听台文档/、oad_todo.md）。
-4. 工具分散（scripts/、packaging/）。
+3. 文档分散三处（docs/、docs/协议/、docs/oad_todo.md）。
+4. 工具分散（tools/scripts/、tools/packaging/）。
 5. 历史遗留（use/、graphify-out/）未清理。
 
 #### 6.2.3 目标布局（渐进式，两阶段）
 
-**阶段一（零风险，建议立即执行）**：不移动代码包（避免 143 处导入改造），只归组非代码项 + 清理遗留：
+> **执行状态（2026-08-14）**：两阶段已按 ADR-14 一并执行完毕（`git mv` 保留历史，sys.path 注入、导入名不变）。以下为迁移后实际布局：
 
 ```
 侦听台改造/
-├── listener/ module_log/ shared/ parser_lib/ loghooks/ sim_concentrator/   # 不动
-├── docs/            # 合并：侦听台文档/ → docs/协议/、oad_todo.md → docs/（引用同步）
-├── tools/           # 合并：scripts/ + packaging/（git mv，脚本内相对路径同步）
-├── reqs/            # 保留（需求会话，配合 REQS-INDEX.md）
-├── data/            # 运行日志 LOG/ → data/logs/（改运行路径，脚本同步）；graphify-out 清理
-├── 归档清理          # use/、graphify-out/（gitignore 已标注"待清理"）
-├── 根文件            # README 增"根目录速览"表；.gitignore 补漏（dist 产物说明）
-└── platform/        # （FR-6 落地时新增）
+├── apps/            # 应用层：listener/ module_log/ platform/(FR-6 落地时新增)
+├── libs/            # 库层：shared/ parser_lib/ loghooks/ sim_concentrator/
+├── docs/            # 项目文档 + docs/协议/（协议规范）+ docs/oad_todo.md
+├── tools/           # 工具：tools/scripts/ + tools/packaging/
+├── reqs/            # 需求会话归档（配合 REQS-INDEX.md）
+├── data/            # 运行日志 data/logs/（frozen exe 下为 exe 同目录 LOG/）；graphify-out 已清理
+├── legacy/          # 历史归档（use/ C# 测试工程、dll_Tesll/ 编译产物快照）
+├── 根文件            # README「根目录速览」表 / .gitignore（data/graphify-out/ 补漏、dist 产物说明）
+└── conftest.py      # 仓库级 pytest 配置：注入仓库根 + apps/ + libs/ 到 sys.path
 ```
 
-**阶段二（可选，中风险，需排期）**：代码包分层 `apps/` + `libs/`：
+**阶段一（已完成）**：归组非代码项 + 清理遗留：
+- `侦听台文档/` → `docs/协议/`（南网/国网子目录）、`oad_todo.md` → `docs/oad_todo.md`，交叉引用全量同步。
+- `scripts/` + `packaging/` → `tools/scripts/` + `tools/packaging/`（spec 的 ROOT 解析、bat 相对路径、冒烟脚本路径全量同步）。
+- 运行日志 `LOG/` → `data/logs/`（listener/module_log/loghooks 的 `_log_dir()` 与默认落盘路径同步；frozen 形态仍为 exe 同目录 `LOG/`；本地历史日志随目录移动保留现场）。
+- `data/graphify-out/` 76 个跟踪文件 `git rm` 清理，`.gitignore` 追加 `data/graphify-out/`。
+
+**阶段二（已完成）**：代码包分层 `apps/` + `libs/`：
 
 ```
 ├── apps/            # listener/ module_log/ platform/(新增)
 ├── libs/            # shared/ parser_lib/ loghooks/ sim_concentrator/
 ```
 
-- 依赖改造：**143 处顶层绝对导入** + conftest.py sys.path + PyInstaller spec pathex + bat 脚本 + 测试路径，全量同步。
-- 前置条件：阶段一稳定 + platform 落地后，一次性 `git mv` + 全量回归（402 passed 基线）。
+- 依赖改造：**全部 ~131 处顶层绝对导入零改动**（sys.path 注入决策），仅改入口与配置层：
+  - `conftest.py`、`apps/*/run.py`、`apps/*/desktop.py`、`apps/module_log/flash_module.py`、`libs/*/__main__.py` 注入仓库根 + apps/ + libs/（收敛到 `shared.infra.ensure_paths()`）。
+  - PyInstaller spec：`pathex` 同时含 apps/ 与 libs/；`datas`（static、DLL）、入口脚本路径按新布局。
+  - 启动脚本（`启动工具.bat`、`apps/*/启动*.bat`）、`DLL.sln`、测试路径（`test_ui_layout` 等 CWD 相对路径改为 `__file__` 相对）全量同步。
+- 冷启动验证：`python -m listener.run` / `module_log.run`（Windows 启动脚本注入 PYTHONPATH）、`python -m loghooks scan` / `sim_concentrator verify` 均可 import。
 
 #### 6.2.4 迁移纪律
 
 1. 一律 `git mv` 保留历史；未迁移的包禁止手改 import。
-2. 每次迁移后跑全量 pytest（基线 402 passed / 66 skipped）。
-3. 目录变更同步更新 README，并追加 ADR 记录（DECISIONS.md 只追加不覆盖）。
+2. 每次迁移后跑全量 pytest（基线 402 passed / 66 skipped；本 WSL 无 DLL 环境 326 passed / 66 skipped / 9 DLL 失败为环境基线）。
+3. 目录变更同步更新 README，并追加 ADR 记录（DECISIONS.md 只追加不覆盖）——已追加 **ADR-14 目录结构两阶段迁移**。
 
 ---
 
@@ -612,7 +622,7 @@ platform/
 | 风险 | 影响 | 对策 |
 |------|------|------|
 | 规则维护成本随固件迭代上升 | 验证失效/漏检 | 命中率量化 + 漂移告警；rules diff 半自动闭环；扫描库自动聚类辅助精选规则 |
-| 13762 嵌套 645/698 字段级解析覆盖不足（OAD/OI 覆盖率低，见 `oad_todo.md`） | 深层次断言做不了 | 按业务场景优先级补 OAD；用真实抓包 golden data 回放守住解析不回退 |
+| 13762 嵌套 645/698 字段级解析覆盖不足（OAD/OI 覆盖率低，见 `docs/oad_todo.md`） | 深层次断言做不了 | 按业务场景优先级补 OAD；用真实抓包 golden data 回放守住解析不回退 |
 | 模拟集中器"不够真"骗不过 CCO 状态机 | 假通过/假失败 | 时序参数（帧间隔/超时窗）可配置；协议一致性测试；硬件在环冒烟 |
 | 三时基不一致（模块时钟/PC 时钟） | 跨来源关联错位 | 以业务锚点（NID/MAC/冻结时刻/RTUA）关联 + 宽松时间窗；批次统一烧录时刻=0 相对对齐 |
 | 海量轮询日志噪音 | 事件流淹没问题 | 规则双重约束（file+msg）；阈值/聚合类规则；事件流分片落盘 |
@@ -648,8 +658,8 @@ platform/
 | 模块日志使用说明 | `docs/module-serial-usage.md` |
 | 打包发布方案 | `docs/一键打包发布方案.md` |
 | 任务交接需求与进度表 | `docs/任务交接需求与进度表.md` |
-| OAD/OI 覆盖清单 | `oad_todo.md` |
-| 协议规范 | `侦听台文档/`（国网/南网协议、报文格式、DLL 接口说明） |
+| OAD/OI 覆盖清单 | `docs/oad_todo.md` |
+| 协议规范 | `docs/协议/`（国网/南网协议、报文格式、DLL 接口说明） |
 
 ### 13.2 待评审问题（归档时遗留，供下轮对齐）
 

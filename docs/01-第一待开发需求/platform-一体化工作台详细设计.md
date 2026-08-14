@@ -22,10 +22,10 @@
 
 ---
 
-## 2. 目录结构（`platform/` 顶层包）
+## 2. 目录结构（`apps/platform/` 顶层包，apps/ 内与 listener、module_log 平级）
 
 ```
-platform/
+apps/platform/
 ├── __init__.py
 ├── app.py                  # 统一 FastAPI 工厂 create_platform_app()
 ├── desktop.py              # 统一桌面入口（pywebview 单窗口）
@@ -45,7 +45,7 @@ platform/
 │   ├── styles.css
 │   └── pages/              # 各页签视图（纯前端，数据走后端 API）
 │       ├── listener.html/js
-│       ├── module-serial.html/js    # 复用 module_log/static 现有文件（复制或代理）
+│       ├── module-serial.html/js    # 复用 apps/module_log/static 现有文件（复制或代理）
 │       ├── compare.html/js
 │       └── workbench.html/js
 ├── scenarios/              # 场景模板 JSON（数据文件，随包分发）
@@ -75,7 +75,7 @@ def create_platform_app(
 ) -> FastAPI:
 ```
 
-- 默认工厂**惰性导入**各子应用（与 `module_log/app.py` 动态 import simcon 同模式，兼容 PyInstaller 打包时补 hiddenimports）。
+- 默认工厂**惰性导入**各子应用（与 `apps/module_log/app.py` 动态 import simcon 同模式，兼容 PyInstaller 打包时补 hiddenimports）。
 - **挂载策略**（关键：避免双前缀，沿用 ADR-13 约定）：
 
 | 挂载路径 | 子应用 | 说明 |
@@ -262,7 +262,7 @@ const PAGES = [
 
 ## 6. 桌面入口（desktop.py）
 
-- 复制 module_log/desktop.py 模式（ADR-2）：后台线程起 uvicorn(8790) → 主线程 pywebview 开窗；未装 pywebview 回退浏览器。
+- 复制 apps/module_log/desktop.py 模式（ADR-2）：后台线程起 uvicorn(8790) → 主线程 pywebview 开窗；未装 pywebview 回退浏览器。
 - 窗口标题：「AI 闭环工作台」；窗口尺寸 1440×900 起。
 - frozen 路径处理沿用 `_base_dir/_runtime_dir/_log_dir` 约定（LOG 与 runtime 落在 exe 同目录）。
 
@@ -276,7 +276,7 @@ const PAGES = [
 | P2 | orchestration models/store + `/api/run` 建单/查询（先做"仅监控"最小闭环） | 一次真实日志扫描产出 Report |
 | P3 | scenarios 模板库 + compare 比对器 + 工作台页签渲染 | 四类差异可视化正确 |
 | P4 | runner 全链路（烧录→监控→激励→比对→反馈）+ feedback 归因 | 端到端 Run 出完整报告 |
-| P5 | 打包（`packaging/platform.spec`，hiddenimports 补全）+ 启动工具.bat 选项 6 | 一体化 exe 可用 |
+| P5 | 打包（`tools/packaging/platform.spec`，hiddenimports 补全）+ 启动工具.bat 选项 6 | 一体化 exe 可用 |
 
 ---
 

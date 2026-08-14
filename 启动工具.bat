@@ -24,16 +24,16 @@ set "HPLC_CHOICE=1"
 goto :listener
 
 :listener
-call "%~dp0listener\启动侦听台.bat"
+call "%~dp0apps\listener\启动侦听台.bat"
 exit /b %errorlevel%
 
 :module
-call "%~dp0module_log\启动模块日志.bat"
+call "%~dp0apps\module_log\启动模块日志.bat"
 exit /b %errorlevel%
 
 :module_desktop
 if not exist "%~dp0dist\模块日志\模块日志.exe" (
-    echo [ERROR] 未找到 dist/模块日志/模块日志.exe。请先执行 packaging/build_exe.bat 构建。
+    echo [ERROR] 未找到 dist/模块日志/模块日志.exe。请先执行 tools/packaging/build_exe.bat 构建。
     pause
     exit /b 1
 )
@@ -44,7 +44,7 @@ exit /b 0
 
 :listener_desktop
 if not exist "%~dp0dist\侦听台桌面\侦听台桌面.exe" (
-    echo [ERROR] 未找到 dist/侦听台桌面/侦听台桌面.exe。请先执行 packaging/build_exe.bat 构建。
+    echo [ERROR] 未找到 dist/侦听台桌面/侦听台桌面.exe。请先执行 tools/packaging/build_exe.bat 构建。
     pause
     exit /b 1
 )
@@ -58,6 +58,6 @@ echo.
 echo [START] 启动全部：侦听台(8765) + 模块日志(8766) ...
 echo 结束请在任务管理器中终止对应 python 进程。
 echo.
-start "侦听台-8765" cmd /c "%~dp0listener\启动侦听台.bat"
-start "模块日志-8766" cmd /c "%~dp0module_log\启动模块日志.bat"
+start "侦听台-8765" cmd /c "%~dp0apps\listener\启动侦听台.bat"
+start "模块日志-8766" cmd /c "%~dp0apps\module_log\启动模块日志.bat"
 exit /b 0

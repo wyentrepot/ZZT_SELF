@@ -19,6 +19,7 @@
 | 11 | module_log 启动脚本编码修正回 GBK（ADR-9 落地补漏）+ test_launcher 断言同步 | ✅ 生效 |
 | 12 | OpenViking 记忆后端 embedding/VLM 切换到火山方舟（doubao-embedding-vision + doubao-seed-code） | ✅ 生效 |
 | 13 | 模拟集中器前端可视化：module_log 新增第三页签「模拟集中器」，挂载 simcon 子应用 | ✅ 生效 |
+| 14 | 仓库目录结构两阶段迁移（apps/libs 分层 + docs/tools/data 归组 + graphify-out 清理） | ✅ 生效 |
 
 ---
 
@@ -306,3 +307,30 @@
   - 测试：全量 pytest 402 passed / 66 skipped（+sim_concentrator 35 +前端 4）；node --check 前端 JS 通过。
   - 桌面 exe 需重新打包才含第三页签；网页模式立即生效。
 - **被取代**：无（补充 ADR-10 的可视化界面）。
+
+---
+
+## ADR-14 仓库目录结构两阶段迁移（apps/libs 分层 + 归组）
+
+- **日期**：2026-08-14
+- **状态**：✅ 生效
+- **决定**：
+  - 依据 `docs/01-第一待开发需求/AI闭环平台项目设计需求文档.md` §6.2.3 目标布局，两阶段一并执行（`git mv` 保留历史，未移动的包不改 import）。
+  - **阶段一（归组非代码项）**：
+    - `侦听台文档/` → `docs/协议/`（南网/国网子目录）、`oad_todo.md` → `docs/oad_todo.md`，交叉引用全量同步。
+    - `scripts/` + `packaging/` → `tools/scripts/` + `tools/packaging/`（spec 的 `ROOT` 解析、bat 相对路径、冒烟脚本路径同步）。
+    - 运行日志 `LOG/` → `data/logs/`（非 frozen 形态；frozen 仍为 exe 同目录 `LOG/`），listener/module_log/loghooks 的 `_log_dir()` 与默认落盘路径同步，本地历史日志随目录移动保留现场。
+    - `data/graphify-out/` 76 个跟踪文件 `git rm` 清理，`.gitignore` 追加 `data/graphify-out/`。
+  - **阶段二（代码包分层）**：`listener/`、`module_log/` → `apps/`；`shared/`、`parser_lib/`、`loghooks/`、`sim_concentrator/` → `libs/`。
+    - 依赖改造采用 **sys.path 注入、导入名不变**（~131 处 `from shared/...`、`from sim_concentrator/...` 零改动）。
+    - 注入点：`conftest.py`、`apps/*/run.py`、`apps/*/desktop.py`、`apps/module_log/flash_module.py`、`libs/*/__main__.py`，收敛到 `shared.infra.ensure_paths()`（仓库根 + apps/ + libs/）。
+    - PyInstaller spec：`pathex` 同时含 apps/ 与 libs/；`datas`（static、DLL）、入口脚本路径按新布局；`ROOT` 解析为 `SPEC_DIR.parent.parent`。
+    - 启动脚本（`启动工具.bat`、`apps/*/启动*.bat`）注入 `PYTHONPATH=apps;libs`（`python -m` 需在模块解析前拿到包位置）；`DLL.sln` 的 C# 工程路径改 `libs\shared\dll\...`；CWD 相对路径的测试（`test_ui_layout` 等）改为 `__file__` 相对。
+- **理由**：
+  - 文档 §6.2 目标布局要求应用/库分层与目录归组；用户确认阶段二与阶段一**一并执行**（原文档要求 platform 落地后执行）。
+  - 采用 sys.path 注入而非改写 131 处导入，迁移风险集中在入口/配置层，import 名保持不变，回归面最小。
+- **影响**：
+  - README「根目录速览」表、目录树、启动/构建/测试章节同步；设计文档 §6.2.3/6.2.4 更新为已执行状态。
+  - 测试基线：本 WSL 无 DLL 环境 326 passed / 66 skipped / 9 DLL 失败（环境基线）；Windows + C# DLL 终验应为 402 passed / 66 skipped。
+  - `python -m listener.run` / `module_log.run` / `loghooks scan` / `sim_concentrator verify` 冷启动验证通过。
+- **被取代**：无（新增决策）。
