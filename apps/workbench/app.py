@@ -1,0 +1,184 @@
+"""workbench.app —— 统一 FastAPI 工厂（FR-6 落地，方案①：前端合并 + 后端代理）。
+
+合并策略（ADR-18，替代原"响应重写中间件"方案）：
+- listener / module_log 后端包**保持独立**（可各自独立运行，ADR-1/10/13 解耦
+  哲学不推翻）。
+- workbench 统一后端通过 **ASGI 前缀代理**把子应用挂到
+  `/api/listener/*` 与 `/api/module-serial/*`：请求
+  `/api/listener/logs/status` → 子应用内部路由 `/api/logs/status`。
+  纯后端路径转换，稳定可靠，不再拦截/改写 HTML 响应。
+- 前端页面**物理复制**到 workbench/static/pages/{listener,module-serial}/，
+  JS 内 `/api/` 统一改为 `/api/listener/`、`/api/module-serial/`；
+  静态资源 `/static/` 改为 `/static/pages/{pkg}/`（见 static/pages/）。
+- 编排路由（/api/run 等）保持本模块 api.router。
+
+listener 依赖 C# DLL/pythonnet，惰性导入 + 挂载失败降级（页签显示"不可用"，
+不拖垮整体，见详细设计 §9 风险表）。
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+
+from .api import router as orchestration_router
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+# 统一入口端口（详细设计 §3.2：8790）
+PORT = 8790
+
+
+def _workbench_static_dir() -> Path:
+    """workbench 自身 static 数据目录。
+
+    frozen：PyInstaller 将 apps/workbench/static 打进 _internal/static；
+    源码：apps/workbench/static（__file__ 真实路径）。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "static"  # type: ignore[attr-defined]
+    return STATIC_DIR
+
+
+def _subapp_static_dir(pkg: str) -> Path:
+    """子应用 static 数据目录（打包时打进 _internal/{pkg}/static）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / pkg / "static"  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parent.parent / pkg / "static"
+
+
+def _prepare_subapp_static(subapp_module) -> None:
+    """frozen 下修正子应用模块的 STATIC_DIR，指向其独立 static 数据目录。
+
+    子应用独立 exe 时 static 平铺 _MEIPASS/static；被 workbench 挂载后
+    _MEIPASS/static 已被 workbench 占用（同名冲突），故指向 {pkg}/static。
+    源码模式 STATIC_DIR 本就指向包内 static，无需修改。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    pkg = subapp_module.__name__.split(".")[0]
+    subapp_module.STATIC_DIR = _subapp_static_dir(pkg)
+
+
+class _PrefixProxy:
+    """ASGI 前缀代理：把 {api_prefix}{sub_path} 转发给子应用。
+
+    Starlette 6.x mount 设置 scope["root_path"]=挂载前缀，但 path 不剥离，
+    子应用 FastAPI 用 path - root_path 匹配路由。本代理主动剥掉
+    api_prefix 并把 root_path 清空，使子应用收到与独立运行一致的
+    path（/api/...），其内部路由原样命中。
+    例：请求 /api/module-serial/fs/list → 代理剥前缀 → 子应用收到
+    /api/fs/list（200）。
+    """
+
+    def __init__(self, sub_app, api_prefix: str, sub_root: str):
+        self.sub_app = sub_app
+        self.api_prefix = api_prefix
+        self.sub_root = sub_root
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.sub_app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        prefix = self.api_prefix
+        if path == prefix or path.startswith(prefix + "/"):
+            new_path = self.sub_root + path[len(prefix):]  # /api + 剩余
+            scope = dict(scope)
+            scope["path"] = new_path
+            scope["raw_path"] = new_path.encode("utf-8")
+            scope["root_path"] = ""
+        await self.sub_app(scope, receive, send)
+
+
+def _mount_proxied(app: FastAPI, name: str, sub_app, api_prefix: str) -> None:
+    """把子应用以 ASGI 前缀代理挂到 app（{api_prefix}/* → 子应用 /api/*）。"""
+    proxy = _PrefixProxy(sub_app, api_prefix, "/api")
+    app.mount(api_prefix, proxy, name=f"proxy-{name}")
+
+
+def create_workbench_app(
+    listener_factory=None,
+    module_log_factory=None,
+    mount_listener: bool = True,
+) -> FastAPI:
+    """创建统一工作台应用。
+
+    参数可注入替代工厂（测试用）；listener 挂载失败自动降级（mount_listener=False）。
+    """
+    app = FastAPI(
+        title="AI 闭环研发验证工作台",
+        description="统一集成程序：侦听台 / 模块日志 / 模拟集中器 / 验证工作台",
+        version="0.1.0",
+    )
+
+    # ---- 1. 挂载 module_log（含内部 simcon 子应用）----
+    try:
+        if module_log_factory is None:
+            import module_log.app as _ml_mod
+
+            _prepare_subapp_static(_ml_mod)
+            module_log_factory = _ml_mod.create_app
+        _ml_sub = module_log_factory()
+        _mount_proxied(app, "module-serial", _ml_sub, "/api/module-serial")
+        app.state.module_log_mounted = True
+    except Exception as exc:  # pragma: no cover - 依赖缺失降级
+        app.state.module_log_mounted = False
+        app.state.module_log_error = str(exc)
+
+    # ---- 2. 挂载 listener（依赖 C# DLL，失败降级）----
+    if mount_listener:
+        try:
+            if listener_factory is None:
+                import listener.app as _ls_app
+
+                _prepare_subapp_static(_ls_app)
+                _sub = _ls_app.create_app(
+                    _ls_app.parser_service,
+                    _ls_app.log_file_service,
+                    _ls_app.serial_capture_service,
+                )
+            else:
+                _sub = listener_factory()
+            _mount_proxied(app, "listener", _sub, "/api/listener")
+            app.state.listener_mounted = True
+        except Exception as exc:  # pragma: no cover
+            app.state.listener_mounted = False
+            app.state.listener_error = str(exc)
+    else:
+        app.state.listener_mounted = False
+
+    # ---- 3. 编排路由 ----
+    app.include_router(orchestration_router)
+
+    # ---- 4. 静态外壳（页签式 SPA）----
+    _wb_static = _workbench_static_dir()
+    if _wb_static.exists():
+        app.mount("/static", StaticFiles(directory=_wb_static), name="static")
+
+    @app.get("/")
+    async def index():
+        from fastapi.responses import FileResponse
+
+        idx = _wb_static / "index.html"
+        if idx.exists():
+            return FileResponse(idx)
+        return {"app": "workbench", "static": "missing"}
+
+    @app.get("/api/platform-version")
+    async def platform_version():
+        return {
+            "app": "workbench",
+            "version": "0.1.0",
+            "module_log_mounted": getattr(app.state, "module_log_mounted", False),
+            "listener_mounted": getattr(app.state, "listener_mounted", False),
+        }
+
+    return app
+
+
+# ---------- 模块级装配（供 uvicorn "workbench.app:app" / PyInstaller 引用）----------
+app = create_workbench_app()

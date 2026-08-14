@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>验证工作台</title>
+<style>
+:root{--bg:#0b1018;--panel:#111a2c;--line:#22314f;--tx:#e8eefb;--dim:#8aa2c8;--accent:#2dd4f0;--green:#2ecc88;--amber:#f0b832;--red:#f55858}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font-family:"Microsoft YaHei","PingFang SC",sans-serif;padding:20px;line-height:1.7}
+h1{font-size:18px;margin-bottom:6px}
+.sub{color:var(--dim);font-size:12px;margin-bottom:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.card h2{font-size:14px;margin-bottom:12px;color:var(--accent)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+select,input,button{background:#0d1526;border:1px solid var(--line);color:var(--tx);padding:8px 12px;border-radius:8px;font-size:13px;font-family:inherit}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#06121f;font-weight:700;border-color:var(--accent)}
+pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;overflow:auto;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:700}
+.badge.pass{background:rgba(46,204,136,.15);color:var(--green);border:1px solid rgba(46,204,136,.4)}
+.badge.fail{background:rgba(245,88,88,.15);color:var(--red);border:1px solid rgba(245,88,88,.4)}
+.badge.run{background:rgba(240,184,50,.15);color:var(--amber);border:1px solid rgba(240,184,50,.4)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+th{background:#0d1526;color:var(--dim);font-size:12px}
+.hint{color:var(--dim);font-size:11.5px;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>验证工作台 <span class="badge run" id="wb-badge">待命</span></h1>
+<div class="sub">AI 闭环验证：选场景 → 填固件信息 → 一键执行（烧录 → 监控 → 激励 → 比对 → 反馈 → 报告）</div>
+
+<div class="card">
+  <h2>① 场景选择与 Run 参数</h2>
+  <div class="row">
+    <select id="scenario"></select>
+    <input id="fw-version" placeholder="固件版本，如 v2.3.2">
+    <input id="fw-commit" placeholder="commit，如 9f2e1a" style="width:120px">
+    <input id="log-dir" placeholder="日志目录（默认 LOG/模块/cco）" style="width:260px">
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label><input type="checkbox" id="skip-flash"> 跳过烧录</label>
+    <label><input type="checkbox" id="skip-stimulus"> 跳过激励</label>
+    <label><input type="checkbox" id="skip-feedback"> 跳过反馈</label>
+    <button class="primary" id="btn-run">▶ 执行 Run</button>
+    <button id="btn-refresh-scenarios">↻ 刷新场景</button>
+  </div>
+  <div class="hint" id="scenario-desc"></div>
+</div>
+
+<div class="card">
+  <h2>② Run 结果</h2>
+  <div id="run-result"><div class="hint">尚未执行 Run。选择场景并点击「执行 Run」开始全链路闭环验证。</div></div>
+</div>
+
+<div class="card">
+  <h2>③ 历史 Runs</h2>
+  <div id="run-history"><div class="hint">暂无历史记录。</div></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = function (id) { return document.getElementById(id); };
+  let currentRunId = null;
+
+  function api(path, opts) {
+    return fetch(path, opts).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || r.statusText); });
+      return r.json();
+    });
+  }
+
+  function loadScenarios() {
+    api("/api/scenarios").then(function (list) {
+      const sel = $("scenario");
+      sel.innerHTML = "";
+      list.forEach(function (s) {
+        const o = document.createElement("option");
+        o.value = s.id; o.textContent = s.name + "（" + s.id + "）";
+        sel.appendChild(o);
+      });
+      showScenarioDesc();
+      $("scenario").addEventListener("change", showScenarioDesc);
+    }).catch(function (e) {
+      $("scenario").innerHTML = '<option>加载失败：' + e.message + '</option>';
+    });
+  }
+
+  function showScenarioDesc() {
+    const id = $("scenario").value;
+    api("/api/scenarios/" + id).then(function (s) {
+      const flow = (s.expected_flow || []).map(function (f) {
+        return f.negate ? "🚫 " + f.event_type : "→ " + f.event_type;
+      }).join("  ");
+      $("scenario-desc").textContent = "期望流程：" + flow;
+    }).catch(function () { });
+  }
+
+  function run() {
+    const body = {
+      scenario_id: $("scenario").value,
+      firmware: { version: $("fw-version").value || "dev", commit: $("fw-commit").value || "" },
+      skip_flash: $("skip-flash").checked,
+      skip_stimulus: $("skip-stimulus").checked,
+      skip_feedback: $("skip-feedback").checked,
+      log_dir: $("log-dir").value || undefined
+    };
+    $("wb-badge").textContent = "运行中";
+    $("wb-badge").className = "badge run";
+    api("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (run) {
+        currentRunId = run.run_id;
+        $("wb-badge").textContent = run.status === "passed" ? "PASS" : "FAIL";
+        $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" : "fail");
+        renderRun(run);
+        loadHistory();
+      })
+      .catch(function (e) {
+        $("wb-badge").textContent = "错误";
+        $("wb-badge").className = "badge fail";
+        $("run-result").innerHTML = '<pre>' + e.message + '</pre>';
+      });
+  }
+
+  function renderRun(run) {
+    const steps = (run.steps || []).map(function (s) {
+      return s.kind + " → " + s.result + (s.detail ? "（" + s.detail + "）" : "");
+    }).join("<br>");
+    $("run-result").innerHTML =
+      '<div style="margin-bottom:8px">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
+      (run.status === "passed" ? "pass" : "fail") + '">' + run.status + '</span></div>' +
+      '<div style="margin-bottom:8px">' + steps + '</div>' +
+      '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>';
+  }
+
+  function loadHistory() {
+    api("/api/runs?limit=10").then(function (list) {
+      if (!list.length) { $("run-history").innerHTML = '<div class="hint">暂无历史记录。</div>'; return; }
+      let html = "<table><tr><th>run_id</th><th>场景</th><th>状态</th><th>固件</th><th>时间</th></tr>";
+      list.forEach(function (r) {
+        html += "<tr><td>" + r.run_id + "</td><td>" + r.scenario_id + "</td><td>" +
+          '<span class="badge ' + (r.status === "passed" ? "pass" : "fail") + '">' + r.status + "</span></td><td>" +
+          (r.firmware_ver || "") + "</td><td>" + (r.created_at || "").slice(0, 19) + "</td></tr>";
+      });
+      $("run-history").innerHTML = html + "</table>";
+    }).catch(function () { });
+  }
+
+  $("btn-run").addEventListener("click", run);
+  $("btn-refresh-scenarios").addEventListener("click", loadScenarios);
+  loadScenarios();
+  loadHistory();
+})();
+</script>
+</body>
+</html>

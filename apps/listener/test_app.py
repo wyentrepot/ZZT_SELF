@@ -364,7 +364,8 @@ class FsApiTests(unittest.TestCase):
 
     def test_list_real_workspace_directory_finds_sample_log(self):
         """集成验证：真实日志目录可被 fs API 浏览到样本文件。"""
-        workspace = Path(__file__).resolve().parents[1]
+        # ADR-14 后：测试文件/ 位于仓库根（apps/listener → apps → 根）
+        workspace = Path(__file__).resolve().parents[2]
         target = workspace / "测试文件"
         response = self.client.get(
             "/api/fs/list", params={"path": str(target)}

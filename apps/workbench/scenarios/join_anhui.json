@@ -1,0 +1,18 @@
+{
+  "id": "join_anhui",
+  "name": "STA 入网（安徽）",
+  "module": "cco",
+  "expected_flow": [
+    {"step": "scan", "event_type": "nwk.scan.start", "within_ms": 10000},
+    {"step": "assoc", "event_type": "join.sta.ok", "within_ms": 30000},
+    {"step": "onnet", "event_type": "network.onnet", "within_ms": 15000}
+  ],
+  "stimulus": {
+    "task_file": "tasks/join_anhui.json",
+    "responders": []
+  },
+  "monitor": {
+    "rules": ["common", "provinces/anhui"],
+    "sources": ["module_log"]
+  }
+}

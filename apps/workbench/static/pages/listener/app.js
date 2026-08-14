@@ -98,7 +98,7 @@ async function openLog() {
   resetDetail();
 
   try {
-    await request("/api/logs/open", {
+    await request("/api/listener/logs/open", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({path}),
@@ -140,7 +140,7 @@ function pickerOpen() {
   picker.selected.textContent = "";
   pickerRoots();
   // 默认定位：上次打开路径（优先后端持久化，其次浏览器记忆）
-  request("/api/fs/last")
+  request("/api/listener/fs/last")
     .then((data) => {
       const last = (data.path || localStorage.getItem("hplc-log-path") || "").trim();
       if (last) {
@@ -158,7 +158,7 @@ function pickerClose() {
 
 async function pickerRoots() {
   try {
-    const data = await request("/api/fs/roots");
+    const data = await request("/api/listener/fs/roots");
     picker.roots.textContent = "";
     data.roots.forEach((root) => {
       const button = document.createElement("button");
@@ -183,7 +183,7 @@ async function pickerList(path) {
   picker.confirm.disabled = true;
   picker.selected.textContent = "";
   try {
-    const data = await request(`/api/fs/list?path=${encodeURIComponent(path)}`);
+    const data = await request(`/api/listener/fs/list?path=${encodeURIComponent(path)}`);
     picker.up.disabled = !data.parent;
     picker.list.textContent = "";
     if (!data.dirs.length && !data.files.length) {
@@ -265,7 +265,7 @@ picker.overlay.addEventListener("click", (event) => {
 });
 picker.up.addEventListener("click", () => {
   if (!picker.currentDir) return;
-  request(`/api/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
+  request(`/api/listener/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
     .then((data) => {
       if (data.parent) pickerList(data.parent);
     })
@@ -283,7 +283,7 @@ const pickerNative = $("#picker-native");
 if (pickerNative) {
   pickerNative.addEventListener("click", async () => {
     try {
-      const data = await request("/api/fs/pick");
+      const data = await request("/api/listener/fs/pick");
       if (data.path) {
         elements.path.value = data.path;
         localStorage.setItem("hplc-log-path", data.path);
@@ -322,7 +322,7 @@ function startPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
   const tick = async () => {
     try {
-      updateStatus(await request("/api/logs/status"));
+      updateStatus(await request("/api/listener/logs/status"));
     } catch (error) {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
@@ -469,7 +469,7 @@ async function loadFrames() {
   const token = ++state.loadToken;
   setFrameLoading(true);
   try {
-    const page = await request(`/api/logs/frames?${params}`);
+    const page = await request(`/api/listener/logs/frames?${params}`);
     if (token !== state.loadToken) return; // 已有更新的请求发出，丢弃本次过期结果
     state.pageCache.set(cacheKey, page);
     renderFrames(page);
@@ -739,7 +739,7 @@ async function loadDetail(id, row) {
   elements.detailEmpty.querySelector("h2").textContent = "正在调用 DLL 深度解析…";
   elements.detailContent.hidden = true;
   try {
-    renderDetail(await request(`/api/logs/frames/${id}`));
+    renderDetail(await request(`/api/listener/logs/frames/${id}`));
   } catch (error) {
     elements.detailEmpty.querySelector("h2").textContent = "详情解析失败";
     showError(error.message);
@@ -752,7 +752,7 @@ async function parseSingleFrame() {
   button.disabled = true;
   output.textContent = "正在解析…";
   try {
-    const data = await request("/api/parse", {
+    const data = await request("/api/listener/parse", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({hex: $("#frame-input").value}),
@@ -823,7 +823,7 @@ $("#copy-detail").addEventListener("click", async () => {
 
 elements.path.value = localStorage.getItem("hplc-log-path") || "";
 updateActiveFilterSummary();
-fetch("/api/version")
+fetch("/api/listener/version")
   .then((response) => response.json())
   .then((data) => {
     $("#version").textContent = `${data.name} · ${data.version} · ${data.date}`;
@@ -835,7 +835,7 @@ if (launchMode === "test") {
   elements.path.value = SAMPLE_PATH;
   setTimeout(openLog, 150);
 } else {
-  request("/api/logs/status").then(updateStatus).catch(() => {});
+  request("/api/listener/logs/status").then(updateStatus).catch(() => {});
 }
 
 // ---------- 分钟采集分析 ----------
@@ -923,7 +923,7 @@ async function loadMinuteAnalysis() {
   if (minuteElements.source.value === "manual") params.set("period_minutes", minuteElements.period.value);
   minuteElements.error.hidden = true;
   try {
-    const data = await request(`/api/logs/task-minute-analysis?${params}`);
+    const data = await request(`/api/listener/logs/task-minute-analysis?${params}`);
     if (minuteElements.source.value === "configured" && data.derived_period_minutes) {
       minuteElements.period.value = String(data.derived_period_minutes);
     }
@@ -938,7 +938,7 @@ async function loadMinuteTaskList() {
   const tei = (minuteElements.ccoTei.value.trim() || "001").toUpperCase();
   const params = new URLSearchParams({ cco_tei: tei, nid: state.nid, start_time: state.startTime, end_time: state.endTime });
   try {
-    const data = await request(`/api/logs/task-config-tasks?${params}`);
+    const data = await request(`/api/listener/logs/task-config-tasks?${params}`);
     minuteElements.taskList.replaceChildren();
     for (const taskNo of data.tasks) {
       const option = document.createElement("option");
@@ -955,7 +955,7 @@ async function refreshDerivedPeriod() {
   if (!taskNo) { minuteElements.period.value = ""; return; }
   const params = new URLSearchParams({ task_no: taskNo, cco_tei: tei, nid: state.nid });
   try {
-    const data = await request(`/api/logs/task-derived-period?${params}`);
+    const data = await request(`/api/listener/logs/task-derived-period?${params}`);
     minuteElements.period.value = (data.source === "configured" && data.derived_period_minutes)
       ? String(data.derived_period_minutes) : "";
   } catch { /* 推导失败保持原值 */ }
@@ -1010,7 +1010,7 @@ async function loadTaskConfigTasks() {
   minuteElements.taskConfigSelect.disabled = true;
   minuteElements.taskConfigQuery.disabled = true;
   try {
-    const data = await request(`/api/logs/task-config-tasks?${params}`);
+    const data = await request(`/api/listener/logs/task-config-tasks?${params}`);
     const select = minuteElements.taskConfigSelect;
     select.replaceChildren();
     if (!data.tasks.length) {
@@ -1041,9 +1041,9 @@ async function loadTaskConfigSummary() {
   minuteElements.taskConfigError.hidden = true;
   try {
     renderTaskConfigSummary(
-      await request(`/api/logs/task-config-summary?${params}`)
+      await request(`/api/listener/logs/task-config-summary?${params}`)
     );
-    renderTaskConfigLifecycle(await request(`/api/logs/task-config-lifecycle?${params}`));
+    renderTaskConfigLifecycle(await request(`/api/listener/logs/task-config-lifecycle?${params}`));
   } catch (error) {
     minuteElements.taskConfigError.textContent = error.message;
     minuteElements.taskConfigError.hidden = false;
@@ -1225,7 +1225,7 @@ loadMinuteTaskList();
 
 async function loadSerialPorts() {
   try {
-    const data = await request("/api/serial/ports");
+    const data = await request("/api/listener/serial/ports");
     const ports = (data.ports || []).map((p) => p.device);
     elements.serialPortList.replaceChildren();
     ports.forEach((device) => {
@@ -1258,7 +1258,7 @@ function setSerialState(active) {
 
 async function refreshSerialStatus() {
   try {
-    const status = await request("/api/serial/status");
+    const status = await request("/api/listener/serial/status");
     const active = status.state === "running" || status.state === "starting";
     setSerialState(active);
     if (status.state === "running") {
@@ -1315,7 +1315,7 @@ async function startSerial() {
   elements.serialStart.disabled = true;
   elements.serialMessage.textContent = `正在打开 ${port} ...`;
   try {
-    await request("/api/serial/start", {
+    await request("/api/listener/serial/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ port, baudrate: baud }),
@@ -1331,7 +1331,7 @@ async function startSerial() {
 
 async function stopSerial() {
   try {
-    await request("/api/serial/stop", { method: "POST" });
+    await request("/api/listener/serial/stop", { method: "POST" });
     elements.serialMessage.textContent = "正在停止串口采集...";
     elements.serialRefresh.disabled = true;
     stopSerialPolling();
@@ -1393,7 +1393,7 @@ sourceRadios.forEach((radio) => {
       dataSourceSwitchBusy = true;
       try {
         // 数据源二选一：日志索引运行中时禁止切到串口，避免数据混在一起
-        const status = await request("/api/logs/status").catch(() => null);
+        const status = await request("/api/listener/logs/status").catch(() => null);
         if (status && (status.state === "indexing" || status.state === "queued")) {
           event.target.checked = false;
           document.querySelector('input[name="data-source"][value="log"]').checked = true;
@@ -1413,7 +1413,7 @@ sourceRadios.forEach((radio) => {
       dataSourceSwitchBusy = true;
       try {
         // 数据源二选一：串口采集运行中时禁止切到日志，避免数据混在一起
-        const status = await request("/api/serial/status").catch(() => null);
+        const status = await request("/api/listener/serial/status").catch(() => null);
         if (status && (status.state === "running" || status.state === "starting")) {
           event.target.checked = false;
           document.querySelector('input[name="data-source"][value="serial"]').checked = true;
