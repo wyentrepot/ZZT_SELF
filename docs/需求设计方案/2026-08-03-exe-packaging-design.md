@@ -44,7 +44,7 @@
 ├── hplc_web/
 │   ├── app.py                # 路径常量改为 frozen 感知（最小改动）
 │   └── run.py                # frozen 下直接 uvicorn.run(app)
-└── docs/superpowers/specs/2026-08-03-exe-packaging-design.md
+└── docs/需求设计方案/2026-08-03-exe-packaging-design.md
 ```
 
 ### 4.2 PyInstaller 配置要点（spec 文件）

@@ -453,7 +453,7 @@ _append_line(direction, text)  →  写原始日志（现有）  +  run_loghooks
 
 ```
 源码变更
-  ↓ ① 工程 AI 重跑扫描（用 docs/loghooks-source-scan-prompt.md）
+  ↓ ① 工程 AI 重跑扫描（用 docs/开发与运维/loghooks-source-scan-prompt.md）
   ↓    产出新 cco_print_scan.json
   ↓ ② python -m loghooks rules diff --old <旧扫描结果> --new <新扫描结果>
   ↓    自动检出：新增打印 / 删除打印 / 行号漂移 / msg 变化
@@ -494,7 +494,7 @@ _append_line(direction, text)  →  写原始日志（现有）  +  run_loghooks
 | 扫描结果（原材料） | `loghooks/rules_source/` | 工程侧 AI | 源码变更时 |
 | 规则文件（消费方） | `loghooks/rules/common.json`、`provinces/*.json` | 本侧工程 | 扫描结果更新后 |
 
-- 扫描结果由工程侧 AI 按 `docs/loghooks-source-scan-prompt.md` 提示词执行，**不在此项目代码仓库内**（产出于 `D:\zzt\loghooks\rules_source\`），但维护者负责将更新后的结果同步到本仓库。
+- 扫描结果由工程侧 AI 按 `docs/开发与运维/loghooks-source-scan-prompt.md` 提示词执行，**不在此项目代码仓库内**（产出于 `D:\zzt\loghooks\rules_source\`），但维护者负责将更新后的结果同步到本仓库。
 - 规则文件基于扫描结果编写，两者通过 `(file, msg)` 稳定关联。
 
 ---

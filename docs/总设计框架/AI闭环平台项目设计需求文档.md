@@ -3,7 +3,7 @@
 > **文档定位**：项目级设计需求文档（PRD + 总体设计），归档用。定义"AI 闭环编码—烧录—运行监控—结论"平台的完整需求、架构、数据模型、接口与验收标准。
 > **适用范围**：侦听台（listener）、模块日志/烧录（module_log）、事件监控（loghooks）、模拟集中器（sim_concentrator）、共享解析库（shared / parser_lib）。
 > **版本**：v1.1 ｜ **日期**：2026-08-14 ｜ **状态**：归档定稿（待评审迭代）
-> **关联文档**：`DECISIONS.md`（ADR-1~13）、`docs/loghooks-design.md`、`docs/模拟集中器验证工具使用手册.md`、`README.md`
+> **关联文档**：`DECISIONS.md`（ADR-1~13）、`docs/需求设计方案/loghooks-design.md`、`docs/开发与运维/模拟集中器验证工具使用手册.md`、`README.md`
 >
 > **v1.1 变更**：
 > 1. 新增 **FR-6 统一集成程序（platform）**：最终形态为"一个程序、全链路打通"（响应需求方 2026-08-14 意见）。
@@ -353,7 +353,7 @@ platform/
 | `data/`（含 `graphify-out/`） | ✅ | 数据与代码分析输出 |
 | `legacy/` | ✅ | 历史归档（`use/` C# 测试工程、`dll_Tesll/` 编译产物快照） |
 | `tools/`（原 `packaging/` `scripts/`） `reqs/` | ✅ | 打包 / 辅助脚本 / 需求会话 |
-| 根文件 | ✅ | README / DECISIONS / REQS-INDEX / oad_todo(→docs/) / conftest / DLL.sln / ov.conf / reasonix.toml / 启动工具.bat / .git* |
+| 根文件 | ✅ | README / DECISIONS / REQS-INDEX / oad_todo(→docs/需求管理/归档/) / conftest / DLL.sln / ov.conf / reasonix.toml / 启动工具.bat / .git* |
 | `build/ dist/ LOG/ packages/ use/ graphify-out/ 测试文件/ .venv/ .pytest_cache/ __pycache__/` | ❌ 全部未跟踪 | PyInstaller 中间/发布产物、运行时日志、NuGet 还原包、历史遗留（`use/`、`graphify-out/` 已在 .gitignore 标注"待清理"）、本地测试大文件、虚拟环境 |
 
 **结论**：git 视角的根目录并不乱（15 项顶层）；"乱"主要来自**本地磁盘上大量未跟踪噪音目录与代码目录混杂**（资源管理器视角），以及 6 个顶层代码包平铺、无法一眼区分"应用"与"库"。
@@ -362,7 +362,7 @@ platform/
 
 1. 顶层 6 个代码包平铺，分不清"应用（可独立运行）"与"库（被引用）"。
 2. 本地噪音目录（build/dist/LOG/packages/use/graphify-out/测试文件）与代码混杂。
-3. 文档分散三处（docs/、docs/协议/、docs/oad_todo.md）。
+3. 文档分散三处（docs/、docs/协议/、docs/需求管理/归档/oad_todo.md）。
 4. 工具分散（tools/scripts/、tools/packaging/）。
 5. 历史遗留（use/、graphify-out/）未清理。
 
@@ -374,7 +374,7 @@ platform/
 侦听台改造/
 ├── apps/            # 应用层：listener/ module_log/ platform/(FR-6 落地时新增)
 ├── libs/            # 库层：shared/ parser_lib/ loghooks/ sim_concentrator/
-├── docs/            # 项目文档 + docs/协议/（协议规范）+ docs/oad_todo.md
+├── docs/            # 项目文档 + docs/协议/（协议规范）+ docs/需求管理/（需求汇总与归档）
 ├── tools/           # 工具：tools/scripts/ + tools/packaging/
 ├── reqs/            # 需求会话归档（配合 REQS-INDEX.md）
 ├── data/            # 运行日志 data/logs/（frozen exe 下为 exe 同目录 LOG/）；graphify-out 已清理
@@ -384,7 +384,7 @@ platform/
 ```
 
 **阶段一（已完成）**：归组非代码项 + 清理遗留：
-- `侦听台文档/` → `docs/协议/`（南网/国网子目录）、`oad_todo.md` → `docs/oad_todo.md`，交叉引用全量同步。
+- `侦听台文档/` → `docs/协议/`（南网/国网子目录）、`oad_todo.md` → `docs/需求管理/归档/oad_todo.md`，交叉引用全量同步。
 - `scripts/` + `packaging/` → `tools/scripts/` + `tools/packaging/`（spec 的 ROOT 解析、bat 相对路径、冒烟脚本路径全量同步）。
 - 运行日志 `LOG/` → `data/logs/`（listener/module_log/loghooks 的 `_log_dir()` 与默认落盘路径同步；frozen 形态仍为 exe 同目录 `LOG/`；本地历史日志随目录移动保留现场）。
 - `data/graphify-out/` 76 个跟踪文件 `git rm` 清理，`.gitignore` 追加 `data/graphify-out/`。
@@ -622,7 +622,7 @@ platform/
 | 风险 | 影响 | 对策 |
 |------|------|------|
 | 规则维护成本随固件迭代上升 | 验证失效/漏检 | 命中率量化 + 漂移告警；rules diff 半自动闭环；扫描库自动聚类辅助精选规则 |
-| 13762 嵌套 645/698 字段级解析覆盖不足（OAD/OI 覆盖率低，见 `docs/oad_todo.md`） | 深层次断言做不了 | 按业务场景优先级补 OAD；用真实抓包 golden data 回放守住解析不回退 |
+| 13762 嵌套 645/698 字段级解析覆盖不足（OAD/OI 覆盖率低，见 `docs/需求管理/归档/oad_todo.md`） | 深层次断言做不了 | 按业务场景优先级补 OAD；用真实抓包 golden data 回放守住解析不回退 |
 | 模拟集中器"不够真"骗不过 CCO 状态机 | 假通过/假失败 | 时序参数（帧间隔/超时窗）可配置；协议一致性测试；硬件在环冒烟 |
 | 三时基不一致（模块时钟/PC 时钟） | 跨来源关联错位 | 以业务锚点（NID/MAC/冻结时刻/RTUA）关联 + 宽松时间窗；批次统一烧录时刻=0 相对对齐 |
 | 海量轮询日志噪音 | 事件流淹没问题 | 规则双重约束（file+msg）；阈值/聚合类规则；事件流分片落盘 |
@@ -653,12 +653,12 @@ platform/
 | 文档 | 位置 |
 |------|------|
 | 架构决策记录 | `DECISIONS.md`（ADR-1~13） |
-| loghooks 设计定稿 | `docs/loghooks-design.md` |
-| 模拟集中器使用手册 | `docs/模拟集中器验证工具使用手册.md` |
-| 模块日志使用说明 | `docs/module-serial-usage.md` |
-| 打包发布方案 | `docs/一键打包发布方案.md` |
-| 任务交接需求与进度表 | `docs/任务交接需求与进度表.md` |
-| OAD/OI 覆盖清单 | `docs/oad_todo.md` |
+| loghooks 设计定稿 | `docs/需求设计方案/loghooks-design.md` |
+| 模拟集中器使用手册 | `docs/开发与运维/模拟集中器验证工具使用手册.md` |
+| 模块日志使用说明 | `docs/开发与运维/module-serial-usage.md` |
+| 打包发布方案 | `docs/需求设计方案/一键打包发布方案.md` |
+| 任务交接需求与进度表 | `docs/需求管理/归档/任务交接需求与进度表.md` |
+| OAD/OI 覆盖清单 | `docs/需求管理/归档/oad_todo.md` |
 | 协议规范 | `docs/协议/`（国网/南网协议、报文格式、DLL 接口说明） |
 
 ### 13.2 待评审问题（归档时遗留，供下轮对齐）

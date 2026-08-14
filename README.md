@@ -39,7 +39,7 @@
 | `测试文件/` | 🚫 本地噪音 | 本地大体积测试数据（gitignore） |
 | `.venv/` `.pytest_cache/` | 🚫 本地噪音 | Python 虚拟环境 / pytest 缓存（gitignore） |
 
-> **目录演进**：目标布局（阶段一归组 / 阶段二 apps+libs 分层）见 `docs/01-第一待开发需求/AI闭环平台项目设计需求文档.md` §6.2。
+> **目录演进**：目标布局（阶段一归组 / 阶段二 apps+libs 分层）见 `docs/总设计框架/AI闭环平台项目设计需求文档.md` §6.2。
 
 ## 一、项目简介
 
@@ -139,15 +139,18 @@
 
 ## 七、构建与运行
 
-1. **构建解析动态库**：用 Visual Studio 打开 `DLL.sln`，产物为 `libs\shared\dll\bin\Debug\GwHPLCAnalysis.dll`（仅侦听台需要）。
+1. **构建解析动态库**：用 Visual Studio 打开 `DLL.sln`，产物为 `libs\shared\dll\bin\Debug\GwHPLCAnalysis.dll`（仅侦听台需要）。命令行方式：双击根目录 `build_dll.bat`（GBK 编码，MSBuild Debug 编译，需 VS2022 BuildTools）。
 2. **启动服务**：双击 `启动工具.bat` 选择应用，或直接运行 `python -m listener.run` / `python -m module_log.run`（从仓库根运行；`python -m` 需要 apps/ 与 libs/ 在 `PYTHONPATH` 或已由入口脚本自动注入，Windows 下建议用启动脚本）。
-3. **停止服务**：关闭对应窗口，或在任务管理器中结束 python 进程。
+3. **启动一体化工作台（FR-6）**：`python -m workbench.run`（端口 8790，统一页签界面：验证工作台 / 模块日志 / 侦听台）；桌面模式 `python -m workbench.desktop`（pywebview 单窗口）。依赖 `libs\shared\dll\bin\Debug\GwHPLCAnalysis.dll`（未编译时侦听台页签自动降级为"不可用"，其余功能不受影响）。
+4. **停止服务**：关闭对应窗口，或在任务管理器中结束 python 进程。
 
 ## 八、单元测试
 
 ```
-.venv\Scripts\python.exe -m pytest apps/listener apps/module_log libs/shared libs/parser_lib
+.venv\Scripts\python.exe -m pytest apps/listener apps/module_log apps/workbench libs/shared libs/parser_lib
 ```
+
+> 注：`apps/listener` 与 `libs/shared` 的部分测试依赖 C# DLL 编译产物（`build_dll.bat` 后即可全绿）；`test_concurrent_meter_e2e.py`、`test_dotnet_parser.py`、`test_dll_python_meter_consistency.py` 属 DLL/串口集成用例，需真实 DLL 环境。
 
 ## 九、相关文档
 

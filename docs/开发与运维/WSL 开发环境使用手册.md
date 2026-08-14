@@ -1,6 +1,6 @@
 # WSL 开发环境使用手册
 
-> 配套设计文档：`docs/superpowers/specs/2026-08-13-wsl-dev-split-design.md`
+> 配套设计文档：`docs/需求设计方案/2026-08-13-wsl-dev-split-design.md`
 > 核心思路：**开发/测试/Web 在 WSL（ext4 明文），串口/桌面/打包在 Windows**，两侧用 git 远程仓库同步。
 
 ## 环境概览
