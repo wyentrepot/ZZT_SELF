@@ -4,28 +4,114 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>验证工作台</title>
+<link rel="stylesheet" href="/static/tokens.css">
 <style>
-:root{--bg:#0b1018;--panel:#111a2c;--line:#22314f;--tx:#e8eefb;--dim:#8aa2c8;--accent:#2dd4f0;--green:#2ecc88;--amber:#f0b832;--red:#f55858}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--tx);font-family:"Microsoft YaHei","PingFang SC",sans-serif;padding:20px;line-height:1.7}
-h1{font-size:18px;margin-bottom:6px}
-.sub{color:var(--dim);font-size:12px;margin-bottom:20px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
-.card h2{font-size:14px;margin-bottom:12px;color:var(--accent)}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-select,input,button{background:#0d1526;border:1px solid var(--line);color:var(--tx);padding:8px 12px;border-radius:8px;font-size:13px;font-family:inherit}
-button{cursor:pointer}
-button:hover{border-color:var(--accent)}
-button.primary{background:var(--accent);color:#06121f;font-weight:700;border-color:var(--accent)}
-pre{background:#0d1526;border:1px solid var(--line);border-radius:8px;padding:12px;font-size:12px;overflow:auto;font-family:Consolas,monospace;white-space:pre-wrap;word-break:break-all}
-.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:700}
-.badge.pass{background:rgba(46,204,136,.15);color:var(--green);border:1px solid rgba(46,204,136,.4)}
-.badge.fail{background:rgba(245,88,88,.15);color:var(--red);border:1px solid rgba(245,88,88,.4)}
-.badge.run{background:rgba(240,184,50,.15);color:var(--amber);border:1px solid rgba(240,184,50,.4)}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
-th{background:#0d1526;color:var(--dim);font-size:12px}
-.hint{color:var(--dim);font-size:11.5px;margin-top:8px}
+/* workbench 验证工作台页面专属样式 —— 引用 tokens.css 中的 Token 变量 */
+body {
+  background: var(--bg-gradient);
+  color: var(--fg-default);
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  padding: var(--sp-5);
+  line-height: var(--lh-relax);
+  min-height: 100vh;
+}
+h1 {
+  font-size: var(--fs-2xl);
+  margin-bottom: var(--sp-1-5);
+}
+.sub {
+  color: var(--fg-dim);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--sp-5);
+}
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: var(--card-padding);
+  margin-bottom: var(--sp-4);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--card-shadow);
+}
+.card h2 {
+  font-size: var(--section-title-fs);
+  margin-bottom: var(--section-title-mb);
+  color: var(--section-title-color);
+}
+.row {
+  display: flex;
+  gap: var(--sp-2-5);
+  flex-wrap: wrap;
+  align-items: center;
+}
+select, input, button {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--input-fg);
+  padding: var(--input-padding);
+  border-radius: var(--input-radius);
+  font-size: var(--input-fs);
+  font-family: inherit;
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.4));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.4));
+}
+select:focus, input:focus {
+  outline: none;
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--input-focus) 25%, transparent);
+}
+button {
+  cursor: pointer;
+  transition: background var(--dur-150) var(--ease-out),
+              border-color var(--dur-150) var(--ease-out);
+}
+button:hover {
+  border-color: var(--btn-hover-border);
+}
+button.primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  font-weight: var(--btn-primary-fw);
+  border-color: var(--btn-primary-bg);
+}
+button.primary:hover {
+  background: var(--btn-primary-hover);
+}
+pre {
+  background: var(--pre-bg);
+  border: 1px solid var(--pre-border);
+  border-radius: var(--pre-radius);
+  padding: var(--pre-padding);
+  font-size: var(--pre-fs);
+  overflow: auto;
+  font-family: var(--pre-font);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--table-cell-fs);
+}
+th, td {
+  border: 1px solid var(--table-border);
+  padding: var(--table-cell-padding);
+  text-align: left;
+}
+th {
+  background: var(--table-header-bg);
+  color: var(--table-header-fg);
+  font-size: var(--table-header-fs);
+}
+tr:hover td {
+  background: var(--table-row-hover);
+}
+.hint {
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  margin-top: var(--sp-2);
+}
 </style>
 </head>
 <body>
@@ -40,7 +126,7 @@ th{background:#0d1526;color:var(--dim);font-size:12px}
     <input id="fw-commit" placeholder="commit，如 9f2e1a" style="width:120px">
     <input id="log-dir" placeholder="日志目录（默认 LOG/模块/cco）" style="width:260px">
   </div>
-  <div class="row" style="margin-top:10px">
+  <div class="row" style="margin-top:var(--sp-2-5)">
     <label><input type="checkbox" id="skip-flash"> 跳过烧录</label>
     <label><input type="checkbox" id="skip-stimulus"> 跳过激励</label>
     <label><input type="checkbox" id="skip-feedback"> 跳过反馈</label>
@@ -130,9 +216,9 @@ th{background:#0d1526;color:var(--dim);font-size:12px}
       return s.kind + " → " + s.result + (s.detail ? "（" + s.detail + "）" : "");
     }).join("<br>");
     $("run-result").innerHTML =
-      '<div style="margin-bottom:8px">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
+      '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
       (run.status === "passed" ? "pass" : "fail") + '">' + run.status + '</span></div>' +
-      '<div style="margin-bottom:8px">' + steps + '</div>' +
+      '<div style="margin-bottom:var(--sp-2)">' + steps + '</div>' +
       '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>';
   }
 
@@ -153,6 +239,27 @@ th{background:#0d1526;color:var(--dim);font-size:12px}
   $("btn-refresh-scenarios").addEventListener("click", loadScenarios);
   loadScenarios();
   loadHistory();
+})();
+</script>
+
+<!-- 主题同步：监听父页面主题切换 -->
+<script>
+(function () {
+  "use strict";
+  function applyTheme(theme) {
+    if (theme) document.documentElement.className = theme;
+  }
+  // 初始化时从父页面读取主题
+  try {
+    var parentTheme = window.top.document.documentElement.className;
+    applyTheme(parentTheme);
+  } catch (e) {}
+  // 监听父页面广播
+  window.addEventListener("message", function (e) {
+    if (e.data && e.data.type === "wb-theme-change") {
+      applyTheme(e.data.theme);
+    }
+  });
 })();
 </script>
 </body>

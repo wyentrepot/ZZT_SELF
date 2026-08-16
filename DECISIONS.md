@@ -24,6 +24,7 @@
 | 16 | docs 文档按 协议/需求/需求设计方案/总设计框架/开发与运维 五类归类 | ✅ 生效 |
 | 17 | FR-5/FR-6 落地：新增 workbench 统一工作台包（包名避开标准库 platform 冲突），编排层 + 统一后端 + 页签式 SPA | ✅ 生效 |
 | 18 | workbench 前端合并 + 后端代理（方案①）：ASGI 前缀代理挂 /api/listener、/api/module-serial + 前端页面复制改前缀，根治页签空白；文件选择器 tkinter 故障降级 PowerShell | ✅ 生效 |
+| 19 | 项目级安装 UI/UX 设计技能（ui-ux-pro-max + ui-styling + design-system）到 .agents/skills/，仅免费且面向前端/软件 UI 的三个，不装品牌营销类 | ✅ 生效 |
 
 ---
 
@@ -410,3 +411,18 @@
 - **理由**：用户反馈"侦听台页面空白黑色、无法加载，且要求合并成一个工程而非仅打包"。方案①（前端合并 + 后端代理）保持底层包独立（不推翻 ADR-1/10/13）、根治前端 API 前缀错配、替代脆弱的响应改写，是符合微前端聚合标准形态的做法（页面聚合 + 反向代理）。
 - **影响**：workbench 三页签（验证工作台/模块日志/侦听台）经复制页面 + 前缀代理完整可用；listener/module_log 独立应用不受影响；文件选择器在 frozen 下 tkinter 故障自动降级 PowerShell；全量 pytest 回归 414 passed / 66 skipped / 0 failed（排除依赖 C# DLL 编译产物的既有 listener/shared 测试）。
 - **被取代**：无（新增决策；原 ADR-17 的"挂载 + 静态重写"表述被本决策细化修正）。
+
+
+## ADR-19 项目级安装 UI/UX 设计技能（.agents/skills/）
+
+- **日期**：2026-08-15
+- **状态**：✅ 生效
+- **决定**：在项目根新建 `.agents/skills/`，仅安装三个免费且面向前端/软件 UI 设计的技能：
+  - `ui-ux-pro-max`（核心，v2.13.0，MIT）：79 风格/192 配色/74 字体配对/119 UX 指南/25 图表/22 技术栈，含 `--design-system` 设计系统生成器；
+  - `ui-styling`（MIT，claudekit）：shadcn/ui + Tailwind + canvas 实现层技能；
+  - `design-system`（MIT，claudekit）：三层 design token（primitive→semantic→component）+ Tailwind theme 配置。
+  不安装 `banner-design`/`brand`/`design`/`slides`（官方划为高级版付费内容，且属品牌营销向，与前端/软件 UI 无关）。
+  来源：`nextlevelbuilder/ui-ux-pro-max-skill`（main 分支，对应 v2.13.0），从 `.claude/skills/` 对应目录原样复制。
+- **理由**：项目 workbench 前端（页签式 SPA + 数据可视化）需要专业 UI/UX 设计指导；用户要求免费、专注前端/软件 UI，科研/数据类风格可经 `--design-system` 组合查询获得。
+- **影响**：`D:/2-侦听台改造/.agents/skills/` 下新增 3 个技能目录（195 文件）；通用 agent 标准目录（Claude Code 2.x/Codex 等）可加载；搜索脚本依赖 Python 3.x 标准库，无外部依赖；`.gitignore` 未忽略 `.agents/`，技能文件随仓库入库。
+- **被取代**：无（新增决策）。
