@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +45,10 @@ from .store import RunStore
 
 def new_run_id() -> str:
     return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
+
+
+class RunCancelled(Exception):
+    """Run 被用户取消（协作式取消：步骤间检查取消标志后抛出）。"""
 
 
 # ---------------------------------------------------------------------------
@@ -158,12 +163,22 @@ def _run_stimulus(task_file: Optional[Path], task: Optional[dict]) -> Optional[d
 
 
 class RunExecutor:
-    """串行执行一个 Run 的全链路编排器。"""
+    """串行执行一个 Run 的全链路编排器。
+
+    支持同步（execute，CLI/测试）与异步（submit + cancel，REST/UI）两种执行：
+    - submit() 在后台线程执行，前端轮询状态；
+    - cancel() 协作式取消：置取消标志，执行线程在步骤间检查，落 CANCELLED 终态。
+    """
 
     def __init__(self, store: Optional[RunStore] = None):
         self.store = store or RunStore()
+        self._cancel_events: Dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
+
+    # ---------------- 同步执行（CLI / 测试复用） ----------------
 
     def execute(self, run_input: RunInput, scenarios_dir: Optional[Path] = None) -> Run:
+        """同步执行一个 Run（阻塞到结束）。取消标志可经 cancel() 注入。"""
         scenario = load_scenario(run_input.scenario_id, scenarios_dir)
         if scenario is None:
             raise ValueError(f"场景模板不存在：{run_input.scenario_id}")
@@ -179,6 +194,12 @@ class RunExecutor:
         try:
             report = self._run_steps(run, run_input, scenario)
             run.status = "passed" if report.verdict == "pass" else "failed"
+        except RunCancelled:
+            run.status = "cancelled"
+            report = Report(run_id=run.run_id, verdict="fail")
+            report.assertions.append(
+                Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
+            )
         except Exception as exc:
             run.status = "failed"
             report = Report(run_id=run.run_id, verdict="fail")
@@ -189,7 +210,83 @@ class RunExecutor:
         run.report_path = str(self.store.save_report(run.run_id, report.model_dump()))
         return run
 
-    def _run_steps(self, run: Run, run_input: RunInput, scenario: dict) -> Report:
+    # ---------------- 异步执行 + 取消（REST / UI） ----------------
+
+    def submit(self, run_input: RunInput, scenarios_dir: Optional[Path] = None) -> Run:
+        """异步启动一个 Run：创建后立刻返回（状态 running），后台线程执行。
+
+        调用方轮询 GET /api/run/{run_id} 获取进度；可经 cancel(run_id) 取消。
+        """
+        scenario = load_scenario(run_input.scenario_id, scenarios_dir)
+        if scenario is None:
+            raise ValueError(f"场景模板不存在：{run_input.scenario_id}")
+
+        run = Run(
+            run_id=new_run_id(),
+            scenario_id=run_input.scenario_id,
+            firmware=run_input.firmware,
+        )
+        self.store.create_run(run)
+        self.store.update_status(run.run_id, "running")
+        run.status = "running"
+
+        cancel_event = threading.Event()
+        with self._lock:
+            self._cancel_events[run.run_id] = cancel_event
+
+        def _target() -> None:
+            try:
+                report = self._run_steps(run, run_input, scenario, cancel_event=cancel_event)
+                status = "passed" if report.verdict == "pass" else "failed"
+                if cancel_event.is_set():
+                    status = "cancelled"
+            except RunCancelled:
+                status = "cancelled"
+                report = Report(run_id=run.run_id, verdict="fail")
+                report.assertions.append(
+                    Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
+                )
+            except Exception as exc:
+                status = "failed"
+                report = Report(run_id=run.run_id, verdict="fail")
+                report.assertions.append(
+                    Assertion(id="run.execute", actual=str(exc), result="fail")
+                )
+            self.store.update_status(run.run_id, status)
+            run.report_path = str(self.store.save_report(run.run_id, report.model_dump()))
+            with self._lock:
+                self._cancel_events.pop(run.run_id, None)
+
+        t = threading.Thread(target=_target, name=f"run-{run.run_id}", daemon=True)
+        t.start()
+        return run
+
+    def cancel(self, run_id: str) -> bool:
+        """请求取消一个正在执行的 Run：置取消标志 + 状态转 CANCELLING。
+
+        返回 True 表示已发起取消（该 run 正在执行）；已终态/不存在返回 False。
+        执行线程会在步骤间检查标志，最终落 CANCELLED 终态。
+        """
+        with self._lock:
+            ev = self._cancel_events.get(run_id)
+        if ev is None:
+            return False
+        ev.set()
+        self.store.update_status(run_id, "cancelling")
+        return True
+
+    def is_cancelled(self, run_id: str) -> bool:
+        with self._lock:
+            ev = self._cancel_events.get(run_id)
+        return ev is not None and ev.is_set()
+
+    def _run_steps(
+        self,
+        run: Run,
+        run_input: RunInput,
+        scenario: dict,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Report:
         steps_result: Dict[str, Any] = {}
         seq = 0
 
@@ -200,6 +297,14 @@ class RunExecutor:
             "steps": [],
             "frames": [],
         }
+
+        # 任务4：协作式取消检查点——每个步骤前检查取消标志，已取消则抛
+        # RunCancelled（外层捕获后落 CANCELLED 终态，跳过剩余步骤）。
+        def _check_cancel() -> None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RunCancelled(run.run_id)
+
+        _check_cancel()
         # 任务4：listener 帧来源——优先显式注入（extras.listener_frames），
         # 否则从 listener 索引库（COM4 侦听台采集落库）按需读取；库不存在/无帧
         # 时优雅降级为空（listener source 为空，不阻断 Run）。
@@ -213,6 +318,7 @@ class RunExecutor:
 
         # 1. flash
         seq += 1
+        _check_cancel()
         if run_input.skip_flash:
             step = RunStep(seq=seq, kind="flash", detail="skipped", result="skipped")
         else:
@@ -222,6 +328,7 @@ class RunExecutor:
 
         # 2. monitor
         seq += 1
+        _check_cancel()
         log_dir = Path(run_input.log_dir) if run_input.log_dir else _default_log_dir()
         rules = run_input.rules or scenario.get("monitor", {}).get("rules", [])
         if run_input.skip_monitor:
@@ -244,6 +351,7 @@ class RunExecutor:
 
         # 3. stimulus
         seq += 1
+        _check_cancel()
         task_file = run_input.task_file or scenario.get("stimulus", {}).get("task_file")
         if run_input.skip_stimulus:
             simcon: Optional[dict] = None
@@ -288,6 +396,7 @@ class RunExecutor:
 
         # 4. compare
         seq += 1
+        _check_cancel()
         if run_input.skip_compare:
             compare: FlowCompare = FlowCompare()
             step = RunStep(seq=seq, kind="compare", detail="skipped", result="skipped")
@@ -306,6 +415,7 @@ class RunExecutor:
 
         # 5. feedback
         seq += 1
+        _check_cancel()
         if run_input.skip_feedback:
             feedback: List[dict] = []
             step = RunStep(seq=seq, kind="feedback", detail="skipped", result="skipped")

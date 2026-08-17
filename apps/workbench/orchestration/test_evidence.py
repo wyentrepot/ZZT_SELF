@@ -607,3 +607,106 @@ class TestRunRecoveryAndSmoke:
         assert report["evidence_frozen"] is True
         assert report["run_id"] == run.run_id
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# 任务4：取消 Run（submit 异步 + cancel 协作式取消 + CANCELLED 终态）
+# ---------------------------------------------------------------------------
+
+
+class TestRunCancel:
+    """任务4 取消 Run：异步提交、取消标志、状态机终态、report 标注。"""
+
+    def test_submit_returns_running_and_completes(self, tmp_path):
+        """submit 立即返回 running，后台线程完成后终态正确。"""
+        import time
+        from workbench.orchestration.runner import RunExecutor
+
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+        )
+        run = ex.submit(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+
+        # submit 返回的 run 对象与后台线程共享，可能已跑完（status 可能 running 或终态）
+        assert run.status in ("running", "passed", "failed", "cancelled", "error")
+        # 轮询等待终态
+        for _ in range(200):
+            row = store.get_run(run.run_id)
+            if row["status"] in ("passed", "failed", "cancelled", "error"):
+                break
+            time.sleep(0.02)
+        assert row["status"] in ("passed", "failed")
+        # 终态后 report 落盘可能有微小延迟（线程先 update_status 再 save_report），等 report
+        for _ in range(200):
+            if store.get_report(run.run_id) is not None:
+                break
+            time.sleep(0.02)
+        assert store.get_report(run.run_id) is not None
+        store.close()
+
+    def test_cancel_marks_cancelled_terminal(self, tmp_path):
+        """cancel() 置取消标志 → 执行线程检查后落 CANCELLED 终态。"""
+        import threading
+        import time
+        from workbench.orchestration.runner import RunExecutor, RunCancelled
+
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        started = threading.Event()
+
+        def _blocking_steps(self, run, run_input, scenario, cancel_event=None):
+            started.set()
+            # 阻塞直到取消
+            while not (cancel_event is not None and cancel_event.is_set()):
+                time.sleep(0.02)
+            raise RunCancelled(run.run_id)
+
+        import workbench.orchestration.runner as runner_mod
+        monkeypatch_prev = getattr(runner_mod.RunExecutor, "_run_steps")
+        runner_mod.RunExecutor._run_steps = _blocking_steps
+        try:
+            ri = RunInput(
+                scenario_id="join_anhui",
+                log_dir=str(log_dir),
+                skip_flash=True,
+                skip_stimulus=True,
+            )
+            run = ex.submit(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+            assert started.wait(timeout=2)
+            assert ex.cancel(run.run_id) is True
+            # 轮询到 CANCELLED 终态
+            for _ in range(200):
+                row = store.get_run(run.run_id)
+                if row["status"] in ("cancelled", "passed", "failed", "error"):
+                    break
+                time.sleep(0.02)
+            assert row["status"] == "cancelled"
+            # report 落盘可能有微小延迟，等待
+            for _ in range(200):
+                if store.get_report(run.run_id) is not None:
+                    break
+                time.sleep(0.02)
+            # report 标注被取消
+            rep = store.get_report(run.run_id)
+            assert rep is not None
+            assert any(a["id"] == "run.cancelled" for a in rep["assertions"])
+        finally:
+            runner_mod.RunExecutor._run_steps = monkeypatch_prev
+            store.close()
+
+    def test_cancel_nonexistent_returns_false(self, tmp_path):
+        """cancel 不存在的 run → False（不崩溃）。"""
+        from workbench.orchestration.runner import RunExecutor
+        from workbench.orchestration.store import RunStore
+
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        assert ex.cancel("run-nonexistent") is False
+        store.close()

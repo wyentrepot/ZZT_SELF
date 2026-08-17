@@ -199,13 +199,67 @@ tr:hover td {
     api("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(function (run) {
         currentRunId = run.run_id;
-        $("wb-badge").textContent = run.status === "passed" ? "PASS" : "FAIL";
-        $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" : "fail");
-        renderRun(run);
-        loadHistory();
+        // 异步执行：轮询状态直到终态，运行中显示「取消 Run」按钮
+        pollRun(run.run_id);
       })
       .catch(function (e) {
         $("wb-badge").textContent = "错误";
+        $("wb-badge").className = "badge fail";
+        $("run-result").innerHTML = '<pre>' + e.message + '</pre>';
+      });
+  }
+
+  /* 轮询 Run 状态：运行中显示取消按钮，终态渲染结果（任务4 取消 Run） */
+  function pollRun(runId) {
+    let timer = null;
+    let cancelled = false;
+
+    function tick() {
+      if (cancelled) return;
+      api("/api/run/" + runId)
+        .then(function (run) {
+          const terminal = run.status === "passed" || run.status === "failed" ||
+                           run.status === "cancelled" || run.status === "error";
+          if (!terminal) {
+            // 运行中：显示「取消 Run」按钮 + 当前状态
+            $("run-result").innerHTML =
+              '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + runId + '</b> &nbsp; 状态: <span class="badge run">' +
+              run.status + '</span></div>' +
+              '<div class="hint">正在执行全链路（烧录→监控→激励→比对→反馈→报告）…</div>' +
+              '<div style="margin-top:var(--sp-2)"><button id="btn-cancel-run">✕ 取消 Run</button></div>';
+            const btn = $("btn-cancel-run");
+            if (btn) btn.addEventListener("click", function () {
+              cancelled = true;
+              cancelRun(runId);
+            });
+            timer = setTimeout(tick, 800);
+            return;
+          }
+          // 终态：渲染结果 + 证据
+          $("wb-badge").textContent = run.status === "passed" ? "PASS" :
+            (run.status === "cancelled" ? "取消" : "FAIL");
+          $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" :
+            (run.status === "cancelled" ? "run" : "fail"));
+          renderRun(run);
+          loadHistory();
+        })
+        .catch(function () { timer = setTimeout(tick, 800); });
+    }
+    tick();
+  }
+
+  /* 请求取消 Run（后端置 CANCELLING → 线程检查后落 CANCELLED） */
+  function cancelRun(runId) {
+    $("wb-badge").textContent = "取消中";
+    $("wb-badge").className = "badge run";
+    $("run-result").innerHTML = '<div class="hint">正在取消 Run…</div>';
+    api("/api/run/" + runId + "/cancel", { method: "POST" })
+      .then(function () {
+        // 取消已发起，继续轮询直到终态（cancelled）
+        pollRun(runId);
+      })
+      .catch(function (e) {
+        $("wb-badge").textContent = "取消失败";
         $("wb-badge").className = "badge fail";
         $("run-result").innerHTML = '<pre>' + e.message + '</pre>';
       });

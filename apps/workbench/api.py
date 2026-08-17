@@ -18,10 +18,13 @@ router = APIRouter(prefix="/api")
 
 
 def _executor() -> RunExecutor:
-    # 延迟创建共享 store（单例化，避免多请求并发开多个 sqlite 连接）
+    # 延迟创建共享 executor + store（单例化，避免多请求并发开多个 sqlite 连接、
+    # 以及 cancel/submit 落在不同实例导致取消事件丢失）
     if not hasattr(_executor, "_store"):
         _executor._store = RunStore()
-    return RunExecutor(_executor._store)
+    if not hasattr(_executor, "_exec"):
+        _executor._exec = RunExecutor(_executor._store)
+    return _executor._exec
 
 
 def _store() -> RunStore:
@@ -47,14 +50,30 @@ async def get_scenario(scenario_id: str):
 
 @router.post("/run")
 async def create_run(run_input: RunInput):
-    """创建并执行一个验证批次（全链路：烧录→监控→激励→比对→反馈→报告）。"""
+    """创建并异步执行一个验证批次（全链路：烧录→监控→激励→比对→反馈→报告）。
+
+    异步执行：立刻返回（状态 running），调用方轮询 GET /api/run/{run_id}
+    获取进度，可经 POST /api/run/{run_id}/cancel 取消（任务4 取消 Run）。
+    """
     try:
-        run = _executor().execute(run_input)
+        run = _executor().submit(run_input)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Run 执行失败：{exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Run 启动失败：{exc}") from exc
     return run.model_dump()
+
+
+@router.post("/run/{run_id}/cancel")
+async def cancel_run(run_id: str):
+    """取消一个正在执行的 Run（协作式取消，落 CANCELLED 终态）。"""
+    run = _store().get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run 不存在：{run_id}")
+    ok = _executor().cancel(run_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail=f"Run 不可取消（不存在或已结束）：{run_id}")
+    return {"run_id": run_id, "status": "cancelling"}
 
 
 @router.get("/run/{run_id}")

@@ -29,6 +29,7 @@
 | 21 | loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（延迟 import），保持引擎与 test_automation 解耦，取代有损 dict 代理路径 | ✅ 生效 |
 | 22 | 任务5协议专项收口：E2/E3/E4 解析修复（问题清单7项 + B-01残留3项）+ 性能基线 + 异常恢复/发布冒烟；OAD/OI 覆盖（18→515）标后续 | ✅ 生效 |
 | 23 | 任务4验证UI证据下钻：evidence_detail()（Report 完整证据明细按 source 分组）+ workbench.html「④ 证据下钻」面板（details 展开 payload/metadata）；运行恢复/取消Run/打包验收待续 | ✅ 生效 |
+| 24 | 任务4取消Run：submit() 后台线程异步 + cancel() 协作式取消（threading.Event 步骤间检查）+ CANCELLED 终态 + POST /api/run/{id}/cancel + _executor() 单例修复 + 前端轮询/取消按钮 | ✅ 生效 |
 
 ---
 
@@ -491,4 +492,19 @@
   - `workbench/static/workbench.html` 的 `renderRun` 在 Run 执行后异步 fetch report，渲染「④ 证据下钻」面板：按 source 分组（loghooks 事件/模拟集中器步骤/侦听台帧），每条 `<details>` 可展开 payload/metadata（递归键值渲染 `renderKeyValue`）。
 - **理由**：FR-6 要求"展示运行状态、步骤、断言、证据和报告"。此前 Report 只有 `evidence_index`（raw_ref 锚点），前端无法下钻到证据原始内容；`evidence_detail` 提供完整可下钻字段，`evidence_index` 保持轻量索引不破坏既有契约。
 - **影响**：`test_evidence.py` = 26 passed（新增 TestEvidenceDetail 3 用例：完整字段/空/Run 端到端含 detail）；全量 `pytest libs apps` = 580 passed / 66 skipped（无回归）。前端 JS 经 node --check 语法验证通过。任务 4 验证 UI 部分证据下钻完成；运行恢复（刷新后恢复 Run）、取消 Run、打包验收（B-03）待续。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-24 任务4取消Run：异步执行 + 协作式取消（submit/cancel + CANCELLED 终态）
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  1. **Run 执行改异步**：`RunExecutor.submit(run_input)` 在后台线程执行 `_run_steps`，`POST /api/run` 立即返回（状态 running），前端轮询 `GET /api/run/{id}` 获取进度。同步 `execute()` 保留（CLI/测试复用）。
+  2. **协作式取消**：`cancel(run_id)` 置 `threading.Event` 取消标志 + 状态转 CANCELLING；`_run_steps` 在 flash/monitor/stimulus/compare/feedback 各步骤前检查标志，已取消抛 `RunCancelled`，外层捕获后落 CANCELLED 终态；Report 标注 `run.cancelled` 断言。
+  3. **API**：新增 `POST /api/run/{run_id}/cancel`（200=cancelling，409=不可取消/不存在，404=不存在）。`_executor()` 单例化修复——原实现每次 new `RunExecutor`，submit 与 cancel 落在不同实例导致取消事件丢失（这是本功能踩到的关键坑）。
+  4. **前端**：`workbench.html` 的 `run()` 改 `pollRun()` 轮询，运行中显示「取消 Run」按钮 + 状态，终态渲染结果/证据；badge 支持 cancelled（"取消"）。
+- **理由**：FR-6 要求"支持取消和错误恢复"。原同步阻塞执行无法在 Run 进行中响应取消请求；异步 + 协作式取消（步骤间检查）不需硬中断正在进行的串口 IO，安全、可测。
+- **影响**：`test_app.py` + `test_evidence.py` = 42 passed（新增 TestRunCancel 3 + cancel flow 2，含 CANCELLED 终态/report 标注/409/404）；全量 `pytest libs apps` = 585 passed / 66 skipped（无回归）。任务 4 取消 Run 完成；运行恢复（刷新后恢复 Run）、打包验收（B-03）待续。
 - **被取代**：无（新增决策）。
