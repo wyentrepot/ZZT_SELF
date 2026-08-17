@@ -22,6 +22,7 @@ from test_automation.resource_lease import ResourceConflictError, ResourceLeaseM
 from workbench.orchestration.evidence import (
     acquire_serial_lease,
     collect_three_source_evidence,
+    evidence_detail,
     evidence_index,
     load_listener_frames_from_index,
 )
@@ -133,6 +134,59 @@ class TestEvidenceIndex:
         idx = evidence_index(store)
         assert idx["total"] == 0
         assert idx["sources"] == {}
+
+
+class TestEvidenceDetail:
+    """任务4：evidence_detail —— 证据下钻完整字段（前端下钻面板数据源）。"""
+
+    def test_detail_includes_full_fields(self):
+        store = collect_three_source_evidence(
+            run_id="run-det",
+            events=[FakeLogEvent(rule_id="r1", captures={"k": "v"})],
+            step_results=[{"index": 0, "name": "s", "result": "pass"}],
+            frame_records=[("000001", "t", "7e 01 7e")],
+        )
+        detail = evidence_detail(store)
+        assert detail["total"] == 3
+        srcs = detail["sources"]
+        assert set(srcs) == {"loghooks", "sim_concentrator", "listener"}
+        # 每条证据含完整可下钻字段
+        for items in srcs.values():
+            for it in items:
+                assert it["kind"] and it["source"]
+                assert "payload" in it and "metadata" in it
+                assert "raw_ref" in it and "sequence" in it
+        # loghooks 事件 payload 带 captures
+        ev = srcs["loghooks"][0]
+        assert ev["payload"]["captures"] == {"k": "v"}
+        assert ev["raw_ref"] == "loghooks:r1"
+
+    def test_detail_empty(self):
+        store = collect_three_source_evidence(run_id="run-det-e")
+        detail = evidence_detail(store)
+        assert detail["total"] == 0
+        assert detail["sources"] == {}
+
+    def test_run_report_contains_evidence_detail(self, tmp_path):
+        """RunExecutor 端到端：Report 含 evidence_detail（前端下钻数据源）。"""
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+            extras={"listener_frames": [("000001", "t", "7e 01 7e")]},
+        )
+        run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+        report = store.get_report(run.run_id)
+        assert report is not None
+        ed = report["evidence_detail"]
+        assert ed["total"] >= 2  # loghooks 事件 + listener 帧
+        assert "loghooks" in ed["sources"]
+        assert "listener" in ed["sources"]
+        store.close()
 
 
 # ---------------------------------------------------------------------------

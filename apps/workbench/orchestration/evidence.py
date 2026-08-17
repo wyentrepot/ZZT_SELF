@@ -157,6 +157,30 @@ def evidence_index(store: EvidenceStore) -> Dict[str, Any]:
     return {"total": total, "sources": index}
 
 
+def evidence_detail(store: EvidenceStore) -> Dict[str, Any]:
+    """EvidenceStore → 完整证据明细（任务4 证据下钻 UI）。
+
+    与 evidence_index（只暴露 raw_ref 锚点）不同，本函数输出每条证据的完整
+    可下钻字段：kind/source/payload/metadata/raw_ref/correlation_key/observed_at，
+    按 source 分组。前端可据此展开原始帧/日志行/步骤结果。
+    """
+    detail: Dict[str, List[Dict[str, Any]]] = {}
+    for ev in store.list():
+        detail.setdefault(ev.source, []).append(
+            {
+                "kind": ev.kind,
+                "source": ev.source,
+                "sequence": ev.sequence,
+                "raw_ref": ev.raw_ref,
+                "correlation_key": ev.correlation_key,
+                "observed_at": ev.observed_at.isoformat() if ev.observed_at else "",
+                "payload": ev.payload,
+                "metadata": ev.metadata,
+            }
+        )
+    return {"total": sum(len(v) for v in detail.values()), "sources": detail}
+
+
 # ---------------------------------------------------------------------------
 # listener 索引库读取（任务 4：Run 接入 COM4 侦听台串口三源闭环）
 # ---------------------------------------------------------------------------

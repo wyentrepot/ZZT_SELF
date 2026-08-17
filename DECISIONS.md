@@ -28,6 +28,7 @@
 | 20 | Windows 串口网关采用原始 TCP + HTTP 控制（D:\019-wy-tool\uart_to_tcp），同一 COM 严格独占，XMODEM 为唯一 Windows 侧业务例外 | ✅ 已确认，待实现 |
 | 21 | loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（延迟 import），保持引擎与 test_automation 解耦，取代有损 dict 代理路径 | ✅ 生效 |
 | 22 | 任务5协议专项收口：E2/E3/E4 解析修复（问题清单7项 + B-01残留3项）+ 性能基线 + 异常恢复/发布冒烟；OAD/OI 覆盖（18→515）标后续 | ✅ 生效 |
+| 23 | 任务4验证UI证据下钻：evidence_detail()（Report 完整证据明细按 source 分组）+ workbench.html「④ 证据下钻」面板（details 展开 payload/metadata）；运行恢复/取消Run/打包验收待续 | ✅ 生效 |
 
 ---
 
@@ -476,4 +477,18 @@
   5. **OAD/OI 覆盖（18→515）标记为任务 5 后续项**（用户决定单独立项，2026-08-17）。
 - **理由**：B-01 已解除（协议口径经 C 侧 aps_stack.c/aps_stack.h + 真实日志帧交叉验证），任务 5 可离线推进；问题清单 7 项与残留 3 项是协议正确性缺口，性能基线是验收出口"可复现"的硬要求；OAD/OI 覆盖是 500+ 条数据工程，不宜与协议修复混做。
 - **影响**：`pytest libs/parser_lib libs/minute_assert` = 137 passed；`pytest apps/listener/test_perf_baseline.py` = 5 passed；`pytest apps/workbench/orchestration/test_evidence.py` = 23 passed；全量 `pytest libs apps` = 577 passed / 66 skipped（无回归）。任务 5 状态：进行中（协议/性能/异常恢复完成，OAD/OI 与真机验证项后续）。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-23 任务4验证UI：证据下钻面板（Report 完整证据明细 + 前端下钻）
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  - `apps/workbench/orchestration/evidence.py` 新增 `evidence_detail(store)`：EvidenceStore → 按 source 分组的完整证据明细（每条含 kind/source/sequence/raw_ref/correlation_key/observed_at/payload/metadata），与 `evidence_index`（只暴露 raw_ref 锚点）互补。
+  - `runner.py` 把 `evidence_detail` 写入 `Report.evidence_detail`（Report 模型加字段），经既有 `GET /api/run/{run_id}/report` 暴露（无需新端点）。
+  - `workbench/static/workbench.html` 的 `renderRun` 在 Run 执行后异步 fetch report，渲染「④ 证据下钻」面板：按 source 分组（loghooks 事件/模拟集中器步骤/侦听台帧），每条 `<details>` 可展开 payload/metadata（递归键值渲染 `renderKeyValue`）。
+- **理由**：FR-6 要求"展示运行状态、步骤、断言、证据和报告"。此前 Report 只有 `evidence_index`（raw_ref 锚点），前端无法下钻到证据原始内容；`evidence_detail` 提供完整可下钻字段，`evidence_index` 保持轻量索引不破坏既有契约。
+- **影响**：`test_evidence.py` = 26 passed（新增 TestEvidenceDetail 3 用例：完整字段/空/Run 端到端含 detail）；全量 `pytest libs apps` = 580 passed / 66 skipped（无回归）。前端 JS 经 node --check 语法验证通过。任务 4 验证 UI 部分证据下钻完成；运行恢复（刷新后恢复 Run）、取消 Run、打包验收（B-03）待续。
 - **被取代**：无（新增决策）。

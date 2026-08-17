@@ -219,7 +219,66 @@ tr:hover td {
       '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
       (run.status === "passed" ? "pass" : "fail") + '">' + run.status + '</span></div>' +
       '<div style="margin-bottom:var(--sp-2)">' + steps + '</div>' +
-      '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>';
+      '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>' +
+      '<div id="ev-panel"></div>';
+    // 证据明细在 report 里（/api/run/{id}/report），异步加载后渲染下钻面板
+    api("/api/run/" + run.run_id + "/report")
+      .then(function (report) { $("ev-panel").innerHTML = renderEvidence(report); })
+      .catch(function () { $("ev-panel").innerHTML = renderEvidence({}); });
+  }
+
+  /* 证据下钻：按 source 分组展示完整证据，可展开 payload/metadata（任务4） */
+  function renderEvidence(run) {
+    const ed = run.evidence_detail || {};
+    const sources = ed.sources || {};
+    const total = ed.total || 0;
+    if (!total) {
+      return '<div class="card" style="margin-top:var(--sp-4)"><h2>④ 证据下钻</h2>' +
+        '<div class="hint">本 Run 未产生证据。</div></div>';
+    }
+    const SRC_LABEL = {
+      loghooks: "loghooks 事件",
+      sim_concentrator: "模拟集中器步骤",
+      listener: "侦听台帧",
+    };
+    let html = '<div class="card" style="margin-top:var(--sp-4)"><h2>④ 证据下钻 <span class="hint">共 ' +
+      total + ' 条</span></h2>';
+    Object.keys(sources).forEach(function (source) {
+      const items = sources[source] || [];
+      html += '<h3 style="margin:var(--sp-3) 0 var(--sp-2)">' +
+        (SRC_LABEL[source] || source) + '（' + items.length + '）</h3>';
+      html += '<div class="ev-group">';
+      items.forEach(function (ev, i) {
+        const title = ev.kind + " · " + (ev.raw_ref || ("ev:" + ev.sequence)) +
+          (ev.correlation_key ? " · " + ev.correlation_key : "");
+        html += '<details class="ev-item" style="margin-bottom:var(--sp-2)">' +
+          '<summary><b>' + title + '</b></summary>' +
+          '<div class="ev-body" style="margin-top:var(--sp-2)">' +
+          renderKeyValue("payload", ev.payload) +
+          renderKeyValue("metadata", ev.metadata) +
+          (ev.observed_at ? '<div class="hint">observed_at: ' + ev.observed_at + '</div>' : "") +
+          '</div></details>';
+      });
+      html += '</div>';
+    });
+    return html + '</div>';
+  }
+
+  /* 递归渲染键值（payload/metadata 可能嵌套） */
+  function renderKeyValue(label, obj) {
+    if (!obj || typeof obj !== "object") {
+      return obj === undefined || obj === null ? "" :
+        '<div class="hint">' + label + ': <code>' + String(obj) + '</code></div>';
+    }
+    const entries = Object.keys(obj).map(function (k) {
+      const v = obj[k];
+      let vs;
+      if (v === null || v === undefined) vs = "";
+      else if (typeof v === "object") vs = JSON.stringify(v);
+      else vs = String(v);
+      return '<div class="ev-row"><code class="ev-key">' + k + '</code>: <code>' + vs + '</code></div>';
+    }).join("");
+    return entries ? '<div class="ev-block"><div class="hint">' + label + '</div>' + entries + '</div>' : "";
   }
 
   function loadHistory() {

@@ -24,6 +24,7 @@ from .evidence import (
     ResourceLeaseManager,
     acquire_serial_lease,
     collect_three_source_evidence,
+    evidence_detail,
     evidence_index,
     load_listener_frames_from_index,
 )
@@ -376,6 +377,7 @@ class RunExecutor:
             verdict=verdict,
             artifacts=scan["files"],
             evidence_index=evidence_index(evidence_store),
+            evidence_detail=evidence_detail(evidence_store),
             evidence_frozen=evidence_store.frozen,
         )
         return report

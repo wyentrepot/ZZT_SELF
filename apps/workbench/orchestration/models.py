@@ -116,4 +116,5 @@ class Report(BaseModel):
     artifacts: List[str] = Field(default_factory=list)
     ts: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     evidence_index: Dict[str, Any] = Field(default_factory=dict)
+    evidence_detail: Dict[str, Any] = Field(default_factory=dict)
     evidence_frozen: bool = False
