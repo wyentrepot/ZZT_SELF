@@ -1,10 +1,16 @@
 """接收帧匹配与判定：验证任务期望条件 → 对接收帧做匹配/断言。
 
+支持两种帧格式（自动识别）：
+- 标准 1376.2（双 68）：68 L 68 AFN SEQ RTUA MSAA PW ... CS 16
+- CCO 本地协议（单 68）：68 L ctrl info afn DT1 DT2 buff CS 16
+
 期望条件（expect）结构（对齐 loghooks 规则 match 的字段语义）：
     {
       "afn": 0x02,                  # 期望 AFN（可选）
-      "dir": "up",                  # "up"(上行, DIR=1) | "down"(下行, DIR=0)（可选）
-      "nested": true,               # 期望含嵌套 645/698 帧（可选）
+      "fn": 230,                    # 期望 FN（本地帧，可选）
+      "dir": "up",                  # "up"(上行) | "down"(下行)（可选）
+      "format": "local",            # 期望帧格式："local" | "standard"（可选）
+      "nested": true,               # 期望含嵌套 645/698 帧（标准帧，可选）
       "fields": {"SEQ": 1},         # 期望信封字段值（可选，按 DataField.raw/value）
       "nested_fields": [            # 期望嵌套帧内字段（可选）
           {"structure": "645", "field": "(当前)正向有功总电能", "eq": 123456.78}
@@ -18,12 +24,30 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-from sim_concentrator.frame_codec import decode_frame
+from sim_concentrator.frame_codec import decode_frame, decode_local_13762_frame
+
+
+def _is_local_frame(raw: bytes) -> bool:
+    if len(raw) < 15 or raw[0] != 0x68:
+        return False
+    return raw[3] != 0x68
 
 
 def _afn_of(decoded: dict) -> Optional[int]:
+    if "afn" in decoded and isinstance(decoded["afn"], int):
+        return decoded["afn"]
     afn_field = decoded.get("fields", {}).get("AFN", {})
     raw = afn_field.get("raw")
+    if isinstance(raw, int):
+        return raw
+    return None
+
+
+def _fn_of(decoded: dict) -> Optional[int]:
+    if "fn" in decoded and isinstance(decoded["fn"], int):
+        return decoded["fn"]
+    fn_field = decoded.get("fields", {}).get("FN", {})
+    raw = fn_field.get("raw")
     if isinstance(raw, int):
         return raw
     return None
@@ -42,13 +66,27 @@ def _field_value(decoded: dict, name: str):
 def match_frame(raw: bytes, expect: Optional[dict]) -> Tuple[bool, dict, List[str]]:
     """对一帧做匹配。expect=None 视为任意 1376.2 帧。"""
     reasons: List[str] = []
+    local = _is_local_frame(raw)
     try:
-        decoded = decode_frame(raw)
+        if local:
+            decoded = decode_local_13762_frame(raw)
+        else:
+            decoded = decode_frame(raw)
     except Exception as e:
         return False, {}, [f"解析失败: {e!r}"]
 
     if expect is None:
         return True, decoded, reasons
+
+    # 帧格式
+    want_fmt = expect.get("format")
+    if want_fmt is not None:
+        if want_fmt == "local" and not local:
+            reasons.append("期望本地帧(单68)，实际为标准帧(双68)")
+            return False, decoded, reasons
+        if want_fmt == "standard" and local:
+            reasons.append("期望标准帧(双68)，实际为本地帧(单68)")
+            return False, decoded, reasons
 
     # AFN
     want_afn = expect.get("afn")
@@ -58,6 +96,23 @@ def match_frame(raw: bytes, expect: Optional[dict]) -> Tuple[bool, dict, List[st
         if got != want:
             reasons.append(f"AFN 不匹配: 期望0x{want:02X}, 实际0x{got:02X}" if got is not None
                            else "AFN 不可解析")
+            return False, decoded, reasons
+
+    # FN（本地帧）
+    want_fn = expect.get("fn")
+    if want_fn is not None:
+        got = _fn_of(decoded)
+        if got != int(want_fn):
+            reasons.append(f"FN 不匹配: 期望{int(want_fn)}, 实际{got}")
+            return False, decoded, reasons
+
+    # 方向（本地帧用 ctrl 位；标准帧暂不判断）
+    want_dir = expect.get("dir")
+    if want_dir is not None and local:
+        dir_bit = (decoded.get("ctrl", 0) >> 7) & 0x01
+        got_dir = "up" if dir_bit == 1 else "down"
+        if got_dir != want_dir:
+            reasons.append(f"方向不匹配: 期望{want_dir}, 实际{got_dir}")
             return False, decoded, reasons
 
     # 信封字段

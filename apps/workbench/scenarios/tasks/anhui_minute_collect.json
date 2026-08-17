@@ -1,0 +1,85 @@
+{
+  "id": "anhui_minute_collect",
+  "name": "安徽分钟采集闭环（集中器 ↔ CCO 交互）",
+  "module": "cco",
+  "port": "COM24",
+  "baudrate": 9600,
+  "enable_responder": true,
+  "description": "模拟集中器(集中器角色)经 COM24 与安徽 CCO 交互：主动下发查询/配置并匹配回复(第一部分)，等待 CCO 主动上报(第二部分，recv_only/历史查询，超时判 fail)。CCO 主动上报由 responder 统一回 00H-F1 确认。帧格式为 CCO 本地协议(单68)：68 L ctrl info afn DT1 DT2 buff CS 16。依据《安徽集中器交互报文.md》与 CCO 固件 gw13762.c。",
+  "responders": [
+    {
+      "id": "anhui.ack",
+      "match": {"afn": 6, "fn": 230},
+      "reply": {"afn": 0, "fn": 1, "format": "local", "desc": "采集数据上报→回确认"}
+    },
+    {
+      "id": "anhui.ack.route",
+      "match": {"afn": 6, "fn": 3},
+      "reply": {"afn": 0, "fn": 1, "format": "local", "desc": "工况变动上报→回确认"}
+    },
+    {
+      "id": "anhui.ack.running",
+      "match": {"afn": 3, "fn": 10},
+      "reply": {"afn": 0, "fn": 1, "format": "local", "desc": "运行模式上报→回确认"}
+    }
+  ],
+  "steps": [
+    {
+      "name": "查询路由运行状态 (10H-F4, 组网确认)",
+      "send": {"format": "local", "afn": 16, "fn": 4, "buff": ""},
+      "expect": {"format": "local", "afn": 16, "fn": 4},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "查询从节点信息 (10H-F2)",
+      "send": {"format": "local", "afn": 16, "fn": 2, "buff": ""},
+      "expect": {"format": "local", "afn": 16, "fn": 2},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "查询采集任务数量 (10H-F230)",
+      "send": {"format": "local", "afn": 16, "fn": 230, "buff": ""},
+      "expect": {"format": "local", "afn": 16, "fn": 230},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "查询任务配置 (10H-F231, 任务7/协议645)",
+      "send": {"format": "local", "afn": 16, "fn": 231, "buff": "07 02"},
+      "expect": {"format": "local", "afn": 16, "fn": 231},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "配置采集任务 (11H-F231, 启用任务7/645/周期5分钟/单相1数据项)",
+      "send": {"format": "local", "afn": 17, "fn": 231, "buff": "07 01 02 05 00 01 04 00 02 01 01 00 04 01 00 02 00"},
+      "expect": {"format": "local", "afn": 17, "fn": 231},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "关联档案到任务 (11H-F232, 任务7/档案2个)",
+      "send": {"format": "local", "afn": 17, "fn": 232, "buff": "07 02 00 01 33 00 00 00 01 01 33 00 00 00 02"},
+      "expect": {"format": "local", "afn": 17, "fn": 232},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "等待 CCO 上报运行模式 (03H-F10, 历史查询)",
+      "recv_only": true,
+      "expect_history": true,
+      "expect": {"format": "local", "afn": 3, "fn": 10},
+      "expect_timeout": 10.0
+    },
+    {
+      "name": "等待 CCO 上报采集数据 (06H-F230, 历史查询)",
+      "recv_only": true,
+      "expect_history": true,
+      "expect": {"format": "local", "afn": 6, "fn": 230},
+      "expect_timeout": 30.0
+    },
+    {
+      "name": "等待 CCO 上报空闲 (06H-F3, 历史查询)",
+      "recv_only": true,
+      "expect_history": true,
+      "expect": {"format": "local", "afn": 6, "fn": 3},
+      "expect_timeout": 30.0
+    }
+  ]
+}
