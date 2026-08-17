@@ -223,14 +223,14 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             result["result"] = "pass"
             result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
             return result
-        # 不匹配：若是 recv_only 继续等（可能是其它主动上报）；否则判 fail
-        # 待办 3.2 语义确认：recv_only + expect 时，收到的任何不匹配帧都被视为
-        # "其它上报"而跳过，持续接收直到 expect 匹配或超时——这正是"连续接收直到超时"。
-        if not recv_only:
-            result["reason"] = "匹配失败：" + "; ".join(reasons)
-            return result
-        result["reason"] = "收到帧但未匹配：" + "; ".join(reasons)
-    result["reason"] = f"超时({timeout}s)未收到期望帧" + ("" if recv_only else "或匹配失败")
+        # 不匹配：跳过继续等（CCO 会插播主动上报帧，如 10H-F1 从节点数量，
+        # 需跳过直至出现期望帧或超时）。记录已收到的帧便于诊断。
+        result["received_hex"] = (result.get("received_hex", []) or [])
+        result["received_hex"].append(frame_to_hex(got))
+        # 若 recv_only 也继续等；send+expect 同样跳过无关帧（修复：真实 CCO 插播主动帧）
+    rx_count = len(result.get("received_hex", []) or [])
+    result["reason"] = (f"超时({timeout}s)未收到期望帧" 
+                        + (f"，期间收到 {rx_count} 帧未匹配" if rx_count else ""))
     return result
 
 

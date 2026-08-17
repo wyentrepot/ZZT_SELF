@@ -83,6 +83,8 @@ class TestExecuteTask:
         assert out["steps"][0]["result"] == "pass"
 
     def test_expect_afn_mismatch_fail(self):
+        # 收到错误 AFN 帧不立即判 fail：跳过继续等（CCO 会插播主动上报帧），
+        # 超时仍未收到期望帧才 fail
         task = {
             "id": "t2",
             "port": "COM_TEST",
@@ -90,7 +92,7 @@ class TestExecuteTask:
             "fail_fast": True,
             "steps": [
                 {"name": "期望确认却收到03", "send": {"afn": 0x01, "rtsa": "070919051620"},
-                 "expect": {"afn": 0x00}},
+                 "expect": {"afn": 0x00}, "expect_timeout": 0.3},
             ],
         }
         io = FakeIO(responses=[build_13762_frame(afn=0x03, seq=1, rtsa=RTSA,
@@ -98,7 +100,9 @@ class TestExecuteTask:
         out = execute_task(task, io=io)
         assert out["summary"]["verdict"] == "fail"
         assert out["steps"][0]["result"] == "fail"
-        assert "AFN" in out["steps"][0]["reason"]
+        assert "超时" in out["steps"][0]["reason"]
+        # 记录到了收到但不匹配的帧
+        assert len(out["steps"][0].get("received_hex", [])) == 1
 
     def test_expect_timeout_fail(self):
         task = {

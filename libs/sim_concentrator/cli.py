@@ -41,10 +41,18 @@ def cmd_verify(args) -> int:
         print(f"[ERROR] 执行失败: {e!r}", file=sys.stderr)
         return 1
     if args.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        # bytes 字段（如 parsed.buff）序列化为 hex 字符串
+        print(json.dumps(out, ensure_ascii=False, indent=2, default=_json_default))
     else:
         _print_human(out)
     return 0 if out["summary"]["verdict"] == "pass" else 1
+
+
+def _json_default(o):
+    """JSON 序列化兜底：bytes → hex 字符串（decode 结果的 buff 等字段）。"""
+    if isinstance(o, (bytes, bytearray)):
+        return o.hex()
+    return str(o)
 
 
 def _print_human(out: dict) -> None:

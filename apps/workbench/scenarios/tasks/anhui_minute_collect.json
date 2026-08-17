@@ -32,7 +32,7 @@
     },
     {
       "name": "查询从节点信息 (10H-F2)",
-      "send": {"format": "local", "afn": 16, "fn": 2, "buff": ""},
+      "send": {"format": "local", "afn": 16, "fn": 2, "buff": "00 00 10"},
       "expect": {"format": "local", "afn": 16, "fn": 2},
       "expect_timeout": 5.0
     },
