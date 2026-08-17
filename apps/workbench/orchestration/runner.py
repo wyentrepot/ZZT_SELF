@@ -101,15 +101,29 @@ def _scan_logs(log_dir: Path, rules: List[str]) -> Dict[str, Any]:
 
 
 def _run_stimulus(task_file: Optional[Path], task: Optional[dict]) -> Optional[dict]:
-    """调用 sim_concentrator runner 执行验证任务（无串口时返回 None）。"""
+    """调用 sim_concentrator runner 执行验证任务（无串口时返回 None）。
+
+    task_file 相对路径优先相对当前工作目录解析；若不存在，则相对
+    scenarios 目录（SCENARIOS_DIR/tasks/）解析，支持随场景模板分发。
+    """
     from sim_concentrator.runner import execute_task
 
     if task is not None:
         return execute_task(task)
-    if task_file and Path(task_file).exists():
-        from sim_concentrator.runner import load_task
+    if task_file:
+        # 1) 相对 CWD
+        if Path(task_file).exists():
+            from sim_concentrator.runner import load_task
 
-        return execute_task(load_task(str(task_file)))
+            return execute_task(load_task(str(task_file)))
+        # 2) 相对 scenarios 目录（SCENARIOS_DIR = <repo>/apps/workbench/scenarios）
+        from .scenarios import SCENARIOS_DIR
+
+        cand = SCENARIOS_DIR / task_file
+        if cand.exists():
+            from sim_concentrator.runner import load_task
+
+            return execute_task(load_task(str(cand)))
     return None
 
 

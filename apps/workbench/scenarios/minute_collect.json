@@ -8,7 +8,7 @@
     {"step": "no_error", "negate": true, "event_type": "join.assoc.err"}
   ],
   "stimulus": {
-    "task_file": "tasks/minute_collect.json",
+    "task_file": "tasks/anhui_minute_collect.json",
     "responders": []
   },
   "monitor": {
