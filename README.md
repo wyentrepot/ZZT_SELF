@@ -12,7 +12,6 @@
 | [总需求](docs/02-总需求.md) | FR/NFR、范围与验收标准 |
 | [骨架设计](docs/03-骨架设计.md) | 模块职责、输入输出、协议、目录与数据模型 |
 | [任务安排](docs/04-任务安排.md) | 任务 1～6、状态、优先级、阻塞与验收出口 |
-| [Windows 串口转 TCP 与 WSL 虚拟串口专项方案](docs/05-Windows串口转TCP与WSL虚拟串口方案.md) | 方案 A、接口、状态机、XMODEM 例外和验收口径 |
 
 协议与 DLL 接口原文位于 [`docs/_references/protocols/`](docs/_references/protocols/)，旧方案和历史记录位于 [`docs/_archive/`](docs/_archive/)。
 
