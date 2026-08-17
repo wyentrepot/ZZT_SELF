@@ -484,3 +484,72 @@ class TestLoghooksEngineEvidence:
         ei = report["evidence_index"]
         assert all(ref.startswith("loghooks:") for ref in ei["sources"]["loghooks"])
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# 任务5：异常恢复与发布冒烟
+# ---------------------------------------------------------------------------
+
+
+class TestRunRecoveryAndSmoke:
+    """任务5验收：异常恢复、状态终态正确落库。"""
+
+    def test_run_step_exception_marks_failed_with_report(self, tmp_path, monkeypatch):
+        """Run 执行中异常 → 不崩溃，状态落 failed，report 含 fail assertion。
+
+        异常恢复：编排器把异常转成 AssertionResult(id=run.execute, result=fail)，
+        report 可落盘供下钻，状态机进入终态 failed。
+        """
+        from workbench.orchestration.runner import RunExecutor
+        from workbench.orchestration.store import RunStore
+        from workbench.orchestration.models import RunInput
+
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+
+        def _boom(self, run, run_input, scenario):
+            raise RuntimeError("模拟执行中断（串口异常）")
+
+        monkeypatch.setattr(RunExecutor, "_run_steps", _boom)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+        )
+        run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+
+        assert run.status == "failed"  # 状态机终态正确
+        report = store.get_report(run.run_id)
+        assert report is not None
+        assert report["verdict"] == "fail"
+        assert any(
+            a["id"] == "run.execute" and a["result"] == "fail"
+            for a in report["assertions"]
+        )
+        store.close()
+
+    def test_run_smoke_passes_with_fake_log(self, tmp_path):
+        """发布冒烟：无串口环境用 fake 日志跑完整 Run（monitor 两源闭环）。
+
+        模拟"干净环境启动后首个 Run"：skip_flash/skip_stimulus 降级，
+        monitor 仍产出事件并冻结证据，report 完整落盘。
+        """
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+        )
+        run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+        report = store.get_report(run.run_id)
+
+        assert run.status in ("passed", "failed")  # 不崩溃即冒烟通过
+        assert report is not None
+        assert report["evidence_frozen"] is True
+        assert report["run_id"] == run.run_id
+        store.close()

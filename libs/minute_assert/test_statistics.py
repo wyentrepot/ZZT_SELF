@@ -149,3 +149,72 @@ class TestFormatTaskStatistics:
         assert "任务专项统计" in text
         assert "任务1：配置电表0只，周期为2，关联表档案为空" in text
         assert "周期1【08:46-08:48】统计信息：1只表上报成功" in text
+
+
+class TestB01ResidualItems:
+    """B-01 残留项结论固化测试（2026-08-17，C 侧源码交叉验证口径）。
+
+    残留①：E4 主动上报 result≠0 条目的断言口径 —— 统计层"数据区非空视为上报
+    成功，不校验结果码"；result≠0（任务不存在/无冻结数据/其他原因）仅作诊断信息，
+    不改变成功/失败判定（与真机验证过的行为一致）。
+    残留②：E2 删除应答 result=失败 与「删除成功后仍上报」判定关系 —— 删除下发
+    （switch_flag=0）仅计数；删除后仍见该任务上报时统计层照常计入周期，不据此
+    反推删除结果（删除应答 result 位在应答帧，parse_task_config 只解析下行请求）。
+    """
+
+    def test_residual_1_active_report_result_nonzero_does_not_change_verdict(self):
+        """残留①：主动上报 result=1（任务不存在）但数据区非空 → 仍计为上报成功。
+
+        统计口径：数据区非空即成功，result≠0 不改变成功判定（B-01 已确认）。
+        """
+        config = "11e20000c10315000000080000000000010102"  # 任务1/周期2/启停1
+        fz1 = bytes.fromhex("004608310726")
+        addr_a = bytes.fromhex("080000000000")
+        # 上报帧：task=1，result 字节=0x22（协议2 + result=1），数据区非空 012500
+        report_result1 = (
+            "11e40000013240000000120001"
+            + addr_a.hex()
+            + "01"
+            + "22"
+            + fz1.hex()
+            + "012500"
+        )
+        log_dir = _write_log([
+            f"[20260731-09:13:02:241]{config}",
+            f"[20260731-08:48:01:857]{report_result1}",
+        ])
+
+        _, task_stats, _ = collect_task_statistics([log_dir / "minute.log"])
+
+        assert len(task_stats) == 1
+        task = task_stats[0]
+        assert len(task.cycles) == 1
+        # 数据区非空 → 计为上报成功（result≠0 不改变判定）
+        assert task.cycles[0].active_ok == 1
+
+    def test_residual_2_delete_then_still_report_still_counted(self):
+        """残留②：任务级删除下发后仍见上报 → 上报照常计入周期统计。
+
+        删除帧（switch_flag=0）只计 delete_count；删除后仍上报不改变周期统计
+        （不据此反推删除结果，删除应答 result 位在应答帧）。
+        """
+        config = "11e20000c10315000000080000000000010102"  # 任务1/周期2/启停1
+        delete = "11e20000c10315000000080000000000010002"  # 任务1 删除
+        fz1 = bytes.fromhex("004608310726")
+        addr_a = bytes.fromhex("080000000000")
+        log_dir = _write_log([
+            f"[20260731-09:13:02:241]{config}",
+            f"[20260731-09:13:03:241]{delete}",
+            # 删除后仍上报（时间在删除之后）
+            f"[20260731-09:13:04:000]{_report_hex(addr_a, 1, fz1, data_region='012500')}",
+        ])
+
+        period_map, task_stats, broadcast_delete = collect_task_statistics([log_dir / "minute.log"])
+
+        assert broadcast_delete == 0
+        assert len(task_stats) == 1
+        task = task_stats[0]
+        assert task.delete_count == 1  # 删除只计数
+        # 删除后仍上报照常计入周期
+        assert len(task.cycles) >= 1
+        assert any(c.active_ok == 1 for c in task.cycles)

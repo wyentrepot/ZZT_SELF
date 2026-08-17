@@ -27,6 +27,7 @@
 | 19 | 项目级安装 UI/UX 设计技能（ui-ux-pro-max + ui-styling + design-system）到 .agents/skills/，仅免费且面向前端/软件 UI 的三个，不装品牌营销类 | ✅ 生效 |
 | 20 | Windows 串口网关采用原始 TCP + HTTP 控制（D:\019-wy-tool\uart_to_tcp），同一 COM 严格独占，XMODEM 为唯一 Windows 侧业务例外 | ✅ 已确认，待实现 |
 | 21 | loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（延迟 import），保持引擎与 test_automation 解耦，取代有损 dict 代理路径 | ✅ 生效 |
+| 22 | 任务5协议专项收口：E2/E3/E4 解析修复（问题清单7项 + B-01残留3项）+ 性能基线 + 异常恢复/发布冒烟；OAD/OI 覆盖（18→515）标后续 | ✅ 生效 |
 
 ---
 
@@ -458,3 +459,21 @@
 - **理由**：任务 3 剩余项「loghooks 引擎本体 Evidence 化」要求引擎产出的 Event 直接可转 Evidence；但直接让引擎 import test_automation 会引入反向依赖，违背 ADR-1/10/13 解耦哲学。可插拔发射器 + 延迟 import 让引擎保持零 test_automation 依赖，由调用方决定是否/如何转 Evidence，同时消除有损 dict 代理路径（证据字段无损、可下钻）。
 - **影响**：`pytest apps/workbench/orchestration/test_evidence.py` = 21 passed（新增 4）；`pytest libs/loghooks libs/test_automation libs/sim_concentrator apps/workbench` = 187 passed；`pytest libs apps` = 563 passed / 66 skipped（无回归）。任务 3 至此全部收口（docs/04-任务安排.md 任务 3 = ✅ 已完成）。
 - **被取代**：无（新增决策；docs/12 §8 原「引擎本体改造延后」表述被本决策收口）。
+
+---
+
+## ADR-22 任务5协议专项收口：E2/E3/E4 解析修复 + 性能基线 + 异常恢复
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  1. **分钟采集问题清单 7 项全部处理**（`libs/parser_lib/adapters/adapter_dualmode`、`adapter_10376`）：
+     - 确定性 bug：E3 字节6 位宽统一为 3+2+3（协议类型3bit `&0x07`、电表类型2bit `(>>3)&0x03`，与 C 侧一致，残留③随此解决）；E3 冻结时刻按小端 BCD 反转解码（与 E4 主动上报一致）；E2 下行删除多余"方向"字段（字节1 bit4~7 为保留）；10376 `_DUALMODE_MESSAGE_NAMES` 补 00E2/E3/E4 注册。
+     - 新实现：E2 上行应答解析（报文头长度 15 → 按手册 §2.2 展开：电表MAC/任务号/启动删除/结果位/周期）；E4 并发抄读格式展开（启动位=0，报文头长度 23 → 按 §4.1 展开：协议/电表/响应结果/源MAC/任务号/冻结时刻/报文条数/转发数据长度 + 报文内容递归解内嵌帧）。
+  2. **B-01 残留 3 项关闭**：① E4 主动上报 result≠0 断言口径——统计层"数据区非空视为成功，不校验结果码"，result 仅作诊断（真机验证行为不变）；② E2 删除应答判定——删除下发只计数，删除后仍上报照常计入周期；③ E3 位宽标注统一随①修复。均固化测试。
+  3. **性能基线可复现**：`apps/listener/test_perf_baseline.py` 5 条查询路径基线（浅翻页/keyset深翻页/时间范围COUNT/query筛选/nid筛选），5万行合成数据实测远优于 2026-08-09 旧基线（23万行 167/221/122ms → 现 6.7/3.8/3/14/27.5ms）。
+  4. **异常恢复+发布冒烟**：RunExecutor 中途异常→failed 终态+report 含 fail assertion 可下钻；无串口环境 skip 降级跑完整 Run 冒烟。
+  5. **OAD/OI 覆盖（18→515）标记为任务 5 后续项**（用户决定单独立项，2026-08-17）。
+- **理由**：B-01 已解除（协议口径经 C 侧 aps_stack.c/aps_stack.h + 真实日志帧交叉验证），任务 5 可离线推进；问题清单 7 项与残留 3 项是协议正确性缺口，性能基线是验收出口"可复现"的硬要求；OAD/OI 覆盖是 500+ 条数据工程，不宜与协议修复混做。
+- **影响**：`pytest libs/parser_lib libs/minute_assert` = 137 passed；`pytest apps/listener/test_perf_baseline.py` = 5 passed；`pytest apps/workbench/orchestration/test_evidence.py` = 23 passed；全量 `pytest libs apps` = 577 passed / 66 skipped（无回归）。任务 5 状态：进行中（协议/性能/异常恢复完成，OAD/OI 与真机验证项后续）。
+- **被取代**：无（新增决策）。

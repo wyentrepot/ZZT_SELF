@@ -78,9 +78,51 @@ def test_e2_config_message_header_length_16():
     assert _field(frame, "报文ID").raw == 0x00E2
     assert "采集任务配置" in _field(frame, "报文ID").value
     assert _field(frame, "报文头长度").raw == 16
-    assert _field(frame, "方向").value == "下行"
+    # E2 下行字节1 bit4~7 为保留，无方向位（问题5修复：不再输出"方向"字段）
+    assert _field(frame, "方向") is None
     assert _field(frame, "任务号").raw == 7
     assert _field(frame, "协议类型").raw == 2
+
+
+def _e2_ack_message():
+    """采集任务设置上行应答（STA→CCO）：通用头 + 业务头(15)。"""
+    # header_len=15：byte0 bit6-7=低2位(15&3=3)、byte1 bit0-3=高4位(15>>2=3)
+    header = bytes([0x01 | 0xC0, 0x03])  # 版本1 + 报文头长度15
+    header += bytes.fromhex("01000000")  # 报文序号（与下行一致）
+    header += bytes.fromhex("120000000000")  # 电表MAC
+    header += bytes([7])  # 任务号
+    header += bytes([0x03])  # 启动/删除1(bit0=1) + 结果1(bit1=1) = 0x03 设置失败
+    header += bytes([5])  # 采集周期5
+    return bytes.fromhex("11E20000") + header
+
+
+def test_e2_ack_message_header_length_15():
+    """采集任务设置上行应答（§2.2，报文头15字节）：含电表MAC/结果位/周期。"""
+    frame = DualMode43Adapter().decode(_e2_ack_message())
+
+    assert _field(frame, "报文ID").raw == 0x00E2
+    assert _field(frame, "报文头长度").raw == 15
+    assert _field(frame, "电表MAC地址").value == "12:00:00:00:00:00"
+    assert _field(frame, "任务号").raw == 7
+    assert _field(frame, "启动/删除标志").value == "启用"
+    assert _field(frame, "结果").value == "设置失败"
+    assert _field(frame, "结果").raw == 1
+    assert _field(frame, "采集周期").raw == 5
+
+
+def test_e2_ack_message_result_success():
+    """上行应答结果位=0 → 设置成功。"""
+    header = bytes([0x01 | 0xC0, 0x03])  # 版本1 + 报文头长度15
+    header += bytes.fromhex("02000000")
+    header += bytes.fromhex("120000000000")
+    header += bytes([7])
+    header += bytes([0x01])  # bit0=1 启用、bit1=0 结果=成功
+    header += bytes([5])
+    raw = bytes.fromhex("11E20000") + header
+
+    frame = DualMode43Adapter().decode(raw)
+    assert _field(frame, "结果").value == "设置成功"
+    assert _field(frame, "结果").raw == 0
 
 
 def test_e3_read_message_header_length_20():
@@ -103,22 +145,52 @@ def test_try_extract_consumes_full_e4_envelope_not_first_nested_frame():
     assert result.raw == bytes.fromhex(E4_APP_HEX)
 
 
-def test_concurrent_read_format_start_flag_zero_is_not_expanded():
-    """并发抄读格式（启动位=0，无转发报文长度）本期不展开业务字段。
+def test_concurrent_read_format_start_flag_zero_is_expanded():
+    """并发抄读格式（启动位=0，报文头23字节）按 §4.1 展开业务字段。
 
-    与 try_extract 的切帧行为一致：decode 走原始业务报文 + 内嵌帧扫描，
-    并给出 warning，不产生伪「报文序号/转发报文长度」字段。
+    原实现"本期仅展示原始业务报文"（问题6）已改为完整解析：含源MAC/任务号/
+    冻结时刻/报文条数/转发数据长度，报文内容递归解出内嵌帧。
     """
-    # 通用头 + 并发抄读头（版本1、方向位0、启动位0）
-    business = bytes([0x01, 0x08])
+    # 通用头 + 并发抄读头（版本1、报文头长度23、方向位0、启动位0）
+    # header_len=23：byte0 bit6-7=低2位(23&3=3)、byte1 bit0-3=高4位(23>>2=5)
+    business = bytes([0x01 | 0xC0, 0x05])  # 版本1 + 报文头长度23
     business += bytes.fromhex("03000000")  # 报文序号
-    business += bytes([0x20])  # 协议类型2、电表类型0
+    business += bytes([0x02])  # 协议类型2、电表类型0、响应结果0（0b00000010）
+    business += bytes.fromhex("120000000000")  # 源MAC
+    business += bytes([7])  # 任务号
+    business += bytes.fromhex("550007310726")  # 冻结时刻（小端BCD：2026-07-31 07:00:55）
+    business += bytes([1])  # 报文条数
+    business += bytes.fromhex("1200")  # 转发数据长度18（645帧长度）
+    business += bytes.fromhex("6811223344556668910633343435A456AF16")  # 完整645帧
     raw = bytes.fromhex("11E40000") + business
 
     frame = DualMode43Adapter().decode(raw)
 
     assert _field(frame, "报文ID").raw == 0x00E4
-    assert _field(frame, "报文序号") is None
-    assert _field(frame, "转发报文长度") is None
-    assert any("并发抄读格式" in warning for warning in frame.warnings)
+    assert _field(frame, "分钟采集类型").value == "并发抄读"
+    assert _field(frame, "报文头长度").raw == 23
+    assert _field(frame, "报文序号").raw == 0x00000003
+    assert _field(frame, "协议类型").raw == 2
+    assert _field(frame, "电表类型").raw == 0
+    assert _field(frame, "响应结果").raw == 0
+    assert _field(frame, "源MAC地址").value == "12:00:00:00:00:00"
+    assert _field(frame, "任务号").raw == 7
+    assert _field(frame, "冻结时刻").value == "2026-07-31 07:00:55"
+    assert _field(frame, "报文条数").raw == 1
+    assert _field(frame, "转发数据长度").raw == 18
+    # 报文内容递归解出内嵌 645 帧
+    assert any(item.structure == "645" for item in frame.nested)
+
+
+def test_concurrent_read_short_business_warns():
+    """并发抄读头不足23字节 → 报 warning 并展示原始业务报文。"""
+    business = bytes([0x01, 0x08])
+    business += bytes.fromhex("03000000")
+    business += bytes([0x20])
+    raw = bytes.fromhex("11E40000") + business
+
+    frame = DualMode43Adapter().decode(raw)
+
+    assert _field(frame, "报文ID").raw == 0x00E4
+    assert any("过短" in w for w in frame.warnings)
     assert any(item.name == "业务报文(原始)" for item in frame.items)

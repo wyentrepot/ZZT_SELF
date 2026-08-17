@@ -31,6 +31,29 @@ class TestParseActiveReport:
         assert task_id == 1
         assert fz_bytes == bytes.fromhex("004508310726")
 
+    def test_parse_active_report_result_code_nonzero(self):
+        """残留① 结论：E4 主动上报 result≠0 时 result_code 正确解析（bit5~7）。
+
+        帧尾字节 `22`（0b00100010）：bit5=1 → result=1（任务不存在）。
+        解析层必须正确提取 result≠0，供上层诊断；统计层口径另见
+        test_statistics（数据区非空视为成功，result 不改变成功/失败判定）。
+        """
+        line = "11e4000001324000000012000108000000000003224608310726000000"
+        result = parse_active_report(line)
+        assert result is not None
+        address, task_id, fz_bytes, result_code = result
+        assert address == "000000000008"
+        assert task_id == 3
+        assert result_code == 1  # 0b00100010 >> 5 & 7 = 1
+
+    def test_parse_active_report_result_code_none_data(self):
+        """残留① 结论：result=2（无冻结数据）也能被正确解析。"""
+        line = "11e4000001324000000012000108000000000003424608310726000000"
+        result = parse_active_report(line)
+        assert result is not None
+        _, _, _, result_code = result
+        assert result_code == 2  # 0b01000010 >> 5 & 7 = 2
+
     def test_non_report_line_returns_none(self):
         assert parse_active_report("11e20000c10315000000080000000000030102") is None
         assert parse_active_report("hello world") is None

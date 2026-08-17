@@ -412,13 +412,11 @@ class DualMode43Adapter(ProtocolAdapter):
         start_flag = (business[1] >> 5) & 0x01
 
         if start_flag != 1:
-            # 并发抄读格式（格式一）业务布局不同且无转发报文长度，切帧仍按
-            # 内嵌帧扫描（与 try_extract 一致）；本期仅展示原始业务报文并
-            # 扫描内嵌帧，不展开业务字段。
-            frame.warnings.append(
-                "并发抄读格式（启动位=0）本期仅展示原始业务报文并扫描内嵌帧"
-            )
-            self._parse_generic_business(frame, business)
+            # 并发抄读格式（格式一，启动位=0）：响应 CCO 的 0x00E3 抄读请求。
+            # 报文头 23 字节（《安徽分钟采集帧结构编程参考手册》§4.1）：
+            # 版本+头长+方向+序号+字节6(协议3/表2/结果3)+源MAC(6)+任务号+冻结时刻(6)+
+            # 报文条数(1)+转发数据长度(2 小端)+报文内容。
+            self._parse_concurrent_read(frame, business, ver, header_len, direction)
             return
 
         if len(business) < 8:
@@ -541,22 +539,152 @@ class DualMode43Adapter(ProtocolAdapter):
                 raw=data.hex(), desc="未能按协议类型解出内嵌帧",
             ))
 
+    def _parse_concurrent_read(self, frame, business, ver, header_len, direction):
+        """采集任务数据上报（0x00E4）并发抄读格式解析（格式一，启动位=0）。
+
+        报文头 23 字节（《安徽分钟采集帧结构编程参考手册》§4.1）：
+        - 0~1：协议版本号(6)+报文头长度(6)+方向位(1)+保留(3)
+        - 2~5：报文序号(32，小端)
+        - 6：协议类型(bit0~2=3)+电表类型(bit3~4=2)+响应结果(bit5~7=3)
+        - 7~12：源MAC地址(48)
+        - 13：任务号(8)
+        - 14~19：冻结时刻(48，小端 BCD)
+        - 20：报文条数(8)
+        - 21~22：转发数据长度(16，小端)
+        - 23+：报文内容（完整 645/698 报文，不做转换）
+        """
+        self._append(frame, "协议版本号", ver, f"{ver:02X}", ver, "固定为1")
+        self._append(frame, "分钟采集类型", "并发抄读", "00", "并发抄读",
+                     "启动位为0时按并发抄读格式展开")
+        self._append(frame, "报文头长度", header_len, f"{header_len:02X}", header_len,
+                     "业务报文头(不含报文内容)字节数")
+        self._append(frame, "方向", "上行" if direction else "下行",
+                     f"{direction:02X}", direction)
+        if len(business) < 23:
+            frame.warnings.append(
+                f"业务报文过短，无法解析并发抄读头（需≥23字节，实际{len(business)}）"
+            )
+            if business:
+                frame.items.append(DataField(
+                    name="业务报文(原始)", value=business.hex(), hex=business.hex(),
+                    raw=business.hex(), desc="并发抄读业务报文",
+                ))
+            return
+
+        sequence = int.from_bytes(business[2:6], "little")
+        self._append(frame, "报文序号", f"0x{sequence:08X}",
+                     business[2:6].hex().upper(), sequence,
+                     "与下行 0x00E3 报文序号保持一致")
+
+        packed6 = business[6]
+        proto_type = packed6 & 0x07
+        meter_type = (packed6 >> 3) & 0x03
+        result = (packed6 >> 5) & 0x07
+        self._append(frame, "协议类型", proto_type,
+                     f"{proto_type:02X} ({self._PROTO_NAMES.get(proto_type, '保留')})",
+                     proto_type)
+        self._append(frame, "电表类型", meter_type, f"{meter_type:02X}", meter_type,
+                     "0：单相；1：三相；2：其他表计")
+        self._append(frame, "响应结果", result, f"{result:02X}", result,
+                     "0：响应成功；1：任务不存在；2：无冻结数据；3：其他原因")
+
+        src_mac = business[7:13]
+        self._append(frame, "源MAC地址", ":".join(f"{b:02X}" for b in src_mac),
+                     src_mac.hex().upper(), src_mac.hex().upper(),
+                     "上报STA模块MAC")
+
+        task_no = business[13]
+        self._append(frame, "任务号", task_no, f"{task_no:02X}", task_no, "采集任务号")
+
+        freeze = business[14:20]
+        year, month, day, hour, minute, second = freeze[::-1]
+        freeze_str = (
+            f"20{year:02X}-{month:02X}-{day:02X} "
+            f"{hour:02X}:{minute:02X}:{second:02X}"
+        )
+        self._append(frame, "冻结时刻", freeze_str, freeze.hex().upper(),
+                     freeze.hex().upper(),
+                     "冻结时间点（小端BCD：YY-MM-DD-HH-MM-SS）")
+
+        count = business[20]
+        data_len = int.from_bytes(business[21:23], "little")
+        self._append(frame, "报文条数", count, f"{count:02X}", count,
+                     "645协议下配置多个DI时回复多条报文")
+        self._append(frame, "转发数据长度", data_len, f"{data_len:04X}", data_len,
+                     "报文内容总字节数（小端）")
+
+        data = business[23:23 + data_len]
+        if len(data) < data_len:
+            frame.warnings.append(
+                f"转发数据长度({data_len})超出可用字节({len(data)})"
+            )
+            data = data[:data_len]
+
+        if not data:
+            return
+        nested = _scan_nested(data)
+        for idx, pf in enumerate(nested):
+            summary = f"{pf.structure}"
+            if pf.address:
+                summary += f" · 地址{pf.address}"
+            frame.items.append(DataField(
+                name=f"报文内容嵌套帧[{idx}] · {pf.structure}",
+                value=summary, hex=pf.raw_hex, raw=pf.raw_hex,
+                desc="并发抄读报文内容内递归解出",
+            ))
+            frame.nested.append(pf)
+        if not nested:
+            frame.items.append(DataField(
+                name="报文内容(原始)", value=data.hex(), hex=data.hex(),
+                raw=data.hex(), desc="未能按协议类型解出内嵌帧",
+            ))
+
     def _parse_minute_config(self, frame, business):
         """采集任务配置（0x00E2）下行报文解析。
 
         业务头：协议版本号(6)+报文头长度(6)+保留(4)+报文序号(32)+目的MAC(48)+
         任务号(8)+启动/删除标志(1)+协议类型(3)+表类型(2)+保留(2)+
         采集周期(8)+数据项个数n(8)+n×(数据项标识(32)+回复长度(8))。
+
+        报文头长度 15 时按「采集任务设置上行应答」解析（STA→CCO，单播回复），
+        见《安徽分钟采集帧结构编程参考手册》§2.2。
         """
-        if len(business) < 16:
-            frame.warnings.append("业务报文过短，无法解析采集任务配置（需≥16字节）")
+        if len(business) < 15:
+            frame.warnings.append("业务报文过短，无法解析采集任务配置（需≥15字节）")
             return
         ver = business[0] & 0x3F
         header_len = (business[0] >> 6) | ((business[1] & 0x0F) << 2)
         sequence = int.from_bytes(business[2:6], "little")
         self._append(frame, "协议版本号", ver, f"{ver:02X}", ver, "固定为1")
         self._append(frame, "报文头长度", header_len, f"{header_len:02X}", header_len)
-        self._append(frame, "方向", "下行", "00", 0, "CCO → STA")
+
+        if header_len == 15:
+            # 上行应答（§2.2）：序号 + 电表MAC(6B) + 任务号 + 启动/删除(1) + 结果(1) + 周期(1)
+            self._append(frame, "报文序号", f"0x{sequence:08X}",
+                         business[2:6].hex().upper(), sequence)
+            if len(business) < 15:
+                frame.warnings.append("业务报文不足15字节，缺少电表MAC/任务号/结果")
+                return
+            meter_mac = business[6:12]
+            self._append(frame, "电表MAC地址", ":".join(f"{b:02X}" for b in meter_mac),
+                         meter_mac.hex().upper(), meter_mac.hex().upper())
+            task_no = business[12]
+            flag = business[13]
+            period = business[14]
+            self._append(frame, "任务号", task_no, f"{task_no:02X}", task_no,
+                         "采集任务号1~15有效，0xFF代表全部任务")
+            self._append(
+                frame, "启动/删除标志", "启用" if flag & 0x01 else "删除",
+                f"{flag & 0x01:02X}", flag & 0x01,
+                "应答中的启停标志（与下行请求一致）",
+            )
+            result = (flag >> 1) & 0x01
+            self._append(frame, "结果", "设置成功" if result == 0 else "设置失败",
+                         f"{result:02X}", result,
+                         "0：设置成功；1：设置失败")
+            self._append(frame, "采集周期", period, f"{period:02X}", period, "单位分钟")
+            return
+
         self._append(frame, "报文序号", f"0x{sequence:08X}",
                      business[2:6].hex().upper(), sequence)
         if len(business) < 13:
@@ -622,13 +750,16 @@ class DualMode43Adapter(ProtocolAdapter):
         if len(business) < 7:
             frame.warnings.append("业务报文不足7字节，缺少协议类型/目的MAC")
             return
-        proto_type = business[6] & 0x0F
-        meter_type = (business[6] >> 4) & 0x01
+        # 字节6 位布局（《安徽分钟采集帧结构编程参考手册》§3.1 字节6）：
+        #   bit0~2 协议类型(3)、bit3~4 电表类型(2)、bit5~7 保留(3) —— 3+2+3
+        packed6 = business[6]
+        proto_type = packed6 & 0x07
+        meter_type = (packed6 >> 3) & 0x03
         self._append(frame, "协议类型", proto_type,
                      f"{proto_type:02X} ({self._PROTO_NAMES.get(proto_type, '保留')})",
                      proto_type)
         self._append(frame, "电表类型", meter_type, f"{meter_type:02X}", meter_type,
-                     "0：单相；1：三相")
+                     "0：单相；1：三相；2：其他表计")
         if len(business) < 13:
             frame.warnings.append("业务报文不足13字节，缺少目的MAC/任务号")
             return
@@ -641,7 +772,13 @@ class DualMode43Adapter(ProtocolAdapter):
             frame.warnings.append("业务报文不足20字节，缺少冻结时刻")
             return
         freeze = business[14:20]
-        freeze_str = "-".join(f"{b:02X}" for b in freeze)
+        # 冻结时刻为小端 BCD（《安徽分钟采集帧结构编程参考手册》§3.1）：
+        # 报文读取顺序 HH MM DD MM YY SS，反转后为 20YY-MM-DD HH:MM:SS
+        year, month, day, hour, minute, second = freeze[::-1]
+        freeze_str = (
+            f"20{year:02X}-{month:02X}-{day:02X} "
+            f"{hour:02X}:{minute:02X}:{second:02X}"
+        )
         self._append(frame, "冻结时刻", freeze_str, freeze.hex().upper(),
                      freeze.hex().upper(),
-                     "冻结时间点（YY-MM-DD-HH-MM-SS）")
+                     "冻结时间点（小端BCD：YY-MM-DD-HH-MM-SS）")
