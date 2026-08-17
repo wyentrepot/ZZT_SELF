@@ -1,14 +1,15 @@
 """验证任务执行器：下发 → 接收 → 匹配 → 解析 → 判定闭环。
 
 一个验证任务（VerifyTask）由若干步骤组成，每步：
-- 构造并下发一帧（send）；
-- 可选：期望收到一帧并匹配（expect）；
+- 构造并下发一帧（send）；支持 CCO 本地协议（send.format="local"）。
+- 可选：期望收到一帧并匹配（expect）。
+- 可选：recv_only 步骤（不 send，只等待并匹配一帧——用于验证 CCO 主动上报）。
+- 可选：expect_history 步骤（在超时内轮询历史帧，确认是否出现过某类上报）。
 - 可选：该步骤期望无响应（expect_no_reply）。
 
-执行结果：逐步判定（Pass/Fail + 原因）+ 汇总结论。
-
-应答引擎在任务执行期间挂载（内置 + 任务覆盖规则），收到模块上行帧时
-自动应答，从而验证"模块上行 → 模拟集中器应答"闭环。
+应答引擎在任务执行期间挂载（内置 + 任务覆盖规则）：收到的每一帧若命中
+应答规则，立即自动应答（统一回 00H-F1 确认），从而验证"模块上行 → 模拟
+集中器应答"闭环；同一帧仍可被 expect / expect_history 匹配验证。
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from typing import Dict, List, Optional
 
 from sim_concentrator.frame_codec import (
     build_13762_frame,
+    build_local_13762_frame,
     decode_frame,
     frame_to_hex,
     hex_to_bytes,
@@ -39,18 +41,46 @@ def _to_int(v, base: int = 16):
     return v
 
 
-def build_send_frame(send: dict) -> bytes:
+def build_send_frame(send: Optional[dict] = None) -> bytes:
     """按 send 参数构造一帧。
 
     send = {
+        # 标准 1376.2（双 68）：
         "afn": 0x02 | "02",
         "seq": 1,
         "rtsa": "070919051620" | [0x20,0x16,...],   # 人读顺序 hex 或字节列表
         "msaa": 1,
         "pw": 0,
         "userdata": "00 01 68..." | "000168..." | [bytes],
+
+        # CCO 本地协议（单 68），format="local"：
+        "format": "local",
+        "afn": 0x10,                 # AFN 码
+        "fn": 230,                   # Fn 码（自动编码为 DT1/DT2）
+        "buff": "00 01" | [0x00,0x01],   # 数据区（可选）
+        "ctrl": 0x03,                # 控制域（可选，默认 0x03 下行宽带载波）
+        "info": [0]*6,               # 信息域 6B（可选）
     }
+
+    未指定 format 时默认标准 1376.2。
     """
+    send = send or {}
+
+    if send.get("format") == "local":
+        afn = _to_int(send.get("afn", 0x00))
+        fn = _to_int(send.get("fn", 1), 10)
+        bf = send.get("buff", b"")
+        if isinstance(bf, str):
+            buff = hex_to_bytes(bf)
+        elif isinstance(bf, list):
+            buff = bytes(bf)
+        else:
+            buff = bytes(bf or b"")
+        ctrl = _to_int(send.get("ctrl", 0x03))
+        info = bytes(send.get("info", [0] * 6))
+        return build_local_13762_frame(afn=afn, fn=fn, buff=buff,
+                                       ctrl=ctrl, info=info)
+
     afn = _to_int(send.get("afn", 0x00))
     seq = _to_int(send.get("seq", 0), 10)
     msaa = _to_int(send.get("msaa", 0x01))
@@ -59,6 +89,8 @@ def build_send_frame(send: dict) -> bytes:
     rtsa_raw = send.get("rtsa")
     if isinstance(rtsa_raw, str):
         rtsa = bytes.fromhex(rtsa_raw.replace(" ", ""))[::-1][:6]  # 人读顺序 → 线上字节
+    elif rtsa_raw is None:
+        rtsa = bytes(6)  # 未指定终端地址：全零兜底
     else:
         rtsa = bytes(rtsa_raw)[:6]
 
@@ -95,24 +127,28 @@ def run_step(io: SerialIO, responder: Optional[Responder],
         "reason": "",
     }
 
-    # 1) 构造并下发
-    try:
-        raw = build_send_frame(step.get("send", {}))
-    except Exception as e:
-        result["reason"] = f"构帧失败: {e!r}"
-        return result
-    result["sent_hex"] = frame_to_hex(raw)
-    try:
-        io.send_frame(raw)
-    except Exception as e:
-        result["reason"] = f"发送失败: {e!r}"
-        return result
-
-    # 2) 接收并匹配（或期望无响应）
-    expect_no_reply = step.get("expect_no_reply", False)
+    recv_only = step.get("recv_only", False)
+    expect_history = step.get("expect_history", False)
     timeout = step.get("expect_timeout", 5.0)
     expect = step.get("expect")
+    is_query = (expect is not None) and not expect_history
 
+    # 1) 构造并下发（recv_only 跳过）
+    if not recv_only:
+        try:
+            raw = build_send_frame(step.get("send", {}))
+        except Exception as e:
+            result["reason"] = f"构帧失败: {e!r}"
+            return result
+        result["sent_hex"] = frame_to_hex(raw)
+        try:
+            io.send_frame(raw)
+        except Exception as e:
+            result["reason"] = f"发送失败: {e!r}"
+            return result
+
+    # 2) 期望无响应
+    expect_no_reply = step.get("expect_no_reply", False)
     if expect_no_reply:
         got = io.recv_frame(timeout=timeout)
         if got is None:
@@ -120,33 +156,95 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             result["reason"] = "期望无响应，符合"
         else:
             result["matched"] = frame_to_hex(got)
-            result["parsed"] = decode_frame(got)
+            result["parsed"] = _safe_decode(got)
             result["reason"] = "期望无响应，但收到帧"
         return result
 
-    if expect is None:
-        # 无期望：发送成功即 pass（记录已发）
+    # 3) 无期望：仅下发/仅等待（recv_only 且无 expect 时，等待任意一帧）
+    if expect is None and not expect_history:
+        if recv_only:
+            got = io.recv_frame(timeout=timeout)
+            if got is None:
+                result["reason"] = f"等待帧超时({timeout}s)"
+                return result
+            result["matched"] = frame_to_hex(got)
+            result["parsed"] = _safe_decode(got)
+            result["result"] = "pass"
+            result["reason"] = "收到一帧"
+            _auto_reply(io, responder, got)
+            return result
         result["result"] = "pass"
         result["reason"] = "仅下发，无接收断言"
         return result
 
-    # 3) 期望接收一帧
-    got = io.recv_frame(timeout=timeout)
-    if got is None:
-        result["reason"] = f"超时({timeout}s)未收到期望帧"
+    # 4) expect_history：在超时内轮询历史帧，确认出现过匹配帧
+    if expect_history:
+        deadline = time.time() + timeout
+        seen = []
+        while time.time() < deadline:
+            for hf in io.rx_history():
+                matched, decoded, reasons = match_frame(hf, expect)
+                if matched:
+                    result["matched"] = frame_to_hex(hf)
+                    result["parsed"] = decoded
+                    result["result"] = "pass"
+                    result["reason"] = "历史帧匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
+                    _auto_reply(io, responder, hf)
+                    return result
+            seen = io.rx_history()
+            time.sleep(0.05)
+        result["reason"] = f"超时({timeout}s)，历史中未出现期望帧；历史帧数={len(seen)}"
         return result
 
-    result["matched"] = frame_to_hex(got)
-    result["parsed"] = decode_frame(got)
-    matched, decoded, reasons = match_frame(got, expect)
-    result["parsed"] = decoded
-    if matched:
-        result["result"] = "pass"
-        result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
-    else:
-        result["result"] = "fail"
-        result["reason"] = "匹配失败：" + "; ".join(reasons)
+    # 5) 期望接收一帧（主动下发后等待 CCO 回复；recv_only 则直接等待上报）
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        got = io.recv_frame(timeout=max(0.05, deadline - time.time()))
+        if got is None:
+            continue
+        result["matched"] = frame_to_hex(got)
+        result["parsed"] = _safe_decode(got)
+        # 先自动应答（若命中规则），再匹配 expect
+        _auto_reply(io, responder, got)
+        matched, decoded, reasons = match_frame(got, expect)
+        result["parsed"] = decoded
+        if matched:
+            result["result"] = "pass"
+            result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
+            return result
+        # 不匹配：若是 recv_only 继续等（可能是其它主动上报）；否则判 fail
+        if not recv_only:
+            result["reason"] = "匹配失败：" + "; ".join(reasons)
+            return result
+        result["reason"] = "收到帧但未匹配：" + "; ".join(reasons)
+    result["reason"] = f"超时({timeout}s)未收到期望帧" + ("" if recv_only else "或匹配失败")
     return result
+
+
+def _safe_decode(raw: bytes) -> dict:
+    try:
+        return decode_frame(raw)
+    except Exception:
+        from sim_concentrator.frame_codec import decode_local_13762_frame
+        try:
+            return decode_local_13762_frame(raw)
+        except Exception:
+            return {"raw_hex": raw.hex()}
+
+
+def _auto_reply(io: Optional[SerialIO], responder: Optional[Responder], raw: bytes) -> None:
+    """若命中应答规则，自动回帧（模拟集中器应答 CCO 主动上报）。"""
+    if responder is None or io is None:
+        return
+    try:
+        reply = responder.reply_for(raw)
+    except Exception:
+        return
+    if reply is not None:
+        try:
+            io.send_frame(reply)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

@@ -128,3 +128,141 @@ def hex_to_bytes(hex_str: str) -> bytes:
     if not s:
         return b""
     return bytes(int(p, 16) for p in s.split())
+
+
+# ---------------------------------------------------------------------------
+# CCO 本地协议（单 68 帧）编解码 —— 供模拟集中器与 CCO 模块交互
+#
+# 帧格式（gw13762.c，Q/GDW 1376.2 本地接口）：
+#     68 | L(2B,LE) | ctrl(1B) | info(6B) | afn(1B) | DT1(1B) | DT2(1B)
+#        | buff(n) | CS(1B) | 16
+# - L = 除首尾两个字节外的总字节数；无地址域时 L = 15 + len(buff)
+# - ctrl: mode(6bit) | prm(1bit) | dir(1bit)，下行 dir=0/prm=0
+# - info(6B) 下行: rout_id(1) attach(1) module_id(1) clash(1) relay(4)
+#                 | err_id(4) chn_id(4) | ack_len | rate_v[2] | serial_num
+# - FN 编码：DT2=(fn-1)>>3，DT1=1<<((fn-1)%8)（余数0→128）
+# ---------------------------------------------------------------------------
+
+
+def fn_to_dt(fn: int):
+    """Fn 码 -> (DT1, DT2) 2 字节编码（CCO 本地协议）。"""
+    fn = int(fn) & 0xFF
+    dt2 = (fn - 1) >> 3
+    rem = fn & 0x07
+    dt1 = 1 << (rem - 1) if rem != 0 else 128
+    return dt1, dt2
+
+
+def dt_to_fn(dt1: int, dt2: int) -> int:
+    """(DT1, DT2) 2 字节编码 -> Fn 码。"""
+    mapping = {1: 1, 2: 2, 4: 3, 8: 4, 16: 5, 32: 6, 64: 7, 128: 8}
+    base = mapping.get(int(dt1))
+    if base is None:
+        return 0
+    return int(dt2) * 8 + base
+
+
+def build_local_13762_frame(
+    afn: int,
+    fn: int,
+    buff: bytes = b"",
+    ctrl: int = 0x03,
+    info: bytes = b"\x00\x00\x00\x00\x00\x00",
+    end: int = 0x16,
+) -> bytes:
+    """构造 CCO 本地协议帧（单 68）：68 L ctrl info afn DT1 DT2 buff CS 16。
+
+    默认 ctrl=0x03（mode=3 宽带载波，下行 dir=0/prm=0）；
+    info 默认 6 字节（无地址域，HOST_NODE 操作）。
+    """
+    dt1, dt2 = fn_to_dt(fn)
+    if len(info) < 6:
+        info = bytes(info) + b"\x00" * (6 - len(info))
+    info = bytes(info)[:6]
+    body = bytes([afn & 0xFF, dt1, dt2]) + bytes(buff)
+    mid = bytes([ctrl & 0xFF]) + info + body
+    # CCO 本地协议：length 字段 = 整个帧长（68头 + L(2) + mid + CS + 16）
+    L = 1 + 2 + len(mid) + 1 + 1  # = 15 + len(buff)
+    frame = bytes([0x68, L & 0xFF, (L >> 8) & 0xFF]) + mid
+    cs = sum(frame[1:]) % 256
+    return frame + bytes([cs, end & 0xFF])
+
+
+def scan_local_frame(buf: bytes):
+    """从字节流开头扫描一帧 CCO 本地协议帧（单 68）。
+
+    返回 (frame, consumed)；找不到完整帧返回 (None, 0)。
+    """
+    i = 0
+    n = len(buf)
+    while i < n:
+        if buf[i] != 0x68:
+            i += 1
+            continue
+        if i + 4 > n:
+            return None, 0
+        L = buf[i + 1] | (buf[i + 2] << 8)
+        frame_len = L  # CCO 本地协议：L 字段 = 整个帧长
+        if L < 15:
+            i += 1  # 非法长度（本地协议最小帧长 15）
+            continue
+        if i + frame_len > n:
+            return None, 0
+        candidate = buf[i:i + frame_len]
+        # 单 68：第 3 字节是控制域（非 68），帧尾 16，CS 校验
+        if candidate[3] != 0x68 and candidate[-1] == 0x16 and \
+                sum(candidate[1:-2]) % 256 == candidate[-2]:
+            return candidate, i + frame_len
+        i += 1
+    return None, 0
+
+
+def decode_local_13762_frame(raw: bytes) -> dict:
+    """解析 CCO 本地协议帧为结构化 dict（供匹配/判定/展示）。
+
+    返回：
+        {
+          "structure": "1376.2-local",
+          "raw_hex": "68...",
+          "fields": { "控制域": {...}, "AFN": {...}, "FN": {...},
+                       "DT1": {...}, "DT2": {...}, "校验和CS": {...} },
+          "items": [ {name, value, hex}, ... ],   # buff 字节项
+          "buff_hex": "...",
+          "ctrl": int, "info": "hex", "afn": int, "fn": int,
+          "buff": bytes,
+        }
+    """
+    L = raw[1] | (raw[2] << 8)
+    ctrl = raw[3]
+    info = raw[4:10]
+    afn = raw[10]
+    dt1 = raw[11]
+    dt2 = raw[12]
+    fn = dt_to_fn(dt1, dt2)
+    buff = raw[13:len(raw) - 2]
+    cs = raw[-2]
+    fields = {
+        "控制域": {"raw": ctrl, "value": f"0x{ctrl:02X}",
+                  "hex": f"{ctrl:02X}", "desc": "mode/prm/dir"},
+        "AFN": {"raw": afn, "value": f"0x{afn:02X}",
+                "hex": f"{afn:02X}", "desc": "应用层功能码"},
+        "FN": {"raw": fn, "value": str(fn),
+               "hex": f"{dt1:02X} {dt2:02X}", "desc": "Fn 码(DT1 DT2)"},
+        "DT1": {"raw": dt1, "value": f"0x{dt1:02X}", "hex": f"{dt1:02X}"},
+        "DT2": {"raw": dt2, "value": f"0x{dt2:02X}", "hex": f"{dt2:02X}"},
+        "校验和CS": {"raw": cs, "value": f"0x{cs:02X}", "hex": f"{cs:02X}"},
+    }
+    items = [{"name": f"buff[{i}]", "value": f"0x{b:02X}", "hex": f"{b:02X}"}
+             for i, b in enumerate(buff)]
+    return {
+        "structure": "1376.2-local",
+        "raw_hex": raw.hex(),
+        "fields": fields,
+        "items": items,
+        "buff_hex": buff.hex(),
+        "ctrl": ctrl,
+        "info": info.hex(),
+        "afn": afn,
+        "fn": fn,
+        "buff": buff,
+    }

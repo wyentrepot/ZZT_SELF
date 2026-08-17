@@ -19,7 +19,21 @@ import threading
 import time
 from typing import Optional
 
-from sim_concentrator.frame_codec import scan_frame, frame_to_hex, hex_to_bytes
+from sim_concentrator.frame_codec import (
+    scan_frame,
+    scan_local_frame,
+    frame_to_hex,
+    hex_to_bytes,
+)
+
+
+def scan_any_frame(buf: bytes):
+    """先尝试 CCO 本地协议（单 68）切帧，失败再尝试标准 1376.2（双 68）。"""
+    frame, consumed = scan_local_frame(buf)
+    if frame is not None:
+        return frame, consumed
+    return scan_frame(buf)
+
 
 try:
     import serial
@@ -56,6 +70,8 @@ class SerialIO:
         self._read_thread: Optional[threading.Thread] = None
         self._write_lock = threading.Lock()
         self._rx_queue: "queue.Queue[bytes]" = queue.Queue()
+        # 历史帧记录：读线程收到的所有完整帧（供 expect_history / 主动上报验证）
+        self._rx_history: list = []
         self._open = False
 
     # -- 生命周期 -------------------------------------------------------
@@ -105,7 +121,12 @@ class SerialIO:
             buf += data
             # 连续切出完整帧（跳过前导脏字节）
             while True:
-                frame, consumed = scan_frame(buf)
+                frame, consumed = scan_any_frame(buf)
+                if frame is not None:
+                    self._rx_history.append(frame)
+                    # 历史只保留最近 1000 帧，防止长时间运行内存增长
+                    if len(self._rx_history) > 1000:
+                        del self._rx_history[: len(self._rx_history) - 1000]
                 if frame is None:
                     break
                 self._rx_queue.put(frame)
@@ -137,3 +158,7 @@ class SerialIO:
 
     def pending_frames(self) -> int:
         return self._rx_queue.qsize()
+
+    def rx_history(self) -> list:
+        """返回收到的所有完整帧（bytes 列表，供主动上报验证/历史查询）。"""
+        return list(self._rx_history)
