@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from typing import Dict, List, Optional
@@ -28,6 +29,8 @@ from sim_concentrator.frame_codec import (
 from sim_concentrator.matcher import match_frame
 from sim_concentrator.responder import Responder
 from sim_concentrator.serial_io import SerialIO
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +181,11 @@ def run_step(io: SerialIO, responder: Optional[Responder],
         return result
 
     # 4) expect_history：在超时内轮询历史帧，确认出现过匹配帧
+    # 语义：rx_history() 是只读累积记录（读线程收到即入历史），匹配**不消费**历史帧，
+    #       只回答"超时窗口内是否出现过该帧"。因此：
+    #       - 与 recv_only 组合：recv_only 只影响是否 send（本分支本身不 send），
+    #         两者语义等价于"只收不发的历史扫描"，可安全叠加。
+    #       - 重复执行同一 history 匹配不会重复应答：一旦命中即返回，只 _auto_reply 一次。
     if expect_history:
         deadline = time.time() + timeout
         seen = []
@@ -213,6 +221,8 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
             return result
         # 不匹配：若是 recv_only 继续等（可能是其它主动上报）；否则判 fail
+        # 待办 3.2 语义确认：recv_only + expect 时，收到的任何不匹配帧都被视为
+        # "其它上报"而跳过，持续接收直到 expect 匹配或超时——这正是"连续接收直到超时"。
         if not recv_only:
             result["reason"] = "匹配失败：" + "; ".join(reasons)
             return result
@@ -233,18 +243,24 @@ def _safe_decode(raw: bytes) -> dict:
 
 
 def _auto_reply(io: Optional[SerialIO], responder: Optional[Responder], raw: bytes) -> None:
-    """若命中应答规则，自动回帧（模拟集中器应答 CCO 主动上报）。"""
+    """若命中应答规则，自动回帧（模拟集中器应答 CCO 主动上报）。
+
+    异常不中断执行流程，但会记录日志以便排查（不再静默吞掉）。
+    """
     if responder is None or io is None:
         return
     try:
         reply = responder.reply_for(raw)
     except Exception:
+        logger.exception("responder.reply_for 异常，已跳过自动应答；帧=%s",
+                         raw.hex()[:64])
         return
     if reply is not None:
         try:
             io.send_frame(reply)
         except Exception:
-            pass
+            logger.exception("自动应答发送失败；帧=%s 应答=%s",
+                             raw.hex()[:64], reply.hex()[:64])
 
 
 # ---------------------------------------------------------------------------
