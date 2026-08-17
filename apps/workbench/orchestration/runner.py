@@ -50,9 +50,14 @@ def new_run_id() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _scan_logs(log_dir: Path, rules: List[str]) -> Dict[str, Any]:
-    """调用 loghooks 引擎离线扫描，返回 {files, events, summary, drift}。"""
-    from loghooks.engine import run_scan
+def _scan_logs(log_dir: Path, rules: List[str], run_id: str = "") -> Dict[str, Any]:
+    """调用 loghooks 引擎离线扫描，返回 {files, events, evidence, summary, drift}。
+
+    - events: dict 事件列表（供 compare_flow 比对，保持既有契约）
+    - evidence: loghooks Event 直接 Evidence 化的完整对象列表（任务3收口：
+      引擎本体 on_event 发射器 → Event.to_evidence()，字段无损，不再走有损 dict 路径）
+    """
+    from loghooks.engine import Engine, Event
     from loghooks.output import build_drift_list, build_summary
     from loghooks.rules import RuleLoader
     from loghooks.sources import iter_lines  # 复用行解析
@@ -84,7 +89,17 @@ def _scan_logs(log_dir: Path, rules: List[str]) -> Dict[str, Any]:
                 parsed_all.extend(iter_lines("module_log", [line]))
             files.append(str(f))
 
-    result = run_scan(parsed_all, rule_objs, source="module_log")
+    # 引擎本体直接 Evidence 化：on_event 发射器把每条 Event 转 Evidence（run_id 注入）
+    evidence_list: List[Any] = []
+
+    def _on_event(ev: Event) -> None:
+        evidence_list.append(ev.to_evidence(run_id=run_id))
+
+    engine = Engine(rule_objs, source="module_log", on_event=_on_event)
+    for line in parsed_all:
+        engine.feed(line)
+    result = engine.finalize()
+
     events = [
         {
             "type": e.type,
@@ -100,6 +115,7 @@ def _scan_logs(log_dir: Path, rules: List[str]) -> Dict[str, Any]:
     return {
         "files": files,
         "events": events,
+        "evidence": evidence_list,
         "summary": build_summary(result),
         "drift": bool(result.drifts),
         "drift_list": build_drift_list(result),
@@ -208,11 +224,11 @@ class RunExecutor:
         log_dir = Path(run_input.log_dir) if run_input.log_dir else _default_log_dir()
         rules = run_input.rules or scenario.get("monitor", {}).get("rules", [])
         if run_input.skip_monitor:
-            scan: Dict[str, Any] = {"files": [], "events": [], "summary": {},
+            scan: Dict[str, Any] = {"files": [], "events": [], "evidence": [], "summary": {},
                                     "drift": False, "drift_list": []}
             step = RunStep(seq=seq, kind="monitor", detail="skipped", result="skipped")
         else:
-            scan = _scan_logs(log_dir, rules)
+            scan = _scan_logs(log_dir, rules, run_id=run.run_id)
             step = RunStep(
                 seq=seq,
                 kind="monitor",
@@ -222,7 +238,8 @@ class RunExecutor:
         self.store.add_step(run.run_id, step)
         run.steps.append(step)
         steps_result["monitor"] = scan
-        collected["events"].extend(scan["events"])
+        # 任务3收口：monitor 事件用引擎本体直接 Evidence 化的完整对象（字段无损）
+        collected["events"].extend(scan.get("evidence") or scan["events"])
 
         # 3. stimulus
         seq += 1

@@ -64,7 +64,7 @@ pytest libs/test_automation            → 58 passed
 ## 8. 未完成/后续
 
 - ~~任务 3：一个 Run 同时消费三源证据的编排~~ → **已落地（2026-08-17，见 §9）**
-- `libs/loghooks` 既有引擎的 Event 直接 Evidence 化（当前用适配器包装，未改引擎本体）
+- ~~`libs/loghooks` 既有引擎的 Event 直接 Evidence 化~~ → **已收口（2026-08-17，见 §11）**
 - 迁移用例的机器可执行帧定义（当前 GW-CASS 为语义断言）
 - 全量测试 13 个 WSL 失败项需 Windows + DLL 环境终验（既有基线）
 
@@ -168,3 +168,59 @@ Run 无库降级不失败。
 - COM4（侦听台串口）→ WSL 推断 `/dev/ttyUSB0`（docs/08 §1，待 `udevadm info`
   ID_SERIAL/ID_PATH 实测回填）；listener 在 WSL 内以 `/dev/ttyUSB0`（115200）采集
   落库后，Run 即可自动取帧完成三源闭环。
+
+---
+
+## 11. loghooks 引擎本体 Evidence 化收口（2026-08-17）
+
+> §8 未完成项「`libs/loghooks` 既有引擎的 Event 直接 Evidence 化（当前用适配器
+> 包装，未改引擎本体）」已收口。任务 3 至此全部完成。
+
+### 11.1 缺口
+
+此前 `apps/workbench/orchestration/runner.py:_scan_logs` 把 loghooks `Event` 降维成
+dict（仅保留 type/label/message/time/rule_id/category/source 7 字段），再经
+`evidence._dict_to_loghooks_event` 代理包装回对象供 `loghooks_event_evidence` 消费——
+**字段有损**：`level / source_line / captures / line_drift / drift_actual /
+drift_expected / source_line_idx` 全部丢失，证据不完整、不可下钻到原始日志行。
+
+### 11.2 实现（方案 B：引擎零硬依赖，保持解耦）
+
+`libs/loghooks/engine.py`：
+
+| 组件 | 作用 |
+|---|---|
+| `Event.to_evidence(run_id="")` | Event → `test_automation.Evidence`（kind=event, source=loghooks）。payload 含全字段（captures/漂移/level/source 等）；metadata 携带 `origin=loghooks.engine` + `source_line` + `source_line_idx`；raw_ref=`loghooks:<rule_id>`。**延迟 import `test_automation.models.Evidence`**，引擎本体不硬依赖 test_automation（ADR-1/10/13 解耦） |
+| `Engine(rules, source, on_event=None)` | 新增可插拔发射器参数：每产出一条 Event 即回调 `on_event(event)`；为 None 时行为与旧版完全一致（`_emit()` 统一登记 + 回调） |
+
+`apps/workbench/orchestration/runner.py`：`_scan_logs(log_dir, rules, run_id="")` 改用
+`Engine(..., on_event=...)` 发射器 + `Event.to_evidence(run_id)` 直接收集完整 Evidence，
+返回 `scan["evidence"]`（完整对象列表）；`scan["events"]`（dict）保留供
+`compare_flow` 比对（契约不变）。
+
+`apps/workbench/orchestration/evidence.py`：`collect_three_source_evidence` 的 events
+分支支持传入已 Evidence 化对象——`type(ev).__name__ == "Evidence"` 直接 `sink(ev)`
+写入（避免二次包装）；其余（dict/Event）仍走 `LoghooksEventAdapter` 适配路径。
+
+### 11.3 测试
+
+`apps/workbench/orchestration/test_evidence.py` 新增 4 用例（合计 21 passed）：
+
+```text
+pytest apps/workbench/orchestration/test_evidence.py                      → 21 passed
+pytest libs/loghooks libs/test_automation libs/sim_concentrator apps/workbench → 187 passed
+pytest libs apps                                                            → 563 passed / 66 skipped（无回归）
+```
+
+覆盖：`Event.to_evidence()` 字段无损（captures/漂移/source_line/source_line_idx）、
+`Engine(on_event=)` 发射器触发且与 events 列表同对象、`collect_three_source_evidence`
+接收已 Evidence 对象直接写入、RunExecutor 端到端 monitor 事件无损进 EvidenceStore。
+
+### 11.4 决策记录
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 引擎本体 Evidence 化方式 | `Event.to_evidence()`（延迟 import）+ `Engine(on_event=)` 可插拔发射器 | 引擎本体保持零 test_automation 依赖（ADR-1/10/13），调用方自由决定是否/如何转 Evidence |
+| monitor 事件证据完整性 | `runner._scan_logs` 直接用引擎发射器收集完整 Evidence | 取代有损 dict 代理路径，证据字段无损、可下钻 |
+| `scan["events"]` 保留 dict | 不改 `compare_flow` 契约 | compare 消费 `.get()` 的 dict，最小侵入 |
+| `collect_three_source_evidence` 双形态 | 已 Evidence 对象直接写入 + 原生 Event/dict 走适配器 | 兼容新旧调用方，不破坏既有 17 用例 |

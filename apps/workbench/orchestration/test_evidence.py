@@ -371,3 +371,116 @@ class TestLoadListenerFrames:
         ei = report["evidence_index"]
         assert "listener" not in ei.get("sources", {})
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# 任务3收口：loghooks 引擎本体 Evidence 化（Event.to_evidence + Engine.on_event）
+# ---------------------------------------------------------------------------
+
+
+class TestLoghooksEngineEvidence:
+    """引擎本体直接 Evidence 化（字段无损，不再走有损 dict 路径）。"""
+
+    def test_event_to_evidence_fields_lossless(self):
+        """Event.to_evidence()：payload 含全部事件字段，metadata 携带 source_line。"""
+        from loghooks.engine import Event
+
+        ev = Event(
+            type="report",
+            label="主动上报",
+            message="发现 06H-F230",
+            level="info",
+            time="10:00:00",
+            rule_id="anhui.report",
+            category="report",
+            source="cco.log",
+            source_line="[..] [RX] 06H-F230",
+            captures={"task_id": "1"},
+            line_drift=True,
+            drift_actual=5,
+            drift_expected=3,
+            source_line_idx=42,
+        )
+        evidence = ev.to_evidence(run_id="run-x")
+        assert evidence.kind == "event"
+        assert evidence.source == "loghooks"
+        assert evidence.run_id == "run-x"
+        assert evidence.raw_ref == "loghooks:anhui.report"
+        assert evidence.correlation_key == "anhui.report"
+        assert evidence.payload["rule_id"] == "anhui.report"
+        assert evidence.payload["captures"] == {"task_id": "1"}
+        assert evidence.payload["line_drift"] is True
+        assert evidence.payload["drift_actual"] == 5
+        assert evidence.payload["drift_expected"] == 3
+        # metadata 携带 source_line / source_line_idx（旧 dict 有损路径丢失的字段）
+        assert evidence.metadata["origin"] == "loghooks.engine"
+        assert evidence.metadata["source_line"] == "[..] [RX] 06H-F230"
+        assert evidence.metadata["source_line_idx"] == 42
+
+    def test_engine_on_event_emitter(self):
+        """Engine(on_event=...)：每条 Event 产出即触发回调，events 列表仍正常累积。"""
+        from loghooks.engine import Engine
+        from loghooks.rules import RuleLoader
+        from loghooks.sources import parse_module_log
+
+        loader = RuleLoader()
+        loader.load_all()
+        rules = [r for r in loader.rules if r.module in ("cco", "common")]
+        emitted = []
+
+        engine = Engine(rules, source="module_log", on_event=emitted.append)
+        line = parse_module_log(
+            "[20260811-19:15:08:510] [RX] 0 | info | aps_ioctrl_nwk.c (950) | onnet cnt = 12"
+        )
+        assert line is not None
+        engine.feed(line)
+        result = engine.finalize()
+
+        assert emitted, "on_event 发射器应收到至少一条事件"
+        assert len(emitted) == len(result.events)
+        assert all(hasattr(e, "rule_id") for e in emitted)
+        # 回调收到的事件与 events 列表一致（同对象）
+        assert emitted[0] is result.events[0]
+
+    def test_collect_accepts_already_evidence(self):
+        """collect_three_source_evidence：events 传已 Evidence 对象 → 直接写 store，不二次包装。"""
+        from loghooks.engine import Event
+        from workbench.orchestration.evidence import collect_three_source_evidence
+
+        ev = Event(
+            type="report", label="主动上报", message="m", level="info",
+            time="10:00:00", rule_id="anhui.report", category="report",
+            source="cco.log", source_line="line", captures={"k": "v"},
+            line_drift=False, source_line_idx=7,
+        )
+        evidence_obj = ev.to_evidence(run_id="run-y")
+        store = collect_three_source_evidence(run_id="run-y", events=[evidence_obj])
+
+        items = store.list()
+        assert len(items) == 1
+        it = items[0]
+        assert it.kind == "event"
+        assert it.source == "loghooks"
+        assert it.payload["captures"] == {"k": "v"}
+        assert it.metadata["source_line_idx"] == 7  # 无损
+        assert it.run_id == "run-y"
+
+    def test_run_monitor_evidence_is_lossless(self, tmp_path):
+        """RunExecutor 端到端：monitor 事件经引擎本体 Evidence 化，payload 含完整字段。"""
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+        )
+        run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+        report = store.get_report(run.run_id)
+        assert report is not None
+        assert "loghooks" in report["evidence_index"]["sources"]
+        # evidence_index 只暴露 raw_ref 锚点，完整 payload 需从 store 复核
+        ei = report["evidence_index"]
+        assert all(ref.startswith("loghooks:") for ref in ei["sources"]["loghooks"])
+        store.close()

@@ -95,11 +95,23 @@ def collect_three_source_evidence(
     sink = _evidence_to_store_sink(store)
 
     if events:
-        adapter = LoghooksEventAdapter(
-            [_dict_to_loghooks_event(ev) if isinstance(ev, dict) else ev for ev in events]
-        )
-        adapter.start(run_context)
-        adapter.collect(sink)  # type: ignore[arg-type]
+        # 任务3收口：events 既可以是 loghooks Event/dict（经适配器转 Evidence），
+        # 也可是已经 Evidence 化的完整对象（引擎本体 on_event 发射器直接产出，
+        # 字段无损）——已 Evidence 的直接写入，避免二次包装。
+        already_evidence = [
+            ev for ev in events
+            if type(ev).__name__ == "Evidence" and hasattr(ev, "kind") and hasattr(ev, "payload")
+        ]
+        if already_evidence:
+            for ev in already_evidence:
+                sink(ev)
+        raw_events = [ev for ev in events if ev not in already_evidence]
+        if raw_events:
+            adapter = LoghooksEventAdapter(
+                [_dict_to_loghooks_event(ev) if isinstance(ev, dict) else ev for ev in raw_events]
+            )
+            adapter.start(run_context)
+            adapter.collect(sink)  # type: ignore[arg-type]
 
     if step_results:
         adapter = SimConcentratorAdapter(list(step_results), case_id=case_id)

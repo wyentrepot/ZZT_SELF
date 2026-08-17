@@ -25,6 +25,8 @@
 | 17 | FR-5/FR-6 落地：新增 workbench 统一工作台包（包名避开标准库 platform 冲突），编排层 + 统一后端 + 页签式 SPA | ✅ 生效 |
 | 18 | workbench 前端合并 + 后端代理（方案①）：ASGI 前缀代理挂 /api/listener、/api/module-serial + 前端页面复制改前缀，根治页签空白；文件选择器 tkinter 故障降级 PowerShell | ✅ 生效 |
 | 19 | 项目级安装 UI/UX 设计技能（ui-ux-pro-max + ui-styling + design-system）到 .agents/skills/，仅免费且面向前端/软件 UI 的三个，不装品牌营销类 | ✅ 生效 |
+| 20 | Windows 串口网关采用原始 TCP + HTTP 控制（D:\019-wy-tool\uart_to_tcp），同一 COM 严格独占，XMODEM 为唯一 Windows 侧业务例外 | ✅ 已确认，待实现 |
+| 21 | loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（延迟 import），保持引擎与 test_automation 解耦，取代有损 dict 代理路径 | ✅ 生效 |
 
 ---
 
@@ -441,3 +443,18 @@
   - XMODEM 是唯一 Windows 侧业务例外，共享路径只读固件，校验 size/SHA-256 后执行。
   - 仅限同机；不使用 RFC2217、虚拟 COM/PTY、COM 共享或局域网访问。
 - **理由**：真实串口在 Windows；普通链路应透明，时序敏感的 XMODEM 放在 Windows 更稳定。
+
+---
+
+## ADR-21 loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（保持解耦）
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  - `libs/loghooks/engine.py` 新增 `Event.to_evidence(run_id="")`：Event → `test_automation.Evidence`（kind=event, source=loghooks），payload 含全字段（captures/漂移/level/source 等），metadata 携带 `origin=loghooks.engine` + `source_line` + `source_line_idx`。**延迟 import `test_automation.models.Evidence`**，引擎本体不硬依赖 test_automation。
+  - `Engine(rules, source, on_event=None)` 新增可插拔发射器：每产出一条 Event 即回调 `on_event(event)`；为 None 时行为与旧版完全一致（内部统一走 `_emit()` 登记 + 回调）。
+  - `apps/workbench/orchestration/runner.py:_scan_logs` 改用引擎发射器 + `Event.to_evidence()` 直接收集完整 Evidence（`scan["evidence"]`），取代此前「Event 降维成 7 字段 dict → `_dict_to_loghooks_event` 代理包装」的**有损路径**；`scan["events"]`（dict）保留供 `compare_flow` 比对（契约不变）。
+  - `apps/workbench/orchestration/evidence.py:collect_three_source_evidence` 的 events 分支支持双形态：已 Evidence 对象（`type(...).__name__ == "Evidence"`）直接 `sink` 写入；dict/Event 仍走 `LoghooksEventAdapter` 适配路径。
+- **理由**：任务 3 剩余项「loghooks 引擎本体 Evidence 化」要求引擎产出的 Event 直接可转 Evidence；但直接让引擎 import test_automation 会引入反向依赖，违背 ADR-1/10/13 解耦哲学。可插拔发射器 + 延迟 import 让引擎保持零 test_automation 依赖，由调用方决定是否/如何转 Evidence，同时消除有损 dict 代理路径（证据字段无损、可下钻）。
+- **影响**：`pytest apps/workbench/orchestration/test_evidence.py` = 21 passed（新增 4）；`pytest libs/loghooks libs/test_automation libs/sim_concentrator apps/workbench` = 187 passed；`pytest libs apps` = 563 passed / 66 skipped（无回归）。任务 3 至此全部收口（docs/04-任务安排.md 任务 3 = ✅ 已完成）。
+- **被取代**：无（新增决策；docs/12 §8 原「引擎本体改造延后」表述被本决策收口）。
