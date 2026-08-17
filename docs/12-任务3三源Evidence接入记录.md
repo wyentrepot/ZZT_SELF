@@ -121,3 +121,50 @@ pytest libs/test_automation libs/sim_concentrator apps/workbench → 150 passed
 | listener 帧来源 | `RunInput.extras["listener_frames"]` 注入 | 符合 SourceAdapter 可注入数据源契约，不依赖真实 listener 运行时，可单测 |
 | Evidence 写入 | sink 桥接（Evidence 对象 → append 字段） | 弥合 SourceAdapter 与 EvidenceStore 契约断层 |
 | 模型变更 | `Report` 增字段（不替换现有 Run/Report） | 不破坏既有 orchestration 契约与测试 |
+
+---
+
+## 10. 任务 4：Run 接入 COM4 侦听台串口三源闭环（2026-08-17 补充）
+
+> §9 的三源 Run 靠 `RunInput.extras["listener_frames"]` 手动注入 listener 帧；本
+> 节打通「Run 自动从 COM4 侦听台采集落库读取帧」，完成任务 4 在 WSL 内可落地的
+> 部分。
+
+### 10.1 新增代码
+
+`apps/workbench/orchestration/evidence.py`：
+
+| 组件 | 作用 |
+|---|---|
+| `default_listener_index_path()` | listener 帧索引库默认路径（源码：`apps/listener/runtime/log_index.sqlite3`，与 listener 包约定对齐，不硬依赖其包；frozen：exe 同目录 `runtime/`） |
+| `load_listener_frames_from_index()` | 只读 sqlite `frames` 表 → `(sequence, log_time, raw_hex)` 列表；库/表不存在或无帧 → 空列表（优雅降级） |
+
+`apps/workbench/orchestration/runner.py`：`_run_steps` 中 listener 帧来源——
+优先 `extras.listener_frames` 显式注入，否则自动从索引库读取（路径可经
+`extras.listener_index` 覆盖），并回写 `extras` 供 Report 汇总。
+
+### 10.2 设计约束
+
+- **串口归 listener 管理**：Run 只读 listener 采集落库（`log_index.sqlite3`），
+  不启动 SerialCaptureService、不抢 COM4（遵守任务 3 串口独占租约）。
+- **优雅降级**：listener 未运行/库缺失 → `listener` source 为空，Run 照常完成
+  （monitor/stimulus 两源仍进 EvidenceStore）。
+- **路径可覆盖**：`extras.listener_index` 供测试/多实例覆盖默认库路径。
+
+### 10.3 测试
+
+`apps/workbench/orchestration/test_evidence.py` 新增 6 用例（合计 17 passed）：
+
+```text
+pytest apps/workbench/orchestration/test_evidence.py        → 17 passed
+pytest libs/test_automation libs/sim_concentrator apps/workbench → 156 passed
+```
+
+覆盖：索引库读帧正序 / 库缺失降级 / 表缺失降级 / limit 生效 / Run 自动加载 /
+Run 无库降级不失败。
+
+### 10.4 待 Windows 实测
+
+- COM4（侦听台串口）→ WSL 推断 `/dev/ttyUSB0`（docs/08 §1，待 `udevadm info`
+  ID_SERIAL/ID_PATH 实测回填）；listener 在 WSL 内以 `/dev/ttyUSB0`（115200）采集
+  落库后，Run 即可自动取帧完成三源闭环。

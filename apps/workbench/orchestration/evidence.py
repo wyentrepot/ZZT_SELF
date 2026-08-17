@@ -16,6 +16,7 @@ step_results / events 列表），不依赖真实串口与运行时，便于单�
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from test_automation.evidence_store import EvidenceStore
@@ -142,3 +143,60 @@ def evidence_index(store: EvidenceStore) -> Dict[str, Any]:
         total += 1
         index.setdefault(ev.source, []).append(ev.raw_ref or f"{ev.source}:ev:{ev.sequence}")
     return {"total": total, "sources": index}
+
+
+# ---------------------------------------------------------------------------
+# listener 索引库读取（任务 4：Run 接入 COM4 侦听台串口三源闭环）
+# ---------------------------------------------------------------------------
+
+
+def default_listener_index_path() -> Path:
+    """listener 帧索引库默认路径（与 apps/listener 约定对齐，不硬依赖其包）。
+
+    源码模式：apps/listener/runtime/log_index.sqlite3；
+    frozen（listener 独立 exe）：exe 同目录 runtime/log_index.sqlite3。
+    Run 只读库取帧，不抢串口（串口归 listener 采集管理，独占租约）。
+    """
+    apps_dir = Path(__file__).resolve().parent.parent.parent  # .../apps
+    return apps_dir / "listener" / "runtime" / "log_index.sqlite3"
+
+
+def load_listener_frames_from_index(
+    index_path: Optional[Path] = None,
+    limit: int = 500,
+) -> List[tuple]:
+    """从 listener 帧索引库读取帧记录 (sequence, log_time, hex_frame)。
+
+    - 库不存在 / 表不存在 / 无帧 → 返回空列表（优雅降级，listener source 为空）
+    - hex_frame 取自 raw_hex 列（listener 落库的 7E 定界帧，与 ListenerFrameAdapter 契约一致）
+    - 默认只读最近 limit 条（按 id 倒序取最新，再正序返回，供三源 Run 消费）
+    """
+    path = Path(index_path) if index_path is not None else default_listener_index_path()
+    if not path.exists():
+        return []
+    try:
+        import sqlite3
+
+        with sqlite3.connect(str(path), timeout=10) as conn:
+            conn.row_factory = sqlite3.Row
+            # 确认 frames 表存在
+            has_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='frames'"
+            ).fetchone()
+            if not has_table:
+                return []
+            rows = conn.execute(
+                """
+                SELECT sequence, log_time, raw_hex FROM frames
+                ORDER BY id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    records = []
+    for row in reversed(rows):  # 正序返回（时间先后）
+        hex_frame = (row["raw_hex"] or "").strip()
+        if hex_frame:
+            records.append((row["sequence"], row["log_time"], hex_frame))
+    return records

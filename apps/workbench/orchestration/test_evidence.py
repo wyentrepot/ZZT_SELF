@@ -1,4 +1,4 @@
-"""workbench.orchestration.evidence —— 三源 Evidence 接入测试（任务 3）。
+"""workbench.orchestration.evidence —— 三源 Evidence 接入测试（任务 3/4）。
 
 覆盖：
 - collect_three_source_evidence：三源（loghooks/sim_concentrator/listener）数据
@@ -6,6 +6,8 @@
 - evidence_index：可下钻索引（raw_ref 锚点按 source 分组）
 - acquire_serial_lease：串口资源独占租约，冲突抛 ResourceConflictError 可预测
 - RunExecutor 端到端：三源 Run 的 Report 含 evidence_index/evidence_frozen/sources.listener
+- load_listener_frames_from_index：从 listener 索引库读帧（任务 4：Run 接入 COM4）
+- RunExecutor 自动加载：未注入 listener_frames 时从索引库读取
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from workbench.orchestration.evidence import (
     acquire_serial_lease,
     collect_three_source_evidence,
     evidence_index,
+    load_listener_frames_from_index,
 )
 from workbench.orchestration.models import RunInput
 from workbench.orchestration.runner import RunExecutor
@@ -250,4 +253,121 @@ class TestRunExecutorThreeSource:
         assert "sim_concentrator" in report["evidence_index"]["sources"]
         assert report["evidence_index"]["sources"]["sim_concentrator"] == ["simcon:step:0"]
         assert report["sources"]["sim_concentrator"]["verdict"] == "pass"
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# load_listener_frames_from_index —— 任务 4：Run 接入 COM4 侦听台串口
+# ---------------------------------------------------------------------------
+
+
+def _make_listener_index(tmp_path: Path, frames: list) -> Path:
+    """构造 listener 风格 frames 表（sequence/log_time/raw_hex）。"""
+    import sqlite3
+
+    db = tmp_path / "log_index.sqlite3"
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            """CREATE TABLE frames (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sequence TEXT NOT NULL,
+                log_time TEXT NOT NULL,
+                byte_length INTEGER NOT NULL,
+                raw_hex TEXT NOT NULL,
+                summary_json TEXT,
+                parse_error TEXT
+            )"""
+        )
+        for seq, ts, hexf in frames:
+            conn.execute(
+                "INSERT INTO frames(sequence, log_time, byte_length, raw_hex) VALUES(?,?,?,?)",
+                (seq, ts, len(hexf.split()), hexf),
+            )
+    return db
+
+
+class TestLoadListenerFrames:
+    def test_reads_frames_chronological(self, tmp_path):
+        """从索引库读取帧，按 id 正序返回 (sequence, log_time, hex_frame)。"""
+        db = _make_listener_index(
+            tmp_path,
+            [
+                ("000001", "2026-08-17 10:00:00", "7e 68 01 02 7e"),
+                ("000002", "2026-08-17 10:00:01", "7e 68 02 03 7e"),
+            ],
+        )
+        records = load_listener_frames_from_index(index_path=db)
+        assert records == [
+            ("000001", "2026-08-17 10:00:00", "7e 68 01 02 7e"),
+            ("000002", "2026-08-17 10:00:01", "7e 68 02 03 7e"),
+        ]
+
+    def test_missing_db_returns_empty(self, tmp_path):
+        """库不存在 → 空列表（优雅降级）。"""
+        assert load_listener_frames_from_index(index_path=tmp_path / "none.sqlite3") == []
+
+    def test_missing_table_returns_empty(self, tmp_path):
+        """库存在但无 frames 表 → 空列表。"""
+        import sqlite3
+
+        db = tmp_path / "empty.sqlite3"
+        with sqlite3.connect(str(db)):
+            pass
+        assert load_listener_frames_from_index(index_path=db) == []
+
+    def test_respects_limit(self, tmp_path):
+        """limit 生效：只读最近 N 条（倒序取最新再正序返回）。"""
+        frames = [(f"{i:06d}", f"2026-08-17 10:00:{i:02d}", f"7e 68 {i:02d} 7e")
+                  for i in range(5)]
+        db = _make_listener_index(tmp_path, frames)
+        records = load_listener_frames_from_index(index_path=db, limit=2)
+        assert len(records) == 2
+        # 最近两条（id 3,4），正序
+        assert records[0][0] == "000003"
+        assert records[1][0] == "000004"
+
+    def test_run_auto_loads_from_index(self, tmp_path):
+        """RunExecutor：未注入 listener_frames 时自动从索引库读取（三源闭环含 listener）。"""
+        db = _make_listener_index(
+            tmp_path,
+            [
+                ("000001", "2026-08-17 10:00:00", "7e 68 01 02 7e"),
+                ("000002", "2026-08-17 10:00:01", "7e 68 02 03 7e"),
+            ],
+        )
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+            extras={"listener_index": str(db)},
+        )
+        run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+        report = store.get_report(run.run_id)
+        assert report is not None
+        assert "listener" in report["evidence_index"]["sources"]
+        assert len(report["evidence_index"]["sources"]["listener"]) == 2
+        assert report["sources"]["listener"]["frames"] == 2
+        store.close()
+
+    def test_run_no_index_degrades_gracefully(self, tmp_path):
+        """RunExecutor：索引库不存在 → listener source 为空，Run 不失败。"""
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui",
+            log_dir=str(log_dir),
+            skip_flash=True,
+            skip_stimulus=True,
+            extras={"listener_index": str(tmp_path / "none.sqlite3")},
+        )
+        run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+        report = store.get_report(run.run_id)
+        assert report is not None
+        ei = report["evidence_index"]
+        assert "listener" not in ei.get("sources", {})
         store.close()

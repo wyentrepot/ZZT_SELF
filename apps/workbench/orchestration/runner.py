@@ -25,6 +25,7 @@ from .evidence import (
     acquire_serial_lease,
     collect_three_source_evidence,
     evidence_index,
+    load_listener_frames_from_index,
 )
 from .feedback import build_feedback
 from .models import (
@@ -182,7 +183,16 @@ class RunExecutor:
             "steps": [],
             "frames": [],
         }
+        # 任务4：listener 帧来源——优先显式注入（extras.listener_frames），
+        # 否则从 listener 索引库（COM4 侦听台采集落库）按需读取；库不存在/无帧
+        # 时优雅降级为空（listener source 为空，不阻断 Run）。
         listener_frames = run_input.extras.get("listener_frames") or []
+        if not listener_frames:
+            listener_frames = load_listener_frames_from_index(
+                index_path=run_input.extras.get("listener_index")
+            )
+            if listener_frames:
+                run_input.extras["listener_frames"] = listener_frames
 
         # 1. flash
         seq += 1
