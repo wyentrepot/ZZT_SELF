@@ -31,6 +31,7 @@
 | 23 | 任务4验证UI证据下钻：evidence_detail()（Report 完整证据明细按 source 分组）+ workbench.html「④ 证据下钻」面板（details 展开 payload/metadata）；运行恢复/取消Run/打包验收待续 | ✅ 生效 |
 | 24 | 任务4取消Run：submit() 后台线程异步 + cancel() 协作式取消（threading.Event 步骤间检查）+ CANCELLED 终态 + POST /api/run/{id}/cancel + _executor() 单例修复 + 前端轮询/取消按钮 | ✅ 生效 |
 | 25 | 任务4剩余：restoreLastRun() 刷新恢复 + store 时间戳毫秒化（排序稳定）+ check_assets.py 打包静态完整性门禁（B-03 自动化部分）；真机 DLL 留 Windows | ✅ 生效 |
+| 26 | 任务4 B-03 真机打包验收完成（Windows）：PyInstaller 打包 dist/工作台/（含 C# DLL/scenarios/loghooks）+ smoke_test_workbench_packaged.py headless 冒烟 9/9；B-03 阻塞解除，任务4 完成 | ✅ 生效 |
 
 ---
 
@@ -522,4 +523,18 @@
   3. **B-03 静态资源完整性门禁**：新增 `apps/workbench/check_assets.py`——关键资产存在/非空、HTML 引用 `/static/` 资源完整性、空文件检测；`--strict` 退出码非 0 供打包 CI 门禁。真机 DLL 打包与干净机启动冒烟留 Windows 环境（B-03 阻塞解除需干净机证据）。
 - **理由**：FR-6 要求"刷新后恢复 Run；DLL/串口缺失不阻断无关能力"。运行恢复是刷新可用性硬要求；时间戳毫秒化是排序稳定性的必要修复；静态资源完整性是本环境（WSL 无 DLL）能自动化的 B-03 部分，提前落地降低真机打包踩坑。
 - **影响**：新增 TestRunRestore 1 + B-03 2 测试；全量 `pytest libs apps` = **588 passed / 66 skipped** 无回归。任务 4 除真机 DLL 打包验收（Windows）外全部完成。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-26 任务4 B-03 真机打包验收完成（Windows）
+
+- **日期**：2026-08-18
+- **状态**：✅ 生效
+- **决定**：
+  1. **真机 Windows 打包**：环境从 WSL 切到原生 Windows 后，DLL 已就位（`libs/shared/dll/bin/Debug/GwHPLCAnalysis.dll`），执行 `PyInstaller --clean --noconfirm tools/packaging/workbench.spec` → `dist/工作台/工作台.exe`（onedir 7.8MB），`_internal/` 含 static（12 资产）、`dll/bin/Debug/GwHPLCAnalysis.dll`、scenarios（4 场景）、loghooks rules。
+  2. **打包版启动冒烟**：新增 `tools/scripts/smoke_test_workbench_packaged.py`，`HPLC_NO_GUI=1` headless 启动 exe，验证 health / 首页 / 静态资源 / platform-version / module-serial+listener 子应用代理 / runtime 生成 = **9/9 PASS**。
+  3. **B-03 阻塞解除**：任务 4 标记 ✅ 已完成；剩余阻塞仅真机串口实测（B-04，任务 6 已屏蔽）。
+- **理由**：B-03 验收出口是"干净机打包与启动冒烟并保存证据"；headless 冒烟脚本即持久化证据，可在任何 Windows 机器复跑验证产物。
+- **影响**：任务 4 收尾；打包冒烟脚本纳入 `tools/scripts/` 供回归。真机串口（COM4 集中器/电表）仍待硬件环境。
 - **被取代**：无（新增决策）。
