@@ -19,6 +19,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .compare import compare_flow
+from .evidence import (
+    ResourceConflictError,
+    ResourceLeaseManager,
+    acquire_serial_lease,
+    collect_three_source_evidence,
+    evidence_index,
+)
 from .feedback import build_feedback
 from .models import (
     Assertion,
@@ -168,6 +175,15 @@ class RunExecutor:
         steps_result: Dict[str, Any] = {}
         seq = 0
 
+        # 任务3：Run 级三源 Evidence 收集 + 串口资源租约
+        lease_manager = ResourceLeaseManager()
+        collected: Dict[str, List[Any]] = {
+            "events": [],
+            "steps": [],
+            "frames": [],
+        }
+        listener_frames = run_input.extras.get("listener_frames") or []
+
         # 1. flash
         seq += 1
         if run_input.skip_flash:
@@ -196,6 +212,7 @@ class RunExecutor:
         self.store.add_step(run.run_id, step)
         run.steps.append(step)
         steps_result["monitor"] = scan
+        collected["events"].extend(scan["events"])
 
         # 3. stimulus
         seq += 1
@@ -204,7 +221,26 @@ class RunExecutor:
             simcon: Optional[dict] = None
             step = RunStep(seq=seq, kind="stimulus", detail="skipped", result="skipped")
         else:
+            # 任务3：串口资源独占租约（冲突可预测）
+            resource_id = run_input.extras.get("resource_id") or "serial/COM24"
+            lease = None
+            try:
+                lease = acquire_serial_lease(
+                    lease_manager, holder=run.run_id, resource_id=resource_id
+                )
+            except ResourceConflictError as exc:
+                simcon = None
+                step = RunStep(
+                    seq=seq, kind="stimulus",
+                    detail=f"资源冲突：{exc}", result="fail",
+                )
+                self.store.add_step(run.run_id, step)
+                run.steps.append(step)
+                steps_result["stimulus"] = None
+                raise
             simcon = _run_stimulus(Path(task_file) if task_file else None, None)
+            if lease is not None:
+                lease_manager.release("serial_port", resource_id, run.run_id)
             if simcon is None:
                 step = RunStep(seq=seq, kind="stimulus", detail="无任务/无串口，跳过", result="skipped")
             else:
@@ -217,6 +253,10 @@ class RunExecutor:
         self.store.add_step(run.run_id, step)
         run.steps.append(step)
         steps_result["stimulus"] = simcon
+        if simcon and simcon.get("steps"):
+            collected["steps"].extend(simcon["steps"])
+        if listener_frames:
+            collected["frames"].extend(listener_frames)
 
         # 4. compare
         seq += 1
@@ -278,6 +318,16 @@ class RunExecutor:
         if simcon and simcon["summary"]["verdict"] == "pass":
             assertions.append(Assertion(id="simcon.verdict", actual="pass", result="pass"))
 
+        # 任务3：三源 Evidence 汇总进同一 run 级 EvidenceStore 并冻结证据窗口
+        evidence_store = collect_three_source_evidence(
+            run_id=run.run_id,
+            events=collected["events"],
+            step_results=collected["steps"],
+            frame_records=collected["frames"],
+            case_id=scenario.get("id", ""),
+        )
+        evidence_store.freeze()
+
         report = Report(
             run_id=run.run_id,
             firmware=run.firmware,
@@ -288,6 +338,9 @@ class RunExecutor:
                     "events": len(scan["events"]),
                     "summary": scan["summary"],
                 },
+                listener={
+                    "frames": len(collected["frames"]),
+                } if collected["frames"] else {},
                 sim_concentrator=(simcon or {}).get("summary", {}),
             ),
             assertions=assertions,
@@ -295,6 +348,8 @@ class RunExecutor:
             feedback=feedback,
             verdict=verdict,
             artifacts=scan["files"],
+            evidence_index=evidence_index(evidence_store),
+            evidence_frozen=evidence_store.frozen,
         )
         return report
 

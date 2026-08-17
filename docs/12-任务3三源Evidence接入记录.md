@@ -63,7 +63,61 @@ pytest libs/test_automation            → 58 passed
 
 ## 8. 未完成/后续
 
-- 任务 3：**一个 Run 同时消费三源证据的编排**（Run 级接入：把三源适配器接进 Run 执行流程）
+- ~~任务 3：一个 Run 同时消费三源证据的编排~~ → **已落地（2026-08-17，见 §9）**
 - `libs/loghooks` 既有引擎的 Event 直接 Evidence 化（当前用适配器包装，未改引擎本体）
 - 迁移用例的机器可执行帧定义（当前 GW-CASS 为语义断言）
 - 全量测试 13 个 WSL 失败项需 Windows + DLL 环境终验（既有基线）
+
+## 9. Run 级三源编排接入（2026-08-17 补充）
+
+> 任务 3 剩余项"一个 Run 同时消费三源证据的编排"已落地，本节约定其实现与验收证据。
+
+### 9.1 新增代码
+
+`apps/workbench/orchestration/evidence.py`（Run 级三源 Evidence 接入）：
+
+| 组件 | 作用 |
+|---|---|
+| `collect_three_source_evidence()` | loghooks 事件 / sim_concentrator 步骤 / listener 帧 → 同一 run 级 `EvidenceStore`（sequence 单调，可 freeze） |
+| `_dict_to_loghooks_event()` | `_scan_logs` 产出的 dict 事件 → `loghooks_event_evidence` 可消费（`getattr` 兼容） |
+| `_evidence_to_store_sink()` | `SourceAdapter` sink 契约（`sink(ev)` 收 Evidence 对象）→ `EvidenceStore.append` 字段式契约桥接 |
+| `acquire_serial_lease()` | 串口资源独占租约（`ResourceLeaseManager`），冲突抛 `ResourceConflictError` |
+| `evidence_index()` | EvidenceStore → 可下钻索引 `{total, sources:{source:[raw_ref,...]}}` |
+
+`apps/workbench/orchestration/runner.py`：`RunExecutor._run_steps` 接入三源收集——
+monitor 事件 → Evidence、stimulus 步骤 → Evidence（stimulus 前取串口独占租约）、
+listener 帧（`RunInput.extras["listener_frames"]`）→ Evidence；Report 新增
+`evidence_index` / `evidence_frozen` / `sources.listener`。
+
+`apps/workbench/orchestration/models.py`：`Report` 补 `evidence_index`、`evidence_frozen` 字段。
+
+### 9.2 测试
+
+`apps/workbench/orchestration/test_evidence.py`（11 用例）：
+
+```text
+pytest apps/workbench/orchestration/test_evidence.py        → 11 passed
+pytest libs/test_automation libs/sim_concentrator apps/workbench → 150 passed
+```
+
+覆盖：三源同时消费进同一 store、dict 事件代理、freeze 拒绝追加、evidence_index
+下钻、串口资源冲突可预测（独占冲突 / shared 共存）、RunExecutor 端到端 Report
+含 evidence 字段、stimulus 步骤 → sim_concentrator Evidence。
+
+### 9.3 验收出口对照
+
+- ✅ **一个 Run 同时消费三源证据**：`collect_three_source_evidence` + `RunExecutor`
+  端到端测试（monitor 事件 + listener 帧 + stimulus 步骤 → 同一 EvidenceStore）
+- ✅ **资源冲突可预测**：`acquire_serial_lease` 独占冲突抛 `ResourceConflictError`，
+  shared 离线文件可共存
+- ⏳ **迁移用例与旧工具结果一致**：GW-CASS 迁移用例结果一致性仍属既有验证项，
+  不在本次 Run 级接入范围
+
+### 9.4 决策记录
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| Run 级编排落点 | `apps/workbench/orchestration/evidence.py` + 复用 `test_automation` EvidenceStore/适配器 | 复用任务 1 领域契约，不重复实现 |
+| listener 帧来源 | `RunInput.extras["listener_frames"]` 注入 | 符合 SourceAdapter 可注入数据源契约，不依赖真实 listener 运行时，可单测 |
+| Evidence 写入 | sink 桥接（Evidence 对象 → append 字段） | 弥合 SourceAdapter 与 EvidenceStore 契约断层 |
+| 模型变更 | `Report` 增字段（不替换现有 Run/Report） | 不破坏既有 orchestration 契约与测试 |
