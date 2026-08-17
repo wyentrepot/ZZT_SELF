@@ -236,3 +236,39 @@ def test_run_cancel_non_running_returns_409(client, tmp_path):
     """取消一个不存在的 Run → 404；已完成 Run 不可取消。"""
     r = client.post("/api/run/nonexistent/cancel")
     assert r.status_code == 404
+
+
+def test_static_assets_complete(client):
+    """B-03 静态资源完整性：HTML 引用的 /static/ 资源都能 serve 200。"""
+    from workbench.check_assets import check_assets, _referenced_static_paths
+
+    # 打包门禁校验：无缺失/空文件/引用断裂
+    assert check_assets() == 0
+
+    # 每个被引用的静态资源经 HTTP 可达
+    for rel in _referenced_static_paths():
+        rel = rel.split("?", 1)[0]
+        if not rel:
+            continue
+        r = client.get("/static/" + rel)
+        assert r.status_code == 200, f"/static/{rel} 应 200，实际 {r.status_code}"
+
+
+def test_static_all_pages_served(client):
+    """B-03：关键页面与子应用页面资源全部 200。"""
+    pages = [
+        "/static/index.html",
+        "/static/app.js",
+        "/static/tokens.css",
+        "/static/styles.css",
+        "/static/workbench.html",
+        "/static/pages/listener/index.html",
+        "/static/pages/listener/app.js",
+        "/static/pages/listener/styles.css",
+        "/static/pages/module-serial/module-serial.html",
+        "/static/pages/module-serial/module-serial.js",
+        "/static/pages/module-serial/styles.css",
+    ]
+    for p in pages:
+        r = client.get(p)
+        assert r.status_code == 200, f"{p} 应 200，实际 {r.status_code}"

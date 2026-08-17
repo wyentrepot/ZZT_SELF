@@ -348,10 +348,36 @@ tr:hover td {
     }).catch(function () { });
   }
 
+  /* 任务4 运行恢复：刷新页面后恢复上次 Run 的状态/结果。
+     取最近一个 Run：终态 → 渲染结果+证据并更新徽标；运行中 → 继续轮询恢复实时状态。 */
+  function restoreLastRun() {
+    api("/api/runs?limit=1").then(function (list) {
+      if (!list.length) return; // 无历史，保持"尚未执行 Run"提示
+      const last = list[0];
+      currentRunId = last.run_id;
+      const terminal = last.status === "passed" || last.status === "failed" ||
+                       last.status === "cancelled" || last.status === "error";
+      if (terminal) {
+        $("wb-badge").textContent = last.status === "passed" ? "PASS" :
+          (last.status === "cancelled" ? "取消" : "FAIL");
+        $("wb-badge").className = "badge " + (last.status === "passed" ? "pass" :
+          (last.status === "cancelled" ? "run" : "fail"));
+        api("/api/run/" + last.run_id).then(function (run) { renderRun(run); })
+          .catch(function () { });
+      } else {
+        // 运行中：恢复轮询（沿用 pollRun 逻辑，显示取消按钮/实时状态）
+        $("wb-badge").textContent = "运行中";
+        $("wb-badge").className = "badge run";
+        pollRun(last.run_id);
+      }
+    }).catch(function () { }); // 恢复失败静默，不影响其他功能
+  }
+
   $("btn-run").addEventListener("click", run);
   $("btn-refresh-scenarios").addEventListener("click", loadScenarios);
   loadScenarios();
   loadHistory();
+  restoreLastRun();
 })();
 </script>
 

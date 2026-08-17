@@ -30,6 +30,7 @@
 | 22 | 任务5协议专项收口：E2/E3/E4 解析修复（问题清单7项 + B-01残留3项）+ 性能基线 + 异常恢复/发布冒烟；OAD/OI 覆盖（18→515）标后续 | ✅ 生效 |
 | 23 | 任务4验证UI证据下钻：evidence_detail()（Report 完整证据明细按 source 分组）+ workbench.html「④ 证据下钻」面板（details 展开 payload/metadata）；运行恢复/取消Run/打包验收待续 | ✅ 生效 |
 | 24 | 任务4取消Run：submit() 后台线程异步 + cancel() 协作式取消（threading.Event 步骤间检查）+ CANCELLED 终态 + POST /api/run/{id}/cancel + _executor() 单例修复 + 前端轮询/取消按钮 | ✅ 生效 |
+| 25 | 任务4剩余：restoreLastRun() 刷新恢复 + store 时间戳毫秒化（排序稳定）+ check_assets.py 打包静态完整性门禁（B-03 自动化部分）；真机 DLL 留 Windows | ✅ 生效 |
 
 ---
 
@@ -507,4 +508,18 @@
   4. **前端**：`workbench.html` 的 `run()` 改 `pollRun()` 轮询，运行中显示「取消 Run」按钮 + 状态，终态渲染结果/证据；badge 支持 cancelled（"取消"）。
 - **理由**：FR-6 要求"支持取消和错误恢复"。原同步阻塞执行无法在 Run 进行中响应取消请求；异步 + 协作式取消（步骤间检查）不需硬中断正在进行的串口 IO，安全、可测。
 - **影响**：`test_app.py` + `test_evidence.py` = 42 passed（新增 TestRunCancel 3 + cancel flow 2，含 CANCELLED 终态/report 标注/409/404）；全量 `pytest libs apps` = 585 passed / 66 skipped（无回归）。任务 4 取消 Run 完成；运行恢复（刷新后恢复 Run）、打包验收（B-03）待续。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-25 任务4剩余项：运行恢复 + 打包静态资源完整性门禁
+
+- **日期**：2026-08-18
+- **状态**：✅ 生效
+- **决定**：
+  1. **运行恢复（FR-6 刷新后恢复）**：前端 `restoreLastRun()` 页面加载时取最近 Run（`GET /api/runs?limit=1`）——终态渲染结果+证据+徽标，运行中继续 `pollRun` 恢复实时状态/取消按钮；失败静默降级不影响其他功能。
+  2. **store 时间戳改毫秒级**：`created_at`/`updated_at` 原 `isoformat(timespec="seconds")` 秒级，同秒多条 Run 时 `list_runs` 倒序不稳定，恢复可能取错 Run；改 `timespec="milliseconds"`（ISO 兼容，前端 `slice(0,19)` 截断不受影响）。
+  3. **B-03 静态资源完整性门禁**：新增 `apps/workbench/check_assets.py`——关键资产存在/非空、HTML 引用 `/static/` 资源完整性、空文件检测；`--strict` 退出码非 0 供打包 CI 门禁。真机 DLL 打包与干净机启动冒烟留 Windows 环境（B-03 阻塞解除需干净机证据）。
+- **理由**：FR-6 要求"刷新后恢复 Run；DLL/串口缺失不阻断无关能力"。运行恢复是刷新可用性硬要求；时间戳毫秒化是排序稳定性的必要修复；静态资源完整性是本环境（WSL 无 DLL）能自动化的 B-03 部分，提前落地降低真机打包踩坑。
+- **影响**：新增 TestRunRestore 1 + B-03 2 测试；全量 `pytest libs apps` = **588 passed / 66 skipped** 无回归。任务 4 除真机 DLL 打包验收（Windows）外全部完成。
 - **被取代**：无（新增决策）。

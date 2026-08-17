@@ -710,3 +710,32 @@ class TestRunCancel:
         ex = RunExecutor(store)
         assert ex.cancel("run-nonexistent") is False
         store.close()
+
+
+class TestRunRestore:
+    """任务4 运行恢复：刷新后恢复上次 Run 所需的后端支撑。"""
+
+    def test_list_runs_newest_first(self, tmp_path):
+        """list_runs 按 created_at 倒序，第一条即最近 Run（restoreLastRun 数据源）。"""
+        import time
+        from workbench.orchestration.runner import RunExecutor
+
+        log_dir = _make_fake_log(tmp_path)
+        store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+        ex = RunExecutor(store)
+        ri = RunInput(
+            scenario_id="join_anhui", log_dir=str(log_dir),
+            skip_flash=True, skip_stimulus=True,
+        )
+        run1 = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+        time.sleep(0.05)  # 确保 created_at 不同
+        run2 = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
+
+        runs = store.list_runs(limit=2)
+        assert len(runs) == 2
+        assert runs[0]["run_id"] == run2.run_id  # 最近的在最前
+        assert runs[1]["run_id"] == run1.run_id
+        # 恢复所需字段齐全
+        for key in ("run_id", "scenario_id", "status", "created_at", "report_path"):
+            assert key in runs[0]
+        store.close()
