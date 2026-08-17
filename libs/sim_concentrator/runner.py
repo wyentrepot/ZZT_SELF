@@ -69,6 +69,11 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
     """
     send = send or {}
 
+    # 原始帧直接发送（格式：local）：send.raw = "68 17 00 ... 16" 完整帧 hex
+    # 用于下发经真机验证的完整帧（L/CS 由外部给定，不做重新构帧）
+    if send.get("raw"):
+        return hex_to_bytes(send["raw"])
+
     if send.get("format") == "local":
         afn = _to_int(send.get("afn", 0x00))
         fn = _to_int(send.get("fn", 1), 10)
