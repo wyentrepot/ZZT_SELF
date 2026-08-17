@@ -20,6 +20,11 @@
 | 12 | OpenViking 记忆后端 embedding/VLM 切换到火山方舟（doubao-embedding-vision + doubao-seed-code） | ✅ 生效 |
 | 13 | 模拟集中器前端可视化：module_log 新增第三页签「模拟集中器」，挂载 simcon 子应用 | ✅ 生效 |
 | 14 | 仓库目录结构两阶段迁移（apps/libs 分层 + docs/tools/data 归组 + graphify-out 清理） | ✅ 生效 |
+| 15 | 需求文档整理：docs/需求管理/ 汇总「已完成/待完成」两文档，需求类文档移入归档 | ✅ 生效 |
+| 16 | docs 文档按 协议/需求/需求设计方案/总设计框架/开发与运维 五类归类 | ✅ 生效 |
+| 17 | FR-5/FR-6 落地：新增 workbench 统一工作台包（包名避开标准库 platform 冲突），编排层 + 统一后端 + 页签式 SPA | ✅ 生效 |
+| 18 | workbench 前端合并 + 后端代理（方案①）：ASGI 前缀代理挂 /api/listener、/api/module-serial + 前端页面复制改前缀，根治页签空白；文件选择器 tkinter 故障降级 PowerShell | ✅ 生效 |
+| 19 | 项目级安装 UI/UX 设计技能（ui-ux-pro-max + ui-styling + design-system）到 .agents/skills/，仅免费且面向前端/软件 UI 的三个，不装品牌营销类 | ✅ 生效 |
 
 ---
 
@@ -333,4 +338,91 @@
   - README「根目录速览」表、目录树、启动/构建/测试章节同步；设计文档 §6.2.3/6.2.4 更新为已执行状态。
   - 测试基线：本 WSL 无 DLL 环境 326 passed / 66 skipped / 9 DLL 失败（环境基线）；Windows + C# DLL 终验应为 402 passed / 66 skipped。
   - `python -m listener.run` / `module_log.run` / `loghooks scan` / `sim_concentrator verify` 冷启动验证通过。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-15 需求文档整理：docs/需求管理/ 汇总 + 归档
+
+- **日期**：2026-08-14
+- **状态**：✅ 生效
+- **决定**：
+  - 新增 `docs/需求管理/已完成需求.md` 与 `docs/需求管理/待完成需求.md` 两份汇总文档，作为需求现状的唯一入口（按状态二分类）。
+  - 将散落的需求/待办/问题文档移入 `docs/需求管理/归档/`：`任务交接需求与进度表.md`、`代办事务.md`、`oad_todo.md`、`分钟采集帧结构_待确认知识点.md`、`分钟采集问题清单_待AI确认.md`。
+  - 交叉引用同步：`AI闭环平台项目设计需求文档.md`、`一键打包发布方案.md`、`tools/scripts/analyze_oad_coverage.py` 的路径更新到归档位置。
+  - 归档正文与 `docs/superpowers/plans/` 历史计划正文不修改（保留原始记录）。
+- **理由**：需求/待办信息分散在多个交接式文档中，需要按「已完成 / 待完成」两个状态集中呈现，便于后续跟踪；原文档保留为归档底稿。
+- **影响**：需求现状以 `docs/需求管理/` 两份汇总文档为准；归档目录保留全部历史细节，供追溯。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-16 docs 文档按 协议/需求/需求设计方案/总设计框架/开发与运维 五类归类
+
+- **日期**：2026-08-14
+- **状态**：✅ 生效
+- **决定**：
+  - `docs/` 目录按五类整理：`总设计框架/`、`需求设计方案/`、`协议/`、`需求管理/`、`开发与运维/`。
+  - **总设计框架/**：`AI闭环平台项目设计需求文档.md`（PRD + 总体设计，顶层文档）由 `docs/01-第一待开发需求/` 移入。
+  - **需求设计方案/**：`loghooks-design.md`、`一键打包发布方案.md`、`安徽分钟采集帧结构_代码差异分析.md`、`platform-一体化工作台详细设计.md`，及原 `docs/superpowers/specs/` 两份设计（`2026-08-03-exe-packaging-design.md`、`2026-08-13-wsl-dev-split-design.md`）。
+  - **协议/**：原有 国网/南网协议、报文格式、DLL 接口说明 等；新增移入 `安徽分钟采集帧结构编程参考手册.md`（位级帧结构定义）。
+  - **需求管理/**：保持既有「已完成/待完成 + 归档」结构不变。
+  - **开发与运维/**（新类）：`WSL 开发环境使用手册.md`、`开发指南.md`、`使用说明.md`、`module-serial-usage.md`、`模拟集中器验证工具使用手册.md`、`performance-analysis.md`、`loghooks-source-scan-prompt.md`，及原 `docs/superpowers/plans/` 全部实施计划（`2026-07-25-*`、`2026-08-02-*`、`2026-08-03-exe-packaging.md`）。
+  - 原 `docs/superpowers/`、`docs/01-第一待开发需求/` 目录已清空删除；`docs/pic/` 保留为图片资源（供 `使用说明.md` 引用）。
+  - 全部被移动文档的交叉引用（docs 内 + README）已同步到新路径；`使用说明.md` 图片相对路径 `.\pic\` 改为 `../pic/`。
+- **理由**：docs 根目录散落 30+ 文档，需按文档性质归组，便于检索与维护；用户指定「协议、需求、需求设计方案、总设计框架」四类，四类之外的手册/指南/实施计划另立「开发与运维」类。
+- **影响**：所有 `docs/...` 相对路径引用需以新五类目录为准；`DECISIONS.md`、`.superpowers/sdd/` 等历史记录中的旧路径按「归档正文不修改」原则保留原样。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-17 FR-5/FR-6 落地：workbench 统一工作台包（包名避开标准库 platform 冲突）
+
+- **日期**：2026-08-15
+- **状态**：✅ 生效
+- **决定**：
+  1. **新增 `apps/workbench/` 包**（而非详细设计文档原定的 `apps/platform/`）：Python 标准库自带 `platform` 模块，而 `apps/` 始终位于 `sys.path` 最前（`conftest.py` / `shared.infra.ensure_paths()`），带 `__init__.py` 的常规包 `platform` 会**遮蔽标准库**，导致 uvicorn/fastapi 内部 `import platform` 崩溃。已实测验证：命名空间包（无 `__init__.py`）不遮蔽、常规包遮蔽。故包名改用 `workbench`（语义贴合"验证工作台"），详细设计文档中的 `platform` 统一理解为产品名而非包名。
+  2. **FR-5 落地于 `workbench/orchestration/`**（无 UI 依赖，CLI/REST/AI 三端复用）：
+     - `models.py`：Run 抽象（FR-5.1）+ 统一报告 Report Schema（FR-5.2，三源归一 module_log/listener/sim_concentrator）。
+     - `store.py`：RunStore —— `data/runs.sqlite` 元数据 + `data/reports/{run_id}.json` 报告归档（frozen 落 exe 同目录）。
+     - `scenarios.py` + `scenarios/*.json`：场景模板库（期望流程 + 激励任务 + 监控规则集绑定），4 个场景（分钟采集/入网/拉合闸/搜表）。
+     - `compare.py`：期望流程比对器（FR-5.3）——hit/missing/timeout/out_of_order/negate 五类差异。
+     - `feedback.py`：归因规则引擎（FR-5.4）——JSON 可配置规则表，失败→归因→修复→再验证。
+     - `runner.py`：RunExecutor 全链路（flash→monitor→stimulus→compare→feedback→report），每步可 `skip_*` 跳过，全部复用 loghooks 引擎与 sim_concentrator runner（FR-6.4 零重实现）。
+  3. **FR-6 落地于 `workbench/app.py` 统一 FastAPI**：`create_workbench_app()` 挂载 `/module-serial`（module_log 含内部 simcon）与 `/listener`（listener 依赖 C# DLL，挂载失败自动降级 `listener_mounted=false`，不拖垮整体）+ 编排路由（`/api/run`、`/api/scenarios`、`/api/compare`、`/api/feedback`、`/api/runs`）+ 页签式 SPA 静态外壳；`run.py` 启动 8790、`desktop.py` pywebview 单窗口（1440×900）。
+  4. **前端**：`static/index.html` + `app.js` + `styles.css` 页签注册表（验证工作台/模块日志/侦听台），验证工作台页签为 `static/workbench.html`（场景选择 → 一键 Run → 报告链接 → 历史 Runs）。
+  5. **场景规则过滤语义**：`monitor.rules` 引用（如 `["common","provinces/anhui"]`）按 `scope`/`province` 匹配规则（非 `id` 前缀匹配），与 loghooks 规则文件的 `scope: common|province`、`province: anhui` 字段对齐。
+- **理由**：FR-5/FR-6 是需求文档 v1.1 的最终形态（一个程序全链路闭环），用户确认全面铺开；包名冲突为硬性技术约束，必须规避；编排层无 UI 依赖是 CLI/REST/AI 三端复用的前提。
+- **影响**：`python -m workbench.run` 启动 8790 一体化工作台（双模式并存，8765/8766/8781 独立服务保留）；Run 报告按 run_id 归档可回溯；全量 pytest 回归不破（291 passed / 66 skipped，排除依赖 C# DLL 编译产物的既有 listener/shared 测试）。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-18 workbench 前端合并 + 后端代理（方案①，根治子应用页签空白）
+
+- **日期**：2026-08-15
+- **状态**：✅ 生效
+- **决定**：
+  1. **放弃"响应重写中间件"方案**（原 `_with_static_rewrite` 拦截 HTML 改写 `/static/`）：只处理了 HTML 的 src/href，**JS 内的 `/api/` 绝对路径未重写**，前端 fetch 打到 workbench 根 → 404 → 侦听台/模块日志页签空白黑色。
+  2. **后端改为 ASGI 前缀代理**（`_PrefixProxy`）：listener / module_log 经 mount 挂到 `/api/listener/*`、`/api/module-serial/*`，代理主动剥掉挂载前缀、补回 `/api`、清空 root_path，子应用路由与独立运行时完全一致地命中。前端统一规则：JS 里 `/api/` → `/api/listener/`（listener）、`/api/module-serial/`（module_log）。
+  3. **前端页面物理复制**进 `workbench/static/pages/{listener,module-serial}/`（listener 的 index.html/app.js/styles.css、module_log 的 module-serial.html/js/styles.css），复制时 `/api/` 全局替换为对应前缀、`/static/` 改为 `/static/pages/{pkg}/`。页签 iframe 指向复制后页面。原 listener/module_log 独立应用页面**保持不动**（可独立运行，ADR-1/10/13 解耦哲学不推翻）。
+  4. **文件选择器降级**：`pick_file_via_tkinter_dialog` 原实现 except 静默吞掉 tkinter 故障返回空串（前端"点了没反应"）；现 tkinter 初始化/弹窗失败时自动降级到 `pick_file_via_native_dialog`（PowerShell 原生对话框）。PyInstaller hook 已自动收集 Tcl/Tk 数据（`_tcl_data`/`_tk_data`），frozen 下 tkinter 8.6 初始化正常。
+  5. **挂载测试更新**：`test_app.py` 的 `test_module_log_mounted`/`test_listener_mounted` 断言路径由 `/module-serial/api/version`、`/listener/api/version` 更新为 `/api/module-serial/version`、`/api/listener/version`。
+- **理由**：用户反馈"侦听台页面空白黑色、无法加载，且要求合并成一个工程而非仅打包"。方案①（前端合并 + 后端代理）保持底层包独立（不推翻 ADR-1/10/13）、根治前端 API 前缀错配、替代脆弱的响应改写，是符合微前端聚合标准形态的做法（页面聚合 + 反向代理）。
+- **影响**：workbench 三页签（验证工作台/模块日志/侦听台）经复制页面 + 前缀代理完整可用；listener/module_log 独立应用不受影响；文件选择器在 frozen 下 tkinter 故障自动降级 PowerShell；全量 pytest 回归 414 passed / 66 skipped / 0 failed（排除依赖 C# DLL 编译产物的既有 listener/shared 测试）。
+- **被取代**：无（新增决策；原 ADR-17 的"挂载 + 静态重写"表述被本决策细化修正）。
+
+
+## ADR-19 项目级安装 UI/UX 设计技能（.agents/skills/）
+
+- **日期**：2026-08-15
+- **状态**：✅ 生效
+- **决定**：在项目根新建 `.agents/skills/`，仅安装三个免费且面向前端/软件 UI 设计的技能：
+  - `ui-ux-pro-max`（核心，v2.13.0，MIT）：79 风格/192 配色/74 字体配对/119 UX 指南/25 图表/22 技术栈，含 `--design-system` 设计系统生成器；
+  - `ui-styling`（MIT，claudekit）：shadcn/ui + Tailwind + canvas 实现层技能；
+  - `design-system`（MIT，claudekit）：三层 design token（primitive→semantic→component）+ Tailwind theme 配置。
+  不安装 `banner-design`/`brand`/`design`/`slides`（官方划为高级版付费内容，且属品牌营销向，与前端/软件 UI 无关）。
+  来源：`nextlevelbuilder/ui-ux-pro-max-skill`（main 分支，对应 v2.13.0），从 `.claude/skills/` 对应目录原样复制。
+- **理由**：项目 workbench 前端（页签式 SPA + 数据可视化）需要专业 UI/UX 设计指导；用户要求免费、专注前端/软件 UI，科研/数据类风格可经 `--design-system` 组合查询获得。
+- **影响**：`D:/2-侦听台改造/.agents/skills/` 下新增 3 个技能目录（195 文件）；通用 agent 标准目录（Claude Code 2.x/Codex 等）可加载；搜索脚本依赖 Python 3.x 标准库，无外部依赖；`.gitignore` 未忽略 `.agents/`，技能文件随仓库入库。
 - **被取代**：无（新增决策）。

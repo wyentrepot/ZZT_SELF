@@ -1,0 +1,910 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "侦听台改造项目 核心接口契约",
+    "version": "2.0.0",
+    "description": "核心接口定义（现状接口 + platform 编排目标接口）。约定：全部 RESTful JSON；时间统一 ISO8601；错误统一 { code, message, detail }。"
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:8765", "description": "侦听台 listener" },
+    { "url": "http://127.0.0.1:8766", "description": "模块日志 module_log" },
+    { "url": "http://127.0.0.1:8781", "description": "模拟集中器 sim_concentrator 独立入口" },
+    { "url": "http://127.0.0.1:8790", "description": "platform 一体化工作台（规划）" }
+  ],
+  "paths": {
+    "/api/version": {
+      "get": {
+        "tags": ["侦听台-基础"],
+        "summary": "获取 DLL 名称和版本",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "description": "版本信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["name", "version"],
+                  "properties": {
+                    "name": { "type": "string", "example": "GW_SMAnalysis" },
+                    "version": { "type": "string", "example": "V1.0.23" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/parse": {
+      "post": {
+        "tags": ["侦听台-解析"],
+        "summary": "解析单帧",
+        "operationId": "parseSingleFrame",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["frame_hex"],
+                "properties": {
+                  "frame_hex": { "type": "string", "description": "完整帧十六进制", "example": "7E FF 02 ... 7E" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "解析结果（simple + full + application）",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FrameDetail" }
+              }
+            }
+          },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/logs/open": {
+      "post": {
+        "tags": ["侦听台-日志索引"],
+        "summary": "开始建立日志索引（流式扫描一次）",
+        "operationId": "openLog",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                  "path": { "type": "string", "example": "D:/logs/原始报文.txt" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "索引任务已受理",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": { "type": "string", "enum": ["queued", "running"] },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/logs/status": {
+      "get": {
+        "tags": ["侦听台-日志索引"],
+        "summary": "查询索引进度",
+        "operationId": "getLogStatus",
+        "responses": {
+          "200": {
+            "description": "索引进度",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["state"],
+                  "properties": {
+                    "state": { "type": "string", "enum": ["idle", "queued", "running", "done", "failed", "cancelled"] },
+                    "frame_count": { "type": "integer" },
+                    "processed_lines": { "type": "integer" },
+                    "total_lines": { "type": "integer" },
+                    "progress": { "type": "number", "format": "float", "minimum": 0, "maximum": 1 },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/logs/frames": {
+      "get": {
+        "tags": ["侦听台-日志索引"],
+        "summary": "分页读取帧摘要",
+        "operationId": "listFrames",
+        "parameters": [
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 500 } },
+          { "name": "nid", "in": "query", "schema": { "type": "string" } },
+          { "name": "start", "in": "query", "schema": { "type": "string" } },
+          { "name": "end", "in": "query", "schema": { "type": "string" } },
+          { "name": "q", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "帧摘要分页",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/FrameSummary" } },
+                    "total": { "type": "integer" },
+                    "offset": { "type": "integer" },
+                    "limit": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/logs/frames/{frame_id}": {
+      "get": {
+        "tags": ["侦听台-日志索引"],
+        "summary": "获取单帧完整解析",
+        "operationId": "getFrameDetail",
+        "parameters": [
+          { "name": "frame_id", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "单帧详情",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FrameDetail" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/logs/minute-analysis": {
+      "get": {
+        "tags": ["侦听台-分钟采集"],
+        "summary": "分钟采集周期统计",
+        "operationId": "getMinuteAnalysis",
+        "parameters": [
+          { "name": "period_minutes", "in": "query", "schema": { "type": "integer", "default": 15, "minimum": 1, "maximum": 1440 } },
+          { "name": "cco_tei", "in": "query", "schema": { "type": "string", "default": "001" } },
+          { "name": "deduplicate", "in": "query", "schema": { "type": "boolean", "default": true } }
+        ],
+        "responses": {
+          "200": {
+            "description": "分钟采集周期统计",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MinuteAnalysisResult" }
+              }
+            }
+          },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/fs/roots": {
+      "get": {
+        "tags": ["侦听台-文件选择"],
+        "summary": "列出 Windows 盘符",
+        "operationId": "fsRoots",
+        "responses": { "200": { "description": "盘符列表" } }
+      }
+    },
+    "/api/fs/list": {
+      "get": {
+        "tags": ["侦听台-文件选择"],
+        "summary": "列目录（常见日志扩展名）",
+        "operationId": "fsList",
+        "parameters": [
+          { "name": "path", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "目录/文件列表" } }
+      }
+    },
+    "/api/module-serial/ports": {
+      "get": {
+        "tags": ["模块日志-串口"],
+        "summary": "列出可用 COM 口",
+        "operationId": "moduleSerialPorts",
+        "responses": {
+          "200": {
+            "description": "串口列表",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "ports": { "type": "array", "items": { "type": "string" } } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/module-serial/status": {
+      "get": {
+        "tags": ["模块日志-串口"],
+        "summary": "获取串口服务状态与烧录进度",
+        "operationId": "moduleSerialStatus",
+        "responses": {
+          "200": {
+            "description": "串口状态",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ModuleSerialStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/module-serial/start": {
+      "post": {
+        "tags": ["模块日志-串口"],
+        "summary": "启动串口实时日志",
+        "operationId": "moduleSerialStart",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["port", "baudrate"],
+                "properties": {
+                  "port": { "type": "string", "example": "COM3" },
+                  "baudrate": { "type": "integer", "example": 115200 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "启动成功" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/module-serial/stop": {
+      "post": {
+        "tags": ["模块日志-串口"],
+        "summary": "停止并关闭串口",
+        "operationId": "moduleSerialStop",
+        "responses": { "200": { "description": "已停止" } }
+      }
+    },
+    "/api/module-serial/flash": {
+      "post": {
+        "tags": ["模块日志-烧录"],
+        "summary": "XMODEM 固件烧录",
+        "operationId": "moduleSerialFlash",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bin_path"],
+                "properties": {
+                  "bin_path": { "type": "string", "example": "D:/fw/app.bin" },
+                  "slot": { "type": "integer", "default": 0 },
+                  "baud_plan": { "type": "array", "items": { "type": "integer" }, "example": [9600, 115200, 9600] },
+                  "no_reboot_after": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "烧录已开始" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/loghooks/scan": {
+      "post": {
+        "tags": ["loghooks"],
+        "summary": "扫描日志文件/目录，输出事件流 + 行绑定 + 摘要",
+        "operationId": "loghooksScan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["paths"],
+                "properties": {
+                  "paths": { "type": "array", "items": { "type": "string" } },
+                  "module": { "type": "string", "enum": ["cco", "sta"] },
+                  "province": { "type": "string" },
+                  "correlate": { "type": "array", "items": { "type": "string" }, "description": "关联的其它来源日志" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "loghooks 扫描结果",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoghooksScanResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/loghooks/sources": {
+      "get": {
+        "tags": ["loghooks"],
+        "summary": "获取来源/模块信息",
+        "operationId": "loghooksSources",
+        "responses": { "200": { "description": "来源注册表信息" } }
+      }
+    },
+    "/api/simcon/status": {
+      "get": {
+        "tags": ["模拟集中器"],
+        "summary": "获取串口/模块状态",
+        "operationId": "simconStatus",
+        "responses": {
+          "200": {
+            "description": "simcon 状态",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SimconStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/simcon/ports": {
+      "get": {
+        "tags": ["模拟集中器"],
+        "summary": "列出可用串口",
+        "operationId": "simconPorts",
+        "responses": { "200": { "description": "串口列表" } }
+      }
+    },
+    "/api/simcon/responders": {
+      "get": {
+        "tags": ["模拟集中器"],
+        "summary": "查询当前生效应答规则",
+        "operationId": "simconResponders",
+        "responses": { "200": { "description": "应答规则列表" } }
+      }
+    },
+    "/api/simcon/open": {
+      "post": {
+        "tags": ["模拟集中器"],
+        "summary": "打开串口（长驻）",
+        "operationId": "simconOpen",
+        "parameters": [
+          { "name": "port", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "baudrate", "in": "query", "schema": { "type": "integer", "default": 115200 } }
+        ],
+        "responses": {
+          "200": { "description": "已打开" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/simcon/close": {
+      "post": {
+        "tags": ["模拟集中器"],
+        "summary": "关闭串口",
+        "operationId": "simconClose",
+        "responses": { "200": { "description": "已关闭" } }
+      }
+    },
+    "/api/simcon/verify": {
+      "post": {
+        "tags": ["模拟集中器"],
+        "summary": "执行验证任务并返回结论 JSON",
+        "operationId": "simconVerify",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VerificationTask" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "验证结论",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Verdict" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/run": {
+      "post": {
+        "tags": ["platform-编排"],
+        "summary": "创建验证批次（Run）并执行",
+        "operationId": "createRun",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["scenario_id"],
+                "properties": {
+                  "scenario_id": { "type": "string", "example": "minute_collect" },
+                  "firmware": { "$ref": "#/components/schemas/FirmwareInfo" },
+                  "parameters": { "type": "object" },
+                  "skip_flash": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Run 已创建", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Run" } } } },
+          "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/run/{run_id}": {
+      "get": {
+        "tags": ["platform-编排"],
+        "summary": "查询批次状态与报告",
+        "operationId": "getRun",
+        "parameters": [
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run 状态",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Run" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/run/{run_id}/report": {
+      "get": {
+        "tags": ["platform-编排"],
+        "summary": "获取统一验证报告",
+        "operationId": "getRunReport",
+        "parameters": [
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "统一验证报告",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Report" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/scenarios": {
+      "get": {
+        "tags": ["platform-编排"],
+        "summary": "获取场景模板库列表",
+        "operationId": "listScenarios",
+        "responses": {
+          "200": {
+            "description": "场景列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": { "type": "array", "items": { "$ref": "#/components/schemas/Scenario" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/compare": {
+      "post": {
+        "tags": ["platform-编排"],
+        "summary": "期望流程 vs 实际事件流 → 流程比对结果",
+        "operationId": "compareFlow",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["expected_flow", "actual_events"],
+                "properties": {
+                  "expected_flow": { "type": "array", "items": { "$ref": "#/components/schemas/ExpectedStep" } },
+                  "actual_events": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "流程比对结果",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FlowCompareResult" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/feedback": {
+      "post": {
+        "tags": ["platform-编排"],
+        "summary": "由失败结论生成归因反馈文本",
+        "operationId": "createFeedback",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["compare_result"],
+                "properties": {
+                  "compare_result": { "$ref": "#/components/schemas/FlowCompareResult" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "归因反馈",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "issue": { "type": "string" },
+                          "evidence": { "type": "string" },
+                          "suggestion": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform/status": {
+      "get": {
+        "tags": ["platform-基础"],
+        "summary": "platform 统一入口健康检查",
+        "operationId": "platformStatus",
+        "responses": {
+          "200": {
+            "description": "各挂载子应用状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "platform": { "type": "string" },
+                    "subapps": { "type": "object" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/platform/pages": {
+      "get": {
+        "tags": ["platform-基础"],
+        "summary": "页签注册表（前端按此渲染页签）",
+        "operationId": "platformPages",
+        "responses": {
+          "200": {
+            "description": "页签注册表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "title": { "type": "string" },
+                          "src": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "FrameSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "seq": { "type": "integer" },
+          "log_time": { "type": "string" },
+          "nid": { "type": "string" },
+          "summary": { "type": "object", "description": "DLL 摘要 JSON（FrmType/APP_PORT/APP_ID 等）" }
+        }
+      },
+      "FrameDetail": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "seq": { "type": "integer" },
+          "log_time": { "type": "string" },
+          "raw_hex": { "type": "string" },
+          "summary": { "type": "object" },
+          "full": { "type": "object" },
+          "application": { "type": "object", "description": "fields/items/nested 结构化应用层" },
+          "warnings": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "MinuteAnalysisResult": {
+        "type": "object",
+        "properties": {
+          "periods": { "type": "array", "items": { "$ref": "#/components/schemas/MinutePeriod" } },
+          "summary": { "type": "object" },
+          "filters": { "type": "object" }
+        }
+      },
+      "MinutePeriod": {
+        "type": "object",
+        "properties": {
+          "period_start": { "type": "string" },
+          "period_end": { "type": "string" },
+          "raw_report_count": { "type": "integer" },
+          "unique_station_count": { "type": "integer" },
+          "duplicate_count": { "type": "integer" },
+          "success_count": { "type": "integer" },
+          "failure_count": { "type": "integer" },
+          "parse_error_count": { "type": "integer" },
+          "report_count": { "type": "integer" },
+          "station_keys": { "type": "array", "items": { "type": "string" } },
+          "frame_ids": { "type": "array", "items": { "type": "integer" } }
+        }
+      },
+      "ModuleSerialStatus": {
+        "type": "object",
+        "properties": {
+          "state": { "type": "string", "enum": ["idle", "starting", "running", "flashing", "stopping"] },
+          "port": { "type": "string" },
+          "baudrate": { "type": "integer" },
+          "flash": { "type": "object", "properties": { "state": { "type": "string" }, "packet": { "type": "integer" }, "total": { "type": "integer" } } }
+        }
+      },
+      "SimconStatus": {
+        "type": "object",
+        "properties": {
+          "port_state": { "type": "string", "enum": ["closed", "open", "executing"] },
+          "port": { "type": "string" },
+          "task_id": { "type": "string" }
+        }
+      },
+      "VerificationTask": {
+        "type": "object",
+        "required": ["id", "steps"],
+        "properties": {
+          "id": { "type": "string" },
+          "port": { "type": "string" },
+          "baudrate": { "type": "integer" },
+          "enable_responder": { "type": "boolean", "default": true },
+          "fail_fast": { "type": "boolean", "default": false },
+          "responders": { "type": "array", "items": { "$ref": "#/components/schemas/ResponderRule" } },
+          "steps": { "type": "array", "items": { "$ref": "#/components/schemas/TaskStep" } }
+        }
+      },
+      "TaskStep": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "send": { "type": "object", "description": "afn/seq/rtsa/msaa/pw/userdata" },
+          "expect": { "type": "object", "description": "afn/nested/fields/nested_fields" },
+          "expect_no_reply": { "type": "boolean" },
+          "expect_timeout": { "type": "number", "format": "float", "default": 5.0 }
+        }
+      },
+      "ResponderRule": {
+        "type": "object",
+        "properties": {
+          "match": { "type": "object" },
+          "reply": { "type": "object" }
+        }
+      },
+      "Verdict": {
+        "type": "object",
+        "properties": {
+          "task_id": { "type": "string" },
+          "steps": { "type": "array", "items": { "type": "object" } },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "pass": { "type": "integer" },
+              "fail": { "type": "integer" },
+              "verdict": { "type": "string", "enum": ["pass", "fail"] }
+            }
+          }
+        }
+      },
+      "LoghooksScanResult": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string" },
+          "files": { "type": "array", "items": { "type": "string" } },
+          "province": { "type": "string" },
+          "summary": { "type": "object" },
+          "events": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } },
+          "correlations": { "type": "array", "items": { "type": "object" } },
+          "rule_drifts": { "type": "array", "items": { "type": "object" } },
+          "detected_provinces": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": ["type", "time"],
+        "properties": {
+          "type": { "type": "string" },
+          "time": { "type": "string" },
+          "label": { "type": "string" },
+          "message": { "type": "string" },
+          "source_line": { "type": "string" }
+        }
+      },
+      "FirmwareInfo": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string" },
+          "commit": { "type": "string" },
+          "flash_file_sha256": { "type": "string" }
+        }
+      },
+      "Scenario": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "module": { "type": "string" },
+          "expected_flow": { "type": "array", "items": { "$ref": "#/components/schemas/ExpectedStep" } }
+        }
+      },
+      "ExpectedStep": {
+        "type": "object",
+        "required": ["step", "event_type"],
+        "properties": {
+          "step": { "type": "string" },
+          "event_type": { "type": "string" },
+          "within_ms": { "type": "integer" },
+          "negate": { "type": "boolean", "default": false },
+          "optional": { "type": "boolean", "default": false }
+        }
+      },
+      "FlowCompareResult": {
+        "type": "object",
+        "properties": {
+          "steps": { "type": "array", "items": { "type": "object" } },
+          "missing": { "type": "array", "items": { "type": "string" } },
+          "timeouts": { "type": "array", "items": { "type": "string" } },
+          "out_of_order": { "type": "array", "items": { "type": "string" } },
+          "negated": { "type": "array", "items": { "type": "string" } },
+          "verdict": { "type": "string", "enum": ["pass", "fail"] }
+        }
+      },
+      "Run": {
+        "type": "object",
+        "properties": {
+          "run_id": { "type": "string", "example": "run-20260814-0001" },
+          "scenario_id": { "type": "string" },
+          "firmware": { "$ref": "#/components/schemas/FirmwareInfo" },
+          "status": { "type": "string", "enum": ["pending", "running", "passed", "failed", "inconclusive", "aborted"] },
+          "verdict": { "type": "string", "enum": ["pass", "fail", "inconclusive"] },
+          "created_at": { "type": "string" },
+          "started_at": { "type": "string" },
+          "finished_at": { "type": "string" }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "properties": {
+          "run_id": { "type": "string" },
+          "firmware": { "$ref": "#/components/schemas/FirmwareInfo" },
+          "scenario": { "type": "string" },
+          "sources": { "type": "object" },
+          "assertions": { "type": "array", "items": { "type": "object" } },
+          "flow_compare": { "$ref": "#/components/schemas/FlowCompareResult" },
+          "verdict": { "type": "string", "enum": ["pass", "fail", "inconclusive"] },
+          "artifacts": { "type": "array", "items": { "type": "string" } },
+          "ts": { "type": "string" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "detail": { "type": "object" }
+        }
+      }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "资源不存在",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ValidationError": {
+        "description": "参数校验失败",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Conflict": {
+        "description": "资源冲突（串口占用 / 数据源互斥）",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    }
+  }
+}

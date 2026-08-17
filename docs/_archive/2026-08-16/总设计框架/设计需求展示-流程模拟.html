@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 闭环研发验证平台 · 全流程动效模拟演示</title>
+<style>
+  :root{
+    --bg:#070b13; --bg2:#0b1120; --panel:#101828; --panel2:#16233b;
+    --line:#22304d; --line2:#33466e;
+    --tx:#f4f7ff; --dim:#8fa3c8; --faint:#55688f;
+    --cyan:#35d6f5; --blue:#6ea8ff; --green:#3ddc97; --amber:#ffc94d; --red:#ff6b6b; --purple:#c58bff;
+    --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--tx); font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+    line-height:1.6; overflow-x:hidden;
+    background-image:
+      radial-gradient(1000px 460px at 85% -8%, rgba(53,214,245,.10), transparent 60%),
+      radial-gradient(800px 400px at 5% 108%, rgba(197,139,255,.07), transparent 60%);
+  }
+  ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}::-webkit-scrollbar-track{background:transparent}
+
+  header{
+    position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);
+    background:rgba(7,11,19,.86);border-bottom:1px solid var(--line);
+  }
+  .bar{max-width:1400px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:10px}
+  .brand .lg{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--cyan),var(--blue));display:flex;align-items:center;justify-content:center;font-weight:900;color:#06121f;box-shadow:0 0 20px rgba(53,214,245,.4);font-size:15px}
+  .brand b{font-size:15px;letter-spacing:.3px}
+  .brand small{display:block;font-weight:400;color:var(--dim);font-size:11px}
+  .controls{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .btn{border:1px solid var(--line2);background:var(--panel);color:var(--tx);font-family:inherit;padding:8px 16px;border-radius:9px;cursor:pointer;font-size:13px;transition:.15s;display:inline-flex;gap:6px;align-items:center}
+  .btn:hover{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 14px rgba(53,214,245,.15)}
+  .btn.primary{background:linear-gradient(135deg,rgba(53,214,245,.18),rgba(110,168,255,.18));border-color:var(--cyan)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .speed{display:flex;border:1px solid var(--line2);border-radius:9px;overflow:hidden}
+  .speed button{background:var(--panel);border:none;color:var(--dim);padding:8px 12px;cursor:pointer;font-family:inherit;font-size:12px}
+  .speed button.on{background:var(--panel2);color:var(--cyan)}
+  .status-pill{font-size:12px;color:var(--dim);border:1px solid var(--line);padding:6px 12px;border-radius:20px;font-family:var(--mono)}
+  .status-pill.run{color:var(--green);border-color:rgba(61,220,151,.4);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.55}}
+
+  .wrap{max-width:1400px;margin:0 auto;padding:26px 20px 80px}
+
+  .pipeline{background:linear-gradient(180deg,var(--bg2),var(--panel));border:1px solid var(--line);border-radius:16px;padding:18px 20px 16px;position:relative;overflow:hidden}
+  .pipeline h3{font-size:13px;color:var(--faint);letter-spacing:2px;margin-bottom:14px;font-weight:600}
+  .pipe{display:flex;align-items:stretch;gap:0;position:relative}
+  .node{flex:1;min-width:0;text-align:center;padding:10px 4px;border-radius:12px;position:relative;cursor:default;transition:.3s;border:1px solid transparent}
+  .node .ic{font-size:26px;display:block;filter:grayscale(.4);opacity:.75;transition:.3s}
+  .node .nm{font-size:13px;font-weight:700;margin-top:5px;color:var(--dim);transition:.3s}
+  .node .md{font-size:10px;color:var(--faint);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .node .dot{width:10px;height:10px;border-radius:50%;background:var(--faint);margin:7px auto 0;transition:.3s}
+  .node.active{background:rgba(53,214,245,.08);border-color:rgba(53,214,245,.45);box-shadow:0 0 26px rgba(53,214,245,.18)}
+  .node.active .ic{filter:none;opacity:1;transform:scale(1.12)}
+  .node.active .nm{color:var(--cyan)}
+  .node.active .dot{background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:pulse 1s infinite}
+  .node.done .ic{filter:none;opacity:1}
+  .node.done .nm{color:var(--green)}
+  .node.done .dot{background:var(--green)}
+  .node.done::after{content:"✓";position:absolute;top:6px;right:8px;color:var(--green);font-size:12px;font-weight:800}
+  .link{position:relative;flex:0 0 44px;display:flex;align-items:center}
+  .link .track{position:absolute;left:0;right:0;height:2px;background:var(--line);border-radius:2px}
+  .link .pkt{position:absolute;width:11px;height:11px;border-radius:50%;left:0;top:50%;margin-top:-5px;background:radial-gradient(circle at 35% 35%,#d9f9ff,var(--cyan));box-shadow:0 0 10px var(--cyan);opacity:0;transition:none}
+  .link .pkt.fly{opacity:1;transition:left 1.4s cubic-bezier(.4,0,.2,1)}
+  .progress{margin-top:14px;height:5px;background:var(--panel2);border-radius:3px;overflow:hidden}
+  .progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:3px;transition:width .5s}
+
+  /* ===== 侦听台绑定分析 ===== */
+  .bindwrap{margin-top:18px;background:linear-gradient(180deg,var(--bg2),var(--panel));border:1px solid var(--line);border-radius:16px;padding:16px 20px}
+  .bind-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  .bind-title{font-size:13px;font-weight:700;color:var(--cyan);letter-spacing:.5px}
+  .bind-sub{font-size:12px;color:var(--dim)}
+  .bind{display:grid;grid-template-columns:1fr 190px 1fr 1fr;gap:12px;align-items:stretch}
+  @media(max-width:1100px){.bind{grid-template-columns:1fr 150px 1fr}}
+  @media(max-width:900px){.bind{grid-template-columns:1fr}}
+  .bcol{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;transition:.3s}
+  .bcol-h{font-size:12.5px;font-weight:700;margin-bottom:4px}
+  .bcol-s{font-size:11px;color:var(--faint);font-family:var(--mono);line-height:1.5;margin-bottom:10px}
+  .bchip{font-size:12px;background:var(--bg2);border:1px dashed var(--line2);border-radius:8px;padding:7px 10px;margin-bottom:7px;font-family:var(--mono);opacity:.45;transition:.3s}
+  .bchip b{color:var(--cyan)}
+  .bcol.lit{border-color:rgba(53,214,245,.5);box-shadow:0 0 18px rgba(53,214,245,.12)}
+  .bchip.lit{opacity:1;border-style:solid;border-color:rgba(61,220,151,.5);box-shadow:0 0 10px rgba(61,220,151,.12)}
+  .bcol#bcol-ls{border-color:rgba(197,139,255,.35)}
+  .bcol#bcol-ls .bcol-h{color:var(--purple)}
+  .bcol#bcol-ml .bcol-h{color:var(--cyan)}
+  .bcol#bcol-sc .bcol-h{color:var(--green)}
+  .bmid{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:8px}
+  .bmid-title{font-size:11px;color:var(--faint);letter-spacing:1px;text-align:center}
+  .banchor{font-size:12px;font-family:var(--mono);background:var(--bg2);border:1px solid var(--line2);border-radius:20px;padding:5px 14px;color:var(--amber);opacity:.5;transition:.3s;white-space:nowrap}
+  .banchor.lit{opacity:1;border-color:var(--amber);box-shadow:0 0 12px rgba(255,201,77,.25);color:var(--amber)}
+  .bnote{font-size:10.5px;color:var(--faint);text-align:center;line-height:1.6;margin-top:4px}
+
+  .stage{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:960px){.stage{grid-template-columns:1fr}}
+  .pane{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px}
+  .pane h4{font-size:12px;color:var(--faint);letter-spacing:2px;margin-bottom:12px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .pane h4 .pill{font-size:10px;letter-spacing:0;background:var(--panel2);color:var(--cyan);padding:2px 8px;border-radius:20px;border:1px solid var(--line2)}
+
+  .method{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:13px;position:relative;overflow:hidden;transition:.3s}
+  .method .mod{color:var(--purple);font-weight:700}
+  .method .fn{color:var(--cyan)}
+  .method .arg{color:var(--amber)}
+  .method .call{color:var(--green)}
+  .method .cur{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--cyan);box-shadow:0 0 12px var(--cyan);opacity:0}
+  .method.loading{border-color:rgba(53,214,245,.5);box-shadow:0 0 20px rgba(53,214,245,.12)}
+  .method.loading .cur{opacity:1;animation:cur 1.2s infinite}
+  @keyframes cur{0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}
+  .method .statusline{margin-top:8px;font-size:11px;color:var(--dim);font-family:var(--mono)}
+
+  .chiprow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .chip{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:12px;font-family:var(--mono)}
+  .chip .em{color:var(--cyan);font-weight:700}
+  .chip.in{opacity:.45;transition:.3s;border-style:dashed}
+  .chip.in.on{opacity:1;border-color:rgba(53,214,245,.5);box-shadow:0 0 12px rgba(53,214,245,.15)}
+  .chip .dotw{width:8px;height:8px;border-radius:50%;background:var(--cyan);flex-shrink:0;box-shadow:0 0 8px var(--cyan)}
+
+  .term{background:#04070d;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px;height:230px;overflow-y:auto;line-height:1.75}
+  .term .hdr{color:var(--faint);font-size:11px;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:6px;display:flex;gap:16px}
+  .term .hdr b{color:var(--dim);font-weight:600}
+  .term .l{white-space:pre-wrap;word-break:break-all;animation:lin .18s}
+  @keyframes lin{from{opacity:0;transform:translateX(-6px)}to{opacity:1}}
+  .term .tx{color:var(--cyan)}
+  .term .rx{color:var(--green)}
+  .term .st{color:var(--faint)}
+  .term .ok{color:var(--green);font-weight:700}
+  .term .fail{color:var(--red);font-weight:700}
+  .term .ev{color:var(--purple)}
+
+  .outbox{margin-top:12px}
+  .outrow{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;background:var(--bg2);font-size:12.5px}
+  .outrow .k{color:var(--faint);font-family:var(--mono);flex-shrink:0}
+  .outrow .v{font-family:var(--mono);color:var(--tx);word-break:break-all}
+  .outrow .v.good{color:var(--green)}
+  .outrow .v.bad{color:var(--red)}
+  .outrow .badge{margin-left:auto;font-size:11px;padding:3px 10px;border-radius:20px;flex-shrink:0}
+  .badge.ok{background:rgba(61,220,151,.12);color:var(--green);border:1px solid rgba(61,220,151,.35)}
+  .badge.ng{background:rgba(255,107,107,.12);color:var(--red);border:1px solid rgba(255,107,107,.35)}
+
+  .cmp{display:flex;flex-direction:column;gap:6px;margin-top:10px;font-family:var(--mono);font-size:12.5px}
+  .cmp .r{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:8px;background:var(--bg2);border:1px solid var(--line)}
+  .cmp .r .s{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:800}
+  .cmp .r.ok .s{background:rgba(61,220,151,.15);color:var(--green)}
+  .cmp .r.miss .s{background:rgba(255,107,107,.15);color:var(--red)}
+  .cmp .r.to .s{background:rgba(255,201,77,.15);color:var(--amber)}
+  .cmp .r.neg .s{background:rgba(53,214,245,.15);color:var(--cyan)}
+  .cmp .r .e{color:var(--dim)}
+  .cmp .r .t{margin-left:auto;color:var(--faint);font-size:11px}
+
+  .logpane{margin-top:18px}
+  .syslog{background:#04070d;border:1px solid var(--line);border-radius:14px;padding:16px 18px;font-family:var(--mono);font-size:12px;height:240px;overflow-y:auto;line-height:1.8}
+  .syslog .tl{color:var(--faint)}
+  .syslog .mod{color:var(--purple);font-weight:700}
+  .syslog .ok{color:var(--green)}
+  .syslog .err{color:var(--red)}
+  .syslog .warn{color:var(--amber)}
+
+  .final{margin-top:18px;display:none;animation:lin .4s}
+  .final.show{display:block}
+  .final-title{font-size:15px;font-weight:800;color:var(--green);margin-bottom:4px}
+  .final-sub{color:var(--dim);font-size:12.5px;margin-bottom:14px}
+  .grid3{display:grid;grid-template-columns:1fr 1.2fr;gap:18px}
+  @media(max-width:960px){.grid3{grid-template-columns:1fr}}
+  .report{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .report h4{font-size:12px;color:var(--faint);letter-spacing:2px;margin-bottom:12px}
+  pre.json{background:#04070d;border:1px solid var(--line);border-radius:10px;padding:14px;font-family:var(--mono);font-size:12px;overflow:auto;line-height:1.7;color:#c6d6f4}
+  pre.json .k{color:var(--purple)}pre.json .s{color:var(--green)}pre.json .n{color:var(--amber)}pre.json .c{color:var(--faint);font-style:italic}
+
+  .desk{border:1px solid var(--line2);border-radius:14px;overflow:hidden;background:var(--bg2);box-shadow:0 24px 60px rgba(0,0,0,.45)}
+  .desk-title{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .desk-title .dot{width:11px;height:11px;border-radius:50%}
+  .desk-title .dot:nth-child(1){background:#ff5f57}.desk-title .dot:nth-child(2){background:#febc2e}.desk-title .dot:nth-child(3){background:#28c840}
+  .desk-title .t{margin-left:8px}
+  .desk-tabs{display:flex;gap:2px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+  .desk-tabs .tab{padding:9px 15px;font-size:12.5px;color:var(--dim);border-bottom:2px solid transparent}
+  .desk-tabs .tab.on{color:var(--cyan);border-bottom-color:var(--cyan);font-weight:700}
+  .desk-body{display:grid;grid-template-columns:290px 1fr;min-height:380px}
+  @media(max-width:960px){.desk-body{grid-template-columns:1fr}}
+  .desk-side{border-right:1px solid var(--line);padding:14px;background:var(--panel)}
+  .desk-side h5{font-size:11px;color:var(--faint);letter-spacing:1px;margin-bottom:10px}
+  .run-card{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px}
+  .run-card .id{font-family:var(--mono);font-size:12px;color:var(--cyan);font-weight:700}
+  .run-card .meta{font-size:10.5px;color:var(--dim);margin-top:3px;font-family:var(--mono)}
+  .run-card .bar{height:5px;border-radius:3px;background:#04070d;margin-top:7px;overflow:hidden}
+  .run-card .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--green));border-radius:3px;width:0;transition:width 1s}
+  .desk-main{padding:16px 18px}
+  .step-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .step-row:last-child{border-bottom:none}
+  .step-row .st{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0}
+  .step-row .st.ok{background:rgba(61,220,151,.15);color:var(--green)}
+  .step-row .st.run{background:rgba(53,214,245,.15);color:var(--cyan);animation:pulse 1.2s infinite}
+  .step-row .ttl{flex:1}
+  .step-row .sub{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+  .kv{display:grid;grid-template-columns:88px 1fr;gap:5px 10px;font-size:12.5px}
+  .kv .k{color:var(--faint)}.kv .v{font-family:var(--mono);color:var(--tx)}
+  .kv .v.good{color:var(--green)}.kv .v.bad{color:var(--red)}
+  .footer{margin-top:46px;padding-top:18px;border-top:1px solid var(--line);color:var(--faint);font-size:12px;text-align:center;line-height:1.8}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <div class="brand">
+      <div class="lg">AI</div>
+      <div><b>AI 闭环研发验证平台</b><small>双模通信（CCO/STA）· 全流程动效模拟</small></div>
+    </div>
+    <div class="controls">
+      <span class="status-pill" id="stPill">◉ 待命</span>
+      <button class="btn" id="btnReset">↺ 重置</button>
+      <button class="btn primary" id="btnNext">▶ 下一步：开始</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ===== 流程条 ===== -->
+  <div class="pipeline">
+    <h3>一整套闭环流程 · 点击「下一步」逐步推进 · 输入 → 模块串口监控 / 方法加载 → 输出 → 最终产物</h3>
+    <div class="pipe" id="pipe"></div>
+    <div class="progress"><i id="prog"></i></div>
+  </div>
+
+  <!-- ===== 侦听台绑定分析 ===== -->
+  <div class="bindwrap">
+    <div class="bind-head">
+      <span class="bind-title">🔗 侦听台绑定分析 · 三方证据如何关联（FR-1.2 / FR-3）</span>
+      <span class="bind-sub" id="bindSub">等待启动… 侦听台作为 loghooks 第二来源 + 客观证据面，旁路抓取网络层帧</span>
+    </div>
+    <div class="bind">
+      <!-- 左：模块日志/烧录 -->
+      <div class="bcol" id="bcol-ml">
+        <div class="bcol-h">模块日志 / 烧录</div>
+        <div class="bcol-s">module_log · 8766<br>串口 RX/TX · 时间戳落盘</div>
+        <div class="bchip" data-b="ml">事件 <b>collect.minute</b> @10:00</div>
+        <div class="bchip" data-b="ml">事件 <b>network.onnet</b> NID=0x61475d</div>
+      </div>
+      <!-- 中：锚点绑定带 -->
+      <div class="bmid">
+        <div class="bmid-title">业务锚点绑定</div>
+        <div class="banchor" id="anchor-1">NID / MAC</div>
+        <div class="banchor" id="anchor-2">冻结时刻</div>
+        <div class="banchor" id="anchor-3">RTUA</div>
+        <div class="bnote">按锚点配对 + 宽松时间窗<br>批次烧录时刻 = 0 相对对齐</div>
+      </div>
+      <!-- 右：侦听台抓帧 -->
+      <div class="bcol" id="bcol-ls">
+        <div class="bcol-h">侦听台（证据面）</div>
+        <div class="bcol-s">listener · 8765<br>网络层帧抓取 · C# DLL 解析</div>
+        <div class="bchip" data-b="ls">帧 <b>68 90 08</b> 冻结时刻 10:00</div>
+        <div class="bchip" data-b="ls">帧 <b>入网确认</b> NID=0x61475d</div>
+      </div>
+      <!-- 右2：模拟集中器激励 -->
+      <div class="bcol" id="bcol-sc">
+        <div class="bcol-h">模拟集中器（激励面）</div>
+        <div class="bcol-s">sim_concentrator<br>13762 帧下发/应答/断言</div>
+        <div class="bchip" data-b="sc">下发 <b>10H-F1</b> RTUA=…</div>
+        <div class="bchip" data-b="sc">断言 <b>verdict: pass</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <!-- 左：输入 + 方法加载 -->
+    <div class="pane">
+      <h4>◈ 输入 & 方法加载 <span class="pill" id="methodPill">待命</span></h4>
+      <div class="method" id="methodBox">
+        <div><span class="mod">module_log</span>.<span class="fn">flash_module</span>(<span class="arg">"fw_v2.3.2.bin"</span>, <span class="arg">port="COM3"</span>)</div>
+        <div class="cur"></div>
+        <div class="statusline" id="methodLine">等待启动…</div>
+      </div>
+      <div class="chiprow" id="inputChips"></div>
+    </div>
+    <!-- 右：串口监控 + 输出 -->
+    <div class="pane">
+      <h4>◈ 串口监控 / 事件化（实时） <span class="pill" id="termPill">待命</span></h4>
+      <div class="term" id="term"></div>
+      <div class="outbox" id="outbox"></div>
+    </div>
+  </div>
+
+  <!-- 系统日志 -->
+  <div class="logpane">
+    <div class="pane" style="margin:0">
+      <h4>◈ 系统流水（模块 ↔ 方法 ↔ 证据链） <span class="pill" id="logPill">待命</span></h4>
+      <div class="syslog" id="syslog"></div>
+    </div>
+  </div>
+
+  <!-- ===== 最终产物 ===== -->
+  <div class="final" id="final">
+    <div class="final-title">🎉 最终产物效果 · 一次闭环 Run 的完整交付</div>
+    <div class="final-sub">run-20260814-0003 · 场景：分钟采集（安徽）· 固件 v2.3.2 · commit 9f2e1a · verdict: PASS</div>
+    <div class="grid3">
+      <div class="report">
+        <h4>统一验证报告 Report（FR-5.2）</h4>
+        <pre class="json" id="reportJson"></pre>
+      </div>
+      <div class="report">
+        <h4>platform 一体化工作台（FR-6 最终形态）</h4>
+        <div class="desk">
+          <div class="desk-title"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="t">AI 闭环工作台 · pywebview 单窗口 · :8790</span></div>
+          <div class="desk-tabs"><span class="tab">侦听台</span><span class="tab">模块日志</span><span class="tab">对照解析</span><span class="tab">模拟集中器</span><span class="tab on">验证工作台</span></div>
+          <div class="desk-body">
+            <div class="desk-side">
+              <h5>验证批次 RUNS</h5>
+              <div class="run-card"><div class="id">run-20260814-0001</div><div class="meta">add_node · v2.3.1</div><div class="bar"><i style="width:100%"></i></div></div>
+              <div class="run-card"><div class="id">run-20260814-0002</div><div class="meta">minute_collect · v2.3.2</div><div class="bar"><i style="width:100%"></i></div></div>
+              <div class="run-card" style="border-color:rgba(61,220,151,.5)"><div class="id">run-20260814-0003</div><div class="meta">minute_collect_anhui · v2.3.2</div><div class="bar"><i id="runBar" style="width:0"></i></div></div>
+            </div>
+            <div class="desk-main">
+              <div class="step-row"><span class="st ok">✓</span><div><div class="ttl">烧录固件 v2.3.2（XMODEM）</div><div class="sub">module_log · LOG/模块/cco</div></div></div>
+              <div class="step-row"><span class="st ok">✓</span><div><div class="ttl">复位 + 事件监控（loghooks）</div><div class="sub">42 events · join/collect/send · anhui</div></div></div>
+              <div class="step-row"><span class="st ok">✓</span><div><div class="ttl">激励验证（sim_concentrator）</div><div class="sub">13762 帧 · 5 步 · 5 pass</div></div></div>
+              <div class="step-row"><span class="st ok">✓</span><div><div class="ttl">流程比对 + 报告归档</div><div class="sub">✅4 · ❌0 · ⚠️0 · 🚫0</div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    依据《docs/总设计框架/AI闭环平台项目设计需求文档.md》v1.1 编制 · 决策见 DECISIONS.md（ADR-1~16）<br>
+    本页为纯前端动效模拟，演示「输入 → 模块串口监控 / 方法加载 → 输出 → 最终产物」完整闭环
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   全流程模拟剧本：5 个阶段 + 每个阶段的方法加载/串口监控/输出
+   ================================================================ */
+const NODES = [
+  {ic:"💻", nm:"编码 / Commit", md:"git · 代码修改"},
+  {ic:"🔥", nm:"编译 · 烧录", md:"module_log"},
+  {ic:"👁", nm:"运行监控 · 事件化", md:"loghooks"},
+  {ic:"⚡", nm:"激励验证 · 断言", md:"sim_concentrator"},
+  {ic:"📋", nm:"结论 · 报告", md:"Run / Report"},
+  {ic:"🔁", nm:"归因反馈", md:"feedback"}
+];
+
+/* 输入 chips（每个阶段的输入参数） */
+const INPUTS = [
+  {em:"commit 9f2e1a", t:"固件 v2.3.2 源码"},
+  {em:"fw_v2.3.2.bin", t:"编译产物 · SHA256=a1b2…"},
+  {em:"rules/anhui.json", t:"loghooks 规则 · 省份识别"},
+  {em:"task minute_collect.json", t:"13762 验证任务"},
+  {em:"期望流程 DSL", t:"入网+分钟上报 [30s窗]"}
+];
+
+/* 每个阶段：模块 / 加载方法 / 输出 JSON */
+const STAGES = [
+  {
+    name:"编译 · 烧录", mod:"module_log", pill:"烧录中",
+    method:`<span class="mod">module_log</span>.<span class="fn">flash_module</span>(<span class="arg">"fw_v2.3.2.bin"</span>, <span class="arg">port="COM3"</span>)`,
+    out:[
+      {k:"sent", v:"68 21 00 …（XMODEM 分帧 128B×N）", good:1},
+      {k:"baud", v:"115200", good:1},
+      {k:"result", v:"烧录完成 · 校验 OK", good:1}
+    ],
+    term:[
+      {cls:"st", txt:"[module_log] 打开串口 COM3 @115200 …"},
+      {cls:"tx", txt:"[TX] 68 21 00 01 07 09 19 05 16 20 …  XMODEM blk 1/218"},
+      {cls:"tx", txt:"[TX] 68 21 00 02 …  XMODEM blk 2/218"},
+      {cls:"rx", txt:"[RX] ACK 06 … blk 218/218"},
+      {cls:"ok", txt:"✔ 固件 v2.3.2 烧录完成，校验 SHA256 OK"}
+    ]
+  },
+  {
+    name:"运行监控 · 事件化", mod:"loghooks", pill:"监控中",
+    method:`<span class="mod">loghooks</span>.<span class="fn">scan</span>(<span class="arg">"LOG/模块/cco"</span>, <span class="arg">rules="anhui"</span>, <span class="arg">correlate="listener"</span>)`,
+    out:[
+      {k:"events", v:"42 条 · join:3 collect:12 send:9 beacon:…", good:1},
+      {k:"province", v:"anhui (confidence:high)", good:1},
+      {k:"drift", v:"0 条规则漂移", good:1}
+    ],
+    term:[
+      {cls:"st", txt:"[loghooks] 扫描 LOG/模块/cco + LOG/侦听台 …"},
+      {cls:"ev", txt:"▸ event network.onnet | 入网节点数 = 1 | aps_ioctrl_nwk.c:950"},
+      {cls:"ev", txt:"▸ event join.sta.ok  | STA 入网成功 NID=0x61475d | sequence 4/4"},
+      {cls:"ev", txt:"▸ event collect.minute | 冻结时刻 2026-08-14 10:00 | 12 只表"},
+      {cls:"ok", txt:"✔ 事件流完成 · 跨来源关联 NID/MAC/冻结时刻 对齐"}
+    ]
+  },
+  {
+    name:"激励验证 · 断言", mod:"sim_concentrator", pill:"激励中",
+    method:`<span class="mod">sim_concentrator</span>.<span class="fn">verify</span>(<span class="arg">task="minute_collect.json"</span>, <span class="arg">port="COM4"</span>)`,
+    out:[
+      {k:"total", v:"5", good:1},
+      {k:"pass", v:"5  fail:0", good:1},
+      {k:"verdict", v:"pass  (CLI 退出码 0)", good:1}
+    ],
+    term:[
+      {cls:"st", txt:"[simcon] 执行任务 minute_collect · 13762 帧交互"},
+      {cls:"tx", txt:"[TX] 68 11 00 01 …  下发 10H-F1 读冻结数据"},
+      {cls:"rx", txt:"[RX] 68 90 08 …  收到 645/698 嵌套帧，解析 12 只表"},
+      {cls:"ok", txt:"✔ step 4/5 匹配成功（AFN=0x10, nested=true）"},
+      {cls:"ok", txt:"✔ summary {total:5, pass:5, fail:0, verdict:pass}"}
+    ]
+  },
+  {
+    name:"结论 · 报告", mod:"Run / Report", pill:"归档中",
+    method:`<span class="mod">orchestration</span>.<span class="fn">finalize_report</span>(<span class="arg">run_id="run-…-0003"</span>)`,
+    out:[
+      {k:"verdict", v:"PASS", good:1},
+      {k:"artifacts", v:"data/reports/run-….json + 证据链(日志/帧hex)", good:1}
+    ],
+    term:[
+      {cls:"ev", txt:"▸ 流程比对：✅命中 4 · ❌缺失 0 · ⚠️超时 0 · 🚫负向 0"},
+      {cls:"st", txt:"[report] 统一验证报告生成，按 run_id 归档可检索"},
+      {cls:"ok", txt:"✔ 报告含完整证据链：日志路径 / 帧 hex / 规则版本 / 固件 commit"}
+    ]
+  },
+  {
+    name:"归因反馈", mod:"feedback", pill:"反馈生成",
+    method:`<span class="mod">orchestration</span>.<span class="fn">build_feedback</span>(<span class="arg">run_id</span>, <span class="arg">attribution="none"</span>)`,
+    out:[
+      {k:"status", v:"本轮无失败，无需归因 → 回路闭合", good:1},
+      {k:"next", v:"可重跑 / 换场景", good:1}
+    ],
+    term:[
+      {cls:"ok", txt:"✔ 无失败项：归因反馈为空，回路闭合"}
+    ]
+  }
+];
+/* ================= 渲染管线（手动逐步） ================= */
+let stepIdx = -1;      // -1 = 未开始
+let finished = false;
+
+const $ = id => document.getElementById(id);
+
+function buildPipe(){
+  const pipe = $("pipe");
+  pipe.innerHTML = "";
+  NODES.forEach((n, i)=>{
+    if(i>0){
+      const lk = document.createElement("div");
+      lk.className = "link";
+      lk.innerHTML = '<div class="track"></div>';
+      pipe.appendChild(lk);
+    }
+    const nd = document.createElement("div");
+    nd.className = "node";
+    nd.id = "node-"+i;
+    nd.innerHTML = '<span class="ic">'+n.ic+'</span><span class="nm">'+n.nm+'</span><div class="md">'+n.md+'</div><div class="dot"></div>';
+    pipe.appendChild(nd);
+  });
+}
+
+function buildInputs(){
+  const box = $("inputChips");
+  box.innerHTML = "";
+  INPUTS.forEach((c,i)=>{
+    const ch = document.createElement("div");
+    ch.className = "chip in";
+    ch.id = "chip-"+i;
+    ch.innerHTML = '<span class="dotw"></span><span class="em">'+c.em+'</span><span>'+c.t+'</span>';
+    box.appendChild(ch);
+  });
+}
+
+function termLine(html){
+  const t = $("term");
+  const div = document.createElement("div");
+  div.className = "l";
+  div.innerHTML = html;
+  t.appendChild(div);
+  t.scrollTop = t.scrollHeight;
+}
+function sysLine(cls, html){
+  const t = $("syslog");
+  const d = document.createElement("div");
+  d.innerHTML = '<span class="tl">['+ts()+']</span> <span class="mod">'+cls+'</span> '+html;
+  t.appendChild(d);
+  t.scrollTop = t.scrollHeight;
+}
+function ts(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0')+":"+String(d.getMinutes()).padStart(2,'0')+":"+String(d.getSeconds()).padStart(2,'0');
+}
+
+function setStage(i){
+  document.querySelectorAll(".node").forEach(n=>n.classList.remove("active"));
+  document.querySelectorAll(".node").forEach((n,idx)=> n.classList.toggle("done", idx < i));
+  if(i < NODES.length) $("node-"+i).classList.add("active");
+  $("prog").style.width = (i/NODES.length*100)+"%";
+}
+
+/* ===== 侦听台绑定分析：点亮三列与锚点 ===== */
+function setBind(stage){
+  const cols = ["bcol-ml","bcol-ls","bcol-sc"];
+  const anchors = ["anchor-1","anchor-2","anchor-3"];
+  // 默认全灭
+  cols.forEach(c=>$(c).classList.remove("lit"));
+  document.querySelectorAll(".bchip").forEach(b=>b.classList.remove("lit"));
+  anchors.forEach(a=>$(a).classList.remove("lit"));
+  const sub = $("bindSub");
+  if(stage <= 0){
+    sub.textContent = "编码阶段：尚未产生可观测证据，侦听台待命…";
+    return;
+  }
+  if(stage === 1){
+    $("bcol-ml").classList.add("lit");
+    sub.textContent = "烧录阶段：module_log 串口写固件；侦听台旁路监听网络层（此刻无帧，仅待命）";
+    return;
+  }
+  if(stage === 2){
+    $("bcol-ml").classList.add("lit");
+    $("bcol-ls").classList.add("lit");
+    $("anchor-1").classList.add("lit");
+    $("anchor-2").classList.add("lit");
+    // 点亮对应 bchip：module_log 事件 + listener 帧
+    document.querySelectorAll('[data-b="ml"]').forEach(b=>b.classList.add("lit"));
+    document.querySelectorAll('[data-b="ls"]').forEach(b=>b.classList.add("lit"));
+    sub.textContent = "监控阶段：模块日志事件 ↔ 侦听台抓帧，以 NID=0x61475d、冻结时刻 10:00 锚点绑定（FR-1.2 跨来源关联）";
+    return;
+  }
+  if(stage === 3){
+    $("bcol-ml").classList.add("lit");
+    $("bcol-ls").classList.add("lit");
+    $("bcol-sc").classList.add("lit");
+    $("anchor-1").classList.add("lit");
+    $("anchor-2").classList.add("lit");
+    $("anchor-3").classList.add("lit");
+    document.querySelectorAll('[data-b]').forEach(b=>b.classList.add("lit"));
+    sub.textContent = "激励阶段：模拟集中器下发 10H-F1 ↔ 侦听台抓帧 ↔ 模块日志应答，以 RTUA/冻结时刻锚点三方绑定断言";
+    return;
+  }
+  // stage >= 4 报告/反馈：全亮
+  cols.forEach(c=>$(c).classList.add("lit"));
+  anchors.forEach(a=>$(a).classList.add("lit"));
+  document.querySelectorAll('[data-b]').forEach(b=>b.classList.add("lit"));
+  sub.textContent = "结论阶段：三源归一为统一验证报告，证据链 = 日志路径 + 帧 hex + 规则版本 + 固件 commit（FR-5.2 / NFR-4）";
+}
+
+/* 点击下一步：推进一个阶段 */
+function nextStep(){
+  if(finished) return;
+  if(stepIdx === -1){
+    stepIdx = 0;
+    $("stPill").textContent = "◉ 运行中";
+    $("stPill").className = "status-pill run";
+    $("logPill").textContent = "运行中";
+    $("termPill").textContent = "运行中";
+    $("final").classList.remove("show");
+    $("syslog").innerHTML = "";
+    $("term").innerHTML = '<div class="hdr"><b>串口监控</b><b>RX/TX 实时</b><b>可回溯源行</b></div>';
+    $("outbox").innerHTML = "";
+    $("runBar").style.width = "0";
+    setStage(0);
+    $("chip-0").classList.add("on");
+    sysLine("git", "提交 9f2e1a · 固件 v2.3.2 源码就绪，开始闭环");
+    $("methodPill").textContent = "编码";
+    $("methodBox").innerHTML = '<div><span class="mod">git</span>.<span class="fn">commit</span>(<span class="arg">"9f2e1a"</span>) · 固件 <span class="arg">v2.3.2</span></div><div class="cur"></div><div class="statusline" id="methodLine">编码完成，等待烧录</div>';
+    $("btnNext").innerHTML = "▶ 下一步：编译 · 烧录";
+    sysLine("module_log", "等待烧录指令…");
+    return;
+  }
+  if(stepIdx === 0){
+    stepIdx = 1;
+    renderStage(STAGES[0]);
+    $("btnNext").innerHTML = "▶ 下一步：运行监控 · 事件化";
+    sysLine("orchestration", "烧录完成，进入运行监控");
+    return;
+  }
+  if(stepIdx === 1){
+    stepIdx = 2;
+    renderStage(STAGES[1]);
+    $("btnNext").innerHTML = "▶ 下一步：激励验证 · 断言";
+    sysLine("orchestration", "事件监控完成，进入激励验证");
+    return;
+  }
+  if(stepIdx === 2){
+    stepIdx = 3;
+    renderStage(STAGES[2]);
+    $("btnNext").innerHTML = "▶ 下一步：结论 · 报告";
+    sysLine("orchestration", "激励验证通过，进入报告");
+    return;
+  }
+  if(stepIdx === 3){
+    stepIdx = 4;
+    renderStage(STAGES[3]);
+    $("btnNext").innerHTML = "▶ 下一步：归因反馈";
+    sysLine("orchestration", "报告生成，进入归因反馈");
+    return;
+  }
+  if(stepIdx === 4){
+    stepIdx = 5;
+    renderStage(STAGES[4]);
+    setStage(NODES.length);
+    $("prog").style.width = "100%";
+    showFinal();
+    $("stPill").textContent = "◉ 完成 · PASS";
+    $("stPill").className = "status-pill";
+    $("logPill").textContent = "完成";
+    $("termPill").textContent = "完成";
+    $("methodPill").textContent = "完成";
+    $("btnNext").innerHTML = "✔ 全流程完成";
+    $("btnNext").disabled = true;
+    finished = true;
+    sysLine("orchestration", "全流程闭环完成，产物已归档 <span class='ok'>run-20260814-0003</span>");
+    return;
+  }
+}
+
+/* 渲染单个阶段：方法加载 + 串口日志 + 输出（一次性渲染，无动画） */
+function renderStage(st){
+  const idx = STAGES.indexOf(st);
+  document.querySelectorAll(".chip.in").forEach(c=>c.classList.remove("on"));
+  const ch = $("chip-"+(idx+1));
+  if(ch) ch.classList.add("on");
+
+  const mb = $("methodBox");
+  mb.classList.add("loading");
+  $("methodPill").textContent = st.pill;
+  mb.innerHTML = st.method + '<div class="cur"></div><div class="statusline" id="methodLine">方法已加载</div>';
+  sysLine("module_log", "方法加载："+st.mod+"<span class='ok'> ✓</span>");
+
+  $("outbox").innerHTML = "";
+  $("term").innerHTML = '<div class="hdr"><b>串口监控 · '+st.mod+'</b><b>RX/TX 实时</b><b>可回溯源行</b></div>';
+
+  st.term.forEach(ln=>{
+    termLine(ln.cls==="tx"?'<span class="tx">'+ln.txt+'</span>':ln.cls==="rx"?'<span class="rx">'+ln.txt+'</span>':ln.cls==="ev"?'<span class="ev">'+ln.txt+'</span>':ln.cls==="ok"?'<span class="ok">'+ln.txt+'</span>':'<span class="st">'+ln.txt+'</span>');
+  });
+
+  const ob = $("outbox");
+  ob.innerHTML = '<div style="font-size:11px;color:var(--faint);margin-bottom:6px">输出 JSON</div>';
+  st.out.forEach(o=>{
+    const row = document.createElement("div");
+    row.className = "outrow";
+    row.innerHTML = '<span class="k">'+o.k+'</span><span class="v '+(o.good?'good':'bad')+'">'+o.v+'</span><span class="badge '+(o.good?'ok':'ng')+'">'+(o.good?'PASS':'FAIL')+'</span>';
+    ob.appendChild(row);
+  });
+  mb.classList.remove("loading");
+  const ml = $("methodLine");
+  if(ml) ml.innerHTML = '<span class="ok">✔ 完成</span>';
+  sysLine(st.mod, "输出 "+st.out.length+" 项断言，全部 <span class='ok'>通过</span>");
+}
+
+function showFinal(){
+  const f = $("final");
+  f.classList.add("show");
+  f.scrollIntoView({behavior:"smooth", block:"start"});
+  $("runBar").style.width = "100%";
+  $("reportJson").innerHTML =
+'{\n'+
+'  <span class="k">"run_id"</span>: <span class="s">"run-20260814-0003"</span>,\n'+
+'  <span class="k">"firmware"</span>: {<span class="k">"version"</span>: <span class="s">"v2.3.2"</span>, <span class="k">"commit"</span>: <span class="s">"9f2e1a"</span>, <span class="k">"flash_sha256"</span>: <span class="s">"a1b2c3d4…"</span>},\n'+
+'  <span class="k">"scenario"</span>: <span class="s">"minute_collect_anhui"</span>,\n'+
+'  <span class="k">"sources"</span>: {\n'+
+'    <span class="k">"module_log"</span>: {<span class="k">"events"</span>: <span class="n">42</span>, <span class="k">"files"</span>: [<span class="s">"LOG/模块/cco/…"</span>]},\n'+
+'    <span class="k">"listener"</span>: {<span class="k">"frames"</span>: <span class="n">128</span>, <span class="k">"minute_reports"</span>: {…}},\n'+
+'    <span class="k">"sim_concentrator"</span>: {<span class="k">"summary"</span>: {<span class="k">"total"</span>: <span class="n">5</span>, <span class="k">"pass"</span>: <span class="n">5</span>, <span class="k">"verdict"</span>: <span class="s">"pass"</span>}}\n'+
+'  },\n'+
+'  <span class="k">"assertions"</span>: [\n'+
+'    {<span class="k">"id"</span>: <span class="s">"join.sta.ok"</span>, <span class="k">"result"</span>: <span class="s">"pass"</span>},\n'+
+'    {<span class="k">"id"</span>: <span class="s">"collect.minute.ok"</span>, <span class="k">"result"</span>: <span class="s">"pass"</span>}\n'+
+'  ],\n'+
+'  <span class="k">"verdict"</span>: <span class="s">"pass"</span>,\n'+
+'  <span class="k">"artifacts"</span>: [<span class="s">"data/reports/run-20260814-0003.json"</span>],\n'+
+'  <span class="k">"ts"</span>: <span class="s">"2026-08-14T10:00:00+08:00"</span>\n'+
+'}';
+  sysLine("report", "统一验证报告生成，<span class='ok'>verdict=PASS</span> · 证据链完整 · 已归档");
+}
+
+/* ================= 事件 ================= */
+$("btnNext").addEventListener("click", nextStep);
+$("btnReset").addEventListener("click", ()=>{
+  stepIdx = -1;
+  finished = false;
+  $("stPill").textContent = "◉ 待命";
+  $("stPill").className = "status-pill";
+  $("logPill").textContent = "待命";
+  $("termPill").textContent = "待命";
+  $("methodPill").textContent = "待命";
+  document.querySelectorAll(".node").forEach(n=>n.classList.remove("active","done"));
+  document.querySelectorAll(".chip.in").forEach(c=>c.classList.remove("on"));
+  $("prog").style.width = "0";
+  $("term").innerHTML = '<div class="hdr"><b>串口监控</b><b>RX/TX 实时</b><b>可回溯源行</b></div>';
+  $("outbox").innerHTML = "";
+  $("syslog").innerHTML = "";
+  $("final").classList.remove("show");
+  $("methodBox").innerHTML = '<div><span class="mod">module_log</span>.<span class="fn">flash_module</span>(<span class="arg">"fw_v2.3.2.bin"</span>, <span class="arg">port="COM3"</span>)</div><div class="cur"></div><div class="statusline" id="methodLine">等待启动…</div>';
+  $("runBar").style.width = "0";
+  $("btnNext").innerHTML = "▶ 下一步：开始";
+  $("btnNext").disabled = false;
+  sysLine("orchestration", "已重置，等待重新开始");
+});
+
+/* 初始化 */
+buildPipe();
+buildInputs();
+$("term").innerHTML = '<div class="hdr"><b>串口监控</b><b>RX/TX 实时</b><b>可回溯源行</b></div>';
+$("reportJson").innerHTML = '<span class="c">// 逐步推进至「结论 · 报告」后生成</span>';
+</script>
+</body>
+</html>

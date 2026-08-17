@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 闭环研发验证平台 · 产品说明</title>
+<style>
+  :root{
+    --bg:#060b15; --bg2:#0a1222; --panel:#0f1a2e; --panel2:#162440;
+    --line:#1e3050; --line2:#2a4470;
+    --tx:#eef3ff; --dim:#8da4c8; --faint:#5870a0;
+    --cyan:#2dd4f0; --blue:#6098ff; --green:#2ecc88; --amber:#f0b832; --red:#f55858; --purple:#b87cff;
+    --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg); color:var(--tx); font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+    line-height:1.75;
+    background-image:
+      radial-gradient(900px 400px at 85% -5%, rgba(45,212,240,.06), transparent 60%),
+      radial-gradient(700px 350px at 5% 105%, rgba(184,124,255,.05), transparent 60%);
+  }
+  ::-webkit-scrollbar{width:7px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:3px}
+
+  header{
+    position:sticky;top:0;z-index:50;backdrop-filter:blur(10px);
+    background:rgba(6,11,21,.88);border-bottom:1px solid var(--line);
+  }
+  .bar{max-width:1120px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .lg{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,var(--cyan),var(--blue));display:flex;align-items:center;justify-content:center;font-weight:900;color:#06121f;box-shadow:0 0 18px rgba(45,212,240,.35);font-size:16px;flex-shrink:0}
+  .brand b{font-size:16px;letter-spacing:.3px}
+  .brand small{display:block;font-weight:400;color:var(--dim);font-size:11px}
+
+  .wrap{max-width:1120px;margin:0 auto;padding:30px 20px 80px}
+
+  h1{font-size:28px;margin-bottom:4px}
+  h1+p{color:var(--dim);font-size:14px;margin-bottom:32px;line-height:1.7}
+  h1+p code{background:var(--panel);padding:2px 7px;border-radius:5px;font-family:var(--mono);font-size:12px;color:var(--cyan)}
+
+  h2{
+    font-size:20px;margin:50px 0 20px;padding-left:14px;
+    border-left:4px solid var(--cyan);display:flex;align-items:center;gap:10px
+  }
+  h2 .no{background:var(--cyan);color:#06121f;font-size:12px;width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;font-weight:800}
+  h3{font-size:16px;margin:28px 0 12px;color:var(--blue)}
+
+  /* ===== 设备拓扑图 ===== */
+  .topo{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px 28px;margin:18px 0}
+  .topo h3{font-size:13px;color:var(--faint);letter-spacing:2px;margin:0 0 20px;font-weight:600}
+  .topo-row{display:flex;align-items:center;gap:0;justify-content:center;flex-wrap:wrap;margin-bottom:8px}
+  .topo-box{background:var(--bg2);border:1px solid var(--line2);border-radius:12px;padding:14px 18px;text-align:center;min-width:140px;flex-shrink:0}
+  .topo-box .ic{font-size:28px;display:block}
+  .topo-box .nm{font-weight:700;font-size:14px;margin:4px 0 2px}
+  .topo-box .ds{font-size:11px;color:var(--dim);font-family:var(--mono)}
+  .topo-box .tag{display:inline-block;font-size:10px;padding:1px 8px;border-radius:20px;margin-top:4px;font-weight:600}
+  .topo-box .tag.ob{background:rgba(45,212,240,.12);color:var(--cyan);border:1px solid rgba(45,212,240,.3)}
+  .topo-box .tag.dev{background:rgba(255,107,107,.12);color:var(--red);border:1px solid rgba(255,107,107,.3)}
+  .topo-box .tag.exe{background:rgba(46,204,136,.12);color:var(--green);border:1px solid rgba(46,204,136,.3)}
+  .topo-box .tag.sti{background:rgba(240,184,50,.12);color:var(--amber);border:1px solid rgba(240,184,50,.3)}
+  .topo-conn{display:flex;flex-direction:column;align-items:center;padding:0 6px;flex-shrink:0}
+  .topo-conn .line{width:2px;height:20px;background:var(--line2)}
+  .topo-conn .lbl{font-size:11px;color:var(--dim);font-family:var(--mono);white-space:nowrap}
+  .topo-conn .arr{font-size:16px;color:var(--dim)}
+  @media(max-width:900px){.topo-row{flex-direction:column;gap:6px}.topo-conn{flex-direction:row;gap:8px}.topo-conn .line{width:30px;height:2px}}
+
+  /* ===== 数据流图 ===== */
+  .flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:18px 0}
+  @media(max-width:900px){.flow-grid{grid-template-columns:1fr}}
+  .flow-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .flow-card .hd{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .flow-card .hd .ic{font-size:22px}
+  .flow-card .hd .t{font-size:14px;font-weight:700}
+  .flow-card .hd .port{font-family:var(--mono);font-size:10px;color:var(--cyan);margin-left:auto;background:var(--panel2);padding:2px 8px;border-radius:20px}
+  .flow-card .inout{font-size:12px;margin-bottom:8px}
+  .flow-card .inout .lb{color:var(--faint);font-size:11px}
+  .flow-card .inout .v{font-family:var(--mono);color:var(--tx);font-size:12.5px;background:var(--bg2);padding:3px 8px;border-radius:6px;display:block;margin-top:3px;word-break:break-all}
+  .arrow-down{text-align:center;color:var(--faint);font-size:18px;padding:4px 0}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:16px}
+  .card h4{font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .card .pill{display:inline-block;font-size:10px;padding:2px 8px;border-radius:20px;margin-left:6px;font-weight:600}
+  .pill.g{background:rgba(46,204,136,.12);color:var(--green);border:1px solid rgba(46,204,136,.3)}
+  .pill.b{background:rgba(45,212,240,.12);color:var(--cyan);border:1px solid rgba(45,212,240,.3)}
+  .pill.y{background:rgba(240,184,50,.12);color:var(--amber);border:1px solid rgba(240,184,50,.3)}
+
+  table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+  table.tbl th{text-align:left;padding:10px 12px;background:var(--panel2);color:var(--blue);border:1px solid var(--line);font-size:12px;white-space:nowrap}
+  table.tbl td{padding:9px 12px;border:1px solid var(--line);vertical-align:top}
+  table.tbl tr:nth-child(even) td{background:rgba(15,26,46,.4)}
+  table.tbl td code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:11.5px;color:var(--cyan)}
+  table.tbl td.mono{font-family:var(--mono);font-size:12px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+
+  .code-block{background:#04070d;border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:12.5px;overflow:auto;line-height:1.7;color:#c6d6f4;margin:10px 0}
+  .code-block .k{color:var(--purple)}.code-block .s{color:var(--green)}.code-block .n{color:var(--amber)}.code-block .c{color:var(--faint);font-style:italic}.code-block .b{color:var(--cyan)}
+
+  .steps{display:flex;flex-direction:column;gap:10px;margin:12px 0}
+  .step{display:flex;gap:14px;background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:14px 16px;align-items:flex-start}
+  .step .no{width:32px;height:32px;border-radius:50%;background:var(--panel2);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;color:var(--cyan);border:1px solid var(--line2)}
+  .step .ct{flex:1}
+  .step .ct .tt{font-weight:700;font-size:13.5px;margin-bottom:3px}
+  .step .ct .ds{font-size:12px;color:var(--dim);font-family:var(--mono);line-height:1.6}
+  .step .ct .ds .hl{color:var(--cyan)}
+  .step .ct .ds .err{color:var(--red)}
+  .step .ct .ds .ok{color:var(--green)}
+
+  .bind-box{background:var(--bg2);border:1px dashed var(--line2);border-radius:12px;padding:16px 18px;margin:12px 0}
+  .bind-box h4{font-size:13px;color:var(--amber);margin-bottom:10px}
+  .bind-box .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .bind-box .item{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 14px;font-family:var(--mono);font-size:12px;flex:1;min-width:180px}
+  .bind-box .item .lb{color:var(--faint);font-size:10px;margin-bottom:3px}
+  .bind-box .item .vl{color:var(--tx);font-size:13px}
+  .bind-box .arrow{color:var(--amber);font-size:20px;flex-shrink:0}
+
+  .footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--faint);font-size:12px;text-align:center;line-height:1.8}
+
+  ul.c{list-style:none;font-size:13px}
+  ul.c li{padding:4px 0 4px 20px;position:relative}
+  ul.c li::before{content:"▸";position:absolute;left:2px;color:var(--cyan)}
+  ul.c li code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:11.5px;color:var(--cyan)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <div class="lg">AI</div>
+    <div class="brand">
+      <b>AI 闭环研发验证平台</b>
+      <small>双模通信（CCO/STA）· 产品说明 v1.1</small>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <h1>产品说明</h1>
+  <p>本平台面向 <b>HPLC/双模通信（CCO/STA）</b> 固件研发场景，将「改代码 → 烧录 → 验证 → 结论」迭代周期从人工核查升级为 <b>自动化闭环流水线</b>。核心依赖四台设备：<code>侦听台</code>（网络层抓帧）、<code>CCO/STA 模块</code>（被测对象）、<code>模拟集中器</code>（13762 激励源）、<code>上位机</code>（运行平台工具）。</p>
+
+  <!-- ==================== 一、设备拓扑 ==================== -->
+  <h2><span class="no">1</span> 设备拓扑总览</h2>
+
+  <div class="topo">
+    <h3>硬件连接关系</h3>
+    <div class="topo-row">
+      <div class="topo-box">
+        <span class="ic">🖥</span>
+        <span class="nm">上位机（PC）</span>
+        <span class="ds">Windows · 运行平台工具</span>
+        <span class="tag ob">观测 + 执行 + 激励</span>
+      </div>
+      <div class="topo-conn">
+        <span class="lbl">USB-to-Serial ×3</span>
+        <span class="arr">↓</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="topo-box">
+          <span class="ic">📡</span><span class="nm">侦听台</span>
+          <span class="ds">网络层抓帧 · 只读</span>
+          <span class="tag ob">观测面</span>
+        </div>
+        <div class="topo-box">
+          <span class="ic">🔌</span><span class="nm">CCO 模块</span>
+          <span class="ds">串口 · 被测对象</span>
+          <span class="tag dev">被测对象</span>
+        </div>
+        <div class="topo-box">
+          <span class="ic">🔌</span><span class="nm">STA 模块</span>
+          <span class="ds">串口 · 被测对象</span>
+          <span class="tag dev">被测对象</span>
+        </div>
+      </div>
+      <div class="topo-conn">
+        <span class="lbl">网络层</span>
+        <span class="arr">↕</span>
+      </div>
+      <div class="topo-box">
+        <span class="ic">🏢</span><span class="nm">模拟集中器</span>
+        <span class="ds">COM4 可读写 · 13762</span>
+        <span class="tag sti">激励面</span>
+      </div>
+    </div>
+    <div style="margin-top:16px;font-size:12px;color:var(--dim);line-height:1.8">
+      <b>关键约束</b>：
+      ① 侦听台 <b>只读</b>监听网络层，不干扰 CCO↔STA 通信（<span class="tag ob">观测面</span>）；
+      ② CCO 串口同时用于 <b>日志采集 + 固件烧录</b>（同端口复用，RX 监控在烧录期间不停）；
+      ③ 模拟集中器使用 <b>独立串口</b>（COM4），不与 CCO 串口冲突（<span class="tag sti">激励面</span>）；
+      ④ 三时基不一致（模块时钟 / PC 时钟 / 串口时间戳）——以 <b>业务锚点</b>（NID/MAC/冻结时刻/RTUA）关联 + 宽松时间窗补偿。
+    </div>
+  </div>
+
+  <!-- ==================== 二、数据流与模块协作 ==================== -->
+  <h2><span class="no">2</span> 数据流：四个模块如何协作</h2>
+
+  <div class="flow-grid">
+    <!-- 侦听台 -->
+    <div class="flow-card">
+      <div class="hd"><span class="ic">📡</span><span class="t">侦听台 listener</span><span class="port">:8765</span></div>
+      <div class="inout"><span class="lb">输入</span><span class="v">网络层 7E 帧流（CCO↔STA 报文）</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="inout"><span class="lb">处理</span><span class="v">C# DLL 帧解析 → Python 富化</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="inout"><span class="lb">输出</span><span class="v">结构化 simple dict + 分钟报表 + 日志索引</span></div>
+      <div class="inout" style="margin-top:6px"><span class="lb">角色</span><span class="v">loghooks <b>第二来源</b> + 跨来源关联的<b>客观证据面</b></span></div>
+    </div>
+
+    <!-- 模块日志/烧录 -->
+    <div class="flow-card">
+      <div class="hd"><span class="ic">🔌</span><span class="t">模块日志/烧录 module_log</span><span class="port">:8766</span></div>
+      <div class="inout"><span class="lb">输入</span><span class="v">CCO/STA 串口 RX/TX 文本行</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="inout"><span class="lb">处理</span><span class="v">加时间戳 · 分类落盘 · XMODEM 烧录 · 对照解析</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="inout"><span class="lb">输出</span><span class="v">带时间戳日志文件 LOG/模块/{cco|sta}/</span></div>
+      <div class="inout" style="margin-top:6px"><span class="lb">角色</span><span class="v">loghooks <b>第一来源</b>（文本行）· 烧录执行面</span></div>
+    </div>
+
+    <!-- 模拟集中器 -->
+    <div class="flow-card">
+      <div class="hd"><span class="ic">🏢</span><span class="t">模拟集中器 sim_concentrator</span><span class="port">:8781</span></div>
+      <div class="inout"><span class="lb">输入</span><span class="v">验证任务 JSON（下发帧 + 期望 + 应答规则）</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="inout"><span class="lb">处理</span><span class="v">13762 构帧/切帧/解析 → 匹配 → 判定</span></div>
+      <div class="arrow-down">↓</div>
+      <div class="inout"><span class="lb">输出</span><span class="v">逐步骤结论 JSON（sent_hex / matched / parsed / result）</span></div>
+      <div class="inout" style="margin-top:6px"><span class="lb">角色</span><span class="v">loghooks <b>第三来源</b>（concentrator_10376）· 激励面</span></div>
+    </div>
+  </div>
+
+  <!-- 绑定关系 -->
+  <div class="bind-box">
+    <h4>🔗 三方证据如何绑定（FR-1.2 跨来源关联）</h4>
+    <div class="row">
+      <div class="item"><span class="lb">模块日志（文本行）</span><span class="vl">事件 <b>collect.minute</b> @10:00<br>NID=0x61475d</span></div>
+      <span class="arrow">→ NID/MAC/冻结时刻 →</span>
+      <div class="item"><span class="lb">侦听台（抓帧）</span><span class="vl">帧 <b>68 90 08</b> 冻结时刻 10:00<br>NID=0x61475d</span></div>
+      <span class="arrow">→ RTUA/冻结时刻 →</span>
+      <div class="item"><span class="lb">模拟集中器（激励）</span><span class="vl">下发 <b>10H-F1</b> RTUA=…<br>断言 verdict: pass</span></div>
+    </div>
+    <div style="font-size:11px;color:var(--faint);margin-top:10px">
+      <b>锚点机制</b>：模块日志事件、侦听台帧、simcon 激励三者以 <b>NID</b>（网络标识）/ <b>MAC</b>（设备地址）/ <b>冻结时刻</b>（分钟采集时间戳）/ <b>RTUA</b>（终端地址）为锚点配对，加以宽松时间窗补偿三时基偏差。批次烧录时刻统一作为 t=0 相对对齐。
+    </div>
+  </div>
+
+  <!-- ==================== 三、CCO 烧录到事件匹配 ==================== -->
+  <h2><span class="no">3</span> CCO 烧录 → 事件匹配（loghooks）</h2>
+
+  <div class="card">
+    <h4>一条完整的"烧录 → 事件匹配"链路 <span class="pill b">核心流程</span></h4>
+    <div class="steps">
+      <div class="step">
+        <div class="no">1</div>
+        <div class="ct">
+          <div class="tt">编译固件 → XMODEM 烧录到 CCO</div>
+          <div class="ds">上位机通过 <span class="hl">module_log</span> 串口（COM3）以 XMODEM 协议将 <span class="hl">fw_v2.3.2.bin</span> 分帧写入 CCO Flash。RX 监控在烧录期间不停，烧录过程日志同步落盘。</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">2</div>
+        <div class="ct">
+          <div class="tt">复位 CCO → 模块打印运行日志</div>
+          <div class="ds">CCO 上电复位后，固件通过串口持续输出 <span class="hl">C 语言 printf</span> 调试信息（如 <span class="hl">"nwk disc done"</span>、<span class="hl">"onnet cnt = 1"</span>）。module_log 按行加 <span class="hl">YYYYMMDD-HH:MM:SS:mmm</span> 时间戳，分类落盘 <span class="hl">LOG/模块/cco/</span>。</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">3</div>
+        <div class="ct">
+          <div class="tt">loghooks 规则匹配 → 事件流</div>
+          <div class="ds">
+            加载规则文件 <span class="hl">rules/anhui.json</span>（text/field 正则 + sequence 状态机），扫描日志文件，输出结构化事件流：
+            <br>· <span class="ok">event network.onnet</span> | 入网节点数 = 1 | aps_ioctrl_nwk.c:950
+            <br>· <span class="ok">event join.sta.ok</span> | STA 入网成功 NID=0x61475d | sequence 4/4
+            <br>· <span class="ok">event collect.minute</span> | 冻结时刻 10:00 | 12 只表
+            <br>如 <span class="err">行号漂移</span>（实际 line 超出容差），事件仍命中，但输出 <span class="hl">rule_drifts 清单</span>提示维护。
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">4</div>
+        <div class="ct">
+          <div class="tt">跨来源关联：侦听台帧 + 模块日志事件 + 集中器激励</div>
+          <div class="ds">
+            以 <span class="hl">NID=0x61475d</span>、<span class="hl">冻结时刻 10:00</span> 为锚点，将侦听台抓取的网络层帧（含冻结数据 hex）与 loghooks 事件（含冻结时刻摘要）自动配对，验证：
+            <br>· 模块日志声称"12 只表分钟上报" ↔ 侦听台帧实际包含 12 条 645/698 嵌套帧
+            <br>· 模拟集中器下发的 10H-F1 读冻结命令 ↔ CCO 应答的 90H 帧（AFN/SEQ/RTUA 匹配）
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 四、AI 闭环验证 + 模拟集中器 ==================== -->
+  <h2><span class="no">4</span> AI 闭环验证 + 模拟集中器</h2>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>模拟集中器：13762 自动激励与断言 <span class="pill g">已实现</span></h4>
+      <ul class="c">
+        <li><b>输入</b>：验证任务 JSON — 若干步骤，每步 = <code>send</code>（下发帧，AFN/SEQ/RTUA/PW + 嵌套 645/698）+ <code>expect</code>（期望应答帧断言）+ 超时 + 可选 <code>expect_no_reply</code></li>
+        <li><b>执行</b>：串口 <code>COM4</code>（独立于 CCO 串口），按步骤构帧→下发→等待→匹配→解析→判定</li>
+        <li><b>输出</b>：结论 JSON — <code>sent_hex</code> / <code>matched</code> / <code>parsed</code>（信封字段 + 数据项 + 嵌套帧）/ <code>result</code>（pass|fail）/ <code>reason</code>；汇总 <code>total/pass/fail/verdict</code>。CLI 退出码 <code>0=pass</code>、<code>1=fail</code>，供 AI 脚本判断</li>
+        <li><b>应答引擎</b>：内置规则表 + 任务/步骤级覆盖，模块上行自动回下行，无需人工干预</li>
+        <li><b>可视化</b>：module_log 第三页签人工监督同一串口</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>AI 闭环编排层：一次 Run 串起全链路 <span class="pill y">目标（P0）</span></h4>
+      <ul class="c">
+        <li><b>Run 抽象</b>：每次闭环验证 = 一个批次（<code>run_id</code>），包含：输入（commit/固件/场景模板 id/参数）→ 执行（烧录→复位→事件监控→激励→断言）→ 产出（事件流摘要 + 验证结论 + 证据链）→ 归档可检索</li>
+        <li><b>期望流程比对</b>：声明式描述期望流程（步骤序列 + 时间窗 + 分支/可选步），实际事件流投影到期望流程 → 输出 ✅命中 / ❌缺失 / ⚠️超时 / 🔀顺序错乱 / 🚫负向触发</li>
+        <li><b>归因反馈</b>：失败时结构化归因（如"assoc err 出现 → 检查关联流程"），回喂编码模型 → 修复 → 再验证，形成闭环</li>
+        <li><b>统一报告</b>：归一 loghooks 摘要 + simcon 结论 + 侦听台分钟报表为一份 <code>Report JSON</code>，含完整证据链</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h4>验证任务 JSON 示例（模拟集中器）</h4>
+    <div class="code-block">
+<span class="k">{</span>
+  <span class="k">"id"</span>: <span class="s">"minute_collect_anhui"</span>,
+  <span class="k">"port"</span>: <span class="s">"COM4"</span>, <span class="k">"baudrate"</span>: <span class="n">115200</span>,
+  <span class="k">"enable_responder"</span>: <span class="n">true</span>, <span class="k">"fail_fast"</span>: <span class="n">true</span>,
+  <span class="k">"steps"</span>: [
+    { <span class="k">"name"</span>: <span class="s">"下发 10H-F1 读冻结数据"</span>,
+      <span class="k">"send"</span>: { <span class="k">"afn"</span>: <span class="n">0x10</span>, <span class="k">"rtsa"</span>: <span class="s">"070919051620"</span>, <span class="k">"userdata"</span>: <span class="s">"00"</span> },
+      <span class="k">"expect"</span>: { <span class="k">"afn"</span>: <span class="n">0x10</span>, <span class="k">"nested"</span>: <span class="n">true</span> },
+      <span class="k">"expect_timeout"</span>: <span class="n">5.0</span> },
+    { <span class="k">"name"</span>: <span class="s">"期望无响应的广播帧"</span>,
+      <span class="k">"send"</span>: { <span class="k">"afn"</span>: <span class="n">0x14</span>, <span class="k">"rtsa"</span>: <span class="s">"999999999999"</span>, <span class="k">"userdata"</span>: <span class="s">"00"</span> },
+      <span class="k">"expect_no_reply"</span>: <span class="n">true</span>, <span class="k">"expect_timeout"</span>: <span class="n">2.0</span> }
+  ]
+<span class="k">}</span>
+    </div>
+  </div>
+
+  <!-- ==================== 五、自动化测试流程 ==================== -->
+  <h2><span class="no">5</span> 如何跑针对性自动化测试</h2>
+
+  <div class="card">
+    <h4>自动化测试的四种模式</h4>
+    <table class="tbl">
+      <tr><th style="width:80px">模式</th><th>触发方式</th><th>被测对象</th><th>覆盖范围</th><th>典型命令</th></tr>
+      <tr>
+        <td class="mono"><b>1. 事件监控</b></td>
+        <td>CLI / REST</td>
+        <td>CCO / STA 固件</td>
+        <td>入网/采集/发送/信标/状态机全流程</td>
+        <td class="mono"><code>python -m loghooks scan LOG/模块/cco --province anhui --correlate LOG/侦听台</code></td>
+      </tr>
+      <tr>
+        <td class="mono"><b>2. 模拟集中器</b></td>
+        <td>CLI / REST</td>
+        <td>CCO 串口侧（13762 协议栈）</td>
+        <td>AFN 指令集（入网/抄读/拉合闸/搜表/升级）</td>
+        <td class="mono"><code>python -m sim_concentrator verify task.json --json</code></td>
+      </tr>
+      <tr>
+        <td class="mono"><b>3. 全量单测</b></td>
+        <td>pytest</td>
+        <td>各模块 Python 层</td>
+        <td>402 passed / 66 skipped（基线）</td>
+        <td class="mono"><code>pytest</code>（假串口注入，不依赖硬件）</td>
+      </tr>
+      <tr>
+        <td class="mono"><b>4. 闭环 Run（目标）</b></td>
+        <td>REST / platform 工作台</td>
+        <td>CCO/STA 固件 + 协议栈</td>
+        <td>烧录→监控→激励→报告 全链路</td>
+        <td class="mono"><code>POST /api/run {"scenario":"minute_collect_anhui","firmware":"v2.3.2"}</code></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h4>典型场景：针对"安徽分钟采集"做一次自动化闭环验证</h4>
+    <div class="steps">
+      <div class="step">
+        <div class="no">1</div>
+        <div class="ct">
+          <div class="tt">准备阶段</div>
+          <div class="ds"><span class="hl">输入</span>：固件 <span class="hl">v2.3.2</span>（commit <span class="hl">9f2e1a</span>）· 场景模板 <span class="hl">minute_collect_anhui</span> · loghooks 规则 <span class="hl">rules/anhui.json</span> · 验证任务 <span class="hl">task_minute_collect.json</span></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">2</div>
+        <div class="ct">
+          <div class="tt">烧录 + 复位</div>
+          <div class="ds"><span class="hl">module_log.flash_module("fw_v2.3.2.bin", port="COM3")</span> → XMODEM 分帧写入 → 校验 SHA256 → 复位 CCO</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">3</div>
+        <div class="ct">
+          <div class="tt">运行监控（事件化）</div>
+          <div class="ds"><span class="hl">loghooks.scan("LOG/模块/cco", rules="anhui", correlate="listener")</span> → 扫描模块日志 → 输出 42 条事件 → 跨来源关联侦听台帧，锚点 NID 配对</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">4</div>
+        <div class="ct">
+          <div class="tt">激励验证（断言）</div>
+          <div class="ds"><span class="hl">sim_concentrator.verify("task_minute_collect.json", port="COM4")</span> → 5 步下发/应答/断言 → 全部 pass → verdict: pass</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">5</div>
+        <div class="ct">
+          <div class="tt">期望流程比对 + 结论</div>
+          <div class="ds">
+            实际事件流 vs 期望流程（入网 + 分钟上报 [30s 窗]）→ <span class="ok">✅4 命中</span> · <span class="err">❌0 缺失</span> · <span class="ok">⚠️0 超时</span> · <span class="ok">🚫0 负向</span>
+            <br>→ 统一报告 <span class="hl">run-20260814-0003.json</span> 归档，证据链完整（日志路径 + 帧 hex + 规则版本 + 固件 commit）
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="no">6</div>
+        <div class="ct">
+          <div class="tt">（如有失败）归因反馈</div>
+          <div class="ds">如 <span class="err">track_succ 缺失</span> → 归因：<span class="hl">"track done.*succ 未出现，检查关联流程"</span> → 回喂编码侧 → 修复固件 → 重跑 Run</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 六、整体数据流总图 ==================== -->
+  <h2><span class="no">6</span> 整体数据流总图</h2>
+
+  <div class="topo" style="font-family:var(--mono);font-size:12.5px;line-height:2.2">
+    <div style="text-align:center;color:var(--cyan);font-weight:700;font-size:14px;margin-bottom:14px">
+      ┌────────────────── 一次闭环 Run 的数据流 ──────────────────┐
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+      <div style="background:var(--bg2);border:1px solid var(--line2);border-radius:10px;padding:10px 20px;text-align:center">
+        <b style="color:var(--amber)">输入</b> &nbsp; commit 9f2e1a · fw_v2.3.2.bin · rules/anhui.json · task_minute_collect.json
+      </div>
+      <div style="color:var(--faint);font-size:18px">↓</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+        <span style="background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:8px"><b style="color:var(--cyan)">module_log</b> 烧录 CCO</span>
+        <span style="color:var(--dim)">→</span>
+        <span style="background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:8px"><b style="color:var(--purple)">loghooks</b> 事件化</span>
+        <span style="color:var(--dim)">→</span>
+        <span style="background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:8px"><b style="color:var(--amber)">sim_concentrator</b> 激励</span>
+      </div>
+      <div style="color:var(--faint);font-size:18px">↓</div>
+      <div style="background:var(--bg2);border:1px dashed var(--line2);padding:10px 20px;border-radius:10px;text-align:center;color:var(--dim);font-size:11px">
+        侦听台 <b style="color:var(--purple)">listener</b> 全程旁路抓帧 · 以 NID/MAC/冻结时刻/RTUA 锚点 ←→ 绑定模块日志事件与 simcon 激励
+      </div>
+      <div style="color:var(--faint);font-size:18px">↓</div>
+      <div style="background:var(--panel);border:2px solid var(--green);border-radius:12px;padding:14px 24px;text-align:center">
+        <b style="color:var(--green);font-size:14px">最终产物</b><br>
+        <span style="color:var(--tx)">统一验证报告 Report JSON</span> &nbsp; <span style="color:var(--green)">verdict: PASS</span><br>
+        <span style="color:var(--faint);font-size:11px">证据链：日志路径 + 帧 hex + 规则版本 + 固件 commit + 场景模板</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 七、关键接口 ==================== -->
+  <h2><span class="no">7</span> 关键接口</h2>
+  <table class="tbl">
+    <tr><th>接口</th><th>模块</th><th>说明</th></tr>
+    <tr><td class="mono">POST /api/module-serial/flash</td><td>module_log (8766)</td><td>XMODEM 固件烧录（同串口 RX 监控不停）</td></tr>
+    <tr><td class="mono">POST /api/loghooks/scan</td><td>module_log (8766)</td><td>扫描日志文件/目录 → 事件流 + 行绑定 + 跨来源关联</td></tr>
+    <tr><td class="mono">POST /api/simcon/verify</td><td>sim_concentrator (8781)</td><td>执行验证任务 → 结论 JSON</td></tr>
+    <tr><td class="mono">POST /api/run</td><td>platform (目标)</td><td>创建验证批次 → 串起烧录→监控→激励→报告全链路</td></tr>
+    <tr><td class="mono">POST /api/compare</td><td>platform (目标)</td><td>期望流程 vs 实际事件流 → 四类差异输出</td></tr>
+    <tr><td class="mono">POST /api/feedback</td><td>platform (目标)</td><td>失败结论 → 归因反馈文本</td></tr>
+  </table>
+
+  <div class="footer">
+    依据《docs/总设计框架/AI闭环平台项目设计需求文档.md》v1.1 编制 · 架构决策见 DECISIONS.md（ADR-1~16）<br>
+    本页为产品说明文档，侧重「设备拓扑 / 数据流 / 模块协作 / 自动化测试」的解释
+  </div>
+</div>
+
+</body>
+</html>

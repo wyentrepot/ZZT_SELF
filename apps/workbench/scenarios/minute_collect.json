@@ -1,0 +1,18 @@
+{
+  "id": "minute_collect",
+  "name": "分钟采集闭环（安徽）",
+  "module": "cco",
+  "expected_flow": [
+    {"step": "onnet", "event_type": "network.onnet", "within_ms": 30000},
+    {"step": "collect", "event_type": "collect.minute.e4", "within_ms": 60000},
+    {"step": "no_error", "negate": true, "event_type": "join.assoc.err"}
+  ],
+  "stimulus": {
+    "task_file": "tasks/minute_collect.json",
+    "responders": []
+  },
+  "monitor": {
+    "rules": ["common", "provinces/anhui"],
+    "sources": ["module_log", "listener"]
+  }
+}

@@ -61,12 +61,12 @@ def test_frozen_default_dll_is_under_meipass(frozen_environment):
 
 
 def test_non_frozen_log_dir_is_repo_root_log(monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module, "_base_dir", lambda: tmp_path / "listener")
+    monkeypatch.setattr(app_module, "_repo_root", lambda: tmp_path)
     assert app_module._log_dir() == tmp_path / "data" / "logs"
 
 
 def test_non_frozen_log_dir_creates_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(app_module, "_base_dir", lambda: tmp_path / "listener")
+    monkeypatch.setattr(app_module, "_repo_root", lambda: tmp_path)
     log_dir = app_module._log_dir()
     assert log_dir.is_dir()
 
@@ -74,4 +74,4 @@ def test_non_frozen_log_dir_creates_dir(monkeypatch, tmp_path):
 def test_frozen_log_dir_is_next_to_exe(frozen_environment, monkeypatch):
     internal_dir, exe = frozen_environment
     monkeypatch.setattr(app_module, "_is_frozen", lambda: True)
-    assert app_module._log_dir() == exe.resolve().parent / "LOG"
+    assert app_module._log_dir() == exe.resolve().parent / "data" / "logs"

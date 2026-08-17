@@ -1,0 +1,18 @@
+{
+  "id": "open_close",
+  "name": "拉合闸（远程通断）",
+  "module": "sta",
+  "expected_flow": [
+    {"step": "cmd_recv", "event_type": "relay.cmd.recv", "within_ms": 10000},
+    {"step": "relay_done", "event_type": "relay.done", "within_ms": 20000},
+    {"step": "no_alarm", "negate": true, "event_type": "relay.fail"}
+  ],
+  "stimulus": {
+    "task_file": "tasks/open_close.json",
+    "responders": []
+  },
+  "monitor": {
+    "rules": ["common"],
+    "sources": ["module_log"]
+  }
+}

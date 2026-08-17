@@ -254,7 +254,7 @@ def main():
     report_lines.append("5. **低优先级**：补充控制类、文件传输类、ESAM接口类等\n")
     report_lines.append("6. **后续**：645协议DI可根据实际抄表业务中遇到的未知DI逐步补充\n")
     
-    report_path = PROJECT / "docs" / "oad_todo.md"
+    report_path = PROJECT / "docs" / "需求管理" / "归档" / "oad_todo.md"
     with open(report_path, 'w', encoding='utf-8') as f:
         f.writelines(report_lines)
     print(f"  报告已写入: {report_path}")

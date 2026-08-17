@@ -117,9 +117,12 @@ def pick_file_via_tkinter_dialog(initial_dir: str = "", timeout_s: int = 60) -> 
 
     浏览器网页受安全沙箱限制无法读取本地路径，但后端运行在用户本机，
     可通过 tkinter（Windows 通用对话框）弹出系统原生选择器直接拿真实路径。
-    取消、失败或超时返回空串。
+    取消返回空串；tkinter 初始化/弹窗失败（如 frozen 环境 Tcl 数据缺失、
+    与 pywebview 主循环冲突）时**自动降级**到 PowerShell 原生对话框
+    （pick_file_via_native_dialog），避免"点了没反应"。
     """
     result: "queue.Queue[str]" = queue.Queue()
+    tk_failed: "queue.Queue[bool]" = queue.Queue()
 
     def _run() -> None:
         try:
@@ -140,16 +143,30 @@ def pick_file_via_tkinter_dialog(initial_dir: str = "", timeout_s: int = 60) -> 
                     ],
                 )
                 result.put(path or "")
+                tk_failed.put(False)
             finally:
                 root.destroy()
         except Exception:
+            # tkinter 不可用（frozen Tcl 缺失 / 与 pywebview 冲突）→ 标记降级
             result.put("")
+            tk_failed.put(True)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     thread.join(timeout=timeout_s)
     if thread.is_alive():
-        return ""
+        # 超时：tkinter 弹窗挂起（常见于打包/无桌面会话环境）→ 降级 PowerShell
+        try:
+            return pick_file_via_native_dialog(initial_dir)
+        except Exception:
+            return ""
+    failed = tk_failed.get()
+    if failed:
+        # tkinter 故障 → 降级 PowerShell 原生对话框
+        try:
+            return pick_file_via_native_dialog(initial_dir)
+        except Exception:
+            return ""
     return result.get()
 
 

@@ -1,0 +1,140 @@
+/* AI 闭环研发验证工作台 —— 页签式统一前端（纯静态，零构建）
+   所有颜色/间距/排版值均引用 tokens.css 中的 Token 变量 */
+@import url("tokens.css");
+
+/* ---- Reset ---- */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+
+/* ---- Body（渐变背景由主题变量控制）---- */
+body {
+  background: var(--bg-gradient);
+  color: var(--fg-default);
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  display: flex;
+  flex-direction: column;
+  transition: background 0.3s, color 0.3s;
+}
+
+/* ---- Header（玻璃态效果）---- */
+.wb-header {
+  background: var(--header-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-bottom: 1px solid var(--header-border);
+  padding: var(--header-padding);
+  display: flex;
+  align-items: center;
+  gap: var(--header-gap);
+  flex-wrap: wrap;
+  transition: background 0.3s, border-color 0.3s;
+}
+
+/* ---- Brand ---- */
+.wb-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--header-brand-gap);
+}
+.wb-logo {
+  width: var(--logo-size);
+  height: var(--logo-size);
+  border-radius: var(--logo-radius);
+  flex-shrink: 0;
+  background: var(--logo-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--fw-black);
+  color: var(--logo-color);
+  transition: background 0.3s;
+}
+.wb-title {
+  font-size: var(--title-fs);
+  font-weight: var(--title-fw);
+}
+.wb-sub {
+  font-size: var(--sub-fs);
+  color: var(--sub-color);
+}
+
+/* ---- Tabs ---- */
+.wb-tabs {
+  display: flex;
+  gap: var(--tab-gap);
+  flex-wrap: wrap;
+}
+.wb-tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--tab-fg);
+  padding: var(--tab-padding);
+  border-radius: var(--tab-radius);
+  cursor: pointer;
+  font-size: var(--tab-fs);
+  font-family: inherit;
+  transition: color var(--dur-150) var(--ease-out),
+              border-color var(--dur-150) var(--ease-out);
+}
+.wb-tab:hover {
+  color: var(--tab-fg-hover);
+}
+.wb-tab.active {
+  color: var(--tab-fg-active);
+  border-color: var(--tab-border-active);
+  border-bottom-color: transparent;
+  background: var(--tab-bg-active);
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+}
+
+/* ---- Theme Switcher ---- */
+.wb-themes {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: var(--sp-3);
+  border-left: 1px solid var(--glass-border);
+}
+.theme-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s var(--ease-out);
+  opacity: 0.5;
+  filter: grayscale(0.5);
+}
+.theme-dot:hover {
+  opacity: 0.8;
+  filter: grayscale(0);
+  transform: scale(1.15);
+}
+.theme-dot.active {
+  opacity: 1;
+  filter: grayscale(0);
+  border-color: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  transform: scale(1.1);
+}
+
+/* ---- Main ---- */
+.wb-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.wb-frame {
+  flex: 1;
+  border: none;
+  background: var(--frame-bg);
+  width: 100%;
+  transition: background 0.3s;
+}

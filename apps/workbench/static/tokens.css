@@ -1,0 +1,344 @@
+/* ============================================================
+   AI 闭环研发验证工作台 —— Design Tokens（三层 Token 体系）
+   支持多主题切换：默认深蓝科技 + 暗色翡翠 + 炭黑灰金 + 靛蓝玻璃
+   ============================================================ */
+
+/* ========== 0. 通用变量（所有主题共享）========== */
+:root {
+  /* ---- Spacing（4px 基准网格）---- */
+  --sp-0:    0;       --sp-px:   1px;
+  --sp-0-5:  0.125rem;  --sp-1:    0.25rem;
+  --sp-1-5:  0.375rem;  --sp-2:    0.5rem;
+  --sp-2-5:  0.625rem;  --sp-3:    0.75rem;
+  --sp-3-5:  0.875rem;  --sp-4:    1rem;
+  --sp-5:    1.25rem;   --sp-6:    1.5rem;
+  --sp-7:    1.75rem;   --sp-8:    2rem;
+  --sp-10:   2.5rem;    --sp-12:   3rem;
+  --sp-16:   4rem;
+
+  /* ---- Typography Scale ---- */
+  --fs-xs:    0.6875rem;  --fs-sm:    0.75rem;
+  --fs-base:  0.8125rem;  --fs-md:    0.875rem;
+  --fs-lg:    0.9375rem;  --fs-xl:    1rem;
+  --fs-2xl:   1.125rem;   --fs-3xl:   1.25rem;
+
+  /* ---- Font Weights ---- */
+  --fw-normal: 400;  --fw-medium: 500;
+  --fw-semibold: 600; --fw-bold: 700; --fw-black: 900;
+
+  /* ---- Line Heights ---- */
+  --lh-none: 1; --lh-tight: 1.25; --lh-snug: 1.375;
+  --lh-normal: 1.5; --lh-relax: 1.625;
+
+  /* ---- Border Radius ---- */
+  --radius-sm: 0.25rem; --radius-md: 0.5rem;
+  --radius-lg: 0.75rem; --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* ---- Shadows ---- */
+  --sh-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --sh-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+  --sh-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+
+  /* ---- Duration / Transition ---- */
+  --dur-75: 75ms; --dur-100: 100ms; --dur-150: 150ms;
+  --dur-200: 200ms; --dur-300: 300ms; --dur-500: 500ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---- Pre / Code ---- */
+  --pre-font: Consolas, "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+}
+
+
+/* ============================================================
+   主题系统：每个主题覆盖以下颜色相关变量
+   通过切换 html 元素的 class 来切换主题
+   ============================================================ */
+
+/* ========== 主题 1：深蓝科技（Deep Blue Tech）—— 默认 ========== */
+:root,
+.theme-deepblue {
+  /* ---- Backgrounds ---- */
+  --bg-page:     #0a1628;
+  --bg-surface:  #0f1f3d;
+  --bg-elevated: #152a4a;
+  --bg-input:    #0d1a30;
+  --bg-hover:    rgba(255, 255, 255, 0.05);
+  --bg-active:   rgba(255, 255, 255, 0.1);
+
+  /* ---- Background Gradient ---- */
+  --bg-gradient: linear-gradient(
+    170deg, #0a1628 0%, #0f1f3d 35%, #0a1628 70%, #070d13 100%
+  );
+
+  /* ---- Glass Surface ---- */
+  --glass-bg:       rgba(15, 31, 61, 0.75);
+  --glass-bg-strong: rgba(15, 31, 61, 0.85);
+  --glass-border:   rgba(255, 255, 255, 0.06);
+  --glass-border-light: rgba(255, 255, 255, 0.12);
+  --glass-blur:     8px;
+
+  /* ---- Foreground / Text ---- */
+  --fg-default:  #e2e8f0;
+  --fg-muted:    #94a3b8;
+  --fg-dim:      #64748b;
+  --fg-inverse:  #0a1628;
+
+  /* ---- Borders ---- */
+  --border-default: rgba(255, 255, 255, 0.06);
+  --border-light:   rgba(255, 255, 255, 0.12);
+  --border-focus:   #06b6d4;
+
+  /* ---- Accent ---- */
+  --accent:       #06b6d4;
+  --accent-hover: #22d3ee;
+  --accent-fg:    #0a1628;
+  --accent-dim:   #0891b2;
+
+  /* ---- Status ---- */
+  --st-pass:      #10b981;
+  --st-pass-bg:   color-mix(in srgb, #10b981 15%, transparent);
+  --st-pass-border: color-mix(in srgb, #10b981 35%, transparent);
+  --st-warn:      #f59e0b;
+  --st-warn-bg:   color-mix(in srgb, #f59e0b 15%, transparent);
+  --st-warn-border: color-mix(in srgb, #f59e0b 35%, transparent);
+  --st-fail:      #ef4444;
+  --st-fail-bg:   color-mix(in srgb, #ef4444 15%, transparent);
+  --st-fail-border: color-mix(in srgb, #ef4444 35%, transparent);
+
+  /* ---- Component Tokens ---- */
+  --header-bg:       var(--glass-bg-strong);
+  --header-border:   var(--glass-border);
+  --header-padding:  var(--sp-2-5) var(--sp-4);
+  --header-gap:      var(--sp-6);
+  --header-brand-gap: var(--sp-2-5);
+
+  --logo-size:   34px;
+  --logo-radius: var(--radius-md);
+  --logo-bg:     linear-gradient(135deg, #06b6d4, #3b82f6);
+  --logo-color:  #0a1628;
+
+  --title-fs:  var(--fs-lg);  --title-fw: var(--fw-bold);
+  --sub-fs:    var(--fs-xs);  --sub-color: var(--fg-dim);
+
+  --tab-padding:   var(--sp-2) var(--sp-4);
+  --tab-gap:       var(--sp-1);
+  --tab-radius:    var(--radius-md) var(--radius-md) 0 0;
+  --tab-fs:        var(--fs-base);
+  --tab-fg:        var(--fg-dim);
+  --tab-fg-hover:  var(--fg-default);
+  --tab-fg-active: var(--accent);
+  --tab-bg-active: transparent;
+  --tab-border-active: var(--glass-border-light);
+
+  --card-bg:       var(--glass-bg);
+  --card-border:   var(--glass-border);
+  --card-radius:   var(--radius-lg);
+  --card-padding:  var(--sp-4);
+  --card-gap:      var(--sp-4);
+  --card-shadow:   0 4px 24px rgba(0, 0, 0, 0.3);
+
+  --btn-padding:    var(--sp-2) var(--sp-3);
+  --btn-radius:     var(--radius-md);
+  --btn-fs:         var(--fs-base);
+  --btn-fw:         var(--fw-normal);
+  --btn-bg:         var(--bg-input);
+  --btn-border:     var(--border-default);
+  --btn-fg:         var(--fg-default);
+  --btn-hover-bg:   var(--bg-hover);
+  --btn-hover-border: var(--accent);
+  --btn-primary-bg:    var(--accent);
+  --btn-primary-fg:    var(--fg-inverse);
+  --btn-primary-fw:    var(--fw-bold);
+  --btn-primary-hover: var(--accent-hover);
+
+  --input-bg:     var(--bg-input);
+  --input-border: var(--border-default);
+  --input-fg:     var(--fg-default);
+  --input-padding: var(--sp-2) var(--sp-3);
+  --input-radius: var(--radius-md);
+  --input-fs:     var(--fs-base);
+  --input-focus:  var(--border-focus);
+
+  --badge-padding: var(--sp-0-5) var(--sp-2-5);
+  --badge-radius:  var(--radius-full);
+  --badge-fs:      var(--fs-sm);
+  --badge-fw:      var(--fw-bold);
+
+  --table-header-bg: var(--bg-input);
+  --table-header-fg: var(--fg-dim);
+  --table-header-fs: var(--fs-sm);
+  --table-cell-padding: var(--sp-1-5) var(--sp-2-5);
+  --table-cell-fs:   var(--fs-sm);
+  --table-border:    var(--border-default);
+  --table-row-hover: var(--bg-hover);
+
+  --pre-bg:     var(--bg-input);
+  --pre-border: var(--border-default);
+  --pre-radius: var(--radius-md);
+  --pre-padding: var(--sp-3);
+  --pre-fs:     var(--fs-sm);
+
+  --frame-bg: transparent;
+
+  --section-title-fs: var(--fs-md);
+  --section-title-fw: var(--fw-semibold);
+  --section-title-color: var(--accent);
+  --section-title-mb: var(--sp-3);
+}
+
+
+/* ========== 主题 2：暗色翡翠（Dark Emerald）========== */
+.theme-emerald {
+  --bg-page:     #0a1a12;
+  --bg-surface:  #0f2418;
+  --bg-elevated: #15301f;
+  --bg-input:    #0c1e15;
+  --bg-hover:    rgba(255, 255, 255, 0.04);
+  --bg-active:   rgba(255, 255, 255, 0.08);
+  --bg-gradient: linear-gradient(
+    170deg, #0a1a12 0%, #0f2418 35%, #0a1a12 70%, #060d09 100%
+  );
+  --glass-bg:       rgba(15, 36, 24, 0.75);
+  --glass-bg-strong: rgba(15, 36, 24, 0.85);
+  --glass-border:   rgba(16, 185, 129, 0.12);
+  --glass-border-light: rgba(16, 185, 129, 0.25);
+  --glass-blur:     8px;
+  --fg-default:  #d1fae5;
+  --fg-muted:    #6ee7b7;
+  --fg-dim:      #34d399;
+  --fg-inverse:  #0a1a12;
+  --border-default: rgba(16, 185, 129, 0.12);
+  --border-light:   rgba(16, 185, 129, 0.25);
+  --border-focus:   #10b981;
+  --accent:       #10b981;
+  --accent-hover: #34d399;
+  --accent-fg:    #0a1a12;
+  --accent-dim:   #059669;
+  --st-pass:      #10b981;
+  --st-warn:      #f59e0b;
+  --st-fail:      #ef4444;
+  --st-pass-bg:   color-mix(in srgb, #10b981 15%, transparent);
+  --st-pass-border: color-mix(in srgb, #10b981 35%, transparent);
+  --st-warn-bg:   color-mix(in srgb, #f59e0b 15%, transparent);
+  --st-warn-border: color-mix(in srgb, #f59e0b 35%, transparent);
+  --st-fail-bg:   color-mix(in srgb, #ef4444 15%, transparent);
+  --st-fail-border: color-mix(in srgb, #ef4444 35%, transparent);
+  --logo-bg:     linear-gradient(135deg, #10b981, #059669);
+  --logo-color:  #0a1a12;
+  --card-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  --section-title-color: #10b981;
+}
+
+
+/* ========== 主题 3：炭黑灰金（Charcoal Gold）========== */
+.theme-charcoal {
+  --bg-page:     #0d0d0d;
+  --bg-surface:  #161616;
+  --bg-elevated: #1f1f1f;
+  --bg-input:    #111111;
+  --bg-hover:    rgba(255, 255, 255, 0.04);
+  --bg-active:   rgba(255, 255, 255, 0.08);
+  --bg-gradient: linear-gradient(
+    170deg, #0d0d0d 0%, #161616 35%, #0d0d0d 70%, #070707 100%
+  );
+  --glass-bg:       rgba(22, 22, 22, 0.8);
+  --glass-bg-strong: rgba(22, 22, 22, 0.9);
+  --glass-border:   rgba(255, 255, 255, 0.05);
+  --glass-border-light: rgba(245, 158, 11, 0.2);
+  --glass-blur:     6px;
+  --fg-default:  #f5f5f4;
+  --fg-muted:    #a8a29e;
+  --fg-dim:      #78716c;
+  --fg-inverse:  #0d0d0d;
+  --border-default: rgba(255, 255, 255, 0.05);
+  --border-light:   rgba(245, 158, 11, 0.2);
+  --border-focus:   #f59e0b;
+  --accent:       #f59e0b;
+  --accent-hover: #fbbf24;
+  --accent-fg:    #0d0d0d;
+  --accent-dim:   #d97706;
+  --st-pass:      #10b981;
+  --st-warn:      #f59e0b;
+  --st-fail:      #ef4444;
+  --st-pass-bg:   color-mix(in srgb, #10b981 15%, transparent);
+  --st-pass-border: color-mix(in srgb, #10b981 35%, transparent);
+  --st-warn-bg:   color-mix(in srgb, #f59e0b 15%, transparent);
+  --st-warn-border: color-mix(in srgb, #f59e0b 35%, transparent);
+  --st-fail-bg:   color-mix(in srgb, #ef4444 15%, transparent);
+  --st-fail-border: color-mix(in srgb, #ef4444 35%, transparent);
+  --logo-bg:     linear-gradient(135deg, #f59e0b, #d97706);
+  --logo-color:  #0d0d0d;
+  --card-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --section-title-color: #f59e0b;
+}
+
+
+/* ========== 主题 4：靛蓝玻璃（Indigo Glass）========== */
+.theme-indigo {
+  --bg-page:     #0f0a1a;
+  --bg-surface:  rgba(25, 15, 45, 0.55);
+  --bg-elevated: rgba(30, 20, 55, 0.6);
+  --bg-input:    rgba(15, 10, 26, 0.8);
+  --bg-hover:    rgba(255, 255, 255, 0.05);
+  --bg-active:   rgba(255, 255, 255, 0.1);
+  --bg-gradient: linear-gradient(
+    170deg, #0f0a1a 0%, #14102a 35%, #0f0a1a 70%, #0a0814 100%
+  );
+  --glass-bg:       rgba(25, 15, 45, 0.55);
+  --glass-bg-strong: rgba(25, 15, 45, 0.7);
+  --glass-border:   rgba(255, 255, 255, 0.06);
+  --glass-border-light: rgba(99, 102, 241, 0.2);
+  --glass-blur:     12px;
+  --fg-default:  #e0e7ff;
+  --fg-muted:    #a5b4fc;
+  --fg-dim:      #818cf8;
+  --fg-inverse:  #0f0a1a;
+  --border-default: rgba(255, 255, 255, 0.06);
+  --border-light:   rgba(99, 102, 241, 0.2);
+  --border-focus:   #6366f1;
+  --accent:       #6366f1;
+  --accent-hover: #818cf8;
+  --accent-fg:    #0f0a1a;
+  --accent-dim:   #4f46e5;
+  --st-pass:      #10b981;
+  --st-warn:      #f59e0b;
+  --st-fail:      #ef4444;
+  --st-pass-bg:   color-mix(in srgb, #10b981 15%, transparent);
+  --st-pass-border: color-mix(in srgb, #10b981 35%, transparent);
+  --st-warn-bg:   color-mix(in srgb, #f59e0b 15%, transparent);
+  --st-warn-border: color-mix(in srgb, #f59e0b 35%, transparent);
+  --st-fail-bg:   color-mix(in srgb, #ef4444 15%, transparent);
+  --st-fail-border: color-mix(in srgb, #ef4444 35%, transparent);
+  --logo-bg:     linear-gradient(135deg, #6366f1, #8b5cf6);
+  --logo-color:  #0f0a1a;
+  --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --section-title-color: #818cf8;
+}
+
+
+/* ========== Utility Classes（状态徽章）========== */
+.badge {
+  display: inline-block;
+  padding: var(--badge-padding);
+  border-radius: var(--badge-radius);
+  font-size: var(--badge-fs);
+  font-weight: var(--badge-fw);
+  line-height: var(--lh-none);
+}
+.badge.pass {
+  background: var(--st-pass-bg);
+  color: var(--st-pass);
+  border: 1px solid var(--st-pass-border);
+}
+.badge.fail {
+  background: var(--st-fail-bg);
+  color: var(--st-fail);
+  border: 1px solid var(--st-fail-border);
+}
+.badge.run {
+  background: var(--st-warn-bg);
+  color: var(--st-warn);
+  border: 1px solid var(--st-warn-border);
+}

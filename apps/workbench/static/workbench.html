@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>验证工作台</title>
+<link rel="stylesheet" href="/static/tokens.css">
+<style>
+/* workbench 验证工作台页面专属样式 —— 引用 tokens.css 中的 Token 变量 */
+body {
+  background: var(--bg-gradient);
+  color: var(--fg-default);
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  padding: var(--sp-5);
+  line-height: var(--lh-relax);
+  min-height: 100vh;
+}
+h1 {
+  font-size: var(--fs-2xl);
+  margin-bottom: var(--sp-1-5);
+}
+.sub {
+  color: var(--fg-dim);
+  font-size: var(--fs-sm);
+  margin-bottom: var(--sp-5);
+}
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: var(--card-padding);
+  margin-bottom: var(--sp-4);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--card-shadow);
+}
+.card h2 {
+  font-size: var(--section-title-fs);
+  margin-bottom: var(--section-title-mb);
+  color: var(--section-title-color);
+}
+.row {
+  display: flex;
+  gap: var(--sp-2-5);
+  flex-wrap: wrap;
+  align-items: center;
+}
+select, input, button {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--input-fg);
+  padding: var(--input-padding);
+  border-radius: var(--input-radius);
+  font-size: var(--input-fs);
+  font-family: inherit;
+  backdrop-filter: blur(calc(var(--glass-blur) * 0.4));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.4));
+}
+select:focus, input:focus {
+  outline: none;
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--input-focus) 25%, transparent);
+}
+button {
+  cursor: pointer;
+  transition: background var(--dur-150) var(--ease-out),
+              border-color var(--dur-150) var(--ease-out);
+}
+button:hover {
+  border-color: var(--btn-hover-border);
+}
+button.primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-fg);
+  font-weight: var(--btn-primary-fw);
+  border-color: var(--btn-primary-bg);
+}
+button.primary:hover {
+  background: var(--btn-primary-hover);
+}
+pre {
+  background: var(--pre-bg);
+  border: 1px solid var(--pre-border);
+  border-radius: var(--pre-radius);
+  padding: var(--pre-padding);
+  font-size: var(--pre-fs);
+  overflow: auto;
+  font-family: var(--pre-font);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--table-cell-fs);
+}
+th, td {
+  border: 1px solid var(--table-border);
+  padding: var(--table-cell-padding);
+  text-align: left;
+}
+th {
+  background: var(--table-header-bg);
+  color: var(--table-header-fg);
+  font-size: var(--table-header-fs);
+}
+tr:hover td {
+  background: var(--table-row-hover);
+}
+.hint {
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  margin-top: var(--sp-2);
+}
+</style>
+</head>
+<body>
+<h1>验证工作台 <span class="badge run" id="wb-badge">待命</span></h1>
+<div class="sub">AI 闭环验证：选场景 → 填固件信息 → 一键执行（烧录 → 监控 → 激励 → 比对 → 反馈 → 报告）</div>
+
+<div class="card">
+  <h2>① 场景选择与 Run 参数</h2>
+  <div class="row">
+    <select id="scenario"></select>
+    <input id="fw-version" placeholder="固件版本，如 v2.3.2">
+    <input id="fw-commit" placeholder="commit，如 9f2e1a" style="width:120px">
+    <input id="log-dir" placeholder="日志目录（默认 LOG/模块/cco）" style="width:260px">
+  </div>
+  <div class="row" style="margin-top:var(--sp-2-5)">
+    <label><input type="checkbox" id="skip-flash"> 跳过烧录</label>
+    <label><input type="checkbox" id="skip-stimulus"> 跳过激励</label>
+    <label><input type="checkbox" id="skip-feedback"> 跳过反馈</label>
+    <button class="primary" id="btn-run">▶ 执行 Run</button>
+    <button id="btn-refresh-scenarios">↻ 刷新场景</button>
+  </div>
+  <div class="hint" id="scenario-desc"></div>
+</div>
+
+<div class="card">
+  <h2>② Run 结果</h2>
+  <div id="run-result"><div class="hint">尚未执行 Run。选择场景并点击「执行 Run」开始全链路闭环验证。</div></div>
+</div>
+
+<div class="card">
+  <h2>③ 历史 Runs</h2>
+  <div id="run-history"><div class="hint">暂无历史记录。</div></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = function (id) { return document.getElementById(id); };
+  let currentRunId = null;
+
+  function api(path, opts) {
+    return fetch(path, opts).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.detail || r.statusText); });
+      return r.json();
+    });
+  }
+
+  function loadScenarios() {
+    api("/api/scenarios").then(function (list) {
+      const sel = $("scenario");
+      sel.innerHTML = "";
+      list.forEach(function (s) {
+        const o = document.createElement("option");
+        o.value = s.id; o.textContent = s.name + "（" + s.id + "）";
+        sel.appendChild(o);
+      });
+      showScenarioDesc();
+      $("scenario").addEventListener("change", showScenarioDesc);
+    }).catch(function (e) {
+      $("scenario").innerHTML = '<option>加载失败：' + e.message + '</option>';
+    });
+  }
+
+  function showScenarioDesc() {
+    const id = $("scenario").value;
+    api("/api/scenarios/" + id).then(function (s) {
+      const flow = (s.expected_flow || []).map(function (f) {
+        return f.negate ? "🚫 " + f.event_type : "→ " + f.event_type;
+      }).join("  ");
+      $("scenario-desc").textContent = "期望流程：" + flow;
+    }).catch(function () { });
+  }
+
+  function run() {
+    const body = {
+      scenario_id: $("scenario").value,
+      firmware: { version: $("fw-version").value || "dev", commit: $("fw-commit").value || "" },
+      skip_flash: $("skip-flash").checked,
+      skip_stimulus: $("skip-stimulus").checked,
+      skip_feedback: $("skip-feedback").checked,
+      log_dir: $("log-dir").value || undefined
+    };
+    $("wb-badge").textContent = "运行中";
+    $("wb-badge").className = "badge run";
+    api("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (run) {
+        currentRunId = run.run_id;
+        $("wb-badge").textContent = run.status === "passed" ? "PASS" : "FAIL";
+        $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" : "fail");
+        renderRun(run);
+        loadHistory();
+      })
+      .catch(function (e) {
+        $("wb-badge").textContent = "错误";
+        $("wb-badge").className = "badge fail";
+        $("run-result").innerHTML = '<pre>' + e.message + '</pre>';
+      });
+  }
+
+  function renderRun(run) {
+    const steps = (run.steps || []).map(function (s) {
+      return s.kind + " → " + s.result + (s.detail ? "（" + s.detail + "）" : "");
+    }).join("<br>");
+    $("run-result").innerHTML =
+      '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
+      (run.status === "passed" ? "pass" : "fail") + '">' + run.status + '</span></div>' +
+      '<div style="margin-bottom:var(--sp-2)">' + steps + '</div>' +
+      '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>';
+  }
+
+  function loadHistory() {
+    api("/api/runs?limit=10").then(function (list) {
+      if (!list.length) { $("run-history").innerHTML = '<div class="hint">暂无历史记录。</div>'; return; }
+      let html = "<table><tr><th>run_id</th><th>场景</th><th>状态</th><th>固件</th><th>时间</th></tr>";
+      list.forEach(function (r) {
+        html += "<tr><td>" + r.run_id + "</td><td>" + r.scenario_id + "</td><td>" +
+          '<span class="badge ' + (r.status === "passed" ? "pass" : "fail") + '">' + r.status + "</span></td><td>" +
+          (r.firmware_ver || "") + "</td><td>" + (r.created_at || "").slice(0, 19) + "</td></tr>";
+      });
+      $("run-history").innerHTML = html + "</table>";
+    }).catch(function () { });
+  }
+
+  $("btn-run").addEventListener("click", run);
+  $("btn-refresh-scenarios").addEventListener("click", loadScenarios);
+  loadScenarios();
+  loadHistory();
+})();
+</script>
+
+<!-- 主题同步：监听父页面主题切换 -->
+<script>
+(function () {
+  "use strict";
+  function applyTheme(theme) {
+    if (theme) document.documentElement.className = theme;
+  }
+  // 初始化时从父页面读取主题
+  try {
+    var parentTheme = window.top.document.documentElement.className;
+    applyTheme(parentTheme);
+  } catch (e) {}
+  // 监听父页面广播
+  window.addEventListener("message", function (e) {
+    if (e.data && e.data.type === "wb-theme-change") {
+      applyTheme(e.data.theme);
+    }
+  });
+})();
+</script>
+</body>
+</html>

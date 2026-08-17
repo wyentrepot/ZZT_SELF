@@ -1,0 +1,103 @@
+"""workbench.api —— 编排路由（/api/run、/api/scenarios、/api/compare、/api/feedback）。
+
+无 UI 依赖；挂载到统一后端 workbench.app.create_workbench_app()。
+CLI / REST / AI agent 三端复用（FR-6.2 编排层）。
+"""
+from __future__ import annotations
+
+from typing import List, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
+from .orchestration.models import Report, RunInput
+from .orchestration.runner import RunExecutor
+from .orchestration.scenarios import load_scenario, load_scenarios, validate_scenario
+from .orchestration.store import RunStore
+
+router = APIRouter(prefix="/api")
+
+
+def _executor() -> RunExecutor:
+    # 延迟创建共享 store（单例化，避免多请求并发开多个 sqlite 连接）
+    if not hasattr(_executor, "_store"):
+        _executor._store = RunStore()
+    return RunExecutor(_executor._store)
+
+
+def _store() -> RunStore:
+    return _executor().store
+
+
+@router.get("/scenarios")
+async def list_scenarios():
+    """列出场景模板。"""
+    return load_scenarios()
+
+
+@router.get("/scenarios/{scenario_id}")
+async def get_scenario(scenario_id: str):
+    s = load_scenario(scenario_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"场景不存在：{scenario_id}")
+    errors = validate_scenario(s)
+    if errors:
+        raise HTTPException(status_code=422, detail=f"场景模板非法：{'；'.join(errors)}")
+    return s
+
+
+@router.post("/run")
+async def create_run(run_input: RunInput):
+    """创建并执行一个验证批次（全链路：烧录→监控→激励→比对→反馈→报告）。"""
+    try:
+        run = _executor().execute(run_input)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Run 执行失败：{exc}") from exc
+    return run.model_dump()
+
+
+@router.get("/run/{run_id}")
+async def get_run(run_id: str):
+    run = _store().get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run 不存在：{run_id}")
+    return run
+
+
+@router.get("/run/{run_id}/report")
+async def get_report(run_id: str):
+    report = _store().get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"报告不存在：{run_id}")
+    return report
+
+
+@router.get("/runs")
+async def list_runs(limit: int = Query(50, ge=1, le=200)):
+    return _store().list_runs(limit)
+
+
+@router.post("/compare")
+async def compare(body: dict):
+    """直接比对：期望流程 vs 实际事件流（不落 Run）。"""
+    from .orchestration.compare import compare_flow
+
+    expected = body.get("expected_flow", [])
+    events = body.get("events", [])
+    return compare_flow(expected, events).model_dump()
+
+
+@router.post("/feedback")
+async def feedback(body: dict):
+    """直接归因：根据比对结论 + 激励结论生成反馈（不落 Run）。"""
+    from .orchestration.feedback import build_feedback
+    from .orchestration.models import FlowCompare
+
+    fc = FlowCompare(**body.get("flow_compare", {}))
+    return build_feedback(fc, body.get("simcon_summary"), body.get("loghooks_drift", False))
+
+
+@router.get("/health")
+async def health():
+    return {"status": "ok", "app": "workbench"}

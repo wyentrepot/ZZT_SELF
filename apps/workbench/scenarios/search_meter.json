@@ -1,0 +1,18 @@
+{
+  "id": "search_meter",
+  "name": "搜表（自动搜表流程）",
+  "module": "cco",
+  "expected_flow": [
+    {"step": "search_start", "event_type": "meter.search.start", "within_ms": 10000},
+    {"step": "search_found", "event_type": "meter.search.found", "within_ms": 60000},
+    {"step": "no_error", "negate": true, "event_type": "meter.search.err"}
+  ],
+  "stimulus": {
+    "task_file": "tasks/search_meter.json",
+    "responders": []
+  },
+  "monitor": {
+    "rules": ["common", "provinces/anhui"],
+    "sources": ["module_log"]
+  }
+}
