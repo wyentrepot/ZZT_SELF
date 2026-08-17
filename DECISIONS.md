@@ -426,3 +426,18 @@
 - **理由**：项目 workbench 前端（页签式 SPA + 数据可视化）需要专业 UI/UX 设计指导；用户要求免费、专注前端/软件 UI，科研/数据类风格可经 `--design-system` 组合查询获得。
 - **影响**：`D:/2-侦听台改造/.agents/skills/` 下新增 3 个技能目录（195 文件）；通用 agent 标准目录（Claude Code 2.x/Codex 等）可加载；搜索脚本依赖 Python 3.x 标准库，无外部依赖；`.gitignore` 未忽略 `.agents/`，技能文件随仓库入库。
 - **被取代**：无（新增决策）。
+
+---
+
+## ADR-20 Windows 串口网关采用原始 TCP + HTTP 控制
+
+- **日期**：2026-08-17
+- **状态**：✅ 已确认，待实现
+- **决定**：
+  - 在 `D:\019-wy-tool\uart_to_tcp` 新建带简洁窗口和轮转日志的 Windows 网关。
+  - 普通字节走原始 TCP；枚举、租约、状态、配置和烧录走带令牌 HTTP。
+  - WSL 增加 local/windows_tcp，覆盖全部串口入口；旧请求默认 local。
+  - 同一 COM 严格独占；断线失败并释放，不自动重连或续跑。
+  - XMODEM 是唯一 Windows 侧业务例外，共享路径只读固件，校验 size/SHA-256 后执行。
+  - 仅限同机；不使用 RFC2217、虚拟 COM/PTY、COM 共享或局域网访问。
+- **理由**：真实串口在 Windows；普通链路应透明，时序敏感的 XMODEM 放在 Windows 更稳定。
