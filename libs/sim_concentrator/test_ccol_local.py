@@ -98,7 +98,7 @@ def test_build_scan_decode_roundtrip():
     assert d["structure"] == "1376.2-local"
     assert d["afn"] == 0x10 and d["fn"] == 230
     assert d["buff"] == b"\x00"
-    assert d["ctrl"] == 0x03
+    assert d["ctrl"] == 0x43  # 默认下行查询：prm=1 启动站（对齐 GW-CASS）
 
 
 def test_scan_local_frame_dirty_prefix():

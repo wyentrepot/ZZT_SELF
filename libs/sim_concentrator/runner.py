@@ -79,10 +79,13 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
             buff = bytes(bf)
         else:
             buff = bytes(bf or b"")
-        ctrl = _to_int(send.get("ctrl", 0x03))
+        # 下行查询：模拟集中器作为启动站下发，prm=1，ctrl=0x43
+        # （对齐 GW-CASS Creat_3762_Frame('43',...)；默认不再是 0x03 从动站）
+        ctrl = _to_int(send.get("ctrl", 0x43))
+        seq = _to_int(send.get("seq", 1), 10)
         info = bytes(send.get("info", [0] * 6))
         return build_local_13762_frame(afn=afn, fn=fn, buff=buff,
-                                       ctrl=ctrl, info=info)
+                                       ctrl=ctrl, info=info, seq=seq)
 
     afn = _to_int(send.get("afn", 0x00))
     seq = _to_int(send.get("seq", 0), 10)
@@ -289,11 +292,20 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
             opened = True
 
         step_results = []
+        seq_counter = 0
         for idx, step in enumerate(steps):
             # 若本步声明了自有 responder，则临时挂载；否则用任务级 responder
             step_r = responder
             if step.get("responders"):
                 step_r = Responder(override_rules=step["responders"])
+            # 本地协议下行帧自动分配递增帧序号（对齐 GW-CASS，CCO 响应回显 serial_num）
+            step = dict(step)
+            if step.get("send") and step["send"].get("format") == "local":
+                send = dict(step["send"])
+                if "seq" not in send:
+                    seq_counter += 1
+                    send["seq"] = seq_counter
+                step["send"] = send
             r = run_step(io, step_r, step, idx)
             step_results.append(r)
             # 任一步失败即中止（默认），除非 task.fail_fast=false

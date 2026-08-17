@@ -166,25 +166,34 @@ def build_local_13762_frame(
     afn: int,
     fn: int,
     buff: bytes = b"",
-    ctrl: int = 0x03,
+    ctrl: int = 0x43,
     info: bytes = b"\x00\x00\x00\x00\x00\x00",
+    seq: int = 1,
     end: int = 0x16,
 ) -> bytes:
     """构造 CCO 本地协议帧（单 68）：68 L ctrl info afn DT1 DT2 buff CS 16。
 
-    默认 ctrl=0x03（mode=3 宽带载波，下行 dir=0/prm=0）；
-    info 默认 6 字节（无地址域，HOST_NODE 操作）。
+    默认 ctrl=0x43（mode=3 宽带载波，prm=1 启动站，dir=0 下行——模拟集中器
+    作为启动站下发查询，与 GW-CASS Creat_3762_Frame('43',...) 对齐）；
+    info 默认 6 字节（无地址域，HOST_NODE 操作），info[5] = seq 帧序号
+    （GW-CASS 每帧递增，CCO 在响应中回显 serial_num）。
     """
     dt1, dt2 = fn_to_dt(fn)
     if len(info) < 6:
         info = bytes(info) + b"\x00" * (6 - len(info))
-    info = bytes(info)[:6]
+    info = bytearray(info[:6])
+    info[5] = seq & 0xFF  # 帧序号（GW-CASS：info 第6字节 = serial_num）
+    info = bytes(info)
     body = bytes([afn & 0xFF, dt1, dt2]) + bytes(buff)
     mid = bytes([ctrl & 0xFF]) + info + body
-    # CCO 本地协议：length 字段 = 整个帧长（68头 + L(2) + mid + CS + 16）
+    # CCO 本地协议：length 字段 = 帧总长（含首字节 0x68）。
+    # CCO rx 校验（gw13762.c）：datalen = p_rxbuf[2]<<8 | p_rxbuf[1]（大端），
+    # 要求 p_rxbuf[datalen-1] == 0x16，故 L = 帧总长 = 15 + len(buff)。
     L = 1 + 2 + len(mid) + 1 + 1  # = 15 + len(buff)
     frame = bytes([0x68, L & 0xFF, (L >> 8) & 0xFF]) + mid
-    cs = sum(frame[1:]) % 256
+    # CS 校验：CCO（gw13762.c）从控制域 p_rxbuf[3] 起累加（不含 68/L 头、不含 CS/16），
+    # 与 GW-CASS CheckSum(..., 3) 对齐。因此 = sum(mid) % 256。
+    cs = sum(mid) % 256
     return frame + bytes([cs, end & 0xFF])
 
 
@@ -210,8 +219,9 @@ def scan_local_frame(buf: bytes):
             return None, 0
         candidate = buf[i:i + frame_len]
         # 单 68：第 3 字节是控制域（非 68），帧尾 16，CS 校验
+        # CS = sum(控制域起，即 index 3 到 -3) % 256（与 CCO gw13762.c 一致）
         if candidate[3] != 0x68 and candidate[-1] == 0x16 and \
-                sum(candidate[1:-2]) % 256 == candidate[-2]:
+                sum(candidate[3:-2]) % 256 == candidate[-2]:
             return candidate, i + frame_len
         i += 1
     return None, 0
