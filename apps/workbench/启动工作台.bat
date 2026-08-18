@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d "%~dp0..\.."
 title AI 工作台（网页版，端口 8790）
 
@@ -49,7 +49,7 @@ if not exist ".build_plain\git-rev.txt" set "NEED_EXPORT=1"
 if exist ".build_plain\git-rev.txt" (
     for /f "delims=" %%R in (.build_plain\git-rev.txt) do set "SAVED_REV=%%R"
     for /f "delims=" %%R in ('git rev-parse HEAD') do set "CURR_REV=%%R"
-    if not "%SAVED_REV%"=="%CURR_REV%" set "NEED_EXPORT=1"
+    if not "!SAVED_REV!"=="!CURR_REV!" set "NEED_EXPORT=1"
 )
 if not defined NEED_EXPORT (
     echo [准备] 明文副本已是最新（HEAD 未变化），跳过导出。
