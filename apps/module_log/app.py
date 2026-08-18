@@ -57,6 +57,11 @@ RUNTIME_DIR = _runtime_dir()
 LAST_PATH_FILE = RUNTIME_DIR / "last_path.txt"
 
 def create_app(module_serial_service=None) -> FastAPI:
+    # workbench 统一挂载时以 create_app() 无参调用：此时默认创建真实串口服务，
+    # 否则 /api/module-serial/* 全部 503（模块串口服务未启用）。
+    # 测试注入自定义 service 或显式传 None（禁用串口）仍受支持。
+    if module_serial_service is None:
+        module_serial_service = ModuleSerialService(log_dir=_log_dir())
     app = FastAPI(title="模块日志 / 烧录串口")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
