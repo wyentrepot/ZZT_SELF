@@ -342,3 +342,9 @@
   color: var(--st-warn);
   border: 1px solid var(--st-warn-border);
 }
+.badge.inconclusive {
+  background: var(--st-warn-bg);
+  color: var(--st-warn);
+  border: 1px solid var(--st-warn-border);
+  opacity: 0.85;
+}

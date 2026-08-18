@@ -32,7 +32,7 @@
     },
     {
       "name": "查询从节点信息 (10H-F2)",
-      "send": {"format": "local", "afn": 16, "fn": 2, "buff": ""},
+      "send": {"format": "local", "afn": 16, "fn": 2, "buff": "00 00 10"},
       "expect": {"format": "local", "afn": 16, "fn": 2},
       "expect_timeout": 5.0
     },
@@ -61,11 +61,10 @@
       "expect_timeout": 5.0
     },
     {
-      "name": "等待 CCO 上报运行模式 (03H-F10, 历史查询)",
-      "recv_only": true,
-      "expect_history": true,
+      "name": "查询本地通信模块运行模式 (03H-F10)",
+      "send": {"format": "local", "afn": 3, "fn": 10},
       "expect": {"format": "local", "afn": 3, "fn": 10},
-      "expect_timeout": 10.0
+      "expect_timeout": 5.0
     },
     {
       "name": "等待 CCO 上报采集数据 (06H-F230, 历史查询)",

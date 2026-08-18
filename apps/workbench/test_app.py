@@ -118,7 +118,15 @@ def test_run_api_end_to_end(client, tmp_path):
     assert r.status_code == 200
     run = r.json()
     assert run["run_id"].startswith("run-")
-    assert run["status"] in ("passed", "failed")
+    # 异步执行：POST 立即返回 running，轮询直到终态
+    assert run["status"] in ("running", "passed", "failed")
+    import time
+    for _ in range(100):
+        st = client.get(f"/api/run/{run['run_id']}").json()["status"]
+        if st in ("passed", "failed", "cancelled", "error"):
+            break
+        time.sleep(0.02)
+    assert st in ("passed", "failed")
 
     # 可回溯：GET /api/run/{id} 与 /report
     r2 = client.get(f"/api/run/{run['run_id']}")
@@ -162,3 +170,105 @@ def test_feedback_api(client):
     fb = r.json()
     assert isinstance(fb, list)
     assert any("采集任务" in o["suggestion"] for o in fb)
+
+
+def test_run_cancel_flow(client, monkeypatch, tmp_path):
+    """任务4 取消 Run：POST 启动 → cancel → 终态 cancelled + report 标注被取消。
+
+    用 monkeypatch 让 _run_steps 阻塞（模拟耗时步骤），确保 cancel 时 Run 还在跑。
+    """
+    import time
+    import threading
+    from workbench.orchestration.runner import RunExecutor
+
+    # 让 _run_steps 等待一个事件（模拟耗时步骤，期间可取消）
+    started = threading.Event()
+    release = threading.Event()
+
+    def _slow_steps(self, run, run_input, scenario, cancel_event=None):
+        started.set()
+        # 等待直到被取消或释放
+        while not (cancel_event is not None and cancel_event.is_set()):
+            if release.wait(timeout=0.02):
+                break
+        if cancel_event is not None and cancel_event.is_set():
+            from workbench.orchestration.runner import RunCancelled
+            raise RunCancelled(run.run_id)
+        from workbench.orchestration.models import Report
+        return Report(run_id=run.run_id, verdict="pass")
+
+    monkeypatch.setattr(RunExecutor, "_run_steps", _slow_steps)
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    r = client.post(
+        "/api/run",
+        json={"scenario_id": "join_anhui", "log_dir": str(log_dir),
+              "skip_flash": True, "skip_stimulus": True},
+    )
+    assert r.status_code == 200
+    run_id = r.json()["run_id"]
+
+    # 等 Run 真正进入 _run_steps
+    assert started.wait(timeout=2), "Run 应进入执行步骤"
+
+    # 取消
+    rc = client.post(f"/api/run/{run_id}/cancel")
+    assert rc.status_code == 200
+    assert rc.json()["status"] == "cancelling"
+
+    # 轮询直到终态 cancelled
+    for _ in range(100):
+        st = client.get(f"/api/run/{run_id}").json()["status"]
+        if st in ("cancelled", "passed", "failed", "error"):
+            break
+        time.sleep(0.02)
+    assert st == "cancelled", f"期望 cancelled，实际 {st}"
+
+    # report 标注被取消
+    rep = client.get(f"/api/run/{run_id}/report").json()
+    assert rep["run_id"] == run_id
+    assert any(a["id"] == "run.cancelled" for a in rep["assertions"])
+    release.set()
+
+
+def test_run_cancel_non_running_returns_409(client, tmp_path):
+    """取消一个不存在的 Run → 404；已完成 Run 不可取消。"""
+    r = client.post("/api/run/nonexistent/cancel")
+    assert r.status_code == 404
+
+
+def test_static_assets_complete(client):
+    """B-03 静态资源完整性：HTML 引用的 /static/ 资源都能 serve 200。"""
+    from workbench.check_assets import check_assets, _referenced_static_paths
+
+    # 打包门禁校验：无缺失/空文件/引用断裂
+    assert check_assets() == 0
+
+    # 每个被引用的静态资源经 HTTP 可达
+    for rel in _referenced_static_paths():
+        rel = rel.split("?", 1)[0]
+        if not rel:
+            continue
+        r = client.get("/static/" + rel)
+        assert r.status_code == 200, f"/static/{rel} 应 200，实际 {r.status_code}"
+
+
+def test_static_all_pages_served(client):
+    """B-03：关键页面与子应用页面资源全部 200。"""
+    pages = [
+        "/static/index.html",
+        "/static/app.js",
+        "/static/tokens.css",
+        "/static/styles.css",
+        "/static/workbench.html",
+        "/static/pages/listener/index.html",
+        "/static/pages/listener/app.js",
+        "/static/pages/listener/styles.css",
+        "/static/pages/module-serial/module-serial.html",
+        "/static/pages/module-serial/module-serial.js",
+        "/static/pages/module-serial/styles.css",
+    ]
+    for p in pages:
+        r = client.get(p)
+        assert r.status_code == 200, f"{p} 应 200，实际 {r.status_code}"

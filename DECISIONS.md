@@ -25,6 +25,13 @@
 | 17 | FR-5/FR-6 落地：新增 workbench 统一工作台包（包名避开标准库 platform 冲突），编排层 + 统一后端 + 页签式 SPA | ✅ 生效 |
 | 18 | workbench 前端合并 + 后端代理（方案①）：ASGI 前缀代理挂 /api/listener、/api/module-serial + 前端页面复制改前缀，根治页签空白；文件选择器 tkinter 故障降级 PowerShell | ✅ 生效 |
 | 19 | 项目级安装 UI/UX 设计技能（ui-ux-pro-max + ui-styling + design-system）到 .agents/skills/，仅免费且面向前端/软件 UI 的三个，不装品牌营销类 | ✅ 生效 |
+| 20 | Windows 串口网关采用原始 TCP + HTTP 控制（D:\019-wy-tool\uart_to_tcp），同一 COM 严格独占，XMODEM 为唯一 Windows 侧业务例外 | ✅ 已确认，待实现 |
+| 21 | loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（延迟 import），保持引擎与 test_automation 解耦，取代有损 dict 代理路径 | ✅ 生效 |
+| 22 | 任务5协议专项收口：E2/E3/E4 解析修复（问题清单7项 + B-01残留3项）+ 性能基线 + 异常恢复/发布冒烟；OAD/OI 覆盖（18→515）标后续 | ✅ 生效 |
+| 23 | 任务4验证UI证据下钻：evidence_detail()（Report 完整证据明细按 source 分组）+ workbench.html「④ 证据下钻」面板（details 展开 payload/metadata）；运行恢复/取消Run/打包验收待续 | ✅ 生效 |
+| 24 | 任务4取消Run：submit() 后台线程异步 + cancel() 协作式取消（threading.Event 步骤间检查）+ CANCELLED 终态 + POST /api/run/{id}/cancel + _executor() 单例修复 + 前端轮询/取消按钮 | ✅ 生效 |
+| 25 | 任务4剩余：restoreLastRun() 刷新恢复 + store 时间戳毫秒化（排序稳定）+ check_assets.py 打包静态完整性门禁（B-03 自动化部分）；真机 DLL 留 Windows | ✅ 生效 |
+| 26 | 任务4 B-03 真机打包验收完成（Windows）：PyInstaller 打包 dist/工作台/（含 C# DLL/scenarios/loghooks）+ smoke_test_workbench_packaged.py headless 冒烟 9/9；B-03 阻塞解除，任务4 完成 | ✅ 生效 |
 
 ---
 
@@ -425,4 +432,109 @@
   来源：`nextlevelbuilder/ui-ux-pro-max-skill`（main 分支，对应 v2.13.0），从 `.claude/skills/` 对应目录原样复制。
 - **理由**：项目 workbench 前端（页签式 SPA + 数据可视化）需要专业 UI/UX 设计指导；用户要求免费、专注前端/软件 UI，科研/数据类风格可经 `--design-system` 组合查询获得。
 - **影响**：`D:/2-侦听台改造/.agents/skills/` 下新增 3 个技能目录（195 文件）；通用 agent 标准目录（Claude Code 2.x/Codex 等）可加载；搜索脚本依赖 Python 3.x 标准库，无外部依赖；`.gitignore` 未忽略 `.agents/`，技能文件随仓库入库。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-20 Windows 串口网关采用原始 TCP + HTTP 控制
+
+- **日期**：2026-08-17
+- **状态**：✅ 已确认，待实现
+- **决定**：
+  - 在 `D:\019-wy-tool\uart_to_tcp` 新建带简洁窗口和轮转日志的 Windows 网关。
+  - 普通字节走原始 TCP；枚举、租约、状态、配置和烧录走带令牌 HTTP。
+  - WSL 增加 local/windows_tcp，覆盖全部串口入口；旧请求默认 local。
+  - 同一 COM 严格独占；断线失败并释放，不自动重连或续跑。
+  - XMODEM 是唯一 Windows 侧业务例外，共享路径只读固件，校验 size/SHA-256 后执行。
+  - 仅限同机；不使用 RFC2217、虚拟 COM/PTY、COM 共享或局域网访问。
+- **理由**：真实串口在 Windows；普通链路应透明，时序敏感的 XMODEM 放在 Windows 更稳定。
+
+---
+
+## ADR-21 loghooks 引擎本体 Evidence 化：可插拔 on_event 发射器 + Event.to_evidence（保持解耦）
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  - `libs/loghooks/engine.py` 新增 `Event.to_evidence(run_id="")`：Event → `test_automation.Evidence`（kind=event, source=loghooks），payload 含全字段（captures/漂移/level/source 等），metadata 携带 `origin=loghooks.engine` + `source_line` + `source_line_idx`。**延迟 import `test_automation.models.Evidence`**，引擎本体不硬依赖 test_automation。
+  - `Engine(rules, source, on_event=None)` 新增可插拔发射器：每产出一条 Event 即回调 `on_event(event)`；为 None 时行为与旧版完全一致（内部统一走 `_emit()` 登记 + 回调）。
+  - `apps/workbench/orchestration/runner.py:_scan_logs` 改用引擎发射器 + `Event.to_evidence()` 直接收集完整 Evidence（`scan["evidence"]`），取代此前「Event 降维成 7 字段 dict → `_dict_to_loghooks_event` 代理包装」的**有损路径**；`scan["events"]`（dict）保留供 `compare_flow` 比对（契约不变）。
+  - `apps/workbench/orchestration/evidence.py:collect_three_source_evidence` 的 events 分支支持双形态：已 Evidence 对象（`type(...).__name__ == "Evidence"`）直接 `sink` 写入；dict/Event 仍走 `LoghooksEventAdapter` 适配路径。
+- **理由**：任务 3 剩余项「loghooks 引擎本体 Evidence 化」要求引擎产出的 Event 直接可转 Evidence；但直接让引擎 import test_automation 会引入反向依赖，违背 ADR-1/10/13 解耦哲学。可插拔发射器 + 延迟 import 让引擎保持零 test_automation 依赖，由调用方决定是否/如何转 Evidence，同时消除有损 dict 代理路径（证据字段无损、可下钻）。
+- **影响**：`pytest apps/workbench/orchestration/test_evidence.py` = 21 passed（新增 4）；`pytest libs/loghooks libs/test_automation libs/sim_concentrator apps/workbench` = 187 passed；`pytest libs apps` = 563 passed / 66 skipped（无回归）。任务 3 至此全部收口（docs/04-任务安排.md 任务 3 = ✅ 已完成）。
+- **被取代**：无（新增决策；docs/12 §8 原「引擎本体改造延后」表述被本决策收口）。
+
+---
+
+## ADR-22 任务5协议专项收口：E2/E3/E4 解析修复 + 性能基线 + 异常恢复
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  1. **分钟采集问题清单 7 项全部处理**（`libs/parser_lib/adapters/adapter_dualmode`、`adapter_10376`）：
+     - 确定性 bug：E3 字节6 位宽统一为 3+2+3（协议类型3bit `&0x07`、电表类型2bit `(>>3)&0x03`，与 C 侧一致，残留③随此解决）；E3 冻结时刻按小端 BCD 反转解码（与 E4 主动上报一致）；E2 下行删除多余"方向"字段（字节1 bit4~7 为保留）；10376 `_DUALMODE_MESSAGE_NAMES` 补 00E2/E3/E4 注册。
+     - 新实现：E2 上行应答解析（报文头长度 15 → 按手册 §2.2 展开：电表MAC/任务号/启动删除/结果位/周期）；E4 并发抄读格式展开（启动位=0，报文头长度 23 → 按 §4.1 展开：协议/电表/响应结果/源MAC/任务号/冻结时刻/报文条数/转发数据长度 + 报文内容递归解内嵌帧）。
+  2. **B-01 残留 3 项关闭**：① E4 主动上报 result≠0 断言口径——统计层"数据区非空视为成功，不校验结果码"，result 仅作诊断（真机验证行为不变）；② E2 删除应答判定——删除下发只计数，删除后仍上报照常计入周期；③ E3 位宽标注统一随①修复。均固化测试。
+  3. **性能基线可复现**：`apps/listener/test_perf_baseline.py` 5 条查询路径基线（浅翻页/keyset深翻页/时间范围COUNT/query筛选/nid筛选），5万行合成数据实测远优于 2026-08-09 旧基线（23万行 167/221/122ms → 现 6.7/3.8/3/14/27.5ms）。
+  4. **异常恢复+发布冒烟**：RunExecutor 中途异常→failed 终态+report 含 fail assertion 可下钻；无串口环境 skip 降级跑完整 Run 冒烟。
+  5. **OAD/OI 覆盖（18→515）标记为任务 5 后续项**（用户决定单独立项，2026-08-17）。
+- **理由**：B-01 已解除（协议口径经 C 侧 aps_stack.c/aps_stack.h + 真实日志帧交叉验证），任务 5 可离线推进；问题清单 7 项与残留 3 项是协议正确性缺口，性能基线是验收出口"可复现"的硬要求；OAD/OI 覆盖是 500+ 条数据工程，不宜与协议修复混做。
+- **影响**：`pytest libs/parser_lib libs/minute_assert` = 137 passed；`pytest apps/listener/test_perf_baseline.py` = 5 passed；`pytest apps/workbench/orchestration/test_evidence.py` = 23 passed；全量 `pytest libs apps` = 577 passed / 66 skipped（无回归）。任务 5 状态：进行中（协议/性能/异常恢复完成，OAD/OI 与真机验证项后续）。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-23 任务4验证UI：证据下钻面板（Report 完整证据明细 + 前端下钻）
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  - `apps/workbench/orchestration/evidence.py` 新增 `evidence_detail(store)`：EvidenceStore → 按 source 分组的完整证据明细（每条含 kind/source/sequence/raw_ref/correlation_key/observed_at/payload/metadata），与 `evidence_index`（只暴露 raw_ref 锚点）互补。
+  - `runner.py` 把 `evidence_detail` 写入 `Report.evidence_detail`（Report 模型加字段），经既有 `GET /api/run/{run_id}/report` 暴露（无需新端点）。
+  - `workbench/static/workbench.html` 的 `renderRun` 在 Run 执行后异步 fetch report，渲染「④ 证据下钻」面板：按 source 分组（loghooks 事件/模拟集中器步骤/侦听台帧），每条 `<details>` 可展开 payload/metadata（递归键值渲染 `renderKeyValue`）。
+- **理由**：FR-6 要求"展示运行状态、步骤、断言、证据和报告"。此前 Report 只有 `evidence_index`（raw_ref 锚点），前端无法下钻到证据原始内容；`evidence_detail` 提供完整可下钻字段，`evidence_index` 保持轻量索引不破坏既有契约。
+- **影响**：`test_evidence.py` = 26 passed（新增 TestEvidenceDetail 3 用例：完整字段/空/Run 端到端含 detail）；全量 `pytest libs apps` = 580 passed / 66 skipped（无回归）。前端 JS 经 node --check 语法验证通过。任务 4 验证 UI 部分证据下钻完成；运行恢复（刷新后恢复 Run）、取消 Run、打包验收（B-03）待续。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-24 任务4取消Run：异步执行 + 协作式取消（submit/cancel + CANCELLED 终态）
+
+- **日期**：2026-08-17
+- **状态**：✅ 生效
+- **决定**：
+  1. **Run 执行改异步**：`RunExecutor.submit(run_input)` 在后台线程执行 `_run_steps`，`POST /api/run` 立即返回（状态 running），前端轮询 `GET /api/run/{id}` 获取进度。同步 `execute()` 保留（CLI/测试复用）。
+  2. **协作式取消**：`cancel(run_id)` 置 `threading.Event` 取消标志 + 状态转 CANCELLING；`_run_steps` 在 flash/monitor/stimulus/compare/feedback 各步骤前检查标志，已取消抛 `RunCancelled`，外层捕获后落 CANCELLED 终态；Report 标注 `run.cancelled` 断言。
+  3. **API**：新增 `POST /api/run/{run_id}/cancel`（200=cancelling，409=不可取消/不存在，404=不存在）。`_executor()` 单例化修复——原实现每次 new `RunExecutor`，submit 与 cancel 落在不同实例导致取消事件丢失（这是本功能踩到的关键坑）。
+  4. **前端**：`workbench.html` 的 `run()` 改 `pollRun()` 轮询，运行中显示「取消 Run」按钮 + 状态，终态渲染结果/证据；badge 支持 cancelled（"取消"）。
+- **理由**：FR-6 要求"支持取消和错误恢复"。原同步阻塞执行无法在 Run 进行中响应取消请求；异步 + 协作式取消（步骤间检查）不需硬中断正在进行的串口 IO，安全、可测。
+- **影响**：`test_app.py` + `test_evidence.py` = 42 passed（新增 TestRunCancel 3 + cancel flow 2，含 CANCELLED 终态/report 标注/409/404）；全量 `pytest libs apps` = 585 passed / 66 skipped（无回归）。任务 4 取消 Run 完成；运行恢复（刷新后恢复 Run）、打包验收（B-03）待续。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-25 任务4剩余项：运行恢复 + 打包静态资源完整性门禁
+
+- **日期**：2026-08-18
+- **状态**：✅ 生效
+- **决定**：
+  1. **运行恢复（FR-6 刷新后恢复）**：前端 `restoreLastRun()` 页面加载时取最近 Run（`GET /api/runs?limit=1`）——终态渲染结果+证据+徽标，运行中继续 `pollRun` 恢复实时状态/取消按钮；失败静默降级不影响其他功能。
+  2. **store 时间戳改毫秒级**：`created_at`/`updated_at` 原 `isoformat(timespec="seconds")` 秒级，同秒多条 Run 时 `list_runs` 倒序不稳定，恢复可能取错 Run；改 `timespec="milliseconds"`（ISO 兼容，前端 `slice(0,19)` 截断不受影响）。
+  3. **B-03 静态资源完整性门禁**：新增 `apps/workbench/check_assets.py`——关键资产存在/非空、HTML 引用 `/static/` 资源完整性、空文件检测；`--strict` 退出码非 0 供打包 CI 门禁。真机 DLL 打包与干净机启动冒烟留 Windows 环境（B-03 阻塞解除需干净机证据）。
+- **理由**：FR-6 要求"刷新后恢复 Run；DLL/串口缺失不阻断无关能力"。运行恢复是刷新可用性硬要求；时间戳毫秒化是排序稳定性的必要修复；静态资源完整性是本环境（WSL 无 DLL）能自动化的 B-03 部分，提前落地降低真机打包踩坑。
+- **影响**：新增 TestRunRestore 1 + B-03 2 测试；全量 `pytest libs apps` = **588 passed / 66 skipped** 无回归。任务 4 除真机 DLL 打包验收（Windows）外全部完成。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-26 任务4 B-03 真机打包验收完成（Windows）
+
+- **日期**：2026-08-18
+- **状态**：✅ 生效
+- **决定**：
+  1. **真机 Windows 打包**：环境从 WSL 切到原生 Windows 后，DLL 已就位（`libs/shared/dll/bin/Debug/GwHPLCAnalysis.dll`），执行 `PyInstaller --clean --noconfirm tools/packaging/workbench.spec` → `dist/工作台/工作台.exe`（onedir 7.8MB），`_internal/` 含 static（12 资产）、`dll/bin/Debug/GwHPLCAnalysis.dll`、scenarios（4 场景）、loghooks rules。
+  2. **打包版启动冒烟**：新增 `tools/scripts/smoke_test_workbench_packaged.py`，`HPLC_NO_GUI=1` headless 启动 exe，验证 health / 首页 / 静态资源 / platform-version / module-serial+listener 子应用代理 / runtime 生成 = **9/9 PASS**。
+  3. **B-03 阻塞解除**：任务 4 标记 ✅ 已完成；剩余阻塞仅真机串口实测（B-04，任务 6 已屏蔽）。
+- **理由**：B-03 验收出口是"干净机打包与启动冒烟并保存证据"；headless 冒烟脚本即持久化证据，可在任何 Windows 机器复跑验证产物。
+- **影响**：任务 4 收尾；打包冒烟脚本纳入 `tools/scripts/` 供回归。真机串口（COM4 集中器/电表）仍待硬件环境。
 - **被取代**：无（新增决策）。

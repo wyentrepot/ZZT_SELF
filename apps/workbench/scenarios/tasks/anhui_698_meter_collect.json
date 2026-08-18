@@ -1,0 +1,51 @@
+{
+  "id": "anhui_698_meter_collect",
+  "name": "安徽 698 电表采集验证（添加档案 + 配置任务 + 主动上报捕捉）",
+  "module": "cco",
+  "port": "COM24",
+  "baudrate": 9600,
+  "enable_responder": true,
+  "description": "模拟集中器经 COM24 与安徽 CCO 交互：1) 添加 698 协议从节点（地址 080000000008）；2) 配置采集任务 1（协议698/周期1分钟/采集A相电压 20000201）；3) 等待 CCO 主动上报 06H-F230 采集数据。帧为 CCO 本地协议（单68）。依据用户 2026-08-17 提供的已验证帧。",
+  "responders": [
+    {
+      "id": "anhui.ack.meter",
+      "match": {"afn": 6, "fn": 230},
+      "reply": {"afn": 0, "fn": 1, "format": "local", "desc": "采集数据上报→回确认"}
+    }
+  ],
+  "steps": [
+    {
+      "name": "添加 698 从节点档案 (11H-F1, 地址 080000000008)",
+      "send": {
+        "raw": "68 17 00 43 00 00 00 00 00 07 11 01 00 01 08 00 00 00 00 00 03 68 16"
+      },
+      "expect": {"format": "local", "afn": 0, "fn": 1},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "配置采集任务 (11H-F231, 任务1/698/周期1分钟/A相电压)",
+      "send": {
+        "format": "local", "afn": 17, "fn": 231, "seq": 8,
+        "buff": "01 01 03 01 00 01 01 00 20 00 02 01 01 01 00 02 00"
+      },
+      "expect": {"format": "local", "afn": 17, "fn": 231},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "关联档案到任务 (11H-F232, 任务1/电表080000000008)",
+      "send": {
+        "format": "local", "afn": 17, "fn": 232, "seq": 9,
+        "buff": "01 01 00 08 00 00 00 00 00"
+      },
+      "expect": {"format": "local", "afn": 17, "fn": 232},
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "等待 CCO 上报采集数据 (06H-F230, 历史查询)",
+      "recv_only": true,
+      "expect_history": true,
+      "expect": {"format": "local", "afn": 6, "fn": 230},
+      "expect_timeout": 90.0
+    }
+  ]
+}

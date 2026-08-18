@@ -34,6 +34,47 @@ class Event:
     drift_expected: Optional[int] = None
     source_line_idx: Optional[int] = None  # 原始日志行序号（0-based，供对照绑定）
 
+    def to_evidence(self, run_id: str = "") -> Any:
+        """Event → test_automation.Evidence（kind=event, source=loghooks，任务3收口）。
+
+        引擎本体不硬依赖 test_automation（ADR-1/10/13 解耦），此处延迟 import：
+        无 test_automation 环境（独立跑 loghooks）时本方法不可用，其余引擎能力不受影响。
+
+        证据字段：
+        - payload：事件全字段（含 captures/source_line/漂移信息，比 runner 旧 dict 有损路径完整）
+        - raw_ref：``loghooks:<rule_id>``（可追溯锚点）
+        - correlation_key：rule_id（关联键）
+        - metadata.origin：loghooks.engine（与 sources.loghooks_event_evidence 一致）
+        """
+        from test_automation.models import Evidence
+
+        return Evidence(
+            kind="event",
+            source="loghooks",
+            payload={
+                "type": self.type,
+                "label": self.label,
+                "message": self.message,
+                "level": self.level,
+                "time": self.time,
+                "rule_id": self.rule_id,
+                "category": self.category,
+                "source": self.source,
+                "captures": dict(self.captures or {}),
+                "line_drift": self.line_drift,
+                "drift_actual": self.drift_actual,
+                "drift_expected": self.drift_expected,
+            },
+            raw_ref=f"loghooks:{self.rule_id}",
+            correlation_key=self.rule_id,
+            metadata={
+                "origin": "loghooks.engine",
+                "source_line": self.source_line,
+                "source_line_idx": self.source_line_idx,
+            },
+            run_id=run_id,
+        )
+
 
 @dataclass
 class DriftInfo:
@@ -69,9 +110,21 @@ class Engine:
         result = engine.finalize()
     """
 
-    def __init__(self, rules: List[Rule], source: str = "module_log"):
+    def __init__(
+        self,
+        rules: List[Rule],
+        source: str = "module_log",
+        on_event: Optional[callable] = None,
+    ):
+        """构造引擎。
+
+        on_event：可选可插拔发射器——每产出一条 Event 即调用 ``on_event(event)``
+        （任务3收口：调用方可直接在此回调里把 Event 转 Evidence 写 EvidenceStore，
+        引擎本体不依赖 test_automation，保持解耦）。为 None 时行为与旧版完全一致。
+        """
         self.rules = rules
         self.source = source
+        self.on_event = on_event
         self.events: List[Event] = []
         self.hit_rule_ids: Set[str] = set()
         self.drifts: List[DriftInfo] = []
@@ -89,6 +142,12 @@ class Engine:
                 self._seq_trackers[rule.id] = SequenceTracker(rule)
             else:
                 self._match_rules.append(rule)
+
+    def _emit(self, event: Event) -> None:
+        """登记事件并触发可插拔发射器（on_event）。"""
+        self.events.append(event)
+        if self.on_event is not None:
+            self.on_event(event)
 
     def feed(self, line: ParsedLine) -> None:
         """喂入一行解析后的日志行，产出事件。"""
@@ -129,7 +188,7 @@ class Engine:
                 drift_actual=result.line_actual,
                 drift_expected=result.line_expected,
             )
-            self.events.append(event)
+            self._emit(event)
 
             # 漂移记录（按 rule_id+行号去重，避免每条事件重复记录）
             if result.line_drift:
@@ -165,7 +224,7 @@ class Engine:
                         captures=se.captures,
                         source_line_idx=line.metadata.get("_idx"),
                     )
-                    self.events.append(event)
+                    self._emit(event)
 
         if not any_match:
             self.unmatched_lines += 1
@@ -190,7 +249,7 @@ class Engine:
                         source_line="",
                         captures=se.captures,
                     )
-                    self.events.append(event)
+                    self._emit(event)
 
         return ScanResult(
             source=self.source,

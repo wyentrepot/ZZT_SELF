@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from typing import Dict, List, Optional
@@ -28,6 +29,8 @@ from sim_concentrator.frame_codec import (
 from sim_concentrator.matcher import match_frame
 from sim_concentrator.responder import Responder
 from sim_concentrator.serial_io import SerialIO
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +69,11 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
     """
     send = send or {}
 
+    # 原始帧直接发送（格式：local）：send.raw = "68 17 00 ... 16" 完整帧 hex
+    # 用于下发经真机验证的完整帧（L/CS 由外部给定，不做重新构帧）
+    if send.get("raw"):
+        return hex_to_bytes(send["raw"])
+
     if send.get("format") == "local":
         afn = _to_int(send.get("afn", 0x00))
         fn = _to_int(send.get("fn", 1), 10)
@@ -76,10 +84,13 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
             buff = bytes(bf)
         else:
             buff = bytes(bf or b"")
-        ctrl = _to_int(send.get("ctrl", 0x03))
+        # 下行查询：模拟集中器作为启动站下发，prm=1，ctrl=0x43
+        # （对齐 GW-CASS Creat_3762_Frame('43',...)；默认不再是 0x03 从动站）
+        ctrl = _to_int(send.get("ctrl", 0x43))
+        seq = _to_int(send.get("seq", 1), 10)
         info = bytes(send.get("info", [0] * 6))
         return build_local_13762_frame(afn=afn, fn=fn, buff=buff,
-                                       ctrl=ctrl, info=info)
+                                       ctrl=ctrl, info=info, seq=seq)
 
     afn = _to_int(send.get("afn", 0x00))
     seq = _to_int(send.get("seq", 0), 10)
@@ -178,6 +189,11 @@ def run_step(io: SerialIO, responder: Optional[Responder],
         return result
 
     # 4) expect_history：在超时内轮询历史帧，确认出现过匹配帧
+    # 语义：rx_history() 是只读累积记录（读线程收到即入历史），匹配**不消费**历史帧，
+    #       只回答"超时窗口内是否出现过该帧"。因此：
+    #       - 与 recv_only 组合：recv_only 只影响是否 send（本分支本身不 send），
+    #         两者语义等价于"只收不发的历史扫描"，可安全叠加。
+    #       - 重复执行同一 history 匹配不会重复应答：一旦命中即返回，只 _auto_reply 一次。
     if expect_history:
         deadline = time.time() + timeout
         seen = []
@@ -212,12 +228,14 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             result["result"] = "pass"
             result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
             return result
-        # 不匹配：若是 recv_only 继续等（可能是其它主动上报）；否则判 fail
-        if not recv_only:
-            result["reason"] = "匹配失败：" + "; ".join(reasons)
-            return result
-        result["reason"] = "收到帧但未匹配：" + "; ".join(reasons)
-    result["reason"] = f"超时({timeout}s)未收到期望帧" + ("" if recv_only else "或匹配失败")
+        # 不匹配：跳过继续等（CCO 会插播主动上报帧，如 10H-F1 从节点数量，
+        # 需跳过直至出现期望帧或超时）。记录已收到的帧便于诊断。
+        result["received_hex"] = (result.get("received_hex", []) or [])
+        result["received_hex"].append(frame_to_hex(got))
+        # 若 recv_only 也继续等；send+expect 同样跳过无关帧（修复：真实 CCO 插播主动帧）
+    rx_count = len(result.get("received_hex", []) or [])
+    result["reason"] = (f"超时({timeout}s)未收到期望帧" 
+                        + (f"，期间收到 {rx_count} 帧未匹配" if rx_count else ""))
     return result
 
 
@@ -233,18 +251,24 @@ def _safe_decode(raw: bytes) -> dict:
 
 
 def _auto_reply(io: Optional[SerialIO], responder: Optional[Responder], raw: bytes) -> None:
-    """若命中应答规则，自动回帧（模拟集中器应答 CCO 主动上报）。"""
+    """若命中应答规则，自动回帧（模拟集中器应答 CCO 主动上报）。
+
+    异常不中断执行流程，但会记录日志以便排查（不再静默吞掉）。
+    """
     if responder is None or io is None:
         return
     try:
         reply = responder.reply_for(raw)
     except Exception:
+        logger.exception("responder.reply_for 异常，已跳过自动应答；帧=%s",
+                         raw.hex()[:64])
         return
     if reply is not None:
         try:
             io.send_frame(reply)
         except Exception:
-            pass
+            logger.exception("自动应答发送失败；帧=%s 应答=%s",
+                             raw.hex()[:64], reply.hex()[:64])
 
 
 # ---------------------------------------------------------------------------
@@ -273,11 +297,20 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
             opened = True
 
         step_results = []
+        seq_counter = 0
         for idx, step in enumerate(steps):
             # 若本步声明了自有 responder，则临时挂载；否则用任务级 responder
             step_r = responder
             if step.get("responders"):
                 step_r = Responder(override_rules=step["responders"])
+            # 本地协议下行帧自动分配递增帧序号（对齐 GW-CASS，CCO 响应回显 serial_num）
+            step = dict(step)
+            if step.get("send") and step["send"].get("format") == "local":
+                send = dict(step["send"])
+                if "seq" not in send:
+                    seq_counter += 1
+                    send["seq"] = seq_counter
+                step["send"] = send
             r = run_step(io, step_r, step, idx)
             step_results.append(r)
             # 任一步失败即中止（默认），除非 task.fail_fast=false

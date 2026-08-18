@@ -199,13 +199,70 @@ tr:hover td {
     api("/api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(function (run) {
         currentRunId = run.run_id;
-        $("wb-badge").textContent = run.status === "passed" ? "PASS" : "FAIL";
-        $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" : "fail");
-        renderRun(run);
-        loadHistory();
+        // 异步执行：轮询状态直到终态，运行中显示「取消 Run」按钮
+        pollRun(run.run_id);
       })
       .catch(function (e) {
         $("wb-badge").textContent = "错误";
+        $("wb-badge").className = "badge fail";
+        $("run-result").innerHTML = '<pre>' + e.message + '</pre>';
+      });
+  }
+
+  /* 轮询 Run 状态：运行中显示取消按钮，终态渲染结果（任务4 取消 Run） */
+  function pollRun(runId) {
+    let timer = null;
+    let cancelled = false;
+
+    function tick() {
+      if (cancelled) return;
+      api("/api/run/" + runId)
+        .then(function (run) {
+          const terminal = run.status === "passed" || run.status === "failed" ||
+                           run.status === "cancelled" || run.status === "error" ||
+                           run.status === "inconclusive";
+          if (!terminal) {
+            // 运行中：显示「取消 Run」按钮 + 当前状态
+            $("run-result").innerHTML =
+              '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + runId + '</b> &nbsp; 状态: <span class="badge run">' +
+              run.status + '</span></div>' +
+              '<div class="hint">正在执行全链路（烧录→监控→激励→比对→反馈→报告）…</div>' +
+              '<div style="margin-top:var(--sp-2)"><button id="btn-cancel-run">✕ 取消 Run</button></div>';
+            const btn = $("btn-cancel-run");
+            if (btn) btn.addEventListener("click", function () {
+              cancelled = true;
+              cancelRun(runId);
+            });
+            timer = setTimeout(tick, 800);
+            return;
+          }
+          // 终态：渲染结果 + 证据
+          $("wb-badge").textContent = run.status === "passed" ? "PASS" :
+            (run.status === "cancelled" ? "取消" :
+             (run.status === "inconclusive" ? "不确定" : "FAIL"));
+          $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" :
+            (run.status === "cancelled" ? "run" :
+             (run.status === "inconclusive" ? "inconclusive" : "fail")));
+          renderRun(run);
+          loadHistory();
+        })
+        .catch(function () { timer = setTimeout(tick, 800); });
+    }
+    tick();
+  }
+
+  /* 请求取消 Run（后端置 CANCELLING → 线程检查后落 CANCELLED） */
+  function cancelRun(runId) {
+    $("wb-badge").textContent = "取消中";
+    $("wb-badge").className = "badge run";
+    $("run-result").innerHTML = '<div class="hint">正在取消 Run…</div>';
+    api("/api/run/" + runId + "/cancel", { method: "POST" })
+      .then(function () {
+        // 取消已发起，继续轮询直到终态（cancelled）
+        pollRun(runId);
+      })
+      .catch(function (e) {
+        $("wb-badge").textContent = "取消失败";
         $("wb-badge").className = "badge fail";
         $("run-result").innerHTML = '<pre>' + e.message + '</pre>';
       });
@@ -217,9 +274,68 @@ tr:hover td {
     }).join("<br>");
     $("run-result").innerHTML =
       '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
-      (run.status === "passed" ? "pass" : "fail") + '">' + run.status + '</span></div>' +
+      (run.status === "passed" ? "pass" : (run.status === "inconclusive" ? "inconclusive" : "fail")) + '">' + run.status + '</span></div>' +
       '<div style="margin-bottom:var(--sp-2)">' + steps + '</div>' +
-      '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>';
+      '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>' +
+      '<div id="ev-panel"></div>';
+    // 证据明细在 report 里（/api/run/{id}/report），异步加载后渲染下钻面板
+    api("/api/run/" + run.run_id + "/report")
+      .then(function (report) { $("ev-panel").innerHTML = renderEvidence(report); })
+      .catch(function () { $("ev-panel").innerHTML = renderEvidence({}); });
+  }
+
+  /* 证据下钻：按 source 分组展示完整证据，可展开 payload/metadata（任务4） */
+  function renderEvidence(run) {
+    const ed = run.evidence_detail || {};
+    const sources = ed.sources || {};
+    const total = ed.total || 0;
+    if (!total) {
+      return '<div class="card" style="margin-top:var(--sp-4)"><h2>④ 证据下钻</h2>' +
+        '<div class="hint">本 Run 未产生证据。</div></div>';
+    }
+    const SRC_LABEL = {
+      loghooks: "loghooks 事件",
+      sim_concentrator: "模拟集中器步骤",
+      listener: "侦听台帧",
+    };
+    let html = '<div class="card" style="margin-top:var(--sp-4)"><h2>④ 证据下钻 <span class="hint">共 ' +
+      total + ' 条</span></h2>';
+    Object.keys(sources).forEach(function (source) {
+      const items = sources[source] || [];
+      html += '<h3 style="margin:var(--sp-3) 0 var(--sp-2)">' +
+        (SRC_LABEL[source] || source) + '（' + items.length + '）</h3>';
+      html += '<div class="ev-group">';
+      items.forEach(function (ev, i) {
+        const title = ev.kind + " · " + (ev.raw_ref || ("ev:" + ev.sequence)) +
+          (ev.correlation_key ? " · " + ev.correlation_key : "");
+        html += '<details class="ev-item" style="margin-bottom:var(--sp-2)">' +
+          '<summary><b>' + title + '</b></summary>' +
+          '<div class="ev-body" style="margin-top:var(--sp-2)">' +
+          renderKeyValue("payload", ev.payload) +
+          renderKeyValue("metadata", ev.metadata) +
+          (ev.observed_at ? '<div class="hint">observed_at: ' + ev.observed_at + '</div>' : "") +
+          '</div></details>';
+      });
+      html += '</div>';
+    });
+    return html + '</div>';
+  }
+
+  /* 递归渲染键值（payload/metadata 可能嵌套） */
+  function renderKeyValue(label, obj) {
+    if (!obj || typeof obj !== "object") {
+      return obj === undefined || obj === null ? "" :
+        '<div class="hint">' + label + ': <code>' + String(obj) + '</code></div>';
+    }
+    const entries = Object.keys(obj).map(function (k) {
+      const v = obj[k];
+      let vs;
+      if (v === null || v === undefined) vs = "";
+      else if (typeof v === "object") vs = JSON.stringify(v);
+      else vs = String(v);
+      return '<div class="ev-row"><code class="ev-key">' + k + '</code>: <code>' + vs + '</code></div>';
+    }).join("");
+    return entries ? '<div class="ev-block"><div class="hint">' + label + '</div>' + entries + '</div>' : "";
   }
 
   function loadHistory() {
@@ -228,17 +344,46 @@ tr:hover td {
       let html = "<table><tr><th>run_id</th><th>场景</th><th>状态</th><th>固件</th><th>时间</th></tr>";
       list.forEach(function (r) {
         html += "<tr><td>" + r.run_id + "</td><td>" + r.scenario_id + "</td><td>" +
-          '<span class="badge ' + (r.status === "passed" ? "pass" : "fail") + '">' + r.status + "</span></td><td>" +
+          '<span class="badge ' + (r.status === "passed" ? "pass" : (r.status === "inconclusive" ? "inconclusive" : "fail")) + '">' + r.status + "</span></td><td>" +
           (r.firmware_ver || "") + "</td><td>" + (r.created_at || "").slice(0, 19) + "</td></tr>";
       });
       $("run-history").innerHTML = html + "</table>";
     }).catch(function () { });
   }
 
+  /* 任务4 运行恢复：刷新页面后恢复上次 Run 的状态/结果。
+     取最近一个 Run：终态 → 渲染结果+证据并更新徽标；运行中 → 继续轮询恢复实时状态。 */
+  function restoreLastRun() {
+    api("/api/runs?limit=1").then(function (list) {
+      if (!list.length) return; // 无历史，保持"尚未执行 Run"提示
+      const last = list[0];
+      currentRunId = last.run_id;
+      const terminal = last.status === "passed" || last.status === "failed" ||
+                       last.status === "cancelled" || last.status === "error" ||
+                       last.status === "inconclusive";
+      if (terminal) {
+        $("wb-badge").textContent = last.status === "passed" ? "PASS" :
+          (last.status === "cancelled" ? "取消" :
+           (last.status === "inconclusive" ? "不确定" : "FAIL"));
+        $("wb-badge").className = "badge " + (last.status === "passed" ? "pass" :
+          (last.status === "cancelled" ? "run" :
+           (last.status === "inconclusive" ? "inconclusive" : "fail")));
+        api("/api/run/" + last.run_id).then(function (run) { renderRun(run); })
+          .catch(function () { });
+      } else {
+        // 运行中：恢复轮询（沿用 pollRun 逻辑，显示取消按钮/实时状态）
+        $("wb-badge").textContent = "运行中";
+        $("wb-badge").className = "badge run";
+        pollRun(last.run_id);
+      }
+    }).catch(function () { }); // 恢复失败静默，不影响其他功能
+  }
+
   $("btn-run").addEventListener("click", run);
   $("btn-refresh-scenarios").addEventListener("click", loadScenarios);
   loadScenarios();
   loadHistory();
+  restoreLastRun();
 })();
 </script>
 

@@ -32,10 +32,10 @@ def _cco(afn: int, fn: int, buff: bytes = b""):
 class FakeIO:
     """模拟 SerialIO：预置响应入队 + 历史记录。"""
 
-    def __init__(self, responses=None, port="COM_TEST"):
+    def __init__(self, responses=None, history=None, port="COM_TEST"):
         self._pending = list(responses or [])
+        self._history = list(history or [])
         self.sent = []
-        self._history = []
         self.port = port
         self.closed = False
 
@@ -98,7 +98,7 @@ def test_build_scan_decode_roundtrip():
     assert d["structure"] == "1376.2-local"
     assert d["afn"] == 0x10 and d["fn"] == 230
     assert d["buff"] == b"\x00"
-    assert d["ctrl"] == 0x03
+    assert d["ctrl"] == 0x43  # 默认下行查询：prm=1 启动站（对齐 GW-CASS）
 
 
 def test_scan_local_frame_dirty_prefix():
@@ -188,3 +188,108 @@ def test_execute_task_end_to_end():
     out = execute_task(task, io=io)
     assert out["summary"]["verdict"] == "pass", out
     assert out["summary"]["pass"] == 2, out["summary"]
+
+
+# ---------------------------------------------------------------------------
+# 3.2 待办语义锁定测试
+# ---------------------------------------------------------------------------
+def test_recv_only_skip_unmatched_until_match():
+    """待办3.2-1：recv_only 时收到的首帧不匹配不应判 fail，
+    应持续接收直到出现匹配帧或超时（连续接收直到超时）。"""
+    io = FakeIO(responses=[
+        _cco(0x06, 3, buff=b"\x04"),     # 先到的不相关上报（06H-F3）
+        _cco(0x06, 230, buff=b"\x01\x00\x01"),  # 期望的 06H-F230 采集数据
+    ])
+    step = {"name": "等待06H-F230上报", "recv_only": True,
+            "expect": {"format": "local", "afn": 0x06, "fn": 230},
+            "expect_timeout": 1.0}
+    r = run_step(io, None, step, 0)
+    assert r["result"] == "pass", r
+    assert r["matched"], "应匹配到期望帧"
+
+
+def test_recv_only_unmatched_all_timeout():
+    """待办3.2-1 边界：recv_only 期间收到的全部是不匹配帧 → 超时判 fail。"""
+    io = FakeIO(responses=[
+        _cco(0x06, 3, buff=b"\x04"),
+        _cco(0x06, 3, buff=b"\x05"),
+    ])
+    step = {"name": "只收到不相关上报", "recv_only": True,
+            "expect": {"format": "local", "afn": 0x06, "fn": 230},
+            "expect_timeout": 0.3}
+    r = run_step(io, None, step, 0)
+    assert r["result"] == "fail", r
+    assert "超时" in r["reason"]
+
+
+def test_expect_history_matches_existing_history():
+    """待办3.2-2：expect_history 在历史帧中匹配（不消费历史，只判断出现过）。"""
+    io = FakeIO(history=[
+        _cco(0x06, 230, buff=b"\x01\x00\x01"),
+    ])
+    step = {"name": "历史中应有06H-F230", "expect_history": True,
+            "expect": {"format": "local", "afn": 0x06, "fn": 230},
+            "expect_timeout": 0.5}
+    r = run_step(io, None, step, 0)
+    assert r["result"] == "pass", r
+
+
+def test_expect_history_no_match_timeout():
+    """待办3.2-2 边界：历史中无匹配帧 → 超时判 fail。"""
+    io = FakeIO(history=[
+        _cco(0x06, 3, buff=b"\x04"),
+    ])
+    step = {"name": "历史无期望帧", "expect_history": True,
+            "expect": {"format": "local", "afn": 0x06, "fn": 230},
+            "expect_timeout": 0.3}
+    r = run_step(io, None, step, 0)
+    assert r["result"] == "fail", r
+    assert "历史" in r["reason"]
+
+
+def test_recv_only_with_expect_history_combo():
+    """待办3.2-2 组合边界：recv_only + expect_history 可安全叠加
+    （recv_only 只影响是否 send，expect_history 做只读历史扫描）。"""
+    io = FakeIO(history=[
+        _cco(0x06, 230, buff=b"\x01\x00\x01"),
+    ])
+    step = {"name": "只收+历史扫描", "recv_only": True, "expect_history": True,
+            "expect": {"format": "local", "afn": 0x06, "fn": 230},
+            "expect_timeout": 0.5}
+    r = run_step(io, None, step, 0)
+    assert r["result"] == "pass", r
+
+
+def test_auto_reply_logs_responder_exception(caplog):
+    """待办3.2-3：_auto_reply 中 responder 抛异常时记录日志，不中断执行。"""
+    from sim_concentrator.runner import _auto_reply
+
+    class BoomResponder:
+        def reply_for(self, raw):
+            raise RuntimeError("boom")
+
+    io = FakeIO()
+    with caplog.at_level("ERROR", logger="sim_concentrator.runner"):
+        _auto_reply(io, BoomResponder(), _cco(0x06, 230))
+    assert any("responder.reply_for" in rec.message for rec in caplog.records), \
+        caplog.records
+    # 异常被吞掉不抛出，流程不中断
+
+
+def test_auto_reply_logs_send_failure(caplog):
+    """待办3.2-3 边界：应答发送失败时记录日志，不中断。"""
+    from sim_concentrator.runner import _auto_reply
+    from sim_concentrator.responder import Responder
+
+    class BrokenIO(FakeIO):
+        def send_frame(self, raw):
+            raise OSError("port closed")
+
+    io = BrokenIO()
+    rp = Responder(override_rules=[{"match": {"afn": 0x06, "fn": 230},
+                                    "reply": {"afn": 0x00, "fn": 1,
+                                              "format": "local"}}])
+    with caplog.at_level("ERROR", logger="sim_concentrator.runner"):
+        _auto_reply(io, rp, _cco(0x06, 230))
+    assert any("自动应答发送失败" in rec.message for rec in caplog.records), \
+        caplog.records

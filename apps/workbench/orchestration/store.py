@@ -71,7 +71,8 @@ class RunStore:
 
     def create_run(self, run: Run) -> Run:
         with self._lock:
-            now = datetime.now().isoformat(timespec="seconds")
+            # 毫秒级时间戳：list_runs 按 created_at 倒序需稳定排序（同秒多条时）
+            now = datetime.now().isoformat(timespec="milliseconds")
             self._conn.execute(
                 "INSERT OR REPLACE INTO runs "
                 "(run_id, scenario_id, status, firmware_ver, firmware_commit, created_at, updated_at, report_path) "
@@ -94,7 +95,7 @@ class RunStore:
         with self._lock:
             self._conn.execute(
                 "UPDATE runs SET status=?, updated_at=? WHERE run_id=?",
-                (status, datetime.now().isoformat(timespec="seconds"), run_id),
+                (status, datetime.now().isoformat(timespec="milliseconds"), run_id),
             )
             self._conn.commit()
 

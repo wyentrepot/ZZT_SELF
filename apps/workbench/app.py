@@ -115,6 +115,11 @@ def create_workbench_app(
         version="0.1.0",
     )
 
+    # D-04 统一错误响应（code/message/details/request_id + 兼容 detail）
+    from .errors import register_error_handlers
+
+    register_error_handlers(app)
+
     # ---- 1. 挂载 module_log（含内部 simcon 子应用）----
     try:
         if module_log_factory is None:

@@ -431,3 +431,14 @@ class Report:
             "evidence_index": self.evidence_index,
             "artifacts": [item.to_dict() for item in self.artifacts],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Report":
+        return cls(
+            run_id=data["run_id"],
+            summary=dict(data.get("summary") or {}),
+            steps=[StepResult(**{**item, "started_at": _from_iso(item.get("started_at")), "finished_at": _from_iso(item.get("finished_at"))}) for item in data.get("steps") or []],
+            assertions=[AssertionResult.from_dict(item) for item in data.get("assertions") or []],
+            evidence_index=dict(data.get("evidence_index") or {}),
+            artifacts=[Artifact.from_dict(item) for item in data.get("artifacts") or []],
+        )
