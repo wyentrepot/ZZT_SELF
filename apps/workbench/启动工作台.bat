@@ -63,18 +63,16 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-pushd ".build_plain"
-REM tar 在中文 Windows 下对 UTF-8 中文文件名会报错（不影响 ASCII 名代码文件），
-REM 因此不依据 tar 退出码判断，改为验证关键源码文件是否解出
-tar -xf "src.tar" >nul 2>&1
-if not exist "apps\workbench\run.py" (
-    popd
-    echo [错误] 解压明文副本失败（未找到 apps\workbench\run.py）。
+REM Windows 自带 tar 对 UTF-8 中文文件名解压失败，且会连带丢失部分 ASCII 文件
+REM （实测 shared/infra.py、sim_concentrator 等关键文件丢失，导致启动报 SyntaxError）。
+REM 改用 venv python 的 tarfile 在仓库根解压（完整支持 UTF-8 文件名）。
+"%~dp0..\..\.venv\Scripts\python.exe" -c "import tarfile; tarfile.open(r'.build_plain\src.tar').extractall(r'.build_plain')"
+if errorlevel 1 (
+    echo [错误] 解压明文副本失败（python tarfile 异常）。
     pause
     exit /b 1
 )
-del /q "src.tar" >nul 2>&1
-popd
+del /q ".build_plain\src.tar" >nul 2>&1
 git rev-parse HEAD > ".build_plain\git-rev.txt"
 :ready
 
