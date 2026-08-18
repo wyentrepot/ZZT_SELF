@@ -110,7 +110,32 @@
               <span>波特率</span>
               <input id="serial-baud" type="number" value="115200" min="300" max="921600" step="1">
             </label>
-            <span class="serial-params">8 数据位 · 无校验 · 1 停止位</span>
+            <label class="path-field">
+              <span>数据位</span>
+              <select id="serial-bytesize">
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8" selected>8</option>
+              </select>
+            </label>
+            <label class="path-field">
+              <span>校验位</span>
+              <select id="serial-parity">
+                <option value="N" selected>无(N)</option>
+                <option value="E">偶(E)</option>
+                <option value="O">奇(O)</option>
+                <option value="M">标记(M)</option>
+                <option value="S">空格(S)</option>
+              </select>
+            </label>
+            <label class="path-field">
+              <span>停止位</span>
+              <select id="serial-stopbits">
+                <option value="1" selected>1</option>
+                <option value="2">2</option>
+              </select>
+            </label>
             <button id="serial-start" class="primary-button" type="button">启动采集</button>
             <button id="serial-stop" class="secondary-button" type="button" disabled>停止</button>
             <button id="serial-refresh" class="secondary-button" type="button" disabled>刷新帧列表</button>

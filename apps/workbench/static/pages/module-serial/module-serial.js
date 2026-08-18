@@ -144,9 +144,12 @@
     btn.classList.toggle("secondary-button", running);
     btn.classList.toggle("primary-button", !running);
     btn.disabled = false;
-    // 串口运行中，端口/波特率不可更改；停止后才能重新选择
+    // 串口运行中，端口/波特率/校验位/数据位/停止位不可更改；停止后才能重新选择
     $(`#ms-port-${ch}`).disabled = running;
     $(`#ms-baud-${ch}`).disabled = running;
+    $(`#ms-parity-${ch}`).disabled = running;
+    $(`#ms-bytesize-${ch}`).disabled = running;
+    $(`#ms-stopbits-${ch}`).disabled = running;
   }
 
   async function toggleSerial(ch) {
@@ -164,10 +167,13 @@
         });
       } else {
         const baud = parseInt($(`#ms-baud-${ch}`).value, 10);
+        const parity = $(`#ms-parity-${ch}`).value;
+        const bytesize = parseInt($(`#ms-bytesize-${ch}`).value, 10);
+        const stopbits = parseInt($(`#ms-stopbits-${ch}`).value, 10);
         await request("/api/module-serial/module-serial/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ port, baudrate: baud, bytesize: 8, parity: "N", stopbits: 1, channel: ch }),
+          body: JSON.stringify({ port, baudrate: baud, bytesize, parity, stopbits, channel: ch }),
         });
         lastSeq[ch] = -1;
         $(`.ms-log-box[data-channel="${ch}"]`).innerHTML = "";
@@ -891,12 +897,15 @@
   async function simconOpen() {
     const port = $("simcon-port").value;
     const baud = parseInt($("simcon-baud").value, 10);
+    const parity = $("simcon-parity").value;
+    const bytesize = parseInt($("simcon-bytesize").value, 10);
+    const stopbits = parseInt($("simcon-stopbits").value, 10);
     if (!port) { alert("请先选择串口"); return; }
     try {
       const r = await simconFetch("/api/module-serial/simcon/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ port, baudrate: baud }),
+        body: JSON.stringify({ port, baudrate: baud, bytesize, parity, stopbits }),
       });
       simcon.open = r.open;
       await simconRefreshStatus();

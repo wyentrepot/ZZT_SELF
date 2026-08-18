@@ -30,6 +30,9 @@ from sim_concentrator.serial_io import SerialIO, list_serial_ports
 class OpenSpec(BaseModel):
     port: str = "COM3"
     baudrate: int = 115200
+    bytesize: int = 8
+    parity: str = "N"
+    stopbits: int = 1
 
 
 class SendSpec(BaseModel):
@@ -63,6 +66,9 @@ class VerifyTask(BaseModel):
     id: Optional[str] = "verify.task"
     port: str = "COM3"
     baudrate: int = 115200
+    bytesize: int = 8
+    parity: str = "N"
+    stopbits: int = 1
     enable_responder: bool = True
     fail_fast: bool = True
     responders: Optional[List[Dict[str, Any]]] = None
@@ -87,11 +93,13 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
         with _holder["lock"]:
             return _holder["io"]
 
-    def _open_io(port: str, baudrate: int) -> SerialIO:
+    def _open_io(port: str, baudrate: int, bytesize: int = 8,
+                 parity: str = "N", stopbits: int = 1) -> SerialIO:
         with _holder["lock"]:
             io = _holder["io"]
             if io is None or not io.is_open():
-                io = SerialIO(port=port, baudrate=baudrate)
+                io = SerialIO(port=port, baudrate=baudrate,
+                              bytesize=bytesize, parity=parity, stopbits=stopbits)
                 io.open()
                 _holder["io"] = io
             return io
@@ -123,7 +131,8 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
     @app.post(f"{prefix}/open")
     async def open_serial(request: OpenSpec):
         try:
-            io = _open_io(request.port, request.baudrate)
+            io = _open_io(request.port, request.baudrate,
+                          request.bytesize, request.parity, request.stopbits)
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"串口打开失败：{exc}") from exc
         return {"open": True, "port": io.port}
@@ -150,7 +159,8 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
             if io is None or not io.is_open():
                 # 任务自带串口参数：自建并独占，执行后关闭
                 from sim_concentrator.serial_io import SerialIO as _SIO
-                io = _SIO(port=task.port, baudrate=task.baudrate)
+                io = _SIO(port=task.port, baudrate=task.baudrate,
+                          bytesize=task.bytesize, parity=task.parity, stopbits=task.stopbits)
                 io.open()
                 try:
                     return execute_task(task.model_dump(), io=io)

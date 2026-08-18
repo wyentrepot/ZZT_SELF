@@ -260,6 +260,32 @@
               <option value="921600">921600</option>
             </select>
           </div>
+          <div class="field">
+            <label for="ms-parity-cco">校验位</label>
+            <select id="ms-parity-cco" style="width:90px">
+              <option value="N" selected>无(N)</option>
+              <option value="E">偶(E)</option>
+              <option value="O">奇(O)</option>
+              <option value="M">标记(M)</option>
+              <option value="S">空格(S)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ms-bytesize-cco">数据位</label>
+            <select id="ms-bytesize-cco" style="width:70px">
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+              <option value="8" selected>8</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ms-stopbits-cco">停止位</label>
+            <select id="ms-stopbits-cco" style="width:70px">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+            </select>
+          </div>
           <button class="text-button ms-refresh" data-channel="cco" type="button">刷新端口</button>
           <button class="primary-button ms-toggle" data-channel="cco" type="button">启动</button>
         </div>
@@ -317,6 +343,32 @@
               <option value="230400">230400</option>
               <option value="460800">460800</option>
               <option value="921600">921600</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ms-parity-sta">校验位</label>
+            <select id="ms-parity-sta" style="width:90px">
+              <option value="N" selected>无(N)</option>
+              <option value="E">偶(E)</option>
+              <option value="O">奇(O)</option>
+              <option value="M">标记(M)</option>
+              <option value="S">空格(S)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ms-bytesize-sta">数据位</label>
+            <select id="ms-bytesize-sta" style="width:70px">
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+              <option value="8" selected>8</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="ms-stopbits-sta">停止位</label>
+            <select id="ms-stopbits-sta" style="width:70px">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
             </select>
           </div>
           <button class="text-button ms-refresh" data-channel="sta" type="button">刷新端口</button>
@@ -489,6 +541,32 @@
               <option value="57600">57600</option>
               <option value="115200" selected>115200</option>
               <option value="230400">230400</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="simcon-parity">校验位</label>
+            <select id="simcon-parity" style="width:90px">
+              <option value="N" selected>无(N)</option>
+              <option value="E">偶(E)</option>
+              <option value="O">奇(O)</option>
+              <option value="M">标记(M)</option>
+              <option value="S">空格(S)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="simcon-bytesize">数据位</label>
+            <select id="simcon-bytesize" style="width:70px">
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+              <option value="8" selected>8</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="simcon-stopbits">停止位</label>
+            <select id="simcon-stopbits" style="width:70px">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
             </select>
           </div>
           <button id="simcon-open" class="primary-button" type="button">打开串口</button>

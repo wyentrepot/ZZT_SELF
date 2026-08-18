@@ -55,6 +55,9 @@ const elements = {
   serialPort: $("#serial-port"),
   serialPortList: $("#serial-port-list"),
   serialBaud: $("#serial-baud"),
+  serialBytesize: $("#serial-bytesize"),
+  serialParity: $("#serial-parity"),
+  serialStopbits: $("#serial-stopbits"),
   serialStart: $("#serial-start"),
   serialStop: $("#serial-stop"),
   serialRefresh: $("#serial-refresh"),
@@ -1312,15 +1315,18 @@ function stopSerialPolling() {
 async function startSerial() {
   const port = elements.serialPort.value.trim() || "COM19";
   const baud = Number(elements.serialBaud.value) || 115200;
+  const bytesize = Number(elements.serialBytesize.value) || 8;
+  const parity = elements.serialParity.value || "N";
+  const stopbits = Number(elements.serialStopbits.value) || 1;
   elements.serialStart.disabled = true;
   elements.serialMessage.textContent = `正在打开 ${port} ...`;
   try {
     await request("/api/serial/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ port, baudrate: baud }),
+      body: JSON.stringify({ port, baudrate: baud, bytesize, parity, stopbits }),
     });
-    elements.serialMessage.textContent = `正在监听 ${port} (${baud}, N, 8, 1)`;
+    elements.serialMessage.textContent = `正在监听 ${port} (${baud}, ${parity}, ${bytesize}, ${stopbits})`;
     elements.serialRefresh.disabled = false;
     startSerialPolling();
   } catch (error) {

@@ -59,12 +59,16 @@ def list_serial_ports() -> list:
 class SerialIO:
     """独占串口通道：读线程切帧入队 + 写锁发送。"""
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.2,
+                 bytesize: int = 8, parity: str = "N", stopbits: int = 1):
         if not _SERIAL_AVAILABLE:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.bytesize = bytesize
+        self.parity = parity
+        self.stopbits = stopbits
         self._ser = None
         self._read_stop = threading.Event()
         self._read_thread: Optional[threading.Thread] = None
@@ -75,13 +79,23 @@ class SerialIO:
         self._open = False
 
     # -- 生命周期 -------------------------------------------------------
+    # 字符参数 → pyserial 常量映射
+    _PARITY_MAP = {"N": serial.PARITY_NONE, "E": serial.PARITY_EVEN,
+                   "O": serial.PARITY_ODD, "M": serial.PARITY_MARK,
+                   "S": serial.PARITY_SPACE}
+    _BYTESIZE_MAP = {5: serial.FIVEBITS, 6: serial.SIXBITS,
+                     7: serial.SEVENBITS, 8: serial.EIGHTBITS}
+    _STOPBITS_MAP = {1: serial.STOPBITS_ONE, 2: serial.STOPBITS_TWO}
+
     def open(self) -> bool:
         if self._open:
             return True
         self._ser = serial.Serial(
             port=self.port, baudrate=self.baudrate,
-            bytesize=serial.EIGHTBITS, parity=serial.PARITY_EVEN,
-            stopbits=serial.STOPBITS_ONE, timeout=self.timeout,
+            bytesize=self._BYTESIZE_MAP.get(self.bytesize, serial.EIGHTBITS),
+            parity=self._PARITY_MAP.get(self.parity.upper(), serial.PARITY_NONE),
+            stopbits=self._STOPBITS_MAP.get(self.stopbits, serial.STOPBITS_ONE),
+            timeout=self.timeout,
         )
         self._open = True
         self._read_stop.clear()
