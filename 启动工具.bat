@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title 侦听台 / 模块日志 启动器
+title 侦听台 / 模块日志 / AI 工作台 启动器
 
 echo.
 echo  侦听台改造 启动器
@@ -11,14 +11,16 @@ echo    2 = 模块日志本地软件（源码直跑，内嵌窗口）
 echo    3 = 全部启动（8765 + 8766）
 echo    4 = 模块日志本地软件（内嵌窗口 exe）
 echo    5 = 侦听台本地软件（内嵌窗口 exe）
+echo    6 = AI 工作台（网页版，端口 8790）
 echo.
 set "HPLC_CHOICE="
-set /p "HPLC_CHOICE=请输入 1 / 2 / 3 / 4 / 5 后回车: "
+set /p "HPLC_CHOICE=请输入 1 / 2 / 3 / 4 / 5 / 6 后回车: "
 if /i "%HPLC_CHOICE%"=="1" goto :listener
 if /i "%HPLC_CHOICE%"=="2" goto :module
 if /i "%HPLC_CHOICE%"=="3" goto :both
 if /i "%HPLC_CHOICE%"=="4" goto :module_desktop
 if /i "%HPLC_CHOICE%"=="5" goto :listener_desktop
+if /i "%HPLC_CHOICE%"=="6" goto :workbench
 echo 输入无效，默认启动侦听台(1)。
 set "HPLC_CHOICE=1"
 goto :listener
@@ -52,6 +54,10 @@ echo.
 echo [START] 启动侦听台本地软件（内嵌窗口）...
 start "" "%~dp0dist\侦听台桌面\侦听台桌面.exe"
 exit /b 0
+
+:workbench
+call "%~dp0apps\workbench\启动工作台.bat"
+exit /b %errorlevel%
 
 :both
 echo.
