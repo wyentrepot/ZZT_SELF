@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 import uuid
 from datetime import datetime
@@ -31,11 +32,13 @@ from .evidence import (
 )
 from .feedback import build_feedback
 from .models import (
+    ArtifactInfo,
     Assertion,
     FlowCompare,
     Report,
     Run,
     RunInput,
+    RunStatus,
     RunStep,
     SourcesSummary,
 )
@@ -45,6 +48,74 @@ from .store import RunStore
 
 def new_run_id() -> str:
     return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
+
+
+def _sha256_of_file(path: Path) -> str:
+    """计算文件 SHA-256（D-03 Artifact 审计链：内容摘要）。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _build_artifacts(run_id: str, files: List[str], report_path: Optional[Path] = None) -> List[ArtifactInfo]:
+    """为 Run 的产物生成结构化 Artifact 清单（D-03 审计链）。
+
+    每个产物：计算 SHA-256、逻辑 Artifact ID（<run_id>-art-<N>）、类型与真实路径。
+    文件缺失/不可读时仍登记（sha256 为空串），保持 manifest 完整可审计。
+    """
+    artifacts: List[ArtifactInfo] = []
+    seen: set = set()
+
+    def _add(path: Path, type_: str) -> None:
+        real = path.resolve()
+        key = str(real)
+        if key in seen or not path.exists():
+            return
+        seen.add(key)
+        try:
+            sha = _sha256_of_file(path)
+            size = path.stat().st_size
+        except OSError:
+            sha, size = "", 0
+        artifacts.append(
+            ArtifactInfo(
+                id=f"{run_id}-art-{len(artifacts) + 1}",
+                run_id=run_id,
+                type=type_,
+                name=path.name,
+                sha256=sha,
+                path=str(real),
+                size=size,
+            )
+        )
+
+    for f in files:
+        _add(Path(f), "log")
+    if report_path is not None:
+        _add(Path(report_path), "report")
+    return artifacts
+
+
+def _verdict_inconclusive_reasons(run_input: RunInput, scan: Dict[str, Any], simcon: Optional[dict],
+                                  listener_frames: List[Any]) -> List[str]:
+    """D-02 必要来源缺失判定：执行后证据缺失（非用户主动跳过）→ inconclusive。
+
+    返回缺失原因列表；空列表表示无缺失（可正常 pass/fail）。
+    - monitor：未跳过但扫描无事件（核心日志证据缺失）
+    - stimulus：未跳过但无执行结果（无任务/无串口导致，必要刺激证据缺失）
+    - listener：显式期望 listener（传了 listener_index）但无帧（侦听台未采集到）
+    用户主动 skip_* 的源不算缺失（降级运行模式，现有兼容行为保持不变）。
+    """
+    reasons: List[str] = []
+    if not run_input.skip_monitor and not scan.get("events"):
+        reasons.append("monitor 事件缺失")
+    if not run_input.skip_stimulus and not (simcon and simcon.get("summary")):
+        reasons.append("stimulus 执行结果缺失")
+    if run_input.extras.get("listener_index") and not listener_frames:
+        reasons.append("listener 帧缺失")
+    return reasons
 
 
 class RunCancelled(Exception):
@@ -193,15 +264,20 @@ class RunExecutor:
 
         try:
             report = self._run_steps(run, run_input, scenario)
-            run.status = "passed" if report.verdict == "pass" else "failed"
+            if report.verdict == "pass":
+                run.status = RunStatus.PASSED
+            elif report.verdict == "inconclusive":
+                run.status = RunStatus.INCONCLUSIVE
+            else:
+                run.status = RunStatus.FAILED
         except RunCancelled:
-            run.status = "cancelled"
+            run.status = RunStatus.CANCELLED
             report = Report(run_id=run.run_id, verdict="fail")
             report.assertions.append(
                 Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
             )
         except Exception as exc:
-            run.status = "failed"
+            run.status = RunStatus.FAILED
             report = Report(run_id=run.run_id, verdict="fail")
             report.assertions.append(
                 Assertion(id="run.execute", actual=str(exc), result="fail")
@@ -228,7 +304,7 @@ class RunExecutor:
         )
         self.store.create_run(run)
         self.store.update_status(run.run_id, "running")
-        run.status = "running"
+        run.status = RunStatus.RUNNING
 
         cancel_event = threading.Event()
         with self._lock:
@@ -237,7 +313,12 @@ class RunExecutor:
         def _target() -> None:
             try:
                 report = self._run_steps(run, run_input, scenario, cancel_event=cancel_event)
-                status = "passed" if report.verdict == "pass" else "failed"
+                if report.verdict == "pass":
+                    status = "passed"
+                elif report.verdict == "inconclusive":
+                    status = "inconclusive"
+                else:
+                    status = "failed"
                 if cancel_event.is_set():
                     status = "cancelled"
             except RunCancelled:
@@ -431,12 +512,36 @@ class RunExecutor:
         run.steps.append(step)
 
         # 6. report 聚合
+        # D-02 verdict 三态判定：
+        #   明确失败证据（simcon 失败）→ fail（真实失败，优先于证据缺失）
+        #   否则必要来源证据缺失（monitor 无事件等）→ inconclusive
+        #   否则期望流程未满足（compare missing，有证据但缺期望）→ fail
+        #   否则 → pass
         verdict = "pass"
+        inconclusive_reasons = _verdict_inconclusive_reasons(
+            run_input, scan, simcon, listener_frames
+        )
+        simcon_fail = bool(simcon and simcon["summary"]["verdict"] != "pass")
+        if simcon_fail:
+            verdict = "fail"
+        elif inconclusive_reasons:
+            verdict = "inconclusive"
+        elif compare.missing or compare.timeouts or compare.negated or compare.out_of_order:
+            verdict = "fail"
+
         assertions: List[Assertion] = []
-        if compare.missing or compare.timeouts or compare.negated or compare.out_of_order:
-            verdict = "fail"
-        if simcon and simcon["summary"]["verdict"] != "pass":
-            verdict = "fail"
+
+        # D-02：必要来源缺失登记为 inconclusive 断言（证据链可追溯）
+        if verdict == "inconclusive":
+            for reason in _verdict_inconclusive_reasons(run_input, scan, simcon, listener_frames):
+                assertions.append(
+                    Assertion(
+                        id="source.missing",
+                        expected="必要来源证据齐全",
+                        actual=reason,
+                        result="inconclusive",
+                    )
+                )
 
         # 断言列表：比对差异映射为断言
         for step_cfg in scenario.get("expected_flow", []):
@@ -485,7 +590,7 @@ class RunExecutor:
             flow_compare=compare,
             feedback=feedback,
             verdict=verdict,
-            artifacts=scan["files"],
+            artifacts=_build_artifacts(run.run_id, scan["files"]),
             evidence_index=evidence_index(evidence_store),
             evidence_detail=evidence_detail(evidence_store),
             evidence_frozen=evidence_store.frozen,

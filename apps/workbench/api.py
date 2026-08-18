@@ -92,6 +92,43 @@ async def get_report(run_id: str):
     return report
 
 
+@router.get("/run/{run_id}/artifacts")
+async def list_artifacts(run_id: str):
+    """列出 Run 的 Artifact manifest（D-03 审计链：结构化清单）。"""
+    report = _store().get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"报告不存在：{run_id}")
+    return report.get("artifacts") or []
+
+
+@router.get("/run/{run_id}/artifacts/{artifact_id}")
+async def download_artifact(run_id: str, artifact_id: str):
+    """按逻辑 Artifact ID 下载产物（D-03：路径越界防护，对外只暴露逻辑 ID）。
+
+    - 未登记的逻辑 ID → 404
+    - 真实路径不存在/为目录 → 404（ArtifactPathUnsafe）
+    """
+    from fastapi.responses import FileResponse
+
+    from .orchestration.artifacts import (
+        ArtifactPathUnsafe,
+        find_artifact,
+        resolve_artifact_path,
+    )
+
+    report = _store().get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"报告不存在：{run_id}")
+    item = find_artifact(report, artifact_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"Artifact 不存在：{artifact_id}")
+    try:
+        path = resolve_artifact_path(item)
+    except ArtifactPathUnsafe as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(str(path), filename=item.get("name") or path.name)
+
+
 @router.get("/runs")
 async def list_runs(limit: int = Query(50, ge=1, le=200)):
     return _store().list_runs(limit)

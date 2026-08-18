@@ -219,7 +219,8 @@ tr:hover td {
       api("/api/run/" + runId)
         .then(function (run) {
           const terminal = run.status === "passed" || run.status === "failed" ||
-                           run.status === "cancelled" || run.status === "error";
+                           run.status === "cancelled" || run.status === "error" ||
+                           run.status === "inconclusive";
           if (!terminal) {
             // 运行中：显示「取消 Run」按钮 + 当前状态
             $("run-result").innerHTML =
@@ -237,9 +238,11 @@ tr:hover td {
           }
           // 终态：渲染结果 + 证据
           $("wb-badge").textContent = run.status === "passed" ? "PASS" :
-            (run.status === "cancelled" ? "取消" : "FAIL");
+            (run.status === "cancelled" ? "取消" :
+             (run.status === "inconclusive" ? "不确定" : "FAIL"));
           $("wb-badge").className = "badge " + (run.status === "passed" ? "pass" :
-            (run.status === "cancelled" ? "run" : "fail"));
+            (run.status === "cancelled" ? "run" :
+             (run.status === "inconclusive" ? "inconclusive" : "fail")));
           renderRun(run);
           loadHistory();
         })
@@ -271,7 +274,7 @@ tr:hover td {
     }).join("<br>");
     $("run-result").innerHTML =
       '<div style="margin-bottom:var(--sp-2)">run_id: <b>' + run.run_id + '</b> &nbsp; 状态: <span class="badge ' +
-      (run.status === "passed" ? "pass" : "fail") + '">' + run.status + '</span></div>' +
+      (run.status === "passed" ? "pass" : (run.status === "inconclusive" ? "inconclusive" : "fail")) + '">' + run.status + '</span></div>' +
       '<div style="margin-bottom:var(--sp-2)">' + steps + '</div>' +
       '<div class="row"><a href="/api/run/' + run.run_id + '/report" target="_blank">查看报告 JSON</a></div>' +
       '<div id="ev-panel"></div>';
@@ -341,7 +344,7 @@ tr:hover td {
       let html = "<table><tr><th>run_id</th><th>场景</th><th>状态</th><th>固件</th><th>时间</th></tr>";
       list.forEach(function (r) {
         html += "<tr><td>" + r.run_id + "</td><td>" + r.scenario_id + "</td><td>" +
-          '<span class="badge ' + (r.status === "passed" ? "pass" : "fail") + '">' + r.status + "</span></td><td>" +
+          '<span class="badge ' + (r.status === "passed" ? "pass" : (r.status === "inconclusive" ? "inconclusive" : "fail")) + '">' + r.status + "</span></td><td>" +
           (r.firmware_ver || "") + "</td><td>" + (r.created_at || "").slice(0, 19) + "</td></tr>";
       });
       $("run-history").innerHTML = html + "</table>";
@@ -356,12 +359,15 @@ tr:hover td {
       const last = list[0];
       currentRunId = last.run_id;
       const terminal = last.status === "passed" || last.status === "failed" ||
-                       last.status === "cancelled" || last.status === "error";
+                       last.status === "cancelled" || last.status === "error" ||
+                       last.status === "inconclusive";
       if (terminal) {
         $("wb-badge").textContent = last.status === "passed" ? "PASS" :
-          (last.status === "cancelled" ? "取消" : "FAIL");
+          (last.status === "cancelled" ? "取消" :
+           (last.status === "inconclusive" ? "不确定" : "FAIL"));
         $("wb-badge").className = "badge " + (last.status === "passed" ? "pass" :
-          (last.status === "cancelled" ? "run" : "fail"));
+          (last.status === "cancelled" ? "run" :
+           (last.status === "inconclusive" ? "inconclusive" : "fail")));
         api("/api/run/" + last.run_id).then(function (run) { renderRun(run); })
           .catch(function () { });
       } else {
