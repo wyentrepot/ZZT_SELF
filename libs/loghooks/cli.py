@@ -148,6 +148,30 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# watch（持续监听）
+# ---------------------------------------------------------------------------
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """loghooks watch：tail 监听日志文件，持续匹配，命中/超时返回 JSON。"""
+    from .watcher import watch
+
+    result = watch(
+        log_paths=list(args.log),
+        pattern=args.pattern,
+        timeout=args.timeout,
+        poll_interval=args.poll,
+    )
+    text = json.dumps(result, ensure_ascii=False, indent=2)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"已写入: {args.out}")
+    else:
+        print(text)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # rules diff 子命令
 # ---------------------------------------------------------------------------
 
@@ -259,6 +283,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_scan.add_argument("--format", choices=["json", "table"], default="json")
     p_scan.add_argument("--out", default=None, help="输出到文件")
     p_scan.set_defaults(func=cmd_scan)
+
+    # watch（持续监听）
+    p_watch = sub.add_parser("watch", help="持续监听日志文件（tail + 引擎）")
+    p_watch.add_argument("log", nargs="+", help="日志文件路径（可多个）")
+    p_watch.add_argument("--pattern", default=None,
+                         help="自定义断言正则；命中后提前返回")
+    p_watch.add_argument("--timeout", type=float, default=60.0,
+                         help="监听时长上限（秒，默认 60）")
+    p_watch.add_argument("--poll", type=float, default=0.1,
+                         help="文件轮询间隔（秒，默认 0.1）")
+    p_watch.add_argument("--out", default=None, help="输出到文件")
+    p_watch.set_defaults(func=cmd_watch)
 
     # rules diff
     p_diff = sub.add_parser("rules", help="规则工具")
