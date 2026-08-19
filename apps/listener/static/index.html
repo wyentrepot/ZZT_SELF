@@ -102,10 +102,12 @@
           <div class="serial-controls">
             <label class="path-field serial-port-field">
               <span>串口</span>
-              <input id="serial-port" type="text" value="COM19" autocomplete="off"
-                list="serial-port-list" placeholder="COM19">
+              <select id="serial-port" class="serial-port-select" aria-label="选择串口">
+                <option value="">正在枚举串口…</option>
+              </select>
             </label>
-            <datalist id="serial-port-list"></datalist>
+            <button id="serial-port-refresh" class="secondary-button"
+              type="button" title="重新枚举串口">刷新</button>
             <label class="path-field serial-baud-field">
               <span>波特率</span>
               <input id="serial-baud" type="number" value="115200" min="300" max="921600" step="1">

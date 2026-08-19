@@ -1049,6 +1049,23 @@ tbody tr.selected td { color: #e5eff6; }
   gap: 12px;
 }
 .serial-port-field { flex: 0 0 140px; }
+.serial-port-select {
+  width: 100%;
+  height: 36px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--ink);
+  background: #09131d;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+}
+.serial-port-select:focus {
+  border-color: #3d8fd1;
+  box-shadow: 0 0 0 2px rgba(61, 143, 209, 0.18);
+}
+.serial-port-refresh-btn { white-space: nowrap; }
 .serial-baud-field { flex: 0 0 130px; }
 .serial-params {
   font-size: 11px;
