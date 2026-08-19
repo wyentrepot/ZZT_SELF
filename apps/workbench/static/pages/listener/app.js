@@ -53,7 +53,7 @@ const elements = {
   detailApp: $("#detail-app"),
   appExpandContent: $("#app-expand-content"),
   serialPort: $("#serial-port"),
-  serialPortList: $("#serial-port-list"),
+  serialPortRefresh: $("#serial-port-refresh"),
   serialBaud: $("#serial-baud"),
   serialBytesize: $("#serial-bytesize"),
   serialParity: $("#serial-parity"),
@@ -1227,20 +1227,37 @@ loadMinuteTaskList();
 // ---------- 串口实时采集 ----------
 
 async function loadSerialPorts() {
+  const current = elements.serialPort.value;
   try {
     const data = await request("/api/listener/serial/ports");
     const ports = (data.ports || []).map((p) => p.device);
-    elements.serialPortList.replaceChildren();
+    elements.serialPort.replaceChildren();
+    if (!ports.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "未发现可用串口";
+      elements.serialPort.append(option);
+      return;
+    }
     ports.forEach((device) => {
       const option = document.createElement("option");
       option.value = device;
-      elements.serialPortList.append(option);
+      option.textContent = device;
+      elements.serialPort.append(option);
     });
-    if (ports.length && !ports.includes(elements.serialPort.value)) {
+    // 当前选择仍在枚举结果中则保留，否则自动选第一个实际存在的串口
+    if (ports.includes(current)) {
+      elements.serialPort.value = current;
+    } else {
       elements.serialPort.value = ports[0];
     }
   } catch (error) {
-    // 列表加载失败不阻塞使用，串口可在输入框手动填写
+    // 列表加载失败：保留一个占位选项，不阻塞使用
+    elements.serialPort.replaceChildren();
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "串口列表加载失败";
+    elements.serialPort.append(option);
   }
 }
 
@@ -1349,6 +1366,7 @@ async function stopSerial() {
 
 elements.serialStart.addEventListener("click", startSerial);
 elements.serialStop.addEventListener("click", stopSerial);
+elements.serialPortRefresh.addEventListener("click", loadSerialPorts);
 elements.serialRefresh.addEventListener("click", () => {
   // 手动刷新：清缓存后重新加载当前页，供深翻页/筛选中使用
   state.pageCache.clear();

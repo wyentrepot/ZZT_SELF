@@ -254,13 +254,14 @@ class LogFileService:
                 summary_json = None
                 parse_error = None
                 simple = {}
-                try:
-                    parsed = self.parser.parse_summary(record.hex_frame)
-                    simple = parsed.get("simple", {})
-                    summary_json = json.dumps(simple, ensure_ascii=False)
-                except Exception as exc:
-                    error_count += 1
-                    parse_error = str(exc)
+                if self.parser is not None:
+                    try:
+                        parsed = self.parser.parse_summary(record.hex_frame)
+                        simple = parsed.get("simple", {})
+                        summary_json = json.dumps(simple, ensure_ascii=False)
+                    except Exception as exc:
+                        error_count += 1
+                        parse_error = str(exc)
 
                 cursor = connection.execute(
                     insert_sql,
@@ -1152,6 +1153,8 @@ class LogFileService:
             raise KeyError(frame_id)
 
         try:
+            if self.parser is None:
+                raise RuntimeError("解析库不可用（当前环境未提供 GwHPLCAnalysis.dll）")
             analysis = self.parser.parse(row["raw_hex"])
         except Exception as exc:
             # 详情解析失败时保留原始帧数据，返回错误信息而非抛异常
@@ -1219,12 +1222,13 @@ class LogFileService:
                 simple = {}
                 summary_json = None
                 parse_error = None
-                try:
-                    parsed = self.parser.parse_summary(hex_frame)
-                    simple = parsed.get("simple", {})
-                    summary_json = json.dumps(simple, ensure_ascii=False)
-                except Exception as exc:
-                    parse_error = str(exc)
+                if self.parser is not None:
+                    try:
+                        parsed = self.parser.parse_summary(hex_frame)
+                        simple = parsed.get("simple", {})
+                        summary_json = json.dumps(simple, ensure_ascii=False)
+                    except Exception as exc:
+                        parse_error = str(exc)
 
                 cursor = connection.execute(
                     insert_sql,

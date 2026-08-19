@@ -69,6 +69,47 @@ def _default_dll() -> Path:
 BASE_DIR = _base_dir()
 STATIC_DIR = BASE_DIR / "static"
 DEFAULT_DLL = _default_dll()
+DEFAULT_SERIAL_PORT = "COM19"
+
+
+def _build_parser_service():
+    """构造解析服务；DLL 缺失/环境不兼容（如 WSL）时降级为 None。
+
+    - 非 Windows（WSL/Linux/macOS）：.NET Framework 解析链不可用，直接降级。
+      不能在此处 import clr：pythonnet + 系统旧版 mono 会触发原生 SIGABRT
+      崩溃（try/except 无法捕获），导致整个 uvicorn 进程被杀。
+    - Windows 下 DLL 缺失/加载失败：捕获异常返回 None。
+
+    降级后仅 DLL 相关路由（/api/parse、/api/version 的解析部分）不可用，
+    串口实时采集与日志索引功能照常工作（帧仍入库，只是不做深度解析）。
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        return ParserService(DotNetHplcParser(DEFAULT_DLL))
+    except Exception:
+        return None
+
+
+def _list_serial_devices():
+    """枚举本机串口设备名（优先真实存在的设备，WSL 下为 /dev/ttyUSB*）。"""
+    try:
+        from serial.tools import list_ports
+
+        return [p.device for p in list_ports.comports()]
+    except Exception:
+        return []
+
+
+def _default_serial_port():
+    """默认串口：优先取第一个存在的 USB 串口，否则回退常量。"""
+    devices = _list_serial_devices()
+    if devices:
+        for dev in devices:
+            if "USB" in dev or dev.startswith("/dev/ttyUSB") or dev.startswith("/dev/ttyACM"):
+                return dev
+        return devices[0]
+    return DEFAULT_SERIAL_PORT
 DEFAULT_INDEX = _runtime_dir() / "log_index.sqlite3"
 LAST_PATH_FILE = _runtime_dir() / "last_path.txt"
 
@@ -161,16 +202,29 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
 
     @app.get("/api/version")
     def version():
-        return {
-            **service.version(),
+        base = {
             "picker_api_revision": 2,
             "minute_analysis_api_revision": 3,
             "frame_filter_api_revision": 2,
             "serial_api_revision": 1,
         }
+        if service is None:
+            base["dll_available"] = False
+            base["name"] = "侦听台"
+            base["version"] = "0.1.0"
+            base["date"] = ""
+            return base
+        base["dll_available"] = True
+        base.update(service.version())
+        return base
 
     @app.post("/api/parse")
     def parse(request: ParseRequest):
+        if service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="协议解析库不可用（当前环境未提供 GwHPLCAnalysis.dll，串口采集不受影响）",
+            )
         try:
             return service.parse(request.hex)
         except FrameValidationError as exc:
@@ -436,7 +490,12 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
 
 
 # ---------- 模块级装配（供 uvicorn / 测试引用 module-level `app`）----------
-parser_service = ParserService(DotNetHplcParser(DEFAULT_DLL))
+# DLL 缺失（WSL 等环境）时 parser_service 降级为 None，串口/日志功能不受影响。
+parser_service = _build_parser_service()
 log_file_service = LogFileService(parser_service, DEFAULT_INDEX)
-serial_capture_service = SerialCaptureService(log_file_service, port="COM19", log_dir=_log_dir() / "侦听台")
+serial_capture_service = SerialCaptureService(
+    log_file_service,
+    port=_default_serial_port(),
+    log_dir=_log_dir() / "侦听台",
+)
 app = create_app(parser_service, log_file_service, serial_capture_service)
