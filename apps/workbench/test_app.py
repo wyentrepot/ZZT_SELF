@@ -272,3 +272,52 @@ def test_static_all_pages_served(client):
     for p in pages:
         r = client.get(p)
         assert r.status_code == 200, f"{p} 应 200，实际 {r.status_code}"
+
+def test_shell_keeps_lazy_iframes_instead_of_reassigning_one_frame():
+    static = Path(__file__).resolve().parent / "static"
+    html = (static / "index.html").read_text(encoding="utf-8")
+    js = (static / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="wb-panels"' in html
+    assert 'id="wb-frame"' not in html
+    assert "framesByPage" in js
+    assert "ensureFrame" in js
+    # 仅在 ensureFrame 首次创建时赋 src；切页函数不能重设已存在页面。
+    assert js.count("frame.src = page.src") == 1
+    switch_body = js.split("function switchTab(id)", 1)[1].split("const THEMES", 1)[0]
+    assert "frame.src = page.src" not in switch_body
+
+
+class _RegistryAwareSerialService:
+    def __init__(self):
+        self.registry = None
+
+    def set_resource_registry(self, registry):
+        self.registry = registry
+
+
+def test_workbench_injects_one_registry_into_listener_and_module_services(tmp_path):
+    from fastapi import FastAPI
+
+    module_service = _RegistryAwareSerialService()
+    listener_service = _RegistryAwareSerialService()
+
+    def module_factory():
+        app = FastAPI()
+        app.state.module_serial_service = module_service
+        return app
+
+    def listener_factory():
+        app = FastAPI()
+        app.state.serial_service = listener_service
+        app.state.log_service = object()
+        return app
+
+    app = create_workbench_app(
+        module_log_factory=module_factory,
+        listener_factory=listener_factory,
+        ai_storage_dir=tmp_path / "ai-control",
+    )
+
+    assert app.state.serial_resource_registry is module_service.registry
+    assert module_service.registry is listener_service.registry
