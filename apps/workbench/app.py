@@ -17,6 +17,7 @@ listener 依赖 C# DLL/pythonnet，惰性导入 + 挂载失败降级（页签显
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -104,6 +105,10 @@ def create_workbench_app(
     listener_factory=None,
     module_log_factory=None,
     mount_listener: bool = True,
+    ai_control_service=None,
+    ai_auth_store=None,
+    ai_admin_key: str | None = None,
+    ai_storage_dir: Path | str | None = None,
 ) -> FastAPI:
     """创建统一工作台应用。
 
@@ -114,11 +119,19 @@ def create_workbench_app(
         description="统一集成程序：侦听台 / 模块日志 / 模拟集中器 / 验证工作台",
         version="0.1.0",
     )
+    # 统一工作台内的所有后端串口服务使用同一资源登记表。UI/AI 不持有
+    # 物理句柄，只读取这些服务暴露的状态、日志和索引。
+    from shared.serial_resources import SerialResourceRegistry
+
+    app.state.serial_resource_registry = SerialResourceRegistry()
 
     # D-04 统一错误响应（code/message/details/request_id + 兼容 detail）
     from .errors import register_error_handlers
 
     register_error_handlers(app)
+
+    _ml_sub = None
+    _listener_sub = None
 
     # ---- 1. 挂载 module_log（含内部 simcon 子应用）----
     try:
@@ -127,8 +140,21 @@ def create_workbench_app(
 
             _prepare_subapp_static(_ml_mod)
             module_log_factory = _ml_mod.create_app
-        _ml_sub = module_log_factory()
+            _ml_sub = module_log_factory(
+                resource_registry=app.state.serial_resource_registry,
+            )
+        else:
+            _ml_sub = module_log_factory()
         _mount_proxied(app, "module-serial", _ml_sub, "/api/module-serial")
+        app.state.module_serial_service = getattr(
+            getattr(_ml_sub, "state", None), "module_serial_service", None,
+        )
+        module_service = app.state.module_serial_service
+        set_registry = getattr(module_service, "set_resource_registry", None)
+        if callable(set_registry):
+            set_registry(app.state.serial_resource_registry)
+        if getattr(_ml_sub, "state", None) is not None:
+            _ml_sub.state.serial_resource_registry = app.state.serial_resource_registry
         app.state.module_log_mounted = True
     except Exception as exc:  # pragma: no cover - 依赖缺失降级
         app.state.module_log_mounted = False
@@ -148,7 +174,20 @@ def create_workbench_app(
                 )
             else:
                 _sub = listener_factory()
+            _listener_sub = _sub
             _mount_proxied(app, "listener", _sub, "/api/listener")
+            app.state.listener_service = getattr(
+                getattr(_sub, "state", None), "serial_service", None,
+            )
+            listener_service = app.state.listener_service
+            set_registry = getattr(listener_service, "set_resource_registry", None)
+            if callable(set_registry):
+                set_registry(app.state.serial_resource_registry)
+            if getattr(_sub, "state", None) is not None:
+                _sub.state.serial_resource_registry = app.state.serial_resource_registry
+            app.state.listener_log_service = getattr(
+                getattr(_sub, "state", None), "log_service", None,
+            )
             app.state.listener_mounted = True
         except Exception as exc:  # pragma: no cover
             app.state.listener_mounted = False
@@ -156,7 +195,35 @@ def create_workbench_app(
     else:
         app.state.listener_mounted = False
 
-    # ---- 3. 编排路由 ----
+    # ---- 3. AI 控制面：仅复用已挂载的后端服务，不经 HTTP 回调 ----
+    from .ai_api import create_ai_router
+    from .ai_auth import AuthorizationStore
+    from .ai_operations import AIControlService
+    from .ai_store import OperationStore
+
+    configured_storage_dir = ai_storage_dir or os.environ.get("WORKBENCH_AI_STORAGE_DIR")
+    storage_dir = Path(configured_storage_dir) if configured_storage_dir else (
+        (Path(sys.executable).resolve().parent / "runtime" / "ai-control")
+        if getattr(sys, "frozen", False)
+        else (Path(__file__).resolve().parent / "runtime" / "ai-control")
+    )
+    app.state.ai_auth_store = ai_auth_store or AuthorizationStore(
+        storage_path=storage_dir / "grants.json",
+    )
+    app.state.ai_control_service = ai_control_service or AIControlService(
+        module_service=getattr(app.state, "module_serial_service", None),
+        listener_service=getattr(app.state, "listener_service", None),
+        log_service=getattr(app.state, "listener_log_service", None),
+        resource_registry=app.state.serial_resource_registry,
+        store=OperationStore(storage_path=storage_dir / "operations.json"),
+    )
+    app.state.ai_admin_key_configured = bool(ai_admin_key or os.environ.get("WORKBENCH_AI_ADMIN_KEY"))
+    app.include_router(create_ai_router(
+        app.state.ai_control_service, app.state.ai_auth_store,
+        admin_key=ai_admin_key or os.environ.get("WORKBENCH_AI_ADMIN_KEY"),
+    ))
+
+    # ---- 4. 编排路由 ----
     app.include_router(orchestration_router)
 
     # ---- 4. 静态外壳（页签式 SPA）----
