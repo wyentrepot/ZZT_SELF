@@ -33,6 +33,7 @@ def _stub_module_log_factory():
     app = FastAPI(title="stub-module-log")
 
     @app.get("/api/version")
+    @app.get("/api/module-serial/version")
     async def v():
         return {"app": "module-serial", "stub": True}
 

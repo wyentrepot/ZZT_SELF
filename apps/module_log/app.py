@@ -96,6 +96,15 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
             "channels": list(CHANNELS),
         }
 
+    # workbench 挂载时经代理透传，同一版本信息也暴露在 /api/module-serial/ 命名空间下
+    @app.get("/api/module-serial/version")
+    def module_serial_version():
+        return {
+            "app": "module-serial",
+            "module_serial_api_revision": 2,
+            "channels": list(CHANNELS),
+        }
+
     # ---- 模块串口 ----
     @app.get("/api/module-serial/ports")
     def module_serial_ports():
@@ -370,6 +379,7 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
 
     # ---- 固件选择（复用 shared.infra，仅 pick 选固件路径）----
     @app.get("/api/fs/roots")
+    @app.get("/api/module-serial/fs/roots")
     def fs_roots():
         drives = infra.windows_drives()
         if drives:
@@ -378,11 +388,13 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
         return {"roots": [{"name": home, "path": home}]}
 
     @app.get("/api/fs/list")
+    @app.get("/api/module-serial/fs/list")
     def fs_list(path: str = Query("", max_length=1024)):
         return infra.list_directory(path)
 
     # ---- loghooks 对照解析 ----
     @app.get("/api/loghooks/scan")
+    @app.get("/api/module-serial/loghooks/scan")
     def loghooks_scan(path: str = Query(..., max_length=2048),
                       module: str = Query("", pattern=r"^(cco|sta|)$"),
                       limit: int = Query(2000, ge=1, le=20000)):
@@ -395,6 +407,7 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
         return res
 
     @app.get("/api/loghooks/realtime")
+    @app.get("/api/module-serial/loghooks/realtime")
     def loghooks_realtime(
         session_id: str = Query("", max_length=128),
         channel: str = Query("cco", pattern=r"^(cco|sta)$"),
@@ -464,6 +477,7 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
 
 
     @app.get("/api/fs/pick")
+    @app.get("/api/module-serial/fs/pick")
     def fs_pick():
         if os.name != "nt":
             raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")

@@ -430,12 +430,14 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         return log_service.task_config_lifecycle_summary(cco_tei, task_no, nid, cycle_index)
 
     @app.get("/api/listener/indexes")
+    @app.get("/api/indexes")
     def listener_indexes():
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         return log_service.list_indexes()
 
     @app.get("/api/listener/indexes/{index_id}/frames")
+    @app.get("/api/indexes/{index_id}/frames")
     def listener_index_frames(
         index_id: str,
         offset: int = Query(0, ge=0),
@@ -465,6 +467,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/listener/indexes/{index_id}/frames/{frame_id}")
+    @app.get("/api/indexes/{index_id}/frames/{frame_id}")
     def listener_index_frame_detail(index_id: str, frame_id: int):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")

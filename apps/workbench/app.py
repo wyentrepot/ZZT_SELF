@@ -95,9 +95,14 @@ class _PrefixProxy:
         await self.sub_app(scope, receive, send)
 
 
-def _mount_proxied(app: FastAPI, name: str, sub_app, api_prefix: str) -> None:
-    """把子应用以 ASGI 前缀代理挂到 app（{api_prefix}/* → 子应用 /api/*）。"""
-    proxy = _PrefixProxy(sub_app, api_prefix, "/api")
+def _mount_proxied(app: FastAPI, name: str, sub_app, api_prefix: str, sub_root: str = "/api") -> None:
+    """把子应用以 ASGI 前缀代理挂到 app（{api_prefix}/* → 子应用 {sub_root}/*）。
+
+    sub_root 默认 "/api"：适用于子应用路由无业务前缀（如 listener 的 /api/*）。
+    对自带完整前缀的子应用（如 module_log 的 /api/module-serial/*），
+    传 sub_root=api_prefix 以透传，避免代理剥前缀导致 404。
+    """
+    proxy = _PrefixProxy(sub_app, api_prefix, sub_root)
     app.mount(api_prefix, proxy, name=f"proxy-{name}")
 
 
@@ -145,7 +150,7 @@ def create_workbench_app(
             )
         else:
             _ml_sub = module_log_factory()
-        _mount_proxied(app, "module-serial", _ml_sub, "/api/module-serial")
+        _mount_proxied(app, "module-serial", _ml_sub, "/api/module-serial", sub_root="/api/module-serial")
         app.state.module_serial_service = getattr(
             getattr(_ml_sub, "state", None), "module_serial_service", None,
         )
