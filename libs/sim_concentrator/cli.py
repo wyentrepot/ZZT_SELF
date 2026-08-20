@@ -1,7 +1,7 @@
 """模拟集中器验证工具 CLI。
 
 用法：
-    python -m sim_concentrator verify <task.json> [--port COM3] [--baud 115200]
+    python -m sim_concentrator verify <task.json> [--port COM24 | --mapping-id simcon] [--baud 9600]
     python -m sim_concentrator responders
     python -m sim_concentrator ports
 
@@ -30,6 +30,8 @@ def cmd_verify(args) -> int:
         return 1
     if args.port:
         task["port"] = args.port
+    if getattr(args, "mapping_id", None):
+        task["mapping_id"] = args.mapping_id
     if args.baud:
         task["baudrate"] = args.baud
 
@@ -103,7 +105,8 @@ def main(argv=None) -> int:
 
     p_verify = sub.add_parser("verify", help="执行验证任务 JSON")
     p_verify.add_argument("task", help="验证任务 JSON 文件路径")
-    p_verify.add_argument("--port", default=None, help="覆盖串口")
+    p_verify.add_argument("--port", default=None, help="覆盖串口（支持 COM 或 Linux 设备别名）")
+    p_verify.add_argument("--mapping-id", default=None, help="使用串口映射 ID，例如 simcon")
     p_verify.add_argument("--baud", type=int, default=None, help="覆盖波特率")
     p_verify.add_argument("--json", action="store_true", help="输出 JSON")
     p_verify.set_defaults(func=cmd_verify)
