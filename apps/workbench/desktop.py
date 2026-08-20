@@ -24,7 +24,8 @@ TITLE = "AI 闭环工作台"
 def _start_server() -> None:
     import uvicorn
 
-    uvicorn.run("workbench.app:app", host="127.0.0.1", port=PORT, log_level="warning")
+    # 0.0.0.0：开放局域网监听（ADR-28），本机仍可 127.0.0.1 访问；页面接口无鉴权，仅限可信局域网。
+    uvicorn.run("workbench.app:app", host="0.0.0.0", port=PORT, log_level="warning")
 
 
 def main() -> None:

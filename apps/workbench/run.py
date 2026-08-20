@@ -27,4 +27,5 @@ def _open() -> None:
 
 if __name__ == "__main__":
     Timer(1.0, _open).start()
-    uvicorn.run("workbench.app:app", host="127.0.0.1", port=PORT)
+    # 0.0.0.0：开放局域网监听（ADR-28），本机仍可 127.0.0.1 访问；页面接口无鉴权，仅限可信局域网。
+    uvicorn.run("workbench.app:app", host="0.0.0.0", port=PORT)

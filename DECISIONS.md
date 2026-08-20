@@ -33,6 +33,7 @@
 | 25 | 任务4剩余：restoreLastRun() 刷新恢复 + store 时间戳毫秒化（排序稳定）+ check_assets.py 打包静态完整性门禁（B-03 自动化部分）；真机 DLL 留 Windows | ✅ 生效 |
 | 26 | 任务4 B-03 真机打包验收完成（Windows）：PyInstaller 打包 dist/工作台/（含 C# DLL/scenarios/loghooks）+ smoke_test_workbench_packaged.py headless 冒烟 9/9；B-03 阻塞解除，任务4 完成 | ✅ 生效 |
 | 27 | 修复 module-serial 页「启动串口无反应」：删除对不存在元素 ms-refresh-speed 的绑定 + check_module_serial_ids.js 静态校验防回归 | ✅ 生效 |
+| 28 | workbench 开放 0.0.0.0 局域网监听（局域网内设备可访问工作台页与 AI 控制面）；已知风险：页面操作接口无鉴权 | ✅ 生效 |
 
 ---
 
@@ -552,4 +553,21 @@
   - **防回归**：新增 `tools/scripts/check_module_serial_ids.js`（Node 静态检查），比对 JS 全部 `$("id")` 引用与 HTML 的 `id` 属性，缺一即非零退出；独立版与 workbench 副本 76 个引用全部有对应元素。
 - **理由**：前端「点击启动无反应」是静默失败，无任何错误提示，排查难；根因是 HTML/JS 不同步的历史回归。
 - **影响**：修复后 `bind()` 完整执行，默认 session 自动创建，启动串口有正常反馈（按钮变停止 + 事件打印）。相关测试 `test_module_serial_frontend.py` + `test_app.py` = **24 passed** 无回归。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-28 workbench 开放 0.0.0.0 局域网监听
+
+- **日期**：2026-08-20
+- **状态**：✅ 生效
+- **决定**：
+  - workbench 监听地址由 `127.0.0.1` 改为 `0.0.0.0`（`apps/workbench/run.py`、`apps/workbench/desktop.py` 两处），使局域网内其他设备可访问工作台页面（`http://<本机IP>:8790/`）与 AI 控制面 `/api/ai/v1/*`。
+  - 前端全部使用相对路径（`/api/...`），不硬编码 IP，本机访问仍走 `127.0.0.1`，体验不受影响；workbench 已将 `/api/listener`、`/api/module-serial`、`/api/fs`、`/api/loghooks`、`/api/simcon` 全部代理进自身进程（ADR-18），局域网设备无需访问其他端口。
+  - AI 控制面 `/api/ai/v1/*` 维持 token 鉴权（能力接口只认 Bearer token；发授权 `/admin/grants` 仍仅限本机 127.0.0.1 + 密钥），不受开放影响。
+- **理由**：用户决定让局域网内其他设备（或 AI 客户端）通过本机 8790 使用工作台能力。
+- **影响**：
+  - **已知风险（已告知用户）**：workbench 的**页面操作接口**（`/api/module-serial/*`、`/api/listener/*`、`/api/fs/*` 等）**无鉴权**（仅有 AI 控制面 `/api/ai/v1/*` 有 token）。开放 0.0.0.0 后，局域网内任何设备可直接打开工作台页面操作真机串口/列文件。用户确认局域网环境可信，接受此风险。
+  - 若未来部署到不可信网络，需先为页面接口增加访问口令（HTTP Basic / token），再开放监听。
+  - 端口 8790 需在 Windows 防火墙放行，局域网设备方可连接。
 - **被取代**：无（新增决策）。
