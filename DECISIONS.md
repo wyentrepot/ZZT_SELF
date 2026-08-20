@@ -34,6 +34,7 @@
 | 26 | 任务4 B-03 真机打包验收完成（Windows）：PyInstaller 打包 dist/工作台/（含 C# DLL/scenarios/loghooks）+ smoke_test_workbench_packaged.py headless 冒烟 9/9；B-03 阻塞解除，任务4 完成 | ✅ 生效 |
 | 27 | 修复 module-serial 页「启动串口无反应」：删除对不存在元素 ms-refresh-speed 的绑定 + check_module_serial_ids.js 静态校验防回归 | ✅ 生效 |
 | 28 | workbench 开放 0.0.0.0 局域网监听（局域网内设备可访问工作台页与 AI 控制面）；已知风险：页面操作接口无鉴权 | ✅ 生效 |
+| 29 | 新增 `.agents/skills/ai-control-plane/` skill：AI 调用 AI 控制面 `/api/ai/v1` 的操作 playbook | ✅ 生效 |
 
 ---
 
@@ -570,4 +571,15 @@
   - **已知风险（已告知用户）**：workbench 的**页面操作接口**（`/api/module-serial/*`、`/api/listener/*`、`/api/fs/*` 等）**无鉴权**（仅有 AI 控制面 `/api/ai/v1/*` 有 token）。开放 0.0.0.0 后，局域网内任何设备可直接打开工作台页面操作真机串口/列文件。用户确认局域网环境可信，接受此风险。
   - 若未来部署到不可信网络，需先为页面接口增加访问口令（HTTP Basic / token），再开放监听。
   - 端口 8790 需在 Windows 防火墙放行，局域网设备方可连接。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-29 新增 `.agents/skills/ai-control-plane/` skill
+
+- **日期**：2026-08-21
+- **状态**：✅ 生效
+- **决定**：在项目级 skills 目录 `.agents/skills/` 下新增 `ai-control-plane/` skill（SKILL.md），作为 AI 调用 AI 控制面 `/api/ai/v1` 的**操作 playbook**：拿授权 token（人/密钥）→ 查状态 → 串口会话（ensure/send/stop）→ 烧录 → 观察+取证 → 侦听台控制与帧查询 → 推荐调用顺序 → 与前端关系 → 错误码速查。
+- **理由**：AI 需要通过 AI 控制面操作真机（cco/sta 串口、烧录、日志观察取证），但没有一份「AI 可直接执行的步骤说明书」；`docs/16-AI操作指南.md` 是给人看的完整文档，skill 是给 AI 的浓缩执行指引。位置沿用 ADR-19 的 `.agents/skills/` 约定，通用 agent 标准目录可加载。
+- **影响**：`.agents/skills/ai-control-plane/SKILL.md` 新增（194 行），frontmatter 含 `name/description/argument-hint/metadata`，13 章节；内容基于 2026-08-20 对全部 AI 工具的实测（授权/状态/审计/会话/发送/观察/取证/烧录校验/侦听台均正常）。不修改任何代码。
 - **被取代**：无（新增决策）。
