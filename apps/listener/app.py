@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from shared import infra
 from shared.dotnet_parser import DotNetHplcParser
 from shared.parser_service import FrameValidationError, ParserService
+from listener.index_registry import ListenerIndexRegistry
 from listener.log_service import LogFileService
 from listener.serial_service import SerialCaptureService
 
@@ -111,6 +112,7 @@ def _default_serial_port():
         return devices[0]
     return DEFAULT_SERIAL_PORT
 DEFAULT_INDEX = _runtime_dir() / "log_index.sqlite3"
+DEFAULT_INDEXES_DIR = _runtime_dir() / "indexes"
 LAST_PATH_FILE = _runtime_dir() / "last_path.txt"
 
 
@@ -194,6 +196,10 @@ class OpenLogRequest(BaseModel):
 
 def create_app(service: ParserService, log_service=None, serial_service=None) -> FastAPI:
     app = FastAPI(title="国网 HPLC 日志解析工具 - 侦听台")
+    # 统一工作台的 AI 控制面直接复用这些后端服务；不通过 HTTP 重开串口。
+    app.state.serial_service = serial_service
+    app.state.log_service = log_service
+    app.state.parser_service = service
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
@@ -423,6 +429,52 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             raise HTTPException(status_code=503, detail="日志服务未启用")
         return log_service.task_config_lifecycle_summary(cco_tei, task_no, nid, cycle_index)
 
+    @app.get("/api/listener/indexes")
+    def listener_indexes():
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        return log_service.list_indexes()
+
+    @app.get("/api/listener/indexes/{index_id}/frames")
+    def listener_index_frames(
+        index_id: str,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=500),
+        query: str = Query("", max_length=100),
+        nid: str = Query("", max_length=16, pattern=r"^[0-9A-Fa-f]{0,8}$"),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+        after_id: int | None = Query(None, ge=0),
+    ):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            return log_service.list_index_frames(
+                index_id,
+                offset=offset,
+                limit=limit,
+                query=query,
+                nid=nid,
+                start_time=start_time,
+                end_time=end_time,
+                after_id=after_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="找不到该索引") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/listener/indexes/{index_id}/frames/{frame_id}")
+    def listener_index_frame_detail(index_id: str, frame_id: int):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            return log_service.get_index_frame(index_id, frame_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="找不到该索引或帧") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"帧详情解析失败：{exc}") from exc
+
     @app.get("/api/logs/frames/{frame_id}")
     def log_frame_detail(frame_id: int):
         if log_service is None:
@@ -440,7 +492,13 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
     def serial_ports():
         if serial_service is None:
             raise HTTPException(status_code=503, detail="串口服务未启用")
-        return {"ports": serial_service.list_available_ports()}
+        port_details = serial_service.list_available_ports()
+        mapping_error = getattr(serial_service, "mapping_error", lambda: "")()
+        return {
+            "ports": port_details,
+            "port_details": port_details,
+            "mapping_error": mapping_error,
+        }
 
     @app.get("/api/serial/status")
     def serial_status():
@@ -492,7 +550,10 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
 # ---------- 模块级装配（供 uvicorn / 测试引用 module-level `app`）----------
 # DLL 缺失（WSL 等环境）时 parser_service 降级为 None，串口/日志功能不受影响。
 parser_service = _build_parser_service()
-log_file_service = LogFileService(parser_service, DEFAULT_INDEX)
+listener_index_registry = ListenerIndexRegistry(DEFAULT_INDEXES_DIR)
+log_file_service = LogFileService(
+    parser_service, DEFAULT_INDEX, index_registry=listener_index_registry
+)
 serial_capture_service = SerialCaptureService(
     log_file_service,
     port=_default_serial_port(),

@@ -1,4 +1,5 @@
 import inspect
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -6,6 +7,8 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from listener.app import create_app
+from listener.index_registry import ListenerIndexRegistry
+from listener.log_service import LogFileService
 
 
 class FakeService:
@@ -519,5 +522,66 @@ class SerialLogMutexTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
 
 
+class VersionedIndexApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.registry = ListenerIndexRegistry(root / "indexes")
+        self.log_service = LogFileService(
+            None, root / "legacy.sqlite3", index_registry=self.registry
+        )
+        self.first_index_id = self.log_service.status()["index_id"]
+        self.log_service.append_frames([("000001", "10:00:00.000", "7E 11 7E")])
+        self.log_service.reset_index()
+        self.second_index_id = self.log_service.status()["index_id"]
+        self.log_service.append_frames([("000001", "10:01:00.000", "7E 22 7E")])
+        self.client = TestClient(create_app(None, self.log_service))
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_historical_frame_uses_index_id_and_keeps_current_route_compatible(self):
+        historical = self.client.get(
+            f"/api/listener/indexes/{self.first_index_id}/frames/1"
+        )
+        current = self.client.get("/api/logs/frames/1")
+
+        self.assertEqual(historical.status_code, 200)
+        self.assertEqual(historical.json()["index_id"], self.first_index_id)
+        self.assertEqual(historical.json()["frame_id"], 1)
+        self.assertEqual(historical.json()["raw_hex"], "7E 11 7E")
+        self.assertEqual(current.status_code, 200)
+        self.assertEqual(current.json()["index_id"], self.second_index_id)
+        self.assertEqual(current.json()["frame_id"], 1)
+        self.assertEqual(current.json()["raw_hex"], "7E 22 7E")
+
+        listing = self.client.get(
+            f"/api/listener/indexes/{self.first_index_id}/frames?limit=1"
+        )
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["index_id"], self.first_index_id)
+        self.assertEqual(listing.json()["items"][0]["frame_id"], 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()
+
+class ListenerPortDetailsApiTest(unittest.TestCase):
+    def test_ports_expose_mapping_details(self):
+        class Service:
+            def list_available_ports(self):
+                return [{
+                    "device": "COM4", "mapping_id": "listener", "label": "侦听台",
+                    "baudrate": 115200, "online": True,
+                }]
+
+            def mapping_error(self):
+                return ""
+
+        client = TestClient(create_app(FakeService(), None, Service()))
+        response = client.get("/api/serial/ports")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ports"][0]["mapping_id"], "listener")
+        self.assertEqual(response.json()["port_details"][0]["label"], "侦听台")
+        self.assertEqual(response.json()["mapping_error"], "")

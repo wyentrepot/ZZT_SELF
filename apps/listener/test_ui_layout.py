@@ -264,5 +264,32 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn(".picker-root-button", css)
 
 
+
+
+    def test_running_serial_session_is_restored_in_both_frontend_entrypoints(self):
+        repo = STATIC_DIR.parent.parent
+        scripts = [
+            repo / "listener" / "static" / "app.js",
+            repo / "workbench" / "static" / "pages" / "listener" / "app.js",
+        ]
+        for script in scripts:
+            js = script.read_text(encoding="utf-8")
+            self.assertIn("restoreSerialSession", js)
+            self.assertIn('applyDataSourceMode("serial")', js)
+            self.assertIn("startSerialPolling()", js)
+
+    def test_index_frame_deep_link_is_restored_in_both_frontend_entrypoints(self):
+        repo = STATIC_DIR.parent.parent
+        scripts = [
+            repo / "listener" / "static" / "app.js",
+            repo / "workbench" / "static" / "pages" / "listener" / "app.js",
+        ]
+        for script in scripts:
+            js = script.read_text(encoding="utf-8")
+            self.assertIn("loadIndexedDetailFromLocation", js)
+            self.assertIn("index_id", js)
+            self.assertIn("frame_id", js)
+            self.assertIn("/listener/indexes/", js)
+
 if __name__ == "__main__":
     unittest.main()
