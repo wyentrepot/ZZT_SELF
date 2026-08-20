@@ -12,6 +12,7 @@
 | [总需求](docs/02-总需求.md) | FR/NFR、范围与验收标准 |
 | [骨架设计](docs/03-骨架设计.md) | 模块职责、输入输出、协议、目录与数据模型 |
 | [任务安排](docs/04-任务安排.md) | 任务 1～6、状态、优先级、阻塞与验收出口 |
+| [AI 操作指南](docs/16-AI操作指南.md) | AI 控制面 `/api/ai/v1` 授权、会话、烧录、观察、证据取证的使用手册 |
 
 协议与 DLL 接口原文位于 [`docs/_references/protocols/`](docs/_references/protocols/)，旧方案和历史记录位于 [`docs/_archive/`](docs/_archive/)。
 
