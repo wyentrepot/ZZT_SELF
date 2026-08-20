@@ -131,10 +131,19 @@ body {
   display: flex;
   min-height: 0;
 }
+.wb-panels {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
 .wb-frame {
   flex: 1;
   border: none;
   background: var(--frame-bg);
   width: 100%;
   transition: background 0.3s;
+}
+.wb-frame[hidden] {
+  display: none;
 }

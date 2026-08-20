@@ -28,7 +28,7 @@ from sim_concentrator.frame_codec import (
 )
 from sim_concentrator.matcher import match_frame
 from sim_concentrator.responder import Responder
-from sim_concentrator.serial_io import SerialIO
+from sim_concentrator.serial_io import SerialIO, resolve_serial_config
 
 logger = logging.getLogger(__name__)
 
@@ -280,12 +280,34 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
     若 io 未提供，则按 task 的 port/baudrate 自建串口并独占打开。
     """
     steps = task.get("steps", [])
-    port = task.get("port", "COM3")
-    baudrate = task.get("baudrate", 115200)
-
     own_io = io is None
+    port_identity = getattr(io, "port_identity", None) if io is not None else None
+    mapping_id = ""
     if own_io:
-        io = SerialIO(port=port, baudrate=baudrate)
+        resolved = resolve_serial_config(
+            task.get("port"),
+            mapping_id=task.get("mapping_id"),
+            baudrate=task.get("baudrate"),
+            bytesize=task.get("bytesize"),
+            parity=task.get("parity"),
+            stopbits=task.get("stopbits"),
+        )
+        port = resolved["port"]
+        baudrate = resolved["baudrate"]
+        mapping_id = resolved["mapping_id"]
+        port_identity = resolved["port_identity"]
+        io = SerialIO(
+            port=port,
+            baudrate=baudrate,
+            bytesize=resolved["bytesize"],
+            parity=resolved["parity"],
+            stopbits=resolved["stopbits"],
+            port_identity=port_identity,
+        )
+    else:
+        port = task.get("port") or getattr(io, "port", "COM3")
+        baudrate = task.get("baudrate") or getattr(io, "baudrate", 115200)
+        mapping_id = str((port_identity or {}).get("mapping_id", ""))
 
     responder = Responder(override_rules=task.get("responders", [])) \
         if task.get("enable_responder", True) else None
@@ -325,6 +347,8 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
             "task_id": task.get("id", "verify.task"),
             "port": port,
             "baudrate": baudrate,
+            "mapping_id": mapping_id,
+            "port_identity": port_identity,
             "steps": step_results,
             "summary": {
                 "total": len(step_results),

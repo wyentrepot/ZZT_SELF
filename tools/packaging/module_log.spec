@@ -20,6 +20,8 @@ web_datas, web_binaries, web_hiddenimports = collect_all("webview")
 
 datas = [
     (str(ROOT / "apps" / "module_log" / "static"), "static"),
+    # 可维护映射模板；runtime hook 首次启动复制到 exe 同级 config/。
+    (str(ROOT / "config" / "serial_ports.json"), "config"),
     # loghooks 规则文件（.json 数据文件，PyInstaller 不会自动打包，需显式收集）
 ] + collect_data_files("loghooks") + list(web_datas)
 
@@ -31,6 +33,7 @@ hiddenimports = [
     "module_log.module_serial_service",
     "module_log.xmodem_flash",
     "shared.infra",
+    "shared.serial_mapping",
     # shared.infra 里动态 import 的 tkinter 文件对话框
     "tkinter",
     "tkinter.filedialog",
@@ -80,7 +83,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(SPEC_DIR / "runtime_hooks" / "ensure_serial_ports_config.py")],
     excludes=["pytest", "tests", "listener"],
     noarchive=False,
     optimize=0,

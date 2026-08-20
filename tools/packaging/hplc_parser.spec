@@ -20,6 +20,8 @@ net_datas, net_binaries, net_hiddenimports = collect_all("pythonnet")
 
 datas = [
     (str(ROOT / "apps" / "listener" / "static"), "static"),
+    # 可维护映射模板；runtime hook 首次启动复制到 exe 同级 config/。
+    (str(ROOT / "config" / "serial_ports.json"), "config"),
     (str(ROOT / "libs" / "shared" / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"), "dll/bin/Debug"),
     (str(ROOT / "libs" / "shared" / "dll" / "bin" / "Debug" / "Newtonsoft.Json.dll"), "dll/bin/Debug"),
 ] + list(net_datas)
@@ -32,6 +34,12 @@ hiddenimports = [
     "shared.parser_service",
     "shared.application_service",
     "listener.log_service",
+    "listener.serial_service",
+    "listener.index_registry",
+    "shared.serial_mapping",
+    # 串口服务在条件导入中使用，显式收集保证冻结环境可枚举端口。
+    "serial",
+    "serial.tools.list_ports",
     "shared.dotnet_parser",
     # uvicorn 动态加载的 loop/protocol/lifespan 实现
     "uvicorn.loops.auto",
@@ -52,7 +60,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(SPEC_DIR / "runtime_hooks" / "ensure_serial_ports_config.py")],
     excludes=["pytest", "tests"],
     noarchive=False,
     optimize=0,

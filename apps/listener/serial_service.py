@@ -10,11 +10,16 @@
 - 相邻帧之间出现 "7E 7E"：前一 7E 是上帧尾、后一 7E 是下帧头；
 - 帧内 0x7E 通过 HDLC 转义 7D 5E 表示，切帧时按 7D 5E 识别为帧内字节。
 """
+import json
+import os
 import queue
 import threading
 import time
 from pathlib import Path
 from typing import Optional
+
+from shared.serial_mapping import SerialPortCatalog
+from shared.serial_resources import SerialResourceConflict, SerialResourceRegistry
 
 try:
     import serial
@@ -90,7 +95,8 @@ def split_7e_frames(data: bytes):
 class SerialCaptureService:
     def __init__(self, log_service, port="COM19", baudrate=SERIAL_BAUD,
                  bytesize=SERIAL_BYTESIZE, parity=SERIAL_PARITY,
-                 stopbits=SERIAL_STOPBITS, log_dir=None):
+                 stopbits=SERIAL_STOPBITS, log_dir=None, port_catalog=None,
+                 resource_registry=None):
         if serial is None:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
         self.log_service = log_service
@@ -99,6 +105,11 @@ class SerialCaptureService:
         self.bytesize = bytesize
         self.parity = parity
         self.stopbits = stopbits
+        # 统一映射仅增强展示与身份识别；缺失/错误时仍可枚举并打开真实设备。
+        self._port_catalog = port_catalog or SerialPortCatalog.load()
+        self._resource_registry = resource_registry or SerialResourceRegistry()
+        self._resource_owner_id = "listener:" + str(id(self))
+        self._port_identity = self._port_identity_for(self.port)[1]
         # 串口数据落盘目录：默认项目根 data/logs/侦听台/（侦听台日志独立子目录）
         default_log_dir = Path(__file__).resolve().parent.parent.parent / "data" / "logs" / "侦听台"
         self.log_dir = Path(log_dir) if log_dir else default_log_dir
@@ -122,7 +133,11 @@ class SerialCaptureService:
         return {
             "state": "idle",  # idle | running | stopped | error
             "port": self.port,
+            "port_identity": dict(self._port_identity),
             "baudrate": self.baudrate,
+            "bytesize": self.bytesize,
+            "parity": self.parity,
+            "stopbits": self.stopbits,
             "frame_count": 0,
             "byte_count": 0,
             "error_count": 0,
@@ -141,41 +156,124 @@ class SerialCaptureService:
             self._status.update(values)
             return dict(self._status)
 
-    def start(self, port=None, baudrate=None, bytesize=None, parity=None,
-              stopbits=None) -> dict:
-        if port is not None:
-            self.port = port
-        if baudrate is not None:
-            self.baudrate = baudrate
-        if bytesize is not None:
-            self.bytesize = bytesize
-        if parity is not None:
-            self.parity = parity
-        if stopbits is not None:
-            self.stopbits = stopbits
+    def set_resource_registry(self, resource_registry: SerialResourceRegistry) -> None:
+        """Attach the workbench-wide registry while this capture is idle."""
+        if resource_registry is None:
+            raise ValueError("resource_registry 不能为空")
         with self._lock:
             if self._thread and self._thread.is_alive():
-                raise RuntimeError("串口采集已在运行")
-            self._buffer = bytearray()
-            self._sequence = 0
-            self._minute_state = {}
-            self._stop_event.clear()
-            self._status = self._empty_status()
-            self._status["state"] = "starting"
-            self._status["message"] = f"正在打开 {self.port} ..."
-            self._log_file, self._log_path = self._open_log_file()
-            if self._log_path is not None:
-                self._status["log_file"] = str(self._log_path)
-            # 串口模式：清空现有索引，保证从干净库开始（与日志模式互斥，各自保留）
-            try:
-                self.log_service.reset_index()
-            except Exception:
-                pass
-        self._thread = threading.Thread(
-            target=self._run, name="hplc-serial-capture", daemon=True
+                raise RuntimeError("串口采集运行中，不能切换串口资源注册表")
+            self._resource_registry = resource_registry
+
+    @staticmethod
+    def _resource_aliases(open_port: str, identity: dict) -> tuple[str, ...]:
+        return tuple(
+            value for value in (
+                open_port,
+                identity.get("device"),
+                identity.get("windows_com"),
+                identity.get("linux_device"),
+            ) if value
         )
-        self._thread.start()
-        return self.status()
+
+    def _reserve_serial_resource(self, open_port: str, identity: dict) -> None:
+        try:
+            self._resource_registry.reserve(
+                self._resource_owner_id,
+                label="侦听台",
+                resource_id=str(identity.get("mapping_id") or ""),
+                aliases=self._resource_aliases(open_port, identity),
+            )
+        except SerialResourceConflict as exc:
+            raise RuntimeError(
+                f"串口 {open_port} 已被后端会话“{exc.owner_label}”占用（{exc.owner_id}）"
+            ) from exc
+
+    def _release_serial_resource(self) -> None:
+        self._resource_registry.release(self._resource_owner_id)
+
+    def _mapping_is_online(self, mapping_id: str) -> bool:
+        return any(
+            detail.get("mapping_id") == mapping_id and detail.get("online")
+            for detail in self.list_available_ports()
+        )
+
+    def _port_identity_for(self, port: str) -> tuple[str, dict]:
+        """将 Windows COM 与 WSL 设备别名收敛到同一可展示身份。"""
+        catalog = getattr(self, "_port_catalog", None)
+        mapping = catalog.find(port) if catalog is not None else None
+        if mapping is None:
+            return str(port), {
+                "mapping_id": "",
+                "label": "",
+                "device": str(port),
+                "linux_device": "",
+                "windows_com": "",
+                "usage": "",
+                "module": "",
+            }
+        if not mapping.enabled:
+            raise RuntimeError(f"串口映射 {mapping.id} 已禁用")
+        device = mapping.device_for()
+        return device, {
+            "mapping_id": mapping.id,
+            "label": mapping.label,
+            "device": device,
+            "linux_device": mapping.linux_device,
+            "windows_com": mapping.windows_com,
+            "usage": mapping.usage,
+            "module": mapping.module,
+        }
+
+    def start(self, port=None, baudrate=None, bytesize=None, parity=None,
+              stopbits=None) -> dict:
+        requested_port = self.port if port is None else str(port)
+        open_port, identity = self._port_identity_for(requested_port)
+        mapping_id = str(identity.get("mapping_id") or "")
+        if mapping_id and not self._mapping_is_online(mapping_id):
+            raise RuntimeError(
+                f"映射串口 {identity.get('label') or mapping_id} 当前离线，请刷新端口列表"
+            )
+        next_baudrate = self.baudrate if baudrate is None else baudrate
+        next_bytesize = self.bytesize if bytesize is None else bytesize
+        next_parity = self.parity if parity is None else parity
+        next_stopbits = self.stopbits if stopbits is None else stopbits
+        reserved = False
+        try:
+            with self._lock:
+                if self._thread and self._thread.is_alive():
+                    raise RuntimeError("串口采集已在运行")
+                self._reserve_serial_resource(open_port, identity)
+                reserved = True
+                self.port = open_port
+                self._port_identity = identity
+                self.baudrate = next_baudrate
+                self.bytesize = next_bytesize
+                self.parity = next_parity
+                self.stopbits = next_stopbits
+                self._buffer = bytearray()
+                self._sequence = 0
+                self._minute_state = {}
+                self._stop_event.clear()
+                self._status = self._empty_status()
+                self._status["state"] = "starting"
+                self._status["message"] = f"正在打开 {self.port} ..."
+                self._log_file, self._log_path = self._open_log_file()
+                if self._log_path is not None:
+                    self._status["log_file"] = str(self._log_path)
+                try:
+                    self.log_service.reset_index()
+                except Exception:
+                    pass
+            self._thread = threading.Thread(
+                target=self._run, name="hplc-serial-capture", daemon=True
+            )
+            self._thread.start()
+            return self.status()
+        except Exception:
+            if reserved:
+                self._release_serial_resource()
+            raise
 
     def _open_log_file(self):
         """在 LOG 目录新建会话日志文件，命名 {COM}_{时间}_自动保存.txt。
@@ -185,7 +283,9 @@ class SerialCaptureService:
         try:
             stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
             port_safe = str(self.port).replace("\\", "").replace("/", "")
-            path = self.log_dir / f"{port_safe}_{stamp}_自动保存.txt"
+            mapping_id = str(self._port_identity.get("mapping_id") or "")
+            identity_tag = mapping_id or port_safe
+            path = self.log_dir / f"{identity_tag}_{port_safe}_{stamp}_自动保存.txt"
             handle = open(path, "a", encoding="utf-8", buffering=1)
             self._log_day = time.strftime("%Y%m%d", time.localtime())
             return handle, path
@@ -198,6 +298,7 @@ class SerialCaptureService:
         if thread and thread.is_alive():
             thread.join(timeout=3)
         self._close_log_file()
+        self._release_serial_resource()
         return self.status()
 
     def _close_log_file(self):
@@ -214,6 +315,7 @@ class SerialCaptureService:
             self._capture_loop()
         except Exception as exc:
             self._close_log_file()
+            self._release_serial_resource()
             self._replace_status(state="error", message=f"串口采集错误：{exc}")
 
     def _capture_loop(self) -> None:
@@ -302,15 +404,43 @@ class SerialCaptureService:
             self._replace_status(error_count=self._status.get("error_count", 0) + 1)
 
     def list_available_ports(self) -> list:
+        """枚举可见串口，并合并统一映射的 COM、角色和默认串口参数。"""
         if list_ports is None:
             return []
         try:
-            return [
+            system_ports = [
                 {"device": p.device, "description": p.description}
                 for p in list_ports.comports()
             ]
         except Exception:
             return []
+        catalog = getattr(self, "_port_catalog", None)
+        if catalog is not None:
+            return catalog.merge_system_ports(system_ports, platform_name=os.name)
+
+        # 兼容旧的直接 __new__ 测试和独立调用：未装配 catalog 时保留原展示行为。
+        if os.name != "nt":
+            com_map = self._load_com_map()
+            for port in system_ports:
+                port["com"] = com_map.get(port["device"], "")
+        return system_ports
+
+    def mapping_error(self) -> str:
+        catalog = getattr(self, "_port_catalog", None)
+        return getattr(catalog, "mapping_error", "") if catalog is not None else ""
+
+    @staticmethod
+    def _load_com_map() -> dict:
+        """读取 设备名 -> Windows COM 号 映射表（serial_com_map.json）。
+
+        文件缺失/损坏时返回空表（仅不显示 COM 标注，不影响功能）。
+        """
+        path = Path(__file__).resolve().parent / "serial_com_map.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return dict(data.get("map", {}))
+        except Exception:
+            return {}
 
 
 def create_serial_service(log_service, port="COM19", log_dir=None) -> SerialCaptureService:

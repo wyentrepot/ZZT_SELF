@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from shared import infra
+from shared.serial_resources import SerialResourceRegistry
 from module_log.module_serial_service import CHANNELS, ModuleSerialService
 
 def _is_frozen() -> bool:
@@ -56,19 +57,32 @@ STATIC_DIR = BASE_DIR / "static"
 RUNTIME_DIR = _runtime_dir()
 LAST_PATH_FILE = RUNTIME_DIR / "last_path.txt"
 
-def create_app(module_serial_service=None) -> FastAPI:
+def create_app(module_serial_service=None, resource_registry: SerialResourceRegistry | None = None) -> FastAPI:
     # workbench 统一挂载时以 create_app() 无参调用：此时默认创建真实串口服务，
     # 否则 /api/module-serial/* 全部 503（模块串口服务未启用）。
     # 测试注入自定义 service 或显式传 None（禁用串口）仍受支持。
+    resource_registry = resource_registry or SerialResourceRegistry()
     if module_serial_service is None:
-        module_serial_service = ModuleSerialService(log_dir=_log_dir())
+        module_serial_service = ModuleSerialService(
+            log_dir=_log_dir(), resource_registry=resource_registry,
+        )
+    else:
+        set_registry = getattr(module_serial_service, "set_resource_registry", None)
+        if callable(set_registry):
+            set_registry(resource_registry)
     app = FastAPI(title="模块日志 / 烧录串口")
+    app.state.module_serial_service = module_serial_service
+    app.state.serial_resource_registry = resource_registry
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # 模拟集中器验证工具（第三页签后端）：挂载独立子应用到 /api/simcon
     # 子应用路由用相对路径（prefix=""），避免 mount 前缀 + 路由前缀双前缀
     from sim_concentrator.api import create_simcon_app
-    app.mount("/api/simcon", create_simcon_app(prefix=""), name="simcon")
+    app.mount(
+        "/api/simcon",
+        create_simcon_app(prefix="", resource_registry=resource_registry),
+        name="simcon",
+    )
 
     @app.get("/module-serial")
     def module_serial_page():
@@ -82,10 +96,154 @@ def create_app(module_serial_service=None) -> FastAPI:
             "channels": list(CHANNELS),
         }
 
+    # workbench 挂载时经代理透传，同一版本信息也暴露在 /api/module-serial/ 命名空间下
+    @app.get("/api/module-serial/version")
+    def module_serial_version():
+        return {
+            "app": "module-serial",
+            "module_serial_api_revision": 2,
+            "channels": list(CHANNELS),
+        }
+
     # ---- 模块串口 ----
     @app.get("/api/module-serial/ports")
     def module_serial_ports():
-        return {"ports": ModuleSerialService.list_available_ports()}
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        return {
+            "ports": module_serial_service.list_available_ports(),
+            "port_details": module_serial_service.list_available_port_details(),
+            "mapping_error": module_serial_service.mapping_error(),
+        }
+
+
+    # ---- 动态会话 API（新前端与 AI 控制面使用）----
+    class ModuleSessionCreateRequest(BaseModel):
+        title: str = Field("", max_length=128)
+        module: str = Field("cco", pattern=r"^(cco|sta)$")
+
+    class ModuleSessionUpdateRequest(BaseModel):
+        title: str | None = Field(None, max_length=128)
+        module: str | None = Field(None, pattern=r"^(cco|sta)$")
+
+    class ModuleSessionStartRequest(BaseModel):
+        port: str = Field(..., min_length=1, max_length=256)
+        baudrate: int = Field(115200, ge=300, le=921600)
+        bytesize: int = Field(8, ge=5, le=8)
+        parity: str = Field("N", min_length=1, max_length=1)
+        stopbits: int = Field(1, ge=1, le=2)
+
+    class ModuleSessionWriteRequest(BaseModel):
+        data: str = Field(..., min_length=1, max_length=4096)
+
+    class ModuleSessionWriteTextRequest(BaseModel):
+        text: str = Field("", max_length=4096)
+        append_newline: bool = True
+
+    class ModuleSessionBaudrateRequest(BaseModel):
+        baudrate: int = Field(..., ge=300, le=921600)
+
+    class ModuleSessionFlashRequest(BaseModel):
+        bin_path: str = Field(..., min_length=1, max_length=2048)
+        slot: int = Field(0, ge=0, le=1)
+        baud_plan: list[int] | None = None
+        no_reboot_after: bool = False
+
+    def _session_service_or_503():
+        if module_serial_service is None:
+            raise HTTPException(status_code=503, detail="模块串口服务未启用")
+        return module_serial_service
+
+    def _session_call(action):
+        try:
+            return action()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"会话不存在：{exc.args[0]}") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/module-serial/sessions")
+    def module_sessions():
+        service = _session_service_or_503()
+        return {"sessions": service.list_sessions()}
+
+    @app.post("/api/module-serial/sessions", status_code=201)
+    def module_session_create(request: ModuleSessionCreateRequest):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.create_session(request.title, request.module))
+
+    @app.get("/api/module-serial/sessions/{session_id}")
+    def module_session_get(session_id: str):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.get_session(session_id))
+
+    @app.patch("/api/module-serial/sessions/{session_id}")
+    def module_session_update(session_id: str, request: ModuleSessionUpdateRequest):
+        service = _session_service_or_503()
+        if request.title is None and request.module is None:
+            raise HTTPException(status_code=422, detail="至少需要提供 title 或 module")
+        return _session_call(
+            lambda: service.update_session(session_id, title=request.title, module=request.module)
+        )
+
+    @app.delete("/api/module-serial/sessions/{session_id}")
+    def module_session_delete(session_id: str):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.delete_session(session_id))
+
+    @app.post("/api/module-serial/sessions/{session_id}/start", status_code=202)
+    def module_session_start(session_id: str, request: ModuleSessionStartRequest):
+        service = _session_service_or_503()
+        return _session_call(
+            lambda: service.start_session(
+                session_id, request.port, request.baudrate, request.bytesize,
+                request.parity, request.stopbits,
+            )
+        )
+
+    @app.post("/api/module-serial/sessions/{session_id}/stop")
+    def module_session_stop(session_id: str):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.stop_session(session_id))
+
+    @app.post("/api/module-serial/sessions/{session_id}/write")
+    def module_session_write(session_id: str, request: ModuleSessionWriteRequest):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.write_session(session_id, request.data))
+
+    @app.post("/api/module-serial/sessions/{session_id}/write-text")
+    def module_session_write_text(session_id: str, request: ModuleSessionWriteTextRequest):
+        service = _session_service_or_503()
+        return _session_call(
+            lambda: service.write_text_session(
+                session_id, request.text, append_newline=request.append_newline,
+            )
+        )
+
+    @app.post("/api/module-serial/sessions/{session_id}/baudrate")
+    def module_session_baudrate(session_id: str, request: ModuleSessionBaudrateRequest):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.set_session_baudrate(session_id, request.baudrate))
+
+    @app.post("/api/module-serial/sessions/{session_id}/flash")
+    def module_session_flash(session_id: str, request: ModuleSessionFlashRequest):
+        service = _session_service_or_503()
+        try:
+            return service.flash_session(
+                session_id, request.bin_path, request.slot,
+                request.baud_plan, request.no_reboot_after,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"会话不存在：{exc.args[0]}") from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/module-serial/sessions/{session_id}/logs")
+    def module_session_logs(session_id: str, after: int = Query(-1, ge=-1)):
+        service = _session_service_or_503()
+        return _session_call(lambda: service.logs_session(session_id, after=after))
 
     @app.get("/api/module-serial/status")
     def module_serial_status():
@@ -99,7 +257,7 @@ def create_app(module_serial_service=None) -> FastAPI:
         parity: str = Field("N", min_length=1, max_length=1)
         stopbits: int = Field(1, ge=1, le=2)
         log_type: str = Field("cco", pattern=r"^(cco|sta)$")  # 兼容旧字段
-        channel: str = Field("cco", pattern=r"^(cco|sta)$")   # 目标通道
+        channel: str | None = Field(None, pattern=r"^(cco|sta)$")  # 未传时兼容 log_type
 
     @app.post("/api/module-serial/start", status_code=202)
     def module_serial_start(request: ModuleSerialStartRequest):
@@ -221,6 +379,7 @@ def create_app(module_serial_service=None) -> FastAPI:
 
     # ---- 固件选择（复用 shared.infra，仅 pick 选固件路径）----
     @app.get("/api/fs/roots")
+    @app.get("/api/module-serial/fs/roots")
     def fs_roots():
         drives = infra.windows_drives()
         if drives:
@@ -229,11 +388,13 @@ def create_app(module_serial_service=None) -> FastAPI:
         return {"roots": [{"name": home, "path": home}]}
 
     @app.get("/api/fs/list")
+    @app.get("/api/module-serial/fs/list")
     def fs_list(path: str = Query("", max_length=1024)):
         return infra.list_directory(path)
 
     # ---- loghooks 对照解析 ----
     @app.get("/api/loghooks/scan")
+    @app.get("/api/module-serial/loghooks/scan")
     def loghooks_scan(path: str = Query(..., max_length=2048),
                       module: str = Query("", pattern=r"^(cco|sta|)$"),
                       limit: int = Query(2000, ge=1, le=20000)):
@@ -246,15 +407,50 @@ def create_app(module_serial_service=None) -> FastAPI:
         return res
 
     @app.get("/api/loghooks/realtime")
-    def loghooks_realtime(channel: str = Query("cco", pattern=r"^(cco|sta)$"),
-                          limit: int = Query(2000, ge=1, le=20000)):
-        """扫描实时串口内存日志，返回事件 + 原始行绑定。"""
+    @app.get("/api/module-serial/loghooks/realtime")
+    def loghooks_realtime(
+        session_id: str = Query("", max_length=128),
+        channel: str = Query("cco", pattern=r"^(cco|sta)$"),
+        limit: int = Query(2000, ge=1, le=20000),
+    ):
+        """扫描实时串口内存日志，返回事件与具体会话/原始行的绑定。
+
+        session_id 是动态会话的首选资源标识；保留 channel 仅为
+        旧 CCO/STA 双通道客户端兼容。两种入口最终都只读取同一服务实例。
+        """
         if module_serial_service is None:
             raise HTTPException(status_code=503, detail="模块串口服务未启用")
         from module_log import loghooks_api
+
+        if session_id:
+            try:
+                session = module_serial_service.get_session(session_id)
+                logs = module_serial_service.logs_session(session_id, after=-1)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"实时会话不存在：{session_id}") from exc
+            module = session["module"]
+            lines = logs.get("lines", []) if isinstance(logs, dict) else []
+            result = loghooks_api.scan_realtime(lines, module=module, limit=limit)
+            result["session_id"] = session_id
+            result["source"] = {
+                "kind": "module_serial_session",
+                "session_id": session_id,
+                "title": session["title"],
+                "module": module,
+                "port": session["port"],
+                "port_identity": session["port_identity"],
+                "log_file": session["log_file"],
+            }
+            return result
+
         logs = module_serial_service.logs(after=-1, channel=channel)
         lines = logs.get("lines", []) if isinstance(logs, dict) else []
-        return loghooks_api.scan_realtime(lines, module=channel, limit=limit)
+        result = loghooks_api.scan_realtime(lines, module=channel, limit=limit)
+        result["source"] = {
+            "kind": "legacy_channel",
+            "channel": channel,
+        }
+        return result
 
     @app.get("/api/loghooks/sources")
     def loghooks_sources():
@@ -266,13 +462,22 @@ def create_app(module_serial_service=None) -> FastAPI:
             for sub in ("cco", "sta"):
                 d = root / sub
                 if d.exists():
-                    for f in sorted(d.iterdir(), reverse=True):
-                        if f.is_file() and f.suffix in (".log", ".txt"):
-                            groups[sub].append({"path": str(f), "name": f.name, "size": f.stat().st_size})
+                    files = [
+                        item for item in d.rglob("*")
+                        if item.is_file() and item.suffix.lower() in {".log", ".txt", ".jsonl"}
+                    ]
+                    for f in sorted(files, key=lambda item: item.stat().st_mtime, reverse=True):
+                        groups[sub].append({
+                            "path": str(f),
+                            "name": f.name,
+                            "relative_path": str(f.relative_to(root)),
+                            "size": f.stat().st_size,
+                        })
         return {"root": str(root), "groups": groups}
 
 
     @app.get("/api/fs/pick")
+    @app.get("/api/module-serial/fs/pick")
     def fs_pick():
         if os.name != "nt":
             raise HTTPException(status_code=501, detail="仅 Windows 支持原生文件选择")

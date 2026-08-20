@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "ports": [
+    {
+      "id": "listener",
+      "linux_device": "/dev/ttyUSB0",
+      "windows_com": "COM4",
+      "label": "侦听台",
+      "usage": "listener",
+      "module": "",
+      "baudrate": 115200,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true
+    },
+    {
+      "id": "cco-main",
+      "linux_device": "/dev/ttyACM0",
+      "windows_com": "COM8",
+      "label": "CCO 日志口",
+      "usage": "module_log",
+      "module": "cco",
+      "baudrate": 115200,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true
+    },
+    {
+      "id": "sta-main",
+      "linux_device": "/dev/ttyACM1",
+      "windows_com": "COM9",
+      "label": "STA 日志口",
+      "usage": "module_log",
+      "module": "sta",
+      "baudrate": 115200,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true
+    },
+    {
+      "id": "simcon",
+      "linux_device": "/dev/ttyUSB1",
+      "windows_com": "COM24",
+      "label": "模拟集中器",
+      "usage": "simcon",
+      "module": "",
+      "baudrate": 9600,
+      "parity": "E",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true
+    }
+  ]
+}

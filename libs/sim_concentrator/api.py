@@ -21,18 +21,26 @@ from pydantic import BaseModel
 
 from sim_concentrator.runner import execute_task
 from sim_concentrator.responder import Responder
-from sim_concentrator.serial_io import SerialIO, list_serial_ports
+from shared.serial_mapping import SerialPortCatalog
+from shared.serial_resources import SerialResourceRegistry
+from sim_concentrator.serial_io import (
+    SerialIO,
+    list_serial_port_details,
+    resolve_serial_config,
+)
 
 
 # ---------------------------------------------------------------------------
 # Pydantic 模型
 # ---------------------------------------------------------------------------
 class OpenSpec(BaseModel):
-    port: str = "COM3"
-    baudrate: int = 115200
-    bytesize: int = 8
-    parity: str = "N"
-    stopbits: int = 1
+    # 所有字段均可省略；省略时采用 config/serial_ports.json 的 simcon 映射默认值。
+    port: Optional[str] = None
+    mapping_id: Optional[str] = None
+    baudrate: Optional[int] = None
+    bytesize: Optional[int] = None
+    parity: Optional[str] = None
+    stopbits: Optional[int] = None
 
 
 class SendSpec(BaseModel):
@@ -64,11 +72,12 @@ class StepSpec(BaseModel):
 
 class VerifyTask(BaseModel):
     id: Optional[str] = "verify.task"
-    port: str = "COM3"
-    baudrate: int = 115200
-    bytesize: int = 8
-    parity: str = "N"
-    stopbits: int = 1
+    port: Optional[str] = None
+    mapping_id: Optional[str] = None
+    baudrate: Optional[int] = None
+    bytesize: Optional[int] = None
+    parity: Optional[str] = None
+    stopbits: Optional[int] = None
     enable_responder: bool = True
     fail_fast: bool = True
     responders: Optional[List[Dict[str, Any]]] = None
@@ -78,7 +87,7 @@ class VerifyTask(BaseModel):
 # ---------------------------------------------------------------------------
 # 应用工厂
 # ---------------------------------------------------------------------------
-def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
+def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialResourceRegistry | None = None) -> FastAPI:
     """创建模拟集中器子应用。
 
     prefix 控制路由前缀：
@@ -87,19 +96,58 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
       （app.mount("/api/simcon", create_simcon_app(prefix=""))，避免双前缀）。
     """
     app = FastAPI(title="模拟集中器验证工具", version="0.1.0")
+    catalog = SerialPortCatalog.load()
+    app.state.serial_port_catalog = catalog
+    app.state.serial_resource_registry = resource_registry or SerialResourceRegistry()
     _holder = {"io": None, "lock": threading.Lock()}
+
+    def _resolve(
+        port: Optional[str] = None,
+        mapping_id: Optional[str] = None,
+        baudrate: Optional[int] = None,
+        bytesize: Optional[int] = None,
+        parity: Optional[str] = None,
+        stopbits: Optional[int] = None,
+    ) -> dict[str, Any]:
+        return resolve_serial_config(
+            port,
+            mapping_id=mapping_id,
+            baudrate=baudrate,
+            bytesize=bytesize,
+            parity=parity,
+            stopbits=stopbits,
+            catalog=catalog,
+        )
+
+    def _port_details() -> list[dict[str, Any]]:
+        # 模拟集中器只展示自己的映射；未映射的实际串口保留作兼容手动选择。
+        details = [
+            detail for detail in list_serial_port_details(catalog)
+            if detail.get("usage") in ("", "simcon")
+        ]
+        # 让既有 UI 在首次加载时优先选中维护的 simcon 默认映射。
+        return sorted(details, key=lambda detail: (
+            0 if detail.get("mapping_id") == "simcon" else 1,
+            str(detail.get("device", "")),
+        ))
 
     def _io() -> Optional[SerialIO]:
         with _holder["lock"]:
             return _holder["io"]
 
-    def _open_io(port: str, baudrate: int, bytesize: int = 8,
-                 parity: str = "N", stopbits: int = 1) -> SerialIO:
+    def _open_io(resolved: dict[str, Any]) -> SerialIO:
         with _holder["lock"]:
             io = _holder["io"]
             if io is None or not io.is_open():
-                io = SerialIO(port=port, baudrate=baudrate,
-                              bytesize=bytesize, parity=parity, stopbits=stopbits)
+                io = SerialIO(
+                    port=resolved["port"],
+                    baudrate=resolved["baudrate"],
+                    bytesize=resolved["bytesize"],
+                    parity=resolved["parity"],
+                    stopbits=resolved["stopbits"],
+                    port_identity=resolved["port_identity"],
+                    resource_registry=app.state.serial_resource_registry,
+                )
                 io.open()
                 _holder["io"] = io
             return io
@@ -116,12 +164,19 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
         return {
             "open": io is not None and io.is_open(),
             "port": io.port if io is not None else None,
+            "port_identity": io.port_identity if io is not None else None,
+            "mapping_error": catalog.mapping_error,
             "pending_frames": io.pending_frames() if io is not None else 0,
         }
 
     @app.get(f"{prefix}/ports")
     async def ports():
-        return {"ports": list_serial_ports()}
+        port_details = _port_details()
+        return {
+            "ports": [str(detail["device"]) for detail in port_details],
+            "port_details": port_details,
+            "mapping_error": catalog.mapping_error,
+        }
 
     @app.get(f"{prefix}/responders")
     async def responders():
@@ -131,11 +186,23 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
     @app.post(f"{prefix}/open")
     async def open_serial(request: OpenSpec):
         try:
-            io = _open_io(request.port, request.baudrate,
-                          request.bytesize, request.parity, request.stopbits)
+            resolved = _resolve(
+                request.port, request.mapping_id, request.baudrate,
+                request.bytesize, request.parity, request.stopbits,
+            )
+            io = _open_io(resolved)
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"串口打开失败：{exc}") from exc
-        return {"open": True, "port": io.port}
+        return {
+            "open": True,
+            "port": io.port,
+            "mapping_id": resolved["mapping_id"],
+            "port_identity": io.port_identity,
+            "baudrate": getattr(io, "baudrate", resolved["baudrate"]),
+            "bytesize": getattr(io, "bytesize", resolved["bytesize"]),
+            "parity": getattr(io, "parity", resolved["parity"]),
+            "stopbits": getattr(io, "stopbits", resolved["stopbits"]),
+        }
 
     @app.post(f"{prefix}/close")
     async def close_serial():
@@ -145,28 +212,42 @@ def create_simcon_app(prefix: str = "/api/simcon") -> FastAPI:
     @app.post(f"{prefix}/verify")
     async def verify(task: VerifyTask):
         """执行验证任务并返回逐步判定 + 汇总结论 JSON。"""
-        # 空任务/无步骤：不碰串口，直接返回空结论
-        if not task.steps:
-            return {
-                "task_id": task.id,
-                "port": task.port,
-                "baudrate": task.baudrate,
-                "steps": [],
-                "summary": {"total": 0, "pass": 0, "fail": 0, "verdict": "fail"},
-            }
-        io = _io()
         try:
+            resolved = _resolve(
+                task.port, task.mapping_id, task.baudrate,
+                task.bytesize, task.parity, task.stopbits,
+            )
+            # 空任务/无步骤：不碰串口，但仍返回可审计的映射解析结果。
+            if not task.steps:
+                return {
+                    "task_id": task.id,
+                    "port": resolved["port"],
+                    "baudrate": resolved["baudrate"],
+                    "mapping_id": resolved["mapping_id"],
+                    "port_identity": resolved["port_identity"],
+                    "steps": [],
+                    "summary": {"total": 0, "pass": 0, "fail": 0, "verdict": "fail"},
+                }
+            task_payload = task.model_dump()
+            task_payload.update(resolved)
+            io = _io()
             if io is None or not io.is_open():
-                # 任务自带串口参数：自建并独占，执行后关闭
-                from sim_concentrator.serial_io import SerialIO as _SIO
-                io = _SIO(port=task.port, baudrate=task.baudrate,
-                          bytesize=task.bytesize, parity=task.parity, stopbits=task.stopbits)
+                # 任务自带串口参数：自建并独占，执行后关闭。
+                io = SerialIO(
+                    port=resolved["port"],
+                    baudrate=resolved["baudrate"],
+                    bytesize=resolved["bytesize"],
+                    parity=resolved["parity"],
+                    stopbits=resolved["stopbits"],
+                    port_identity=resolved["port_identity"],
+                    resource_registry=app.state.serial_resource_registry,
+                )
                 io.open()
                 try:
-                    return execute_task(task.model_dump(), io=io)
+                    return execute_task(task_payload, io=io)
                 finally:
                     io.close()
-            return execute_task(task.model_dump(), io=io)
+            return execute_task(task_payload, io=io)
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"验证任务执行失败：{exc}") from exc
 

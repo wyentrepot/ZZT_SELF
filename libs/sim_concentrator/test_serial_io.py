@@ -9,7 +9,11 @@ import time
 import pytest
 
 from sim_concentrator.frame_codec import build_13762_frame
-from sim_concentrator.serial_io import SerialIO, list_serial_ports
+from sim_concentrator.serial_io import (
+    SerialIO,
+    list_serial_ports,
+    resolve_serial_config,
+)
 
 RTSA = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])
 
@@ -93,3 +97,33 @@ def test_serial_io_recv_timeout():
 def test_list_ports_returns_list():
     ports = list_serial_ports()
     assert isinstance(ports, list)
+
+
+def test_resolve_simcon_mapping_alias_uses_platform_device_and_defaults():
+    resolved = resolve_serial_config(port="COM24")
+
+    assert resolved["mapping_id"] == "simcon"
+    assert resolved["port"] == "/dev/ttyUSB1"
+    assert resolved["baudrate"] == 9600
+    assert resolved["parity"] == "E"
+    assert resolved["bytesize"] == 8
+    assert resolved["stopbits"] == 1
+    assert resolved["port_identity"]["windows_com"] == "COM24"
+
+
+def test_serial_io_respects_shared_backend_serial_registry():
+    from shared.serial_resources import SerialResourceRegistry
+
+    registry = SerialResourceRegistry()
+    registry.reserve(
+        "module:ms-cco", label="模块日志会话 CCO",
+        resource_id="cco-main", aliases=("COM_SHARED",),
+    )
+    io = SerialIO(
+        port="COM_SHARED",
+        port_identity={"mapping_id": "cco-main", "windows_com": "COM_SHARED"},
+        resource_registry=registry,
+    )
+
+    with pytest.raises(RuntimeError, match="模块日志会话 CCO"):
+        io.open()

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -110,6 +111,9 @@ class SerialCaptureServiceTest(unittest.TestCase):
         self.assertEqual(status["port"], "COM_TEST")
         self.assertIn("log_dir", status)
         self.assertIsNone(status["log_file"])
+        self.assertEqual(status["bytesize"], 8)
+        self.assertEqual(status["parity"], "N")
+        self.assertEqual(status["stopbits"], 1)
 
     def test_log_dir_created_on_init(self):
         base = Path(tempfile.mkdtemp()) / "nested" / "LOG"
@@ -277,5 +281,176 @@ class SerialCaptureServiceTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class ListAvailablePortsComTest(unittest.TestCase):
+    """list_available_ports 的 COM 标注行为（方案 C）。"""
+
+    def _fake_comports(self):
+        return [
+            mock.Mock(device="/dev/ttyUSB0", description="CP2102"),
+            mock.Mock(device="/dev/ttyACM0", description="CH342"),
+            mock.Mock(device="COM4", description="CP2102"),
+        ]
+
+    def test_non_windows_adds_com_annotation(self):
+        """非 Windows 时按映射表附加 com 字段，设备名保持原样。"""
+        with mock.patch("listener.serial_service.os.name", "posix"),              mock.patch("listener.serial_service.list_ports.comports",
+                        return_value=self._fake_comports()):
+            svc = SerialCaptureService.__new__(SerialCaptureService)
+            with mock.patch.object(
+                SerialCaptureService, "_load_com_map",
+                return_value={"/dev/ttyUSB0": "COM4", "/dev/ttyACM0": "COM8"},
+            ):
+                ports = svc.list_available_ports()
+        by_device = {p["device"]: p for p in ports}
+        self.assertEqual(by_device["/dev/ttyUSB0"]["com"], "COM4")
+        self.assertEqual(by_device["/dev/ttyACM0"]["com"], "COM8")
+        # Windows 名端口（已是 COMx 形式）无映射，com 为空但不影响设备名
+        self.assertEqual(by_device["COM4"]["com"], "")
+        self.assertEqual(by_device["COM4"]["device"], "COM4")
+
+    def test_windows_keeps_plain(self):
+        """Windows 侧不加 com 标注（不影响 Windows 端使用）。"""
+        with mock.patch("listener.serial_service.os.name", "nt"), \
+             mock.patch("listener.serial_service.list_ports.comports",
+                        return_value=self._fake_comports()):
+            svc = SerialCaptureService.__new__(SerialCaptureService)
+            ports = svc.list_available_ports()
+        for p in ports:
+            self.assertNotIn("com", p)
+
+    def test_missing_map_returns_empty_com(self):
+        """映射表缺失/损坏时 com 为空字符串，不抛异常。"""
+        with mock.patch("listener.serial_service.os.name", "posix"), \
+             mock.patch("listener.serial_service.list_ports.comports",
+                        return_value=self._fake_comports()), \
+             mock.patch.object(SerialCaptureService, "_load_com_map",
+                               return_value={}):
+            svc = SerialCaptureService.__new__(SerialCaptureService)
+            ports = svc.list_available_ports()
+        for p in ports:
+            self.assertEqual(p.get("com", ""), "")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+class SharedSerialCatalogIntegrationTest(unittest.TestCase):
+    """真实服务应使用统一 catalog，而不是只读侦听台旧 JSON。"""
+
+    def test_port_listing_contains_mapping_metadata(self):
+        from shared.serial_mapping import SerialPortCatalog
+
+        config = {
+            "version": 1,
+            "ports": [{
+                "id": "listener", "linux_device": "/dev/ttyUSB0",
+                "windows_com": "COM4", "label": "侦听台",
+                "usage": "listener", "module": "", "baudrate": 115200,
+                "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True,
+            }],
+        }
+        base = Path(tempfile.mkdtemp())
+        path = base / "serial_ports.json"
+        path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        catalog = SerialPortCatalog.load(path)
+        svc = SerialCaptureService(
+            _log_service(str(base)), port="COM_TEST", log_dir=base / "LOG",
+            port_catalog=catalog,
+        )
+        fake = [mock.Mock(device="/dev/ttyUSB0", description="CP210x")]
+        with mock.patch("listener.serial_service.list_ports.comports", return_value=fake):
+            ports = svc.list_available_ports()
+        self.assertEqual(ports[0]["mapping_id"], "listener")
+        self.assertEqual(ports[0]["label"], "侦听台")
+        self.assertEqual(ports[0]["com"], "COM4")
+
+    def test_start_resolves_mapping_alias_and_exposes_port_identity(self):
+        from shared.serial_mapping import SerialPortCatalog
+
+        config = {
+            "version": 1,
+            "ports": [{
+                "id": "listener-main", "linux_device": "/dev/ttyUSB0",
+                "windows_com": "COM4", "label": "侦听台",
+                "usage": "listener", "module": "", "baudrate": 115200,
+                "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True,
+            }],
+        }
+        base = Path(tempfile.mkdtemp())
+        config_path = base / "serial_ports.json"
+        config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        service = SerialCaptureService(
+            _log_service(str(base)), port="COM_TEST", log_dir=base / "LOG",
+            port_catalog=SerialPortCatalog.load(config_path),
+        )
+
+        class FakeSerial:
+            def __init__(self, *args, **kwargs):
+                self.kwargs = kwargs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size):
+                return b""
+
+        fake_port = mock.Mock(device="/dev/ttyUSB0", description="fake")
+        with mock.patch("listener.serial_service.list_ports.comports", return_value=[fake_port]), \
+             mock.patch("listener.serial_service.serial.Serial", FakeSerial):
+            service.start(port="COM4")
+            status = service.status()
+            service.stop()
+
+        self.assertEqual(status["port"], "/dev/ttyUSB0")
+        self.assertEqual(status["port_identity"]["mapping_id"], "listener-main")
+        self.assertEqual(status["port_identity"]["windows_com"], "COM4")
+
+
+class SharedBackendSerialReservationTest(unittest.TestCase):
+    """侦听台必须在打开 pyserial 前检查工作台共享资源表。"""
+
+    def test_listener_respects_module_reservation(self):
+        from shared.serial_resources import SerialResourceRegistry
+
+        registry = SerialResourceRegistry()
+        registry.reserve(
+            "module:ms-cco", label="模块日志会话 CCO",
+            aliases=("COM_SHARED",),
+        )
+        service = SerialCaptureService(
+            _log_service(tempfile.mkdtemp()), port="COM_SHARED",
+            log_dir=Path(tempfile.mkdtemp()) / "LOG",
+            resource_registry=registry,
+        )
+        with self.assertRaisesRegex(RuntimeError, "模块日志会话 CCO"):
+            service.start(port="COM_SHARED")
+
+
+class ListenerMappedPortAvailabilityTest(unittest.TestCase):
+    def test_start_rejects_offline_mapping_before_starting_capture(self):
+        from shared.serial_mapping import SerialPortCatalog
+
+        config = {
+            "version": 1,
+            "ports": [{
+                "id": "listener-main", "linux_device": "/dev/ttyUSB7",
+                "windows_com": "COM47", "label": "侦听台",
+                "usage": "listener", "module": "", "baudrate": 115200,
+                "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True,
+            }],
+        }
+        base = Path(tempfile.mkdtemp())
+        config_path = base / "serial_ports.json"
+        config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        service = SerialCaptureService(
+            _log_service(str(base)), port="COM47", log_dir=base / "LOG",
+            port_catalog=SerialPortCatalog.load(config_path),
+        )
+
+        with mock.patch("listener.serial_service.list_ports.comports", return_value=[]):
+            with self.assertRaisesRegex(RuntimeError, "当前离线"):
+                service.start(port="COM47")
+        self.assertEqual(service.status()["state"], "idle")

@@ -1226,30 +1226,34 @@ loadMinuteTaskList();
 
 // ---------- 串口实时采集 ----------
 
-async function loadSerialPorts() {
-  const current = elements.serialPort.value;
+async function loadSerialPorts(preferredPort) {
+  const current = preferredPort || elements.serialPort.value;
   try {
     const data = await request("/api/listener/serial/ports");
-    const ports = (data.ports || []).map((p) => p.device);
+    const items = data.ports || [];
+    const devices = items.map((p) => p.device);
     elements.serialPort.replaceChildren();
-    if (!ports.length) {
+    if (!items.length) {
       const option = document.createElement("option");
       option.value = "";
       option.textContent = "未发现可用串口";
       elements.serialPort.append(option);
       return;
     }
-    ports.forEach((device) => {
+    items.forEach((item) => {
       const option = document.createElement("option");
-      option.value = device;
-      option.textContent = device;
+      option.value = item.device;
+      // 双标注：有 COM 映射显示 'COM4 (/dev/ttyUSB0)'，否则原样
+      option.textContent = item.com
+        ? `${item.com} (${item.device})`
+        : item.device;
       elements.serialPort.append(option);
     });
     // 当前选择仍在枚举结果中则保留，否则自动选第一个实际存在的串口
-    if (ports.includes(current)) {
+    if (devices.includes(current)) {
       elements.serialPort.value = current;
     } else {
-      elements.serialPort.value = ports[0];
+      elements.serialPort.value = devices[0];
     }
   } catch (error) {
     // 列表加载失败：保留一个占位选项，不阻塞使用
@@ -1282,7 +1286,7 @@ async function refreshSerialStatus() {
     const active = status.state === "running" || status.state === "starting";
     setSerialState(active);
     if (status.state === "running") {
-      elements.serialState.textContent = `采集中 · ${status.frame_count || 0} 帧`;
+      elements.serialState.textContent = "采集中 · " + (status.frame_count || 0) + " 帧";
       elements.serialState.className = "serial-state running";
       state.lastFrameCount = status.frame_count || 0;
     } else if (status.state === "error") {
@@ -1292,13 +1296,14 @@ async function refreshSerialStatus() {
       stopSerialPolling();
     } else if (status.state === "stopped") {
       elements.serialMessage.textContent =
-        `已停止，本次共采集 ${status.frame_count || 0} 帧`;
+        "已停止，本次共采集 " + (status.frame_count || 0) + " 帧";
       stopSerialPolling();
     } else {
       elements.serialMessage.textContent = status.message || "串口未启动";
     }
+    return status;
   } catch (error) {
-    // 服务不可用时静默
+    return null;
   }
 }
 
@@ -1372,7 +1377,7 @@ elements.serialRefresh.addEventListener("click", () => {
   state.pageCache.clear();
   loadFrames();
 });
-loadSerialPorts();
+// 串口状态恢复在数据源切换逻辑初始化后执行，避免默认日志模式覆盖后端运行态。
 
 // ---------- 数据源二选一：日志文件分析 / 串口实时监听 ----------
 
@@ -1452,5 +1457,48 @@ sourceRadios.forEach((radio) => {
     }
   });
 });
-// 初始化当前模式（默认日志）
+// 初始化当前模式（默认日志）；若后端串口仍在运行，随后以运行态覆盖。
 applyDataSourceMode(document.querySelector('input[name="data-source"]:checked')?.value || "log");
+
+async function loadIndexedDetailFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const indexId = params.get("index_id");
+  const frameId = params.get("frame_id");
+  if (!indexId || !frameId || !/^[0-9]+$/.test(frameId)) return;
+
+  state.selectedId = Number(frameId);
+  elements.detailEmpty.hidden = false;
+  elements.detailEmpty.querySelector("h2").textContent = "正在打开指定索引帧…";
+  elements.detailContent.hidden = true;
+  try {
+    const url = "/api/listener/listener/indexes/" + encodeURIComponent(indexId) +
+      "/frames/" + encodeURIComponent(frameId);
+    renderDetail(await request(url));
+  } catch (error) {
+    elements.detailEmpty.querySelector("h2").textContent = "指定索引帧无法打开";
+    showError(error.message);
+  }
+}
+
+async function restoreSerialSession() {
+  const status = await refreshSerialStatus();
+  await loadSerialPorts(status && status.port ? status.port : "");
+
+  const active = status && (status.state === "running" || status.state === "starting");
+  if (!active) return status;
+
+  const serialRadio = document.querySelector('input[name="data-source"][value="serial"]');
+  if (serialRadio) serialRadio.checked = true;
+  applyDataSourceMode("serial");
+
+  if (status.port) elements.serialPort.value = status.port;
+  if (status.baudrate) elements.serialBaud.value = String(status.baudrate);
+  if (status.bytesize) elements.serialBytesize.value = String(status.bytesize);
+  if (status.parity) elements.serialParity.value = String(status.parity);
+  if (status.stopbits) elements.serialStopbits.value = String(status.stopbits);
+  elements.serialRefresh.disabled = false;
+  startSerialPolling();
+  return status;
+}
+
+restoreSerialSession().then(loadIndexedDetailFromLocation);

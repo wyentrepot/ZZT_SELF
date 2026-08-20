@@ -52,14 +52,55 @@ def extract_log_record(line: bytes) -> Optional[LogRecord]:
 class LogFileService:
     MAX_PAGE_SIZE = 500
 
-    def __init__(self, parser: FrameParserService, database_path: Path):
+    def __init__(self, parser: FrameParserService, database_path: Path, index_registry=None,
+                 read_only: bool = False):
         self.parser = parser
         self.database_path = Path(database_path).resolve()
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self._index_registry = index_registry
+        self._read_only = read_only
+        self._index_id = None
         self._status_lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
         self._status = self._empty_status()
+
+        if self._read_only:
+            if not self.database_path.is_file():
+                raise FileNotFoundError(f"索引数据库不存在：{self.database_path}")
+        elif self._index_registry is not None:
+            # 旧的固定路径数据库只登记为历史记录，新的 current 一律落在
+            # runtime/indexes/{index_id}.sqlite3，避免下一次 DROP TABLE 覆盖历史。
+            self._index_registry.adopt_legacy_index(self.database_path)
+            current_index_id = self._index_registry.current_index_id()
+            if current_index_id:
+                self._index_id = current_index_id
+                self.database_path = self._index_registry.database_path_for(current_index_id)
+                self.database_path.parent.mkdir(parents=True, exist_ok=True)
+                self._initialize_database(reset=False)
+            else:
+                self._activate_new_index(kind="startup")
+        else:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize_database(reset=False)
+
+    def _activate_new_index(self, *, kind: str, source_path=None) -> dict:
+        if self._index_registry is None:
+            raise RuntimeError("未配置版本化索引目录")
+        record = self._index_registry.create_index(kind=kind, source_path=source_path)
+        self._index_id = record["index_id"]
+        self.database_path = self._index_registry.database_path_for(self._index_id)
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_database(reset=False)
+        return record
+
+    def open_index(self, index_id: str):
+        """打开历史索引的独立只读视图；不会切换或影响 current 索引。"""
+        if self._index_registry is None:
+            if index_id != self._index_id:
+                raise KeyError(index_id)
+            return self
+        return LogFileService(
+            self.parser, self._index_registry.database_path_for(index_id), read_only=True
+        )
 
     @staticmethod
     def _empty_status() -> dict:
@@ -77,12 +118,19 @@ class LogFileService:
 
     @contextmanager
     def _connect(self):
-        connection = sqlite3.connect(self.database_path, timeout=30)
+        if self._read_only:
+            connection = sqlite3.connect(
+                f"file:{self.database_path.as_posix()}?mode=ro", uri=True, timeout=30
+            )
+        else:
+            connection = sqlite3.connect(self.database_path, timeout=30)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        if not self._read_only:
+            connection.execute("PRAGMA journal_mode=WAL")
         try:
             yield connection
-            connection.commit()
+            if not self._read_only:
+                connection.commit()
         except Exception:
             connection.rollback()
             raise
@@ -150,18 +198,25 @@ class LogFileService:
     def _replace_status(self, **values) -> dict:
         with self._status_lock:
             self._status.update(values)
-            return dict(self._status)
+            result = dict(self._status)
+            result["index_id"] = self._index_id
+            return result
 
     def status(self) -> dict:
         with self._status_lock:
-            return dict(self._status)
+            result = dict(self._status)
+            result["index_id"] = self._index_id
+            return result
 
     def reset_index(self) -> dict:
         """清空并重建索引（供串口模式启动时调用，保证从干净库开始）。
 
         丢弃 frames / minute_reports 全部数据，仅保留表结构。
         """
-        self._initialize_database(reset=True)
+        if self._index_registry is not None:
+            self._activate_new_index(kind="serial")
+        else:
+            self._initialize_database(reset=True)
         return self._replace_status(
             state="idle",
             source_path=None,
@@ -182,6 +237,8 @@ class LogFileService:
             raise RuntimeError("当前日志仍在建立索引，请完成后再加载新文件")
 
         file_size = source.stat().st_size
+        if self._index_registry is not None:
+            self._activate_new_index(kind="file", source_path=source)
         self._status = self._empty_status()
         self._replace_status(
             state="queued",
@@ -191,25 +248,27 @@ class LogFileService:
         )
         self._worker = threading.Thread(
             target=self._index_worker,
-            args=(source,),
+            args=(source, self._index_registry is not None),
             name="hplc-log-indexer",
             daemon=True,
         )
         self._worker.start()
         return self.status()
 
-    def _index_worker(self, source: Path) -> None:
+    def _index_worker(self, source: Path, prepared_index: bool = False) -> None:
         try:
-            self.index_file(source)
+            self.index_file(source, _prepared_index=prepared_index)
         except Exception as exc:
             self._replace_status(state="failed", message=str(exc))
 
-    def index_file(self, path) -> dict:
+    def index_file(self, path, _prepared_index: bool = False) -> dict:
         source = Path(path).expanduser().resolve()
         if not source.is_file():
             raise FileNotFoundError(f"日志文件不存在：{source}")
 
         file_size = source.stat().st_size
+        if self._index_registry is not None and not _prepared_index:
+            self._activate_new_index(kind="file", source_path=source)
         self._initialize_database(reset=True)
         self._replace_status(
             state="indexing",
@@ -1123,6 +1182,7 @@ class LogFileService:
             items.append(
                 {
                     "id": row["id"],
+                    "frame_id": row["id"],
                     "sequence": row["sequence"],
                     "log_time": row["log_time"],
                     "byte_length": row["byte_length"],
@@ -1132,12 +1192,32 @@ class LogFileService:
             )
 
         return {
+            "index_id": self._index_id,
             "items": items,
             "offset": offset,
             "limit": limit,
             "total": total,
             "after_id": items[-1]["id"] if items else None,
         }
+
+    def list_indexes(self) -> dict:
+        if self._index_registry is None:
+            return {"current_index_id": self._index_id, "indexes": []}
+        return {
+            "current_index_id": self._index_registry.current_index_id(),
+            "indexes": self._index_registry.list_indexes(),
+        }
+
+    def list_index_frames(self, index_id: str, **filters) -> dict:
+        page = self.open_index(index_id).list_frames(**filters)
+        page["index_id"] = index_id
+        return page
+
+    def get_index_frame(self, index_id: str, frame_id: int) -> dict:
+        frame = self.open_index(index_id).get_frame(frame_id)
+        frame["index_id"] = index_id
+        frame["frame_id"] = frame_id
+        return frame
 
     def get_frame(self, frame_id: int) -> dict:
         with self._connect() as connection:
@@ -1160,6 +1240,8 @@ class LogFileService:
             # 详情解析失败时保留原始帧数据，返回错误信息而非抛异常
             return {
                 "id": row["id"],
+                "index_id": self._index_id,
+                "frame_id": row["id"],
                 "sequence": row["sequence"],
                 "log_time": row["log_time"],
                 "byte_length": row["byte_length"],
@@ -1175,6 +1257,8 @@ class LogFileService:
 
         return {
             "id": row["id"],
+            "index_id": self._index_id,
+            "frame_id": row["id"],
             "sequence": row["sequence"],
             "log_time": row["log_time"],
             "byte_length": row["byte_length"],

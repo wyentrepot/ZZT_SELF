@@ -24,6 +24,8 @@ web_datas, web_binaries, web_hiddenimports = collect_all("webview")
 
 datas = [
     (str(ROOT / "apps" / "workbench" / "static"), "static"),
+    # 可维护映射模板；runtime hook 首次启动复制到 exe 同级 config/。
+    (str(ROOT / "config" / "serial_ports.json"), "config"),
     (str(ROOT / "apps" / "workbench" / "scenarios"), "workbench/scenarios"),
     # 统一后端挂载的子应用静态前端：各自映射到包目录，
     # frozen 下子应用 _base_dir()=包目录 → STATIC_DIR=包目录/static 保持一致
@@ -49,6 +51,11 @@ hiddenimports = [
     "workbench.app",
     "workbench.run",
     "workbench.desktop",
+    # AI 控制面采用工厂内导入，显式收集。
+    "workbench.ai_api",
+    "workbench.ai_auth",
+    "workbench.ai_operations",
+    "workbench.ai_store",
     "workbench.api",
     "workbench.orchestration",
     "workbench.orchestration.models",
@@ -61,6 +68,7 @@ hiddenimports = [
     "listener",
     "listener.app",
     "listener.log_service",
+    "listener.index_registry",
     "listener.serial_service",
     "module_log",
     "module_log.app",
@@ -89,6 +97,7 @@ hiddenimports = [
     "sim_concentrator.cli",
     # 共享层：路径工具 + C# DLL 解析链 + 帧解析服务
     "shared.infra",
+    "shared.serial_mapping",
     "shared.dotnet_parser",
     "shared.parser_service",
     "shared.application_service",
@@ -123,7 +132,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(SPEC_DIR / "runtime_hooks" / "ensure_serial_ports_config.py")],
     excludes=["pytest", "tests", "test_"],
     noarchive=False,
     optimize=0,
