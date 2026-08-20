@@ -268,5 +268,140 @@ class ModuleSerialDualChannelApiTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 409)
 
 
+    def test_ports_exposes_mapping_details_without_breaking_ports(self):
+        details = [{
+            "device": "COM8", "mapping_id": "cco-main", "label": "CCO 日志口",
+            "module": "cco", "baudrate": 115200, "online": True,
+        }]
+        with mock.patch.object(self.svc, "list_available_ports", return_value=["COM8"]), \
+             mock.patch.object(self.svc, "list_available_port_details", return_value=details), \
+             mock.patch.object(self.svc, "mapping_error", return_value=""):
+            resp = self.client.get("/api/module-serial/ports")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["ports"], ["COM8"])
+        self.assertEqual(resp.json()["port_details"], details)
+        self.assertEqual(resp.json()["mapping_error"], "")
+
+
+
+class DynamicSessionApiTest(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.svc = ModuleSerialService(log_dir=Path(self.tmpdir) / "LOG")
+        self.client = TestClient(create_app(module_serial_service=self.svc))
+
+    def test_session_crud_is_resource_oriented(self):
+        created = self.client.post(
+            "/api/module-serial/sessions",
+            json={"title": "第三路 STA", "module": "sta"},
+        )
+        self.assertEqual(created.status_code, 201)
+        session = created.json()
+        session_id = session["session_id"]
+        self.assertEqual(session["title"], "第三路 STA")
+        self.assertEqual(session["module"], "sta")
+
+        listed = self.client.get("/api/module-serial/sessions")
+        self.assertEqual([item["session_id"] for item in listed.json()["sessions"]], [session_id])
+
+        changed = self.client.patch(
+            f"/api/module-serial/sessions/{session_id}",
+            json={"title": "STA 观察"},
+        )
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(changed.json()["title"], "STA 观察")
+
+        deleted = self.client.delete(f"/api/module-serial/sessions/{session_id}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertTrue(deleted.json()["deleted"])
+
+    def test_session_actions_only_affect_target_session(self):
+        first = self.client.post("/api/module-serial/sessions", json={"module": "cco"}).json()["session_id"]
+        second = self.client.post("/api/module-serial/sessions", json={"module": "sta"}).json()["session_id"]
+        first_serial = FakeSerial()
+        second_serial = FakeSerial()
+
+        try:
+            with mock.patch("serial.Serial", side_effect=[first_serial, second_serial]):
+                first_start = self.client.post(
+                    f"/api/module-serial/sessions/{first}/start",
+                    json={"port": "COM_DYNAMIC_1", "baudrate": 115200},
+                )
+                second_start = self.client.post(
+                    f"/api/module-serial/sessions/{second}/start",
+                    json={"port": "COM_DYNAMIC_2", "baudrate": 115200},
+                )
+            self.assertEqual(first_start.status_code, 202)
+            self.assertEqual(second_start.status_code, 202)
+
+            sent = self.client.post(
+                f"/api/module-serial/sessions/{second}/write-text",
+                json={"text": "reboot"},
+            )
+            self.assertEqual(sent.status_code, 200)
+            self.assertEqual(first_serial.written, b"")
+            self.assertEqual(second_serial.written, b"reboot\r\n")
+
+            stopped = self.client.post(f"/api/module-serial/sessions/{first}/stop")
+            self.assertEqual(stopped.status_code, 200)
+            states = {item["session_id"]: item["state"]
+                      for item in self.client.get("/api/module-serial/sessions").json()["sessions"]}
+            self.assertEqual(states[first], "idle")
+            self.assertEqual(states[second], "running")
+        finally:
+            self.svc.stop_session(first)
+            self.svc.stop_session(second)
+
+    def test_unknown_session_returns_404(self):
+        response = self.client.get("/api/module-serial/sessions/no-such-session/logs")
+        self.assertEqual(response.status_code, 404)
+
+
+    def test_loghooks_realtime_reads_the_requested_dynamic_session(self):
+        session_id = self.client.post(
+            "/api/module-serial/sessions",
+            json={"title": "STA 观察", "module": "sta"},
+        ).json()["session_id"]
+        self.svc._require_session(session_id).channel._append_line(
+            "RX",
+            "76133386 | info | nwk_nsm.c (752)| nwk disc done",
+        )
+
+        response = self.client.get(
+            f"/api/loghooks/realtime?session_id={session_id}&limit=100"
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["session_id"], session_id)
+        self.assertEqual(data["module"], "sta")
+        self.assertEqual(data["total_lines"], 1)
+        self.assertIn("nwk disc done", data["lines"][0]["raw"])
+
+    def test_loghooks_realtime_rejects_unknown_dynamic_session(self):
+        response = self.client.get("/api/loghooks/realtime?session_id=no-such-session")
+        self.assertEqual(response.status_code, 404)
+
+
+
+class LegacyModuleSerialRoutingTest(unittest.TestCase):
+    """旧请求只有 log_type 时，必须实际路由到该类型而非默认 CCO。"""
+
+    def test_start_uses_log_type_when_channel_is_omitted(self):
+        tmpdir = tempfile.mkdtemp()
+        service = ModuleSerialService(log_dir=Path(tmpdir) / "LOG")
+        client = TestClient(create_app(module_serial_service=service))
+        fake = FakeSerial()
+        try:
+            with mock.patch("serial.Serial", return_value=fake):
+                response = client.post(
+                    "/api/module-serial/start",
+                    json={"port": "COM_STA", "log_type": "sta"},
+                )
+            self.assertEqual(response.status_code, 202)
+            status = client.get("/api/module-serial/status").json()
+            self.assertEqual(status["channels"]["sta"]["state"], "running")
+            self.assertEqual(status["channels"]["cco"]["state"], "idle")
+        finally:
+            service.stop(channel="sta")
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,4 @@
+import json
 import queue
 import tempfile
 import threading
@@ -462,5 +463,162 @@ class DualChannelServiceTest(unittest.TestCase):
         self.assertIn("sta", st["channels"])
 
 
+
+
+class DynamicSessionServiceTest(unittest.TestCase):
+    """动态会话不受 CCO/STA 两路限制，并在服务端统一维护物理端口独占。"""
+
+    def _service(self, catalog=None):
+        return ModuleSerialService(
+            log_dir=Path(tempfile.mkdtemp()) / "LOG",
+            port_catalog=catalog,
+        )
+
+    def test_creates_three_independent_sessions_and_stopping_one_keeps_others_running(self):
+        svc = self._service()
+        sessions = [
+            svc.create_session(title=f"实时日志 {index}", module="cco" if index != 2 else "sta")
+            for index in range(1, 4)
+        ]
+        session_ids = [item["session_id"] for item in sessions]
+        self.assertEqual([item["session_id"] for item in svc.list_sessions()], session_ids)
+
+        serials = [FakeSerial(), FakeSerial(), FakeSerial()]
+        try:
+            with mock.patch("serial.Serial", side_effect=serials):
+                for index, session_id in enumerate(session_ids):
+                    svc.start_session(session_id, f"COM_DYNAMIC_{index}", baudrate=115200)
+
+            svc.stop_session(session_ids[1])
+            states = {item["session_id"]: item["state"] for item in svc.list_sessions()}
+            self.assertEqual(states[session_ids[0]], "running")
+            self.assertEqual(states[session_ids[1]], "idle")
+            self.assertEqual(states[session_ids[2]], "running")
+        finally:
+            for session_id in session_ids:
+                svc.stop_session(session_id)
+
+    def test_mapped_aliases_cannot_be_opened_by_two_sessions(self):
+        from shared.serial_mapping import SerialPortCatalog, SerialPortMapping
+
+        catalog = SerialPortCatalog([
+            SerialPortMapping(
+                id="cco-main", linux_device="/dev/ttyACM0", windows_com="COM8",
+                label="CCO 日志口", usage="module_log", module="cco",
+            ),
+        ])
+        svc = self._service(catalog=catalog)
+        first = svc.create_session(title="CCO A", module="cco")["session_id"]
+        second = svc.create_session(title="CCO B", module="cco")["session_id"]
+
+        try:
+            with mock.patch.object(svc, "_system_ports", return_value=[
+                {"device": "/dev/ttyACM0", "description": "fake"},
+            ]), mock.patch("serial.Serial", return_value=FakeSerial()):
+                svc.start_session(first, "/dev/ttyACM0")
+                with self.assertRaisesRegex(RuntimeError, "CCO A"):
+                    svc.start_session(second, "COM8")
+        finally:
+            svc.stop_session(first)
+            svc.stop_session(second)
+
+    def test_dynamic_session_log_records_stable_identity(self):
+        from shared.serial_mapping import SerialPortCatalog, SerialPortMapping
+
+        catalog = SerialPortCatalog([
+            SerialPortMapping(
+                id="sta-main", linux_device="/dev/ttyACM1", windows_com="COM9",
+                label="STA 日志口", usage="module_log", module="sta",
+                baudrate=115200,
+            ),
+        ])
+        svc = self._service(catalog=catalog)
+        session = svc.create_session(title="STA 采集", module="sta")
+        session_id = session["session_id"]
+
+        try:
+            with mock.patch.object(svc, "_system_ports", return_value=[
+                {"device": "/dev/ttyACM1", "description": "fake"},
+            ]), mock.patch("serial.Serial", return_value=FakeSerial()):
+                result = svc.start_session(session_id, "/dev/ttyACM1")
+            log_path = Path(result["log_file"])
+            self.assertIn("_[sta]_[sta-main-", log_path.name)
+            content = log_path.read_text(encoding="utf-8")
+            self.assertIn(session_id, content)
+            self.assertIn("mapping_id=sta-main", content)
+            self.assertIn("COM9", content)
+        finally:
+            svc.stop_session(session_id)
+
+    def test_running_dynamic_session_cannot_be_deleted_until_stopped(self):
+        svc = self._service()
+        session_id = svc.create_session(title="待关闭", module="cco")["session_id"]
+        try:
+            with mock.patch("serial.Serial", return_value=FakeSerial()):
+                svc.start_session(session_id, "COM_DYNAMIC")
+            with self.assertRaisesRegex(RuntimeError, "运行中"):
+                svc.delete_session(session_id)
+            svc.stop_session(session_id)
+            self.assertTrue(svc.delete_session(session_id)["deleted"])
+            self.assertEqual(svc.list_sessions(), [])
+        finally:
+            if any(item["session_id"] == session_id for item in svc.list_sessions()):
+                svc.stop_session(session_id)
+
 if __name__ == "__main__":
     unittest.main()
+class SharedSerialCatalogIntegrationTest(unittest.TestCase):
+    """模块日志枚举应提供统一映射细节，同时保留旧 ports 字符串列表。"""
+
+    def test_port_details_use_catalog_and_ports_stay_compatible(self):
+        from shared.serial_mapping import SerialPortCatalog
+
+        config = {
+            "version": 1,
+            "ports": [{
+                "id": "cco-main", "linux_device": "/dev/ttyACM0",
+                "windows_com": "COM8", "label": "CCO 日志口",
+                "usage": "module_log", "module": "cco", "baudrate": 115200,
+                "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True,
+            }],
+        }
+        base = Path(tempfile.mkdtemp())
+        config_path = base / "serial_ports.json"
+        config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        svc = ModuleSerialService(log_dir=base / "LOG", port_catalog=SerialPortCatalog.load(config_path))
+        fake_port = mock.Mock(device="/dev/ttyACM0", description="CH342")
+        with mock.patch("serial.tools.list_ports.comports", return_value=[fake_port]):
+            details = svc.list_available_port_details()
+            ports = svc.list_available_ports()
+        self.assertEqual(details[0]["mapping_id"], "cco-main")
+        self.assertEqual(details[0]["module"], "cco")
+        self.assertEqual(ports, ["/dev/ttyACM0"])
+
+class SharedBackendSerialReservationTest(unittest.TestCase):
+    """工作台内 listener/module 复用同一资源表时，映射别名必须互斥。"""
+
+    def test_module_session_respects_listener_reservation(self):
+        from shared.serial_mapping import SerialPortCatalog, SerialPortMapping
+        from shared.serial_resources import SerialResourceRegistry
+
+        catalog = SerialPortCatalog([
+            SerialPortMapping(
+                id="shared-port", linux_device="/dev/ttyACM7", windows_com="COM77",
+                label="共享串口", usage="", module="cco",
+            ),
+        ])
+        registry = SerialResourceRegistry()
+        registry.reserve(
+            "listener:listener-main", label="侦听台",
+            resource_id="shared-port", aliases=("COM77", "/dev/ttyACM7"),
+        )
+        svc = ModuleSerialService(
+            log_dir=Path(tempfile.mkdtemp()) / "LOG",
+            port_catalog=catalog, resource_registry=registry,
+        )
+        session_id = svc.create_session(title="待启动", module="cco")["session_id"]
+        with mock.patch.object(svc, "_system_ports", return_value=[
+            {"device": "/dev/ttyACM7", "description": "fake"},
+        ]):
+            with self.assertRaisesRegex(RuntimeError, "侦听台"):
+                svc.start_session(session_id, "COM77")
