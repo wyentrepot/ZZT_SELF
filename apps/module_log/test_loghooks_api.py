@@ -157,6 +157,18 @@ class ScanLogFileTest(unittest.TestCase):
         self.assertNotIn("", lines)
 
 
+    def test_scan_nested_session_log_directory(self):
+        """动态会话日志即使归档到子目录，也必须能被对照解析找到。"""
+        nested = self.root / "cco" / "ms-session-a"
+        nested.mkdir(parents=True, exist_ok=True)
+        _write_log(nested / "nested_[cco].log", CCO_LOG)
+        res = loghooks_api.scan_log_file(self.root / "cco", module="cco")
+        self.assertFalse(res.get("error"))
+        self.assertEqual(res["total_lines"], len(CCO_LOG))
+        self.assertEqual(len(res["files"]), 1)
+        self.assertIn("ms-session-a", res["files"][0])
+
+
 class FrontendIntegrityTest(unittest.TestCase):
     """前端 module-serial.js 完整性静态检查（防止虚拟滚动等重构误删关键函数）。"""
 

@@ -42,13 +42,18 @@ def _read_file_lines(path: Path) -> List[str]:
 
 
 def _iter_log_files(path: Path) -> List[Path]:
-    """枚举日志文件：单个文件或目录下的 *.log/.txt。"""
+    """枚举日志文件：单个文件或目录树内的 *.log/.txt/.jsonl。
+
+    动态串口会话会按会话或归档目录保存日志；递归扫描保持文件路径作为
+    行定位的一部分，避免不同会话同名文件发生歧义。
+    """
+    suffixes = {".log", ".txt", ".jsonl"}
     if path.is_file():
-        return [path] if path.suffix in (".log", ".txt", ".jsonl") else []
+        return [path] if path.suffix.lower() in suffixes else []
     if path.is_dir():
         return sorted(
-            p for p in path.iterdir()
-            if p.is_file() and p.suffix in (".log", ".txt")
+            item for item in path.rglob("*")
+            if item.is_file() and item.suffix.lower() in suffixes
         )
     return []
 

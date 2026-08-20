@@ -5,472 +5,544 @@
 (function () {
   "use strict";
 
-  // 统一选择器：以 . / # / [ 开头视为 CSS 选择器（querySelector），否则视为元素 id。
-  // 单通道旧版只支持 getElementById；双通道改造后大量使用类/属性选择器，
-  // 若仍用 getElementById 会返回 null 导致 bind() 抛错、串口下拉无法填充。
   const $ = (sel) =>
     sel.startsWith(".") || sel.startsWith("#") || sel.startsWith("[")
       ? document.querySelector(sel)
       : document.getElementById(sel);
-  const CHANNELS = ["cco", "sta"];
-  // 日志刷新速度三档：快/中/慢（毫秒）。默认中。
+  const API_BASE = document.body.dataset.apiBase || "/api";
+  const api = function (suffix) { return API_BASE + suffix; };
   const REFRESH_SPEED_MS = { fast: 100, medium: 500, slow: 800 };
   const DEFAULT_REFRESH_SPEED = "medium";
-  // 每路日志显示框最多保留的行数：超过后丢弃最旧行，防止整夜监听后
-  // DOM 节点无限增长导致浏览器卡死/崩溃。历史日志完整落盘在 LOG/模块/<ch>/。
   const MAX_LOG_ROWS = 3000;
-  // 每路独立增量游标
-  const lastSeq = { cco: -1, sta: -1 };
+  const sessionsById = new Map();
+  const lastSeqBySessionId = new Map();
+  const viewStateBySessionId = new Map();
+  let activeSessionId = null;
   let pollTimer = null;
-  const portRefreshing = { cco: false, sta: false };
-  let pickerChannel = "cco"; // 文件选择当前归属通道
+  let portDetails = [];
 
   async function request(url, options) {
-    const resp = await fetch(url, options);
-    if (!resp.ok) {
-      let detail = resp.statusText;
-      try {
-        const body = await resp.json();
-        detail = body.detail || detail;
-      } catch (_) { /* ignore */ }
-      throw new Error(detail);
-    }
-    return resp.json();
+    const response = await fetch(url, options);
+    let body = {};
+    try { body = await response.json(); } catch (error) {}
+    if (!response.ok) throw new Error(body.detail || response.statusText || "请求失败");
+    return body;
   }
 
-  // ---------- 状态 ----------
-  async function refreshStatus() {
-    try {
-      const st = await request("/api/module-serial/status");
-      $("ms-server-state").textContent = "已连接";
-      const chs = st.channels || {};
-      CHANNELS.forEach((ch) => {
-        const c = chs[ch] || {};
-        $(`ms-status-${ch}`).textContent =
-          `${c.state} · ${c.port || "-"} · ${c.baudrate || "-"}` +
-          (c.flash && c.flash.flashing ? ` · 烧录 ${c.flash.packet}/${c.flash.total || "?"}` : "");
-        updateToggleButton(ch, c.state);
-        $(`.ms-flash[data-channel="${ch}"]`).disabled = !!(c.flash && c.flash.flashing);
-        // 进度
-        const bar = $(`.ms-progress-bar[data-channel="${ch}"]`);
-        const txt = $(`.ms-progress-text[data-channel="${ch}"]`);
-        const total = c.flash && c.flash.total ? c.flash.total : 0;
-        const pkt = c.flash ? c.flash.packet : 0;
-        if (c.flash && c.flash.flashing && total > 0) {
-          const pct = Math.round((pkt * 100) / total);
-          bar.style.width = pct + "%";
-          txt.textContent = `传输中 ${pkt}/${total} (${pct}%)`;
-        } else if (c.flash && c.flash.phase === "done") {
-          bar.style.width = "100%";
-          txt.textContent = "烧录完成";
-        } else if (c.flash && c.flash.phase === "error") {
-          bar.style.width = "0%";
-          txt.textContent = "烧录失败：" + (c.flash.message || "");
-        } else {
-          bar.style.width = "0%";
-          txt.textContent = c.flash && c.flash.message ? c.flash.message : "未开始";
-        }
+  function escapeHtml(value) {
+    return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function currentSession() {
+    return activeSessionId ? sessionsById.get(activeSessionId) : null;
+  }
+
+  function viewState(sessionId) {
+    if (!viewStateBySessionId.has(sessionId)) {
+      viewStateBySessionId.set(sessionId, {
+        lines: [], firmwarePath: "", slot: "0", noReboot: false, autoScroll: true,
       });
-      return st;
-    } catch (err) {
-      $("ms-server-state").textContent = "连接失败：" + err.message;
+    }
+    return viewStateBySessionId.get(sessionId);
+  }
+
+  function isRunning(session) {
+    return !!session && (session.state === "running" || session.state === "starting");
+  }
+
+  function setSelectValue(id, value) {
+    const element = $(id);
+    if (!element || value === undefined || value === null) return;
+    const expected = String(value);
+    for (let index = 0; index < element.options.length; index += 1) {
+      if (String(element.options[index].value) === expected) {
+        element.value = expected;
+        return;
+      }
+    }
+  }
+
+  function renderSessionTabs() {
+    const host = $("ms-session-tabs");
+    host.replaceChildren();
+    sessionsById.forEach(function (session) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ms-session-tab " + session.state;
+      if (session.session_id === activeSessionId) button.classList.add("active");
+      button.dataset.sessionId = session.session_id;
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      button.appendChild(dot);
+      button.appendChild(document.createTextNode(session.title || session.session_id));
+      button.addEventListener("click", function () { switchSession(session.session_id); });
+      host.appendChild(button);
+    });
+  }
+
+  function renderLog() {
+    const session = currentSession();
+    const box = $("ms-log-box");
+    box.replaceChildren();
+    if (!session) return;
+    const view = viewState(session.session_id);
+    view.lines.forEach(function (line) {
+      const row = document.createElement("div");
+      const direction = line.dir || "EVENT";
+      const cls = direction === "RX" ? "rx" : direction === "TX" ? "tx" : "ev";
+      const timestamp = document.createElement("span");
+      timestamp.className = "t";
+      timestamp.textContent = "[" + (line.ts || "") + "] ";
+      const body = document.createElement("span");
+      body.className = cls;
+      body.textContent = "[" + direction + "] " +
+        String(line.text || "").split(String.fromCharCode(13)).join("").split(String.fromCharCode(10)).join("");
+      row.append(timestamp, body);
+      box.appendChild(row);
+    });
+    if (view.autoScroll) box.scrollTop = box.scrollHeight;
+  }
+
+  function renderActiveSession() {
+    const session = currentSession();
+    const panel = $("ms-session-panel");
+    const closeButton = $("ms-close-session");
+    if (!session) {
+      panel.hidden = true;
+      closeButton.disabled = true;
+      $("ms-session-message").textContent = "正在创建默认页面…";
+      renderSessionTabs();
+      return;
+    }
+    panel.hidden = false;
+    closeButton.disabled = false;
+    renderSessionTabs();
+
+    const config = session.serial_config || {};
+    const identity = session.port_identity || {};
+    const view = viewState(session.session_id);
+    const running = isRunning(session);
+
+    $("ms-title").value = session.title || "";
+    $("ms-module").value = session.module || "cco";
+    if (session.port) setSelectValue("ms-port", session.port);
+    setSelectValue("ms-baud", config.baudrate || session.baudrate || 115200);
+    setSelectValue("ms-parity", config.parity || session.parity || "N");
+    setSelectValue("ms-bytesize", config.bytesize || session.bytesize || 8);
+    setSelectValue("ms-stopbits", config.stopbits || session.stopbits || 1);
+    $("ms-bin").value = view.firmwarePath;
+    $("ms-slot").value = view.slot;
+    $("ms-no-reboot").checked = view.noReboot;
+    $("ms-autoscroll").checked = view.autoScroll;
+    $("ms-module-badge").textContent = (session.module || "cco").toUpperCase();
+    $("ms-module-badge").className = "ms-channel-badge " + (session.module || "cco");
+    $("ms-session-title-display").textContent = session.title || "实时日志";
+    $("ms-session-status").textContent =
+      (session.state || "idle") + " · " + (identity.label || session.port || "未连接") +
+      " · " + (config.baudrate || session.baudrate || 115200);
+    $("ms-send-target").textContent = "→ " + (session.title || session.session_id);
+
+    $("ms-toggle").textContent = running ? "停止" : "启动";
+    $("ms-toggle").className = running ? "secondary-button" : "primary-button";
+    ["ms-title", "ms-module", "ms-port", "ms-baud", "ms-parity", "ms-bytesize", "ms-stopbits"].forEach(function (id) {
+      $(id).disabled = running;
+    });
+    $("ms-refresh-ports").disabled = running;
+    $("ms-flash").disabled = !running || !!(session.flash && session.flash.flashing);
+
+    const flash = session.flash || {};
+    if (flash.flashing && flash.total) {
+      const percent = Math.round((flash.packet || 0) * 100 / flash.total);
+      $("ms-progress-bar").style.width = percent + "%";
+      $("ms-progress-text").textContent = "传输中 " + (flash.packet || 0) + "/" + flash.total + " (" + percent + "%)";
+    } else if (flash.phase === "done") {
+      $("ms-progress-bar").style.width = "100%";
+      $("ms-progress-text").textContent = "烧录完成";
+    } else if (flash.phase === "error") {
+      $("ms-progress-bar").style.width = "0%";
+      $("ms-progress-text").textContent = "烧录失败：" + (flash.message || "");
+    } else {
+      $("ms-progress-bar").style.width = "0%";
+      $("ms-progress-text").textContent = flash.message || "未开始";
+    }
+    $("ms-log-path").textContent = session.log_file || "尚未生成日志文件";
+    $("ms-session-message").textContent = identity.mapping_id
+      ? "映射：" + identity.mapping_id + " · " + (identity.label || identity.device || "")
+      : "未映射串口按实际设备名独占";
+    renderLog();
+  }
+
+  async function refreshPorts() {
+    const selected = $("ms-port").value;
+    try {
+      const data = await request(api("/module-serial/ports"));
+      portDetails = data.port_details || [];
+      const ports = portDetails.length ? portDetails : (data.ports || []).map(function (device) {
+        return { device: device, label: "", online: true };
+      });
+      const select = $("ms-port");
+      select.replaceChildren();
+      if (!ports.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "（未发现串口）";
+        select.appendChild(option);
+        return;
+      }
+      ports.forEach(function (item) {
+        const option = document.createElement("option");
+        option.value = item.device;
+        option.disabled = item.online === false || item.enabled === false;
+        const prefix = item.label ? item.label + " · " : "";
+        const suffix = item.online === false ? "（离线）" : "";
+        option.textContent = prefix + item.device + suffix;
+        select.appendChild(option);
+      });
+      const session = currentSession();
+      if (session && session.port) setSelectValue("ms-port", session.port);
+      else if (selected) setSelectValue("ms-port", selected);
+    } catch (error) {
+      $("ms-session-message").textContent = "端口列表加载失败：" + error.message;
+    }
+  }
+
+  async function refreshSessions() {
+    try {
+      const data = await request(api("/module-serial/sessions"));
+      const sessions = data.sessions || [];
+      sessionsById.clear();
+      sessions.forEach(function (session) {
+        sessionsById.set(session.session_id, session);
+        viewState(session.session_id);
+        if (!lastSeqBySessionId.has(session.session_id)) lastSeqBySessionId.set(session.session_id, -1);
+      });
+      if (!activeSessionId || !sessionsById.has(activeSessionId)) {
+        activeSessionId = sessions.length ? sessions[0].session_id : null;
+      }
+      renderActiveSession();
+      if (typeof cmpRefreshSessions === "function") cmpRefreshSessions();
+      return sessions;
+    } catch (error) {
+      $("ms-server-state").textContent = "连接失败：" + error.message;
+      return [];
+    }
+  }
+
+  async function createSession(title, module) {
+    try {
+      const session = await request(api("/module-serial/sessions"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title || "", module: module || "cco" }),
+      });
+      sessionsById.set(session.session_id, session);
+      activeSessionId = session.session_id;
+      viewState(session.session_id);
+      lastSeqBySessionId.set(session.session_id, -1);
+      renderActiveSession();
+      await refreshPorts();
+      if (typeof cmpRefreshSessions === "function") cmpRefreshSessions();
+      return session;
+    } catch (error) {
+      alert("新增页面失败：" + error.message);
       return null;
     }
   }
 
-  // ---------- 日志增量轮询 ----------
-  async function pollLogs() {
-    for (const ch of CHANNELS) {
-      try {
-        const data = await request(`/api/module-serial/logs?after=${lastSeq[ch]}&channel=${ch}`);
-        if (!data.lines || data.lines.length === 0) continue;
-        const box = $(`.ms-log-box[data-channel="${ch}"]`);
-        const autoscroll = $(`.ms-autoscroll[data-channel="${ch}"]`).checked;
-        for (const line of data.lines) {
-          const cls = line.dir === "RX" ? "rx" : line.dir === "TX" ? "tx" : "ev";
-          const div = document.createElement("div");
-          const text = String(line.text).replace(/\r?\n/g, "").replace(/\r/g, "");
-          div.innerHTML = `<span class="t">[${line.ts}]</span> [${line.dir}] <span class="${cls}">${escapeHtml(text)}</span>`;
-          box.appendChild(div);
-        }
-        // 动态缓存裁剪：只保留最近 MAX_LOG_ROWS 行，超出的最旧行直接移除
-        while (box.childElementCount > MAX_LOG_ROWS) {
-          box.removeChild(box.firstElementChild);
-        }
-        if (autoscroll) box.scrollTop = box.scrollHeight;
-        if (data.last_seq >= 0) lastSeq[ch] = data.last_seq;
-      } catch (_) { /* 下次再试 */ }
+  async function ensureDefaultSession() {
+    const sessions = await refreshSessions();
+    if (!sessions.length) await createSession("", "cco");
+  }
+
+  async function switchSession(sessionId) {
+    if (!sessionsById.has(sessionId)) return;
+    activeSessionId = sessionId;
+    renderActiveSession();
+    await refreshPorts();
+    await pollActiveLogs();
+  }
+
+  async function updateCurrentSession(patch) {
+    const session = currentSession();
+    if (!session) return null;
+    try {
+      const updated = await request(api("/module-serial/sessions/" + session.session_id), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      sessionsById.set(updated.session_id, updated);
+      renderActiveSession();
+      if (typeof cmpRefreshSessions === "function") cmpRefreshSessions();
+      return updated;
+    } catch (error) {
+      alert("更新页面失败：" + error.message);
+      renderActiveSession();
+      return null;
     }
   }
 
-  function escapeHtml(s) {
-    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  // ---------- 端口 ----------
-  async function refreshPorts(ch) {
-    if (portRefreshing[ch]) return;
-    portRefreshing[ch] = true;
-    try {
-      const data = await request("/api/module-serial/ports");
-      const sel = $(`#ms-port-${ch}`);
-      const current = sel.value;
-      sel.replaceChildren();
-      if (!data.ports || data.ports.length === 0) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = "（未发现串口）";
-        sel.appendChild(opt);
-        return;
-      }
-      for (const p of data.ports) {
-        const opt = document.createElement("option");
-        opt.value = p;
-        opt.textContent = p;
-        sel.appendChild(opt);
-      }
-      if (data.ports.includes(current)) sel.value = current;
-    } catch (err) {
-      console.error(`refreshPorts(${ch}):`, err);
-    } finally {
-      portRefreshing[ch] = false;
-    }
+  async function applyMappedPortDefaults() {
+    const session = currentSession();
+    if (!session || isRunning(session)) return;
+    const detail = portDetails.find(function (item) { return item.device === $("ms-port").value; });
+    if (!detail) return;
+    if (detail.baudrate) setSelectValue("ms-baud", detail.baudrate);
+    if (detail.parity) setSelectValue("ms-parity", detail.parity);
+    if (detail.bytesize) setSelectValue("ms-bytesize", detail.bytesize);
+    if (detail.stopbits) setSelectValue("ms-stopbits", detail.stopbits);
+
+    const patch = {};
+    if (detail.module && detail.module !== session.module) patch.module = detail.module;
+    if (detail.label && (!session.title || /^实时日志 /.test(session.title))) patch.title = detail.label;
+    if (Object.keys(patch).length) await updateCurrentSession(patch);
   }
 
-  // ---------- 动作 ----------
-  function updateToggleButton(ch, state) {
-    const btn = $(`.ms-toggle[data-channel="${ch}"]`);
-    const running = state === "running" || state === "starting";
-    btn.textContent = running ? "停止" : "启动";
-    btn.classList.toggle("secondary-button", running);
-    btn.classList.toggle("primary-button", !running);
-    btn.disabled = false;
-    // 串口运行中，端口/波特率/校验位/数据位/停止位不可更改；停止后才能重新选择
-    $(`#ms-port-${ch}`).disabled = running;
-    $(`#ms-baud-${ch}`).disabled = running;
-    $(`#ms-parity-${ch}`).disabled = running;
-    $(`#ms-bytesize-${ch}`).disabled = running;
-    $(`#ms-stopbits-${ch}`).disabled = running;
-  }
-
-  async function toggleSerial(ch) {
-    const port = $(`#ms-port-${ch}`).value;
-    if (!port) { alert(`请先选择 ${ch.toUpperCase()} 串口`); return; }
-    const btn = $(`.ms-toggle[data-channel="${ch}"]`);
-    btn.disabled = true;
+  async function toggleSerial() {
+    const session = currentSession();
+    if (!session) return;
+    const button = $("ms-toggle");
+    button.disabled = true;
     try {
-      const isStop = btn.textContent === "停止";
-      if (isStop) {
-        await request("/api/module-serial/stop", {
+      if (isRunning(session)) {
+        await request(api("/module-serial/sessions/" + session.session_id + "/stop"), { method: "POST" });
+      } else {
+        const port = $("ms-port").value;
+        if (!port) throw new Error("请先选择串口");
+        await request(api("/module-serial/sessions/" + session.session_id + "/start"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channel: ch }),
+          body: JSON.stringify({
+            port: port,
+            baudrate: parseInt($("ms-baud").value, 10),
+            parity: $("ms-parity").value,
+            bytesize: parseInt($("ms-bytesize").value, 10),
+            stopbits: parseInt($("ms-stopbits").value, 10),
+          }),
         });
-      } else {
-        const baud = parseInt($(`#ms-baud-${ch}`).value, 10);
-        const parity = $(`#ms-parity-${ch}`).value;
-        const bytesize = parseInt($(`#ms-bytesize-${ch}`).value, 10);
-        const stopbits = parseInt($(`#ms-stopbits-${ch}`).value, 10);
-        await request("/api/module-serial/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ port, baudrate: baud, bytesize, parity, stopbits, channel: ch }),
-        });
-        lastSeq[ch] = -1;
-        $(`.ms-log-box[data-channel="${ch}"]`).innerHTML = "";
+        const view = viewState(session.session_id);
+        view.lines = [];
+        lastSeqBySessionId.set(session.session_id, -1);
       }
-      await refreshStatus();
-    } catch (err) {
-      alert((isStop ? "停止失败：" : "启动失败：") + err.message);
-    } finally {
-      btn.disabled = false;
-    }
-  }
-  // ---------- 文件选择：先试系统原生对话框（/api/fs/pick）----------
-  async function pickFile(ch) {
-    pickerChannel = ch;
-    const btn = $(`.ms-pick[data-channel="${ch}"]`);
-    btn.disabled = true;
-    btn.textContent = "选择中…";
-    try {
-      const data = await request("/api/fs/pick");
-      const path = data && data.path;
-      if (path) {
-        $(`#ms-bin-${ch}`).value = path;
-      } else {
-        pickerOpen();
-      }
-    } catch (err) {
-      pickerOpen();
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "选择…";
-    }
-  }
-
-  // ---------- 内置目录浏览器兜底 ----------
-  const picker = {
-    overlay: null, close: null, cancel: null, up: null, path: null,
-    roots: null, list: null, selected: null, confirm: null,
-    currentDir: null, chosenFile: null,
-  };
-
-  function formatFileSize(bytes) {
-    if (bytes == null) return "";
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
-  }
-
-  function pickerClose() { picker.overlay.hidden = true; }
-
-  function pickerOpen() {
-    picker.overlay.hidden = false;
-    pickerRoots();
-  }
-
-  async function pickerRoots() {
-    try {
-      const data = await request("/api/fs/roots");
-      picker.roots.textContent = "";
-      data.roots.forEach((root) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "picker-root-button";
-        button.textContent = root.name;
-        button.addEventListener("click", () => pickerList(root.path));
-        picker.roots.appendChild(button);
-      });
+      await refreshSessions();
     } catch (error) {
-      pickerList(picker.currentDir || "");
+      alert("串口操作失败：" + error.message);
+    } finally {
+      button.disabled = false;
     }
   }
 
-  async function pickerList(path) {
-    if (!path) return;
-    picker.path.textContent = path;
-    picker.path.title = path;
-    picker.currentDir = path;
-    picker.list.innerHTML = '<div class="file-picker-empty">加载中…</div>';
-    picker.chosenFile = null;
-    picker.confirm.disabled = true;
-    picker.selected.textContent = "";
+  async function pollActiveLogs() {
+    const session = currentSession();
+    if (!session) return;
+    const after = lastSeqBySessionId.get(session.session_id);
     try {
-      const data = await request(`/api/fs/list?path=${encodeURIComponent(path)}`);
-      picker.up.disabled = !data.parent;
-      picker.list.textContent = "";
-      if (!data.dirs.length && !data.files.length) {
-        const empty = document.createElement("div");
-        empty.className = "file-picker-empty";
-        empty.textContent = "该目录没有子目录或文件";
-        picker.list.appendChild(empty);
-        return;
+      const data = await request(api("/module-serial/sessions/" + session.session_id + "/logs?after=" + after));
+      const view = viewState(session.session_id);
+      (data.lines || []).forEach(function (line) { view.lines.push(line); });
+      while (view.lines.length > MAX_LOG_ROWS) view.lines.shift();
+      if (typeof data.last_seq === "number") lastSeqBySessionId.set(session.session_id, data.last_seq);
+      renderLog();
+    } catch (error) {}
+  }
+
+  async function chooseFirmware() {
+    try {
+      const data = await request(api("/fs/pick"));
+      if (data.path) {
+        $("ms-bin").value = data.path;
+        viewState(activeSessionId).firmwarePath = data.path;
       }
-      data.dirs.forEach((dir) => picker.list.appendChild(pickerDirRow(dir)));
-      data.files.forEach((file) => picker.list.appendChild(pickerFileRow(file)));
     } catch (error) {
-      picker.list.textContent = "";
-      const empty = document.createElement("div");
-      empty.className = "file-picker-empty";
-      empty.textContent = error.message;
-      picker.list.appendChild(empty);
-      picker.up.disabled = true;
+      alert("无法打开文件选择器，请手动输入固件路径");
     }
   }
 
-  function pickerDirRow(dir) {
-    const row = document.createElement("div");
-    row.className = "file-picker-row file-picker-dir";
-    row.innerHTML = '<span class="picker-icon">📁</span>';
-    const name = document.createElement("span");
-    name.className = "picker-name";
-    name.textContent = dir.name;
-    row.appendChild(name);
-    row.addEventListener("click", () => pickerList(dir.path));
-    row.addEventListener("dblclick", () => pickerList(dir.path));
-    return row;
-  }
-
-  function pickerFileRow(file) {
-    const row = document.createElement("div");
-    row.className = "file-picker-row file-picker-file";
-    row.innerHTML = '<span class="picker-icon">📄</span>';
-    const name = document.createElement("span");
-    name.className = "picker-name";
-    name.textContent = file.name;
-    const size = document.createElement("span");
-    size.className = "picker-size";
-    size.textContent = formatFileSize(file.size);
-    row.appendChild(name);
-    row.appendChild(size);
-    const select = () => {
-      picker.list.querySelectorAll(".file-picker-row.selected").forEach((node) => {
-        node.classList.remove("selected");
-      });
-      row.classList.add("selected");
-      picker.chosenFile = file.path;
-      picker.selected.textContent = file.path;
-      picker.confirm.disabled = false;
-    };
-    row.addEventListener("click", select);
-    row.addEventListener("dblclick", () => { select(); pickerConfirm(); });
-    return row;
-  }
-
-  function pickerConfirm() {
-    if (!picker.chosenFile) return;
-    $(`#ms-bin-${pickerChannel}`).value = picker.chosenFile;
-    pickerClose();
-  }
-  async function startFlash(ch) {
-    const binPath = $(`#ms-bin-${ch}`).value.trim();
-    if (!binPath) { alert(`请先选择 ${ch.toUpperCase()} 固件 .bin 路径`); return; }
-    const slot = parseInt($(`#ms-slot-${ch}`).value || "0", 10);
-    const noReboot = $(`.ms-no-reboot[data-channel="${ch}"]`).checked;
-    if (!confirm(`确认向 ${ch.toUpperCase()} (${$(`#ms-port-${ch}`).value}) 烧录 ${binPath}？\nimage=${slot}`)) {
-      return;
-    }
-    const bar = $(`.ms-progress-bar[data-channel="${ch}"]`);
-    const txt = $(`.ms-progress-text[data-channel="${ch}"]`);
-    bar.style.width = "0%";
-    txt.textContent = "开始烧录…";
+  async function startFlash() {
+    const session = currentSession();
+    if (!session) return;
+    const view = viewState(session.session_id);
+    const binPath = $("ms-bin").value.trim();
+    if (!binPath) { alert("请先选择固件 .bin 路径"); return; }
+    view.firmwarePath = binPath;
+    view.slot = $("ms-slot").value;
+    view.noReboot = $("ms-no-reboot").checked;
+    if (!confirm("确认向当前页面“" + session.title + "”烧录 " + binPath + "？")) return;
     try {
-      await request("/api/module-serial/flash", {
+      await request(api("/module-serial/sessions/" + session.session_id + "/flash"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bin_path: binPath, slot, baud_plan: null, no_reboot_after: noReboot, channel: ch }),
+        body: JSON.stringify({
+          bin_path: binPath, slot: parseInt(view.slot, 10),
+          baud_plan: null, no_reboot_after: view.noReboot,
+        }),
       });
-    } catch (err) {
-      txt.textContent = "烧录失败：" + err.message;
+      await refreshSessions();
+    } catch (error) {
+      alert("烧录失败：" + error.message);
     }
   }
 
-  // ---------- 底部发送框：回车即发送当前行 ----------
-  // 任何发送数据默认自动携带换行（append_newline，默认开，可勾选关闭）。
-  // “换行”按钮只发送一个换行符；直接按换行（空输入）也是发送一个换行。
-  function sendText() {
-    const text = $("ms-send-text").value;
-    const ch = $("ms-send-channel").value;
-    const appendNl = $("ms-send-append-nl").checked;
-    // 空内容也发送：空输入 + 自动补换行 = 发送一个换行
-    request("/api/module-serial/write_text", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, channel: ch, append_newline: appendNl }),
-    })
-      .then(() => { $("ms-send-text").value = ""; })
-      .catch((err) => alert("发送失败：" + err.message));
-  }
-
-  // 发送一个换行符（“携带换行符作为一个按键”）
-  function sendNewline() {
-    const ch = $("ms-send-channel").value;
-    request("/api/module-serial/write_text", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: "", channel: ch, append_newline: true }),
-    })
-      .catch((err) => alert("发送失败：" + err.message));
-  }
-
-  // ---------- 绑定 ----------
-  function bind() {
-    // 禁用浏览器原生中键自动滚动（autoscroll）：鼠标中键按下时不再进入滚动模式，
-    // 避免在日志/事件行上按中键后移动鼠标导致页面自行下拉。
-    document.addEventListener("mousedown", (e) => {
-      if (e.button === 1) e.preventDefault();
-    });
-    document.addEventListener("auxclick", (e) => {
-      if (e.button === 1) e.preventDefault();
-    });
-
-    CHANNELS.forEach((ch) => {
-      $(`.ms-refresh[data-channel="${ch}"]`).addEventListener("click", () => refreshPorts(ch));
-      $(`.ms-toggle[data-channel="${ch}"]`).addEventListener("click", () => toggleSerial(ch));
-      $(`.ms-pick[data-channel="${ch}"]`).addEventListener("click", () => pickFile(ch));
-      $(`.ms-flash[data-channel="${ch}"]`).addEventListener("click", () => startFlash(ch));
-      $(`.ms-clear[data-channel="${ch}"]`).addEventListener("click", () => {
-        $(`.ms-log-box[data-channel="${ch}"]`).innerHTML = "";
+  async function sendText(text, appendNewline) {
+    const session = currentSession();
+    if (!session) return;
+    try {
+      await request(api("/module-serial/sessions/" + session.session_id + "/write-text"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, append_newline: appendNewline }),
       });
-      refreshPorts(ch);
-    });
+      $("ms-send-text").value = "";
+    } catch (error) {
+      alert("发送失败：" + error.message);
+    }
+  }
 
-    // 发送框：回车发送（Shift+Enter 换行）；按钮发送；清空；隐藏/显示
-    $("ms-send-text").addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendText();
+  async function closeActiveSession() {
+    const session = currentSession();
+    if (!session) return;
+    if (isRunning(session)) {
+      if (!confirm("当前页面仍在采集。确认后将先停止串口再关闭页面。")) return;
+      try {
+        await request(api("/module-serial/sessions/" + session.session_id + "/stop"), { method: "POST" });
+      } catch (error) {
+        alert("停止串口失败：" + error.message);
+        return;
+      }
+    }
+    try {
+      await request(api("/module-serial/sessions/" + session.session_id), { method: "DELETE" });
+      sessionsById.delete(session.session_id);
+      viewStateBySessionId.delete(session.session_id);
+      lastSeqBySessionId.delete(session.session_id);
+      activeSessionId = null;
+      await refreshSessions();
+      if (!currentSession()) await createSession("", "cco");
+    } catch (error) {
+      alert("关闭页面失败：" + error.message);
+    }
+  }
+
+  function bind() {
+    $("ms-add-session").addEventListener("click", function () { createSession("", "cco"); });
+    $("ms-close-session").addEventListener("click", closeActiveSession);
+    $("ms-refresh-ports").addEventListener("click", refreshPorts);
+    $("ms-toggle").addEventListener("click", toggleSerial);
+    $("ms-port").addEventListener("change", applyMappedPortDefaults);
+    $("ms-title").addEventListener("change", function () {
+      const value = $("ms-title").value.trim();
+      if (value) updateCurrentSession({ title: value });
+    });
+    $("ms-module").addEventListener("change", function () {
+      updateCurrentSession({ module: $("ms-module").value });
+    });
+    $("ms-pick").addEventListener("click", chooseFirmware);
+    $("ms-flash").addEventListener("click", startFlash);
+    $("ms-clear").addEventListener("click", function () {
+      const session = currentSession();
+      if (!session) return;
+      viewState(session.session_id).lines = [];
+      renderLog();
+    });
+    $("ms-autoscroll").addEventListener("change", function () {
+      const session = currentSession();
+      if (session) viewState(session.session_id).autoScroll = $("ms-autoscroll").checked;
+    });
+    $("ms-send-btn").addEventListener("click", function () {
+      sendText($("ms-send-text").value, $("ms-send-append-nl").checked);
+    });
+    $("ms-send-newline").addEventListener("click", function () { sendText("", true); });
+    $("ms-send-clear").addEventListener("click", function () { $("ms-send-text").value = ""; });
+    $("ms-send-text").addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendText($("ms-send-text").value, $("ms-send-append-nl").checked);
       }
     });
-    $("ms-send-btn").addEventListener("click", sendText);
-    $("ms-send-newline").addEventListener("click", sendNewline);
-    $("ms-send-clear").addEventListener("click", () => { $("ms-send-text").value = ""; });
-    $("ms-sender-hide").addEventListener("click", () => {
+    $("ms-sender-hide").addEventListener("click", function () {
       $("ms-sender").hidden = true;
       $("ms-sender-showbar").hidden = false;
     });
-    $("ms-sender-show").addEventListener("click", () => {
+    $("ms-sender-show").addEventListener("click", function () {
       $("ms-sender").hidden = false;
       $("ms-sender-showbar").hidden = true;
     });
-
-    // 日志刷新速度切换
-    $("ms-refresh-speed").addEventListener("change", (e) => {
-      setRefreshSpeed(e.target.value);
+    $("ms-refresh-speed").addEventListener("change", function (event) {
+      setRefreshSpeed(event.target.value);
     });
-
-    // 内置文件浏览器事件绑定（兜底）
-    picker.overlay = $("ms-file-picker");
-    picker.close = $("ms-picker-close");
-    picker.cancel = $("ms-picker-cancel");
-    picker.up = $("ms-picker-up");
-    picker.path = $("ms-picker-path");
-    picker.roots = $("ms-picker-roots");
-    picker.list = $("ms-picker-list");
-    picker.selected = $("ms-picker-selected");
-    picker.confirm = $("ms-picker-confirm");
-    picker.close.addEventListener("click", pickerClose);
-    picker.cancel.addEventListener("click", pickerClose);
-    picker.overlay.addEventListener("click", (event) => {
-      if (event.target === picker.overlay) pickerClose();
-    });
-    picker.up.addEventListener("click", () => {
-      if (!picker.currentDir) return;
-      request(`/api/fs/list?path=${encodeURIComponent(picker.currentDir)}`)
-        .then((data) => { if (data.parent) pickerList(data.parent); })
-        .catch(() => {});
-    });
-    picker.confirm.addEventListener("click", pickerConfirm);
   }
 
-  // ---------- 刷新速度：变更时重建轮询定时器 ----------
-  function startPolling(ms) {
-    if (pollTimer !== null) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
-    pollTimer = setInterval(() => {
-      refreshStatus();
-      pollLogs();
-    }, ms);
-    window.__pollIntervalMs = ms;
+  function startPolling(interval) {
+    if (pollTimer !== null) clearInterval(pollTimer);
+    pollTimer = setInterval(function () {
+      refreshSessions();
+      pollActiveLogs();
+    }, interval);
+    window.__pollIntervalMs = interval;
   }
 
   function setRefreshSpeed(speed) {
-    const ms = REFRESH_SPEED_MS[speed] || REFRESH_SPEED_MS[DEFAULT_REFRESH_SPEED];
-    startPolling(ms);
-    return ms;
+    const interval = REFRESH_SPEED_MS[speed] || REFRESH_SPEED_MS[DEFAULT_REFRESH_SPEED];
+    startPolling(interval);
+    return interval;
   }
+
+  async function refreshStatus() { return refreshSessions(); }
+  async function pollLogs() { return pollActiveLogs(); }
 
   // ---------- 对照解析页 ----------
   const cmp = {
-    source: "file", module: "cco", events: [], lines: [],
+    source: "file", module: "cco", sessionId: null, events: [], lines: [],
     selectedEvent: -1, selectedLine: -1, realtimeTimer: null,
   };
   const CMP_ICONS = { join: "🛜", collect: "📊", send: "⬆️", beacon: "📡", state: "⚙️", flash: "⚡", error: "⚠️", other: "🔍" };
   const CMP_LEVELS = { info: "info", warn: "warn", error: "error" };
 
   function cmpSetMeta(text) { $("cmp-meta").textContent = text || ""; }
+
+  function cmpCurrentSession() {
+    return cmp.sessionId ? sessionsById.get(cmp.sessionId) : null;
+  }
+
+  function cmpSyncModuleButtons() {
+    document.querySelectorAll(".cmp-modseg-btn").forEach(function (button) {
+      button.classList.toggle("active", button.dataset.mod === cmp.module);
+    });
+  }
+
+  function cmpRefreshSessions() {
+    const select = $("cmp-session");
+    if (!select) return;
+    const previous = cmp.sessionId || select.value;
+    select.replaceChildren();
+    sessionsById.forEach(function (session) {
+      const option = document.createElement("option");
+      option.value = session.session_id;
+      const identity = session.port_identity || {};
+      option.textContent = (session.title || session.session_id) + " · " +
+        (identity.label || session.port || "未连接");
+      select.appendChild(option);
+    });
+    if (!select.options.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "（暂无实时页面）";
+      select.appendChild(option);
+    }
+    if (previous) setSelectValue("cmp-session", previous);
+    cmp.sessionId = select.value || null;
+    const session = cmpCurrentSession();
+    if (session && session.module) {
+      cmp.module = session.module;
+      cmpSyncModuleButtons();
+    }
+    cmpRefreshSerialStatus();
+  }
+
+  function cmpRealtimeUrl() {
+    if (!cmp.sessionId) return "";
+    return api("/loghooks/realtime?session_id=" + encodeURIComponent(cmp.sessionId) + "&limit=8000");
+  }
 
   async function cmpScan() {
     const module = cmp.module;
@@ -482,34 +554,38 @@
       if (cmp.source === "file") {
         const path = $("cmp-file").value.trim();
         if (!path) { alert("请先选择日志文件或目录"); return; }
-        data = await request(`/api/loghooks/scan?path=${encodeURIComponent(path)}&module=${module}&limit=8000`);
+        data = await request(api("/loghooks/scan?path=" + encodeURIComponent(path) +
+          "&module=" + encodeURIComponent(module) + "&limit=8000"));
       } else {
-        data = await request(`/api/loghooks/realtime?channel=${module}&limit=8000`);
+        const session = cmpCurrentSession();
+        if (!session) throw new Error("请先新增并选择一个实时日志页面");
+        cmp.module = session.module || "cco";
+        const url = cmpRealtimeUrl();
+        data = await request(url);
       }
       cmp.events = data.events || [];
-      // 右侧全量日志行：直接用后端返回的 lines（带 file/line/raw）
-      cmp.lines = (data.lines || []).map((ln) => ({
-        key: (ln.file || "") + ":" + ln.line,
-        line: ln.line,
-        file: ln.file || "",
-        raw: ln.raw,
-      }));
-      // 给事件补充 __key（用于点击跳转到对应日志行）
-      cmp.events.forEach((ev, i) => {
-        ev.__i = i;
-        ev.__key = (ev.file || "") + ":" + ev.line;
+      cmp.lines = (data.lines || []).map(function (line) {
+        return {
+          key: (line.file || "") + ":" + line.line,
+          line: line.line,
+          file: line.file || "",
+          raw: line.raw,
+        };
+      });
+      cmp.events.forEach(function (event, index) {
+        event.__i = index;
+        event.__key = (event.file || "") + ":" + event.line;
       });
       cmp.selectedEvent = -1;
       cmp.selectedLine = -1;
       cmpRenderEvents();
       cmpRenderLog();
-      // 统计条
-      cmpUpdateStats(data, module);
-      cmpSetMeta(data.module ? `${module.toUpperCase()} 来源` : "");
+      cmpUpdateStats(data, cmp.module);
+      cmpSetMeta(data.module ? cmp.module.toUpperCase() + " 来源" : "");
       if (cmp.source === "realtime") cmpStartRealtime();
-    } catch (err) {
+    } catch (error) {
       cmpSetMeta("解析失败");
-      alert("解析失败：" + err.message);
+      alert("解析失败：" + error.message);
     } finally {
       if (runBtn) runBtn.disabled = false;
     }
@@ -696,24 +772,27 @@
 
   function cmpStartRealtime() {
     cmpStopRealtime();
-    cmp.realtimeTimer = setInterval(() => {
-      const module = cmp.module;
-      request(`/api/loghooks/realtime?channel=${module}&limit=8000`)
-        .then((data) => {
+    if (!cmpCurrentSession()) return;
+    cmp.realtimeTimer = setInterval(function () {
+      const url = cmpRealtimeUrl();
+      if (!url) return;
+      request(url)
+        .then(function (data) {
           cmp.events = data.events || [];
           cmpRenderEvents();
-          // 实时模式下日志也在增长，更新全量行 + 虚拟滚动
-          cmp.lines = (data.lines || []).map((ln) => ({
-            key: (ln.file || "") + ":" + ln.line,
-            line: ln.line,
-            file: ln.file || "",
-            raw: ln.raw,
-          }));
+          cmp.lines = (data.lines || []).map(function (line) {
+            return {
+              key: (line.file || "") + ":" + line.line,
+              line: line.line,
+              file: line.file || "",
+              raw: line.raw,
+            };
+          });
           cmpRenderLog();
-          cmpUpdateStats(data, module);
-          cmpSetMeta(`${module.toUpperCase()} 实时`);
+          cmpUpdateStats(data, cmp.module);
+          cmpSetMeta(cmp.module.toUpperCase() + " 实时");
         })
-        .catch(() => {});
+        .catch(function () {});
     }, 2000);
   }
   function cmpStopRealtime() {
@@ -734,7 +813,7 @@
 
   async function cmpPickFile() {
     try {
-      const data = await request("/api/fs/pick");
+      const data = await request(api("/fs/pick"));
       if (data && data.path) { $("cmp-file").value = data.path; }
     } catch (_) { alert("无法打开文件选择器，请手动输入路径"); }
   }
@@ -742,7 +821,7 @@
   async function cmpPickDir() {
     // 打开目录：复用 fs/pick 选一个文件，取其所在目录；或提示手动输入目录
     try {
-      const data = await request("/api/fs/pick");
+      const data = await request(api("/fs/pick"));
       if (data && data.path) {
         const idx = data.path.lastIndexOf(/[\/]/.source);
         const dir = idx > 0 ? data.path.slice(0, idx) : data.path;
@@ -752,99 +831,137 @@
   }
 
   async function cmpRefreshSerialStatus() {
-    try {
-      const st = await request("/api/module-serial/status");
-      const ch = (st.channels && st.channels[cmp.module]) || {};
-      const running = ch.state === "running" || ch.state === "starting";
-      const el = $("cmp-rt-status");
-      if (running) {
-        el.textContent = `${cmp.module.toUpperCase()} · ${ch.port || "-"} · ${ch.baudrate || "-"} · 采集中`;
-        el.classList.add("on");
-        $("cmp-src-realtime-status").textContent = "运行中";
-        $("cmp-run-realtime").textContent = "重新解析";
-      } else {
-        el.textContent = `${cmp.module.toUpperCase()} 串口未运行`;
-        el.classList.remove("on");
-        $("cmp-src-realtime-status").textContent = "空闲";
-        $("cmp-run-realtime").textContent = "开始解析";
-      }
-    } catch (_) {
-      $("cmp-rt-status").textContent = "无法获取串口状态";
-      $("cmp-rt-status").classList.remove("on");
+    const session = cmpCurrentSession();
+    const el = $("cmp-rt-status");
+    if (!session) {
+      el.textContent = "请选择实时页面";
+      el.classList.remove("on");
+      $("cmp-src-realtime-status").textContent = "无页面";
+      $("cmp-run-realtime").textContent = "开始解析";
+      return;
+    }
+    const running = session.state === "running" || session.state === "starting";
+    const identity = session.port_identity || {};
+    if (running) {
+      el.textContent = (session.module || "cco").toUpperCase() + " · " +
+        (identity.label || session.port || "-") + " · " +
+        ((session.serial_config || {}).baudrate || session.baudrate || "-") + " · 采集中";
+      el.classList.add("on");
+      $("cmp-src-realtime-status").textContent = "运行中";
+      $("cmp-run-realtime").textContent = "重新解析";
+    } else {
+      el.textContent = (session.module || "cco").toUpperCase() + " 页面串口未运行";
+      el.classList.remove("on");
+      $("cmp-src-realtime-status").textContent = "空闲";
+      $("cmp-run-realtime").textContent = "开始解析";
     }
   }
 
   function cmpBind() {
-    // 页签切换
-    document.querySelectorAll(".ms-tab").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        document.querySelectorAll(".ms-tab").forEach((t) => t.classList.toggle("active", t === tab));
+    document.querySelectorAll(".ms-tab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        document.querySelectorAll(".ms-tab").forEach(function (item) {
+          item.classList.toggle("active", item === tab);
+        });
         const name = tab.dataset.tab;
         $("ms-tab-live").hidden = name !== "live";
         $("ms-tab-compare").hidden = name !== "compare";
         $("ms-tab-simcon").hidden = name !== "simcon";
         if (name === "live") cmpStopRealtime();
-        if (name === "compare") cmpRefreshSerialStatus();
+        if (name === "compare") {
+          cmpRefreshSessions();
+          cmpRefreshSerialStatus();
+        }
         if (name === "simcon") simconRefreshStatus();
       });
     });
 
-    // 来源卡片（互斥二选一）
-    document.querySelectorAll(".cmp-srccard").forEach((card) => {
-      card.addEventListener("click", () => {
+    document.querySelectorAll(".cmp-srccard").forEach(function (card) {
+      card.addEventListener("click", function () {
         cmpSetSource(card.dataset.src);
         if (card.dataset.src === "realtime") cmpRefreshSerialStatus();
       });
-      card.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cmpSetSource(card.dataset.src); }
+      card.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          cmpSetSource(card.dataset.src);
+        }
       });
     });
 
-    // 模块分段控件
-    document.querySelectorAll(".cmp-modseg-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".cmp-modseg-btn").forEach((b) => b.classList.toggle("active", b === btn));
-        cmp.module = btn.dataset.mod;
-        cmpRefreshSerialStatus();
-        if (cmp.source === "realtime") cmpScan();
+    document.querySelectorAll(".cmp-modseg-btn").forEach(function (button) {
+      button.addEventListener("click", function () {
+        if (cmp.source === "realtime") return;
+        cmp.module = button.dataset.mod;
+        cmpSyncModuleButtons();
       });
     });
 
-    // 文件来源动作
+    $("cmp-session").addEventListener("change", function () {
+      cmp.sessionId = $("cmp-session").value || null;
+      const session = cmpCurrentSession();
+      if (session && session.module) {
+        cmp.module = session.module;
+        cmpSyncModuleButtons();
+      }
+      cmpRefreshSerialStatus();
+      if (cmp.source === "realtime" && cmp.realtimeTimer) cmpScan();
+    });
+
     $("cmp-pick-file").addEventListener("click", cmpPickFile);
     $("cmp-pick-dir").addEventListener("click", cmpPickDir);
     $("cmp-run-file").addEventListener("click", cmpScan);
-    $("cmp-file").addEventListener("keydown", (e) => { if (e.key === "Enter") cmpScan(); });
-
-    // 串口来源动作
+    $("cmp-file").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") cmpScan();
+    });
     $("cmp-run-realtime").addEventListener("click", cmpScan);
 
-    // 默认：实时串口来源
     cmp.source = "realtime";
-    cmp.module = "cco";
     cmpSetSource("realtime");
-    cmpRefreshSerialStatus();
+    cmpRefreshSessions();
   }
   // ========== 模拟集中器（第三页签）==========
-  const simcon = { open: false, port: null };
+  const simcon = { open: false, port: null, portDetails: new Map() };
 
   async function simconFetch(url, options) {
     return request(url, options);
   }
 
+  function simconApplyPortDetail(detail) {
+    if (!detail) return;
+    if (detail.baudrate) setSelectValue("simcon-baud", detail.baudrate);
+    if (detail.parity) setSelectValue("simcon-parity", detail.parity);
+    if (detail.bytesize) setSelectValue("simcon-bytesize", detail.bytesize);
+    if (detail.stopbits) setSelectValue("simcon-stopbits", detail.stopbits);
+  }
+
   async function simconRefreshPorts() {
     try {
-      const data = await simconFetch("/api/simcon/ports");
+      const data = await simconFetch(api("/simcon/ports"));
+      const details = data.port_details || (data.ports || []).map(function (device) {
+        return { device: device, label: "", online: true };
+      });
       const sel = $("simcon-port");
       const prev = sel.value;
+      simcon.portDetails = new Map();
       sel.innerHTML = "";
-      for (const p of data.ports) {
+      details.forEach(function (detail) {
+        const device = String(detail.device || "");
+        if (!device) return;
+        simcon.portDetails.set(device, detail);
         const opt = document.createElement("option");
-        opt.value = p;
-        opt.textContent = p;
+        opt.value = device;
+        opt.disabled = detail.online === false || detail.enabled === false;
+        const label = detail.label ? detail.label + " · " : "";
+        const com = detail.windows_com ? " [" + detail.windows_com + "]" : "";
+        const offline = detail.online === false ? "（离线）" : "";
+        opt.textContent = label + device + com + offline;
         sel.appendChild(opt);
+      });
+      if (prev && [...sel.options].some((option) => option.value === prev)) {
+        sel.value = prev;
       }
-      if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+      simconApplyPortDetail(simcon.portDetails.get(sel.value));
     } catch (err) {
       console.error("simconRefreshPorts:", err);
     }
@@ -852,7 +969,7 @@
 
   async function simconRefreshStatus() {
     try {
-      const s = await simconFetch("/api/simcon/status");
+      const s = await simconFetch(api("/simcon/status"));
       simcon.open = s.open;
       simcon.port = s.port;
       const st = $("simcon-status");
@@ -875,7 +992,7 @@
   async function simconRefreshRules() {
     const box = $("simcon-rule-list");
     try {
-      const data = await simconFetch("/api/simcon/responders");
+      const data = await simconFetch(api("/simcon/responders"));
       const rules = data.rules || [];
       if (!rules.length) {
         box.innerHTML = '<div class="simcon-empty">（无应答规则）</div>';
@@ -905,16 +1022,20 @@
 
   async function simconOpen() {
     const port = $("simcon-port").value;
+    const detail = simcon.portDetails.get(port) || {};
     const baud = parseInt($("simcon-baud").value, 10);
     const parity = $("simcon-parity").value;
     const bytesize = parseInt($("simcon-bytesize").value, 10);
     const stopbits = parseInt($("simcon-stopbits").value, 10);
     if (!port) { alert("请先选择串口"); return; }
     try {
-      const r = await simconFetch("/api/simcon/open", {
+      const r = await simconFetch(api("/simcon/open"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ port, baudrate: baud, bytesize, parity, stopbits }),
+        body: JSON.stringify({
+          port, mapping_id: detail.mapping_id || undefined,
+          baudrate: baud, bytesize, parity, stopbits,
+        }),
       });
       simcon.open = r.open;
       await simconRefreshStatus();
@@ -925,7 +1046,7 @@
 
   async function simconClose() {
     try {
-      await simconFetch("/api/simcon/close", { method: "POST" });
+      await simconFetch(api("/simcon/close"), { method: "POST" });
       await simconRefreshStatus();
     } catch (err) {
       alert("关闭失败：" + err.message);
@@ -944,7 +1065,7 @@
     resultBox.hidden = false;
     resultBox.innerHTML = '<div class="simcon-running">执行中…</div>';
     try {
-      const out = await simconFetch("/api/simcon/verify", {
+      const out = await simconFetch(api("/simcon/verify"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(task),
@@ -980,6 +1101,9 @@
     $("simcon-open").addEventListener("click", simconOpen);
     $("simcon-close").addEventListener("click", simconClose);
     $("simcon-run-task").addEventListener("click", simconRunTask);
+    $("simcon-port").addEventListener("change", function () {
+      simconApplyPortDetail(simcon.portDetails.get($("simcon-port").value));
+    });
     $("simcon-refresh-ports").addEventListener("click", () => {
       simconRefreshPorts();
       simconRefreshStatus();
@@ -993,8 +1117,7 @@
     bind();
     cmpBind();
     simconBind();
-    refreshStatus();
-    pollLogs();
+    refreshPorts().then(ensureDefaultSession);
     setRefreshSpeed(DEFAULT_REFRESH_SPEED);
   }
 
