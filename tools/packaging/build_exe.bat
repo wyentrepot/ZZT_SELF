@@ -24,22 +24,25 @@ echo  ============
 echo    1 = 侦听台网页版（控制台，dist\侦听台）
 echo    2 = 侦听台桌面版（pywebview 内嵌窗口，dist\侦听台桌面）
 echo    3 = 模块日志桌面版（pywebview 内嵌窗口，dist\模块日志）
+echo    4 = Workbench (AI serial sessions, pywebview)
+echo Enter 1 / 2 / 3 / 4
 echo.
 set "PKG_CHOICE="
 set /p "PKG_CHOICE=请输入 1 / 2 / 3 后回车: "
 if /i "%PKG_CHOICE%"=="1" goto :listener_web
 if /i "%PKG_CHOICE%"=="2" goto :listener_desktop
 if /i "%PKG_CHOICE%"=="3" goto :module_desktop
+if /i "%PKG_CHOICE%"=="4" goto :workbench_desktop
 echo 输入无效，默认打包侦听台网页版(1)。
 set "PKG_CHOICE=1"
 goto :listener_web
 
 :install_deps
-if exist ".venv\.deps_build" goto :deps_ok
+if exist ".venv\.deps_build_v2" goto :deps_ok
 echo [1/3] 安装依赖（打包 + 模块日志运行依赖）...
-".venv\Scripts\python.exe" -m pip install -r "tools\packaging\requirements-build.txt" -r "apps\module_log\requirements.txt"
+".venv\Scripts\python.exe" -m pip install -r "tools\packaging\requirements-build.txt" -r "apps\listener\requirements.txt" -r "apps\module_log\requirements.txt"
 if errorlevel 1 goto :failed
-echo. > ".venv\.deps_build"
+echo. > ".venv\.deps_build_v2"
 :deps_ok
 exit /b 0
 
@@ -81,6 +84,20 @@ echo [3/3] 完成。
 echo 输出: %CD%\dist\模块日志\
 exit /b 0
 
+:workbench_desktop
+if not exist "libs\shared\dll\bin\Debug\GwHPLCAnalysis.dll" (
+    echo [ERROR] libs\shared\dll\bin\Debug\GwHPLCAnalysis.dll not found. Build the C# project first.
+    pause
+    exit /b 1
+)
+call :install_deps
+echo [2/3] Building Workbench (AI serial sessions)...
+call :build tools\packaging\workbench.spec
+if errorlevel 1 goto :failed
+echo [3/3] Done.
+echo Output: %CD%\dist\
+exit /b 0
+
 REM =====================================================================
 REM :build <spec 相对路径>
 REM 检测工作区 .py 是否处于 E-SafeNet 透明加密状态（文件头 62 14 = "b.#"）。
@@ -94,6 +111,8 @@ set "SPEC=%~1"
 if errorlevel 1 goto :build_plain
 echo （工作区源码为明文，直接构建）
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm "%SPEC%"
+if errorlevel 1 exit /b %errorlevel%
+call :seed_serial_config
 exit /b %errorlevel%
 
 :build_plain
@@ -126,7 +145,22 @@ popd
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm --distpath "dist" --workpath ".build_plain\build" ".build_plain\%SPEC%"
 set "BUILD_RC=%errorlevel%"
 rmdir /s /q ".build_plain\build" >nul 2>&1
-exit /b %BUILD_RC%
+if not "%BUILD_RC%"=="0" exit /b %BUILD_RC%
+call :seed_serial_config
+exit /b %errorlevel%
+
+:seed_serial_config
+REM Put an editable default next to every onedir executable.  The runtime hook
+REM performs the same first-run seed when a spec is invoked directly.
+for /d %%D in ("dist\*") do (
+    if exist "%%~fD\*.exe" (
+        if not exist "%%~fD\config" mkdir "%%~fD\config"
+        if errorlevel 1 exit /b 1
+        if not exist "%%~fD\config\serial_ports.json" copy /y "config\serial_ports.json" "%%~fD\config\serial_ports.json" >nul
+        if errorlevel 1 exit /b 1
+    )
+)
+exit /b 0
 
 :failed
 echo.
