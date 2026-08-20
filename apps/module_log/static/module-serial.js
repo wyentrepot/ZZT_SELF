@@ -467,9 +467,6 @@
       $("ms-sender").hidden = false;
       $("ms-sender-showbar").hidden = true;
     });
-    $("ms-refresh-speed").addEventListener("change", function (event) {
-      setRefreshSpeed(event.target.value);
-    });
   }
 
   function startPolling(interval) {

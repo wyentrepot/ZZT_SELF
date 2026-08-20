@@ -32,6 +32,7 @@
 | 24 | 任务4取消Run：submit() 后台线程异步 + cancel() 协作式取消（threading.Event 步骤间检查）+ CANCELLED 终态 + POST /api/run/{id}/cancel + _executor() 单例修复 + 前端轮询/取消按钮 | ✅ 生效 |
 | 25 | 任务4剩余：restoreLastRun() 刷新恢复 + store 时间戳毫秒化（排序稳定）+ check_assets.py 打包静态完整性门禁（B-03 自动化部分）；真机 DLL 留 Windows | ✅ 生效 |
 | 26 | 任务4 B-03 真机打包验收完成（Windows）：PyInstaller 打包 dist/工作台/（含 C# DLL/scenarios/loghooks）+ smoke_test_workbench_packaged.py headless 冒烟 9/9；B-03 阻塞解除，任务4 完成 | ✅ 生效 |
+| 27 | 修复 module-serial 页「启动串口无反应」：删除对不存在元素 ms-refresh-speed 的绑定 + check_module_serial_ids.js 静态校验防回归 | ✅ 生效 |
 
 ---
 
@@ -537,4 +538,18 @@
   3. **B-03 阻塞解除**：任务 4 标记 ✅ 已完成；剩余阻塞仅真机串口实测（B-04，任务 6 已屏蔽）。
 - **理由**：B-03 验收出口是"干净机打包与启动冒烟并保存证据"；headless 冒烟脚本即持久化证据，可在任何 Windows 机器复跑验证产物。
 - **影响**：任务 4 收尾；打包冒烟脚本纳入 `tools/scripts/` 供回归。真机串口（COM4 集中器/电表）仍待硬件环境。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-27 修复 module-serial 页「启动串口无反应」：删除对不存在元素 ms-refresh-speed 的绑定
+
+- **日期**：2026-08-20
+- **状态**：✅ 生效
+- **决定**：
+  - **根因**：`03267f7` 引入的 `module-serial.js` 第 470 行 `$("ms-refresh-speed").addEventListener(...)` 所指向的 `<select id="ms-refresh-speed">` 元素在 `b6779da`（实时日志独占页签 UI 重写）时被从 HTML 删除，但 JS 绑定未同步删除。`bind()` 执行到该行时 `$()` 返回 `null`，`.addEventListener` 抛 `TypeError`，导致 `bind()` 中断；`boot()` 中其后的 `refreshPorts().then(ensureDefaultSession)` 不执行，页面无默认 session，用户点「启动」时 `currentSession()` 为 `null` → `if (!session) return;` **静默无反应**（按钮不变化、无事件打印）。
+  - **修复**：从 `apps/module_log/static/module-serial.js` 与 `apps/workbench/static/pages/module-serial/module-serial.js`（同源拷贝）两处删除该 `addEventListener` 块；`setRefreshSpeed(DEFAULT_REFRESH_SPEED)` 在 `boot()` 中仍调用，默认 medium 轮询不受影响。
+  - **防回归**：新增 `tools/scripts/check_module_serial_ids.js`（Node 静态检查），比对 JS 全部 `$("id")` 引用与 HTML 的 `id` 属性，缺一即非零退出；独立版与 workbench 副本 76 个引用全部有对应元素。
+- **理由**：前端「点击启动无反应」是静默失败，无任何错误提示，排查难；根因是 HTML/JS 不同步的历史回归。
+- **影响**：修复后 `bind()` 完整执行，默认 session 自动创建，启动串口有正常反馈（按钮变停止 + 事件打印）。相关测试 `test_module_serial_frontend.py` + `test_app.py` = **24 passed** 无回归。
 - **被取代**：无（新增决策）。
