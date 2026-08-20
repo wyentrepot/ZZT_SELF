@@ -67,7 +67,11 @@ class ModuleDynamicFrontendContractTest(unittest.TestCase):
         html = WORKBENCH_HTML.read_text(encoding="utf-8")
         js = WORKBENCH_JS.read_text(encoding="utf-8")
 
-        self.assertIn('data-api-base="/api/module-serial"', html)
+        # workbench 副本经 _PrefixProxy 挂载在 /api/module-serial 下：
+        # data-api-base="/api" + api("/module-serial/sessions")
+        #   -> /api/module-serial/sessions -> 子应用路由命中（无双前缀 404）。
+        self.assertIn('data-api-base="/api"', html)
+        self.assertNotIn('data-api-base="/api/module-serial"', html)
         self.assertIn("const API_BASE", js)
         self.assertIn('api("/module-serial/sessions")', js)
         self.assertIn("activeSessionId", js)

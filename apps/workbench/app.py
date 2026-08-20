@@ -151,6 +151,12 @@ def create_workbench_app(
         else:
             _ml_sub = module_log_factory()
         _mount_proxied(app, "module-serial", _ml_sub, "/api/module-serial", sub_root="/api/module-serial")
+        # module_log 子应用还自带 /api/fs、/api/loghooks 路由，并在内部把
+        # simcon 挂在 /api/simcon；统一工作台下按透传模式补齐这三组前缀，
+        # 使 module-serial 页面的 fs/loghooks/simcon 请求在 iframe 内可达。
+        _mount_proxied(app, "module-serial-fs", _ml_sub, "/api/fs", sub_root="/api/fs")
+        _mount_proxied(app, "module-serial-loghooks", _ml_sub, "/api/loghooks", sub_root="/api/loghooks")
+        _mount_proxied(app, "module-serial-simcon", _ml_sub, "/api/simcon", sub_root="/api/simcon")
         app.state.module_serial_service = getattr(
             getattr(_ml_sub, "state", None), "module_serial_service", None,
         )

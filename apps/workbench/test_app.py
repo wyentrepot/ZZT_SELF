@@ -37,6 +37,18 @@ def _stub_module_log_factory():
     async def v():
         return {"app": "module-serial", "stub": True}
 
+    @app.get("/api/fs/roots")
+    async def fs_roots():
+        return {"roots": [{"name": "stub", "path": "stub"}]}
+
+    @app.get("/api/loghooks/sources")
+    async def loghooks_sources():
+        return {"root": "stub", "groups": {}}
+
+    @app.get("/api/simcon/ports")
+    async def simcon_ports():
+        return {"ports": [], "port_details": []}
+
     return app
 
 
@@ -81,6 +93,18 @@ def test_module_log_mounted(client):
     r = client.get("/api/module-serial/version")
     assert r.status_code == 200
     assert r.json()["app"] == "module-serial"
+
+
+def test_module_log_extra_prefixes_proxied(client):
+    # module_log 子应用自带的 /api/fs、/api/loghooks、/api/simcon
+    # 在统一工作台下也必须可达（module-serial 页面的 iframe 依赖它们）。
+    r = client.get("/api/fs/roots")
+    assert r.status_code == 200
+    assert r.json()["roots"][0]["name"] == "stub"
+    r = client.get("/api/loghooks/sources")
+    assert r.status_code == 200
+    r = client.get("/api/simcon/ports")
+    assert r.status_code == 200
 
 
 def test_listener_mounted(client):
