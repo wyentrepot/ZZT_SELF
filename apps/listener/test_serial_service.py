@@ -277,5 +277,55 @@ class SerialCaptureServiceTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+class ListAvailablePortsComTest(unittest.TestCase):
+    """list_available_ports 的 COM 标注行为（方案 C）。"""
+
+    def _fake_comports(self):
+        return [
+            mock.Mock(device="/dev/ttyUSB0", description="CP2102"),
+            mock.Mock(device="/dev/ttyACM0", description="CH342"),
+            mock.Mock(device="COM4", description="CP2102"),
+        ]
+
+    def test_non_windows_adds_com_annotation(self):
+        """非 Windows 时按映射表附加 com 字段，设备名保持原样。"""
+        with mock.patch("listener.serial_service.os.name", "posix"),              mock.patch("listener.serial_service.list_ports.comports",
+                        return_value=self._fake_comports()):
+            svc = SerialCaptureService.__new__(SerialCaptureService)
+            with mock.patch.object(
+                SerialCaptureService, "_load_com_map",
+                return_value={"/dev/ttyUSB0": "COM4", "/dev/ttyACM0": "COM8"},
+            ):
+                ports = svc.list_available_ports()
+        by_device = {p["device"]: p for p in ports}
+        self.assertEqual(by_device["/dev/ttyUSB0"]["com"], "COM4")
+        self.assertEqual(by_device["/dev/ttyACM0"]["com"], "COM8")
+        # Windows 名端口（已是 COMx 形式）无映射，com 为空但不影响设备名
+        self.assertEqual(by_device["COM4"]["com"], "")
+        self.assertEqual(by_device["COM4"]["device"], "COM4")
+
+    def test_windows_keeps_plain(self):
+        """Windows 侧不加 com 标注（不影响 Windows 端使用）。"""
+        with mock.patch("listener.serial_service.os.name", "nt"), \
+             mock.patch("listener.serial_service.list_ports.comports",
+                        return_value=self._fake_comports()):
+            svc = SerialCaptureService.__new__(SerialCaptureService)
+            ports = svc.list_available_ports()
+        for p in ports:
+            self.assertNotIn("com", p)
+
+    def test_missing_map_returns_empty_com(self):
+        """映射表缺失/损坏时 com 为空字符串，不抛异常。"""
+        with mock.patch("listener.serial_service.os.name", "posix"), \
+             mock.patch("listener.serial_service.list_ports.comports",
+                        return_value=self._fake_comports()), \
+             mock.patch.object(SerialCaptureService, "_load_com_map",
+                               return_value={}):
+            svc = SerialCaptureService.__new__(SerialCaptureService)
+            ports = svc.list_available_ports()
+        for p in ports:
+            self.assertEqual(p.get("com", ""), "")
+
+
 if __name__ == "__main__":
     unittest.main()

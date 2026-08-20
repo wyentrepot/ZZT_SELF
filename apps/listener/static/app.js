@@ -1230,26 +1230,30 @@ async function loadSerialPorts() {
   const current = elements.serialPort.value;
   try {
     const data = await request("/api/serial/ports");
-    const ports = (data.ports || []).map((p) => p.device);
+    const items = data.ports || [];
+    const devices = items.map((p) => p.device);
     elements.serialPort.replaceChildren();
-    if (!ports.length) {
+    if (!items.length) {
       const option = document.createElement("option");
       option.value = "";
       option.textContent = "未发现可用串口";
       elements.serialPort.append(option);
       return;
     }
-    ports.forEach((device) => {
+    items.forEach((item) => {
       const option = document.createElement("option");
-      option.value = device;
-      option.textContent = device;
+      option.value = item.device;
+      // 双标注：有 COM 映射显示 'COM4 (/dev/ttyUSB0)'，否则原样
+      option.textContent = item.com
+        ? `${item.com} (${item.device})`
+        : item.device;
       elements.serialPort.append(option);
     });
     // 当前选择仍在枚举结果中则保留，否则自动选第一个实际存在的串口
-    if (ports.includes(current)) {
+    if (devices.includes(current)) {
       elements.serialPort.value = current;
     } else {
-      elements.serialPort.value = ports[0];
+      elements.serialPort.value = devices[0];
     }
   } catch (error) {
     // 列表加载失败：保留一个占位选项，不阻塞使用

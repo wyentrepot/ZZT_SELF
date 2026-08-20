@@ -1,0 +1,9 @@
+{
+  "comment": "WSL/非 Windows 环境下 设备名 -> Windows COM 号的映射表。仅用于前端展示标注（如 'COM4 (/dev/ttyUSB0)'），不影响真实设备名与串口打开。Windows 侧无需此表（设备名本就是 COMx）。若 usbip attach 顺序变化导致 tty 编号变动，请在此修正。",
+  "map": {
+    "/dev/ttyUSB0": "COM4",
+    "/dev/ttyUSB1": "COM24",
+    "/dev/ttyACM0": "COM8",
+    "/dev/ttyACM1": "COM9"
+  }
+}

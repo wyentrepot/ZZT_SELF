@@ -10,6 +10,8 @@
 - 相邻帧之间出现 "7E 7E"：前一 7E 是上帧尾、后一 7E 是下帧头；
 - 帧内 0x7E 通过 HDLC 转义 7D 5E 表示，切帧时按 7D 5E 识别为帧内字节。
 """
+import json
+import os
 import queue
 import threading
 import time
@@ -305,12 +307,33 @@ class SerialCaptureService:
         if list_ports is None:
             return []
         try:
-            return [
+            ports = [
                 {"device": p.device, "description": p.description}
                 for p in list_ports.comports()
             ]
         except Exception:
             return []
+        # 仅非 Windows（WSL 等）附加 COM 标注：设备名是 /dev/ttyUSB* 等，
+        # 前端据此显示 'COM4 (/dev/ttyUSB0)'。Windows 侧设备名本就是 COMx，
+        # 保持原样不加标注，避免影响 Windows 端使用。
+        if os.name != "nt":
+            com_map = self._load_com_map()
+            for port in ports:
+                port["com"] = com_map.get(port["device"], "")
+        return ports
+
+    @staticmethod
+    def _load_com_map() -> dict:
+        """读取 设备名 -> Windows COM 号 映射表（serial_com_map.json）。
+
+        文件缺失/损坏时返回空表（仅不显示 COM 标注，不影响功能）。
+        """
+        path = Path(__file__).resolve().parent / "serial_com_map.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return dict(data.get("map", {}))
+        except Exception:
+            return {}
 
 
 def create_serial_service(log_service, port="COM19", log_dir=None) -> SerialCaptureService:
