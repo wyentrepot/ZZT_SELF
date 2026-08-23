@@ -196,19 +196,33 @@ class AIControlService:
         if self.module_service is None:
             raise SourceUnavailable("模块日志服务不可用")
         resource = self.session_resource(session_id)
+        # Only the command selected by the established text-before-hex behavior
+        # participates in the idempotency identity.  The operation used to retain
+        # only its target, which incorrectly treated different writes as replays.
+        if "text" in request:
+            command = {
+                "type": "text",
+                "text": str(request["text"]),
+                "append_newline": bool(request.get("append_newline", True)),
+            }
+        elif "data_hex" in request:
+            command = {"type": "data_hex", "data_hex": str(request["data_hex"])}
+        else:
+            command = {"type": "missing"}
         action = self.store.create(
-            "module_send", actor, {"target": {"session_id": session_id, "mapping_id": resource}},
+            "module_send", actor,
+            {"target": {"session_id": session_id, "mapping_id": resource}, "command": command},
             client_request_id=client_request_id,
         )
         if action["state"] != "created":
             return action
         try:
-            if "text" in request:
+            if command["type"] == "text":
                 result = self.module_service.write_text_session(
-                    session_id, str(request["text"]), bool(request.get("append_newline", True)),
+                    session_id, command["text"], command["append_newline"],
                 )
-            elif "data_hex" in request:
-                result = self.module_service.write_session(session_id, str(request["data_hex"]))
+            elif command["type"] == "data_hex":
+                result = self.module_service.write_session(session_id, command["data_hex"])
             else:
                 raise ValueError("必须提供 text 或 data_hex")
             completed = self.store.set_state(action["operation_id"], "succeeded", result=result)
@@ -928,16 +942,35 @@ class AIControlService:
     def _listener_index_source_path(self, index_id: str) -> str | None:
         """Return source metadata for this exact versioned index, never the current index's state."""
         try:
-            indexes = self._listener_log_or_error().list_indexes().get("indexes") or []
+            service = self._listener_log_or_error()
+            listing = service.list_indexes()
+            indexes = listing.get("indexes") or []
         except Exception:
             return None
         record = next(
             (item for item in indexes if isinstance(item, dict) and item.get("index_id") == index_id),
             None,
         )
-        if not isinstance(record, dict):
+        if isinstance(record, dict):
+            source_path = record.get("source_path")
+            if source_path:
+                return str(source_path)
+
+        # Legacy/single-current services may expose the trusted current index id
+        # separately while omitting per-index metadata.  Falling back is safe only
+        # for that exact current id; historical index ids must never inherit the
+        # current source path.
+        current_index_id = str(listing.get("current_index_id") or "")
+        if current_index_id != index_id:
             return None
-        source_path = record.get("source_path")
+        try:
+            status = service.status()
+        except Exception:
+            return None
+        status_index_id = str(status.get("index_id") or "")
+        if status_index_id and status_index_id != index_id:
+            return None
+        source_path = status.get("source_path")
         return str(source_path) if source_path else None
 
     def _listener_last_frame_id(self, index_id: str) -> int:

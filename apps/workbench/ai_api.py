@@ -140,6 +140,11 @@ def create_ai_router(
         try:
             resource = control.session_resource(session_id)
             grant = grant_from_header(authorization, "module_send:execute", resource)
+            existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
+            if existing is not None:
+                grant_from_header(
+                    authorization, "module_send:execute", control.operation_resource(existing["operation_id"]),
+                )
             return control.send_module(
                 session_id, request, actor=actor(grant),
                 client_request_id=str(request.get("client_request_id") or ""),
@@ -148,6 +153,8 @@ def create_ai_router(
             raise HTTPException(status_code=404, detail=f"会话不存在：{exc.args[0]}") from exc
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/flash-operations", status_code=202)
     def flash_operation(request: dict[str, Any], authorization: str | None = Header(None)):
@@ -155,6 +162,11 @@ def create_ai_router(
         try:
             resource = control.session_resource(session_id)
             grant = grant_from_header(authorization, "module_flash:execute", resource)
+            existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
+            if existing is not None:
+                grant_from_header(
+                    authorization, "module_flash:execute", control.operation_resource(existing["operation_id"]),
+                )
             return control.flash_module(authorised_flash_request(request, grant), actor=actor(grant))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"会话不存在：{exc.args[0]}") from exc
@@ -162,6 +174,8 @@ def create_ai_router(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/listener/ensure")
     def ensure_listener(request: dict[str, Any], authorization: str | None = Header(None)):

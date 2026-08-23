@@ -388,6 +388,64 @@ def test_listener_historical_cursor_result_uses_its_index_source_path_not_curren
         log_service.close()
 
 
+def test_listener_current_only_index_keeps_current_status_source_path_but_unknown_history_omits_it():
+    log_service = FakeListenerLogService()
+    service = AIControlService(listener_service=FakeListenerService(), log_service=log_service)
+
+    current = service.create_observation(
+        _listener_cursor_request(start_frame_id=1, end_frame_id=1), actor="ai:grant-test",
+    )
+    historical = service.create_observation(
+        _listener_cursor_request(index_id="idx-listener-other", start_frame_id=1, end_frame_id=1),
+        actor="ai:grant-test",
+    )
+
+    assert current["result"]["index"]["source_log_path"] == "/tmp/listener.txt"
+    assert service.read_artifact(current["result"]["artifact_id"])["content"]["index"][
+        "source_log_path"
+    ] == "/tmp/listener.txt"
+    assert "source_log_path" not in historical["result"]["index"]
+
+
+def test_operation_store_idempotency_is_atomic_for_same_and_different_fingerprints():
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    from workbench.ai_store import IdempotencyConflict, OperationStore
+
+    same_store = OperationStore()
+    same_barrier = threading.Barrier(2)
+
+    def same_request():
+        same_barrier.wait()
+        return same_store.create(
+            "observation", "ai:grant", {"source": "module_log"},
+            client_request_id="same", idempotency_fingerprint="same-fingerprint",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        same_results = list(executor.map(lambda _: same_request(), range(2)))
+    assert {item["operation_id"] for item in same_results} == {same_results[0]["operation_id"]}
+
+    different_store = OperationStore()
+    different_barrier = threading.Barrier(2)
+
+    def different_request(fingerprint):
+        different_barrier.wait()
+        try:
+            return different_store.create(
+                "observation", "ai:grant", {"source": fingerprint},
+                client_request_id="different", idempotency_fingerprint=fingerprint,
+            )
+        except IdempotencyConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        different_results = list(executor.map(different_request, ("fingerprint-a", "fingerprint-b")))
+    assert sum(item == "conflict" for item in different_results) == 1
+    assert sum(isinstance(item, dict) for item in different_results) == 1
+
+
 @pytest.mark.parametrize(
     "observation_request, message",
     [

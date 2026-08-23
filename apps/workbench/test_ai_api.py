@@ -1,6 +1,8 @@
 """AI HTTP control-plane tests."""
 from __future__ import annotations
 
+import json
+
 from fastapi import FastAPI
 import pytest
 from fastapi.testclient import TestClient
@@ -361,6 +363,116 @@ def test_observation_idempotency_checks_existing_resource_authorization_before_r
     assert denied.status_code == 403
     assert "operation_id" not in denied.json()
     assert "artifact_id" not in denied.text
+
+
+def test_shared_operation_idempotency_conflicts_map_to_409_without_result_leakage():
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["module_send:execute", "module_flash:execute", "observation:create", "evidence:read"],
+        resources=["cco-main"], ttl_seconds=60, created_by="human",
+        firmware_roots=["/tmp/allowed"],
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    headers = _auth_header(token)
+
+    sent = client.post(
+        "/api/ai/v1/module-sessions/ms-cco/send",
+        json={"text": "alpha", "client_request_id": "send-collision"}, headers=headers,
+    )
+    send_replay = client.post(
+        "/api/ai/v1/module-sessions/ms-cco/send",
+        json={"text": "alpha", "client_request_id": "send-collision"}, headers=headers,
+    )
+    send_conflict = client.post(
+        "/api/ai/v1/module-sessions/ms-cco/send",
+        json={"text": "beta", "client_request_id": "send-collision"}, headers=headers,
+    )
+
+    flashed = client.post(
+        "/api/ai/v1/flash-operations",
+        json={"session_id": "ms-cco", "bin_path": "/tmp/allowed/fw.bin", "slot": 0,
+              "client_request_id": "flash-collision"},
+        headers=headers,
+    )
+    flash_replay = client.post(
+        "/api/ai/v1/flash-operations",
+        json={"session_id": "ms-cco", "bin_path": "/tmp/allowed/fw.bin", "slot": 0,
+              "client_request_id": "flash-collision"},
+        headers=headers,
+    )
+    flash_conflict = client.post(
+        "/api/ai/v1/flash-operations",
+        json={"session_id": "ms-cco", "bin_path": "/tmp/allowed/fw.bin", "slot": 1,
+              "client_request_id": "flash-collision"},
+        headers=headers,
+    )
+
+    cross_send = client.post(
+        "/api/ai/v1/module-sessions/ms-cco/send",
+        json={"text": "cross", "client_request_id": "cross-kind"}, headers=headers,
+    )
+    cross_observation = client.post(
+        "/api/ai/v1/observations",
+        json={**_module_cursor_observation(), "client_request_id": "cross-kind"}, headers=headers,
+    )
+
+    assert sent.status_code == 200
+    assert send_replay.status_code == 200
+    assert send_replay.json()["operation_id"] == sent.json()["operation_id"]
+    assert flashed.status_code == 202
+    assert flash_replay.status_code == 202
+    assert flash_replay.json()["operation_id"] == flashed.json()["operation_id"]
+    assert cross_send.status_code == 200
+    for conflict in (send_conflict, flash_conflict, cross_observation):
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"] == "幂等键与既有请求不一致"
+        assert "operation_id" not in conflict.json()
+        assert "result" not in conflict.json()
+        assert "artifact_id" not in conflict.text
+
+
+def test_observation_replay_of_a_persisted_legacy_operation_without_fingerprint_fails_closed(tmp_path):
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create", "evidence:read"], resources=["cco-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    storage_dir = tmp_path / "ai-control"
+    first_app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory,
+        ai_auth_store=auth,
+        ai_storage_dir=storage_dir,
+    )
+    headers = {**_auth_header(token), "Idempotency-Key": "legacy-operation"}
+    created = TestClient(first_app).post(
+        "/api/ai/v1/observations", json=_module_cursor_observation(), headers=headers,
+    )
+    stored_path = storage_dir / "operations.json"
+    stored = json.loads(stored_path.read_text(encoding="utf-8"))
+    stored["operations"][0].pop("idempotency_fingerprint", None)
+    stored["operations"][0].pop("idempotency_replay_fingerprint", None)
+    stored_path.write_text(json.dumps(stored), encoding="utf-8")
+    replay_app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory,
+        ai_auth_store=auth,
+        ai_storage_dir=storage_dir,
+    )
+    replay = TestClient(replay_app, raise_server_exceptions=False).post(
+        "/api/ai/v1/observations", json=_module_cursor_observation(), headers=headers,
+    )
+
+    assert created.status_code == 202
+    assert replay.status_code == 409
+    assert replay.json()["detail"] == "幂等键与既有请求不一致"
+    assert "operation_id" not in replay.json()
+    assert "artifact_id" not in replay.text
 
 
 def test_flash_api_requires_scope_and_authorized_firmware_root():
