@@ -35,6 +35,12 @@
 | 27 | 修复 module-serial 页「启动串口无反应」：删除对不存在元素 ms-refresh-speed 的绑定 + check_module_serial_ids.js 静态校验防回归 | ✅ 生效 |
 | 28 | workbench 开放 0.0.0.0 局域网监听（局域网内设备可访问工作台页与 AI 控制面）；已知风险：页面操作接口无鉴权 | ✅ 生效 |
 | 29 | 新增 `.agents/skills/ai-control-plane/` skill：AI 调用 AI 控制面 `/api/ai/v1` 的操作 playbook | ✅ 生效 |
+| 30 | P1 AI 观察接口与有界证据：module literal/regex/loghook/sequence/not_seen/cursor_range + listener index 固定 cursor_range 复合深链 + 422/幂等/安全输入边界 + HPLC_TEST_DATA_ROOT fixture 根 | ✅ 生效 |
+| 31 | P2 项目内 `observe-workbench-logs` 观察技能：显式调用、六命令、默认 dry-run、Token 唯一 WORKBENCH_AI_TOKEN、不碰硬件/无控制操作 | ✅ 生效 |
+| 32 | P3 串口 Profile Store：四槽（cco/sta/listener/simcon）默认禁用、原子保存、从 serial_ports.json 回填默认参数 | ✅ 生效 |
+| 33 | P4 串口 Profile 一键应用：SerialProfileApplier 固定顺序（侦听台→CCO→STA→模拟集中器）+ 逐槽状态/部分成功 + GET/PUT/apply 三接口 | ✅ 生效 |
+| 34 | P5 左侧分组导航（验证/设备/维护）+ hash 路由 + 抽屉/折叠 + iframe 保活保留 | ✅ 生效 |
+| 35 | P6 串口配置页：四槽保存/一键应用/刷新状态、内联校验、错误摘要 | ✅ 生效 |
 
 ---
 
@@ -582,4 +588,93 @@
 - **决定**：在项目级 skills 目录 `.agents/skills/` 下新增 `ai-control-plane/` skill（SKILL.md），作为 AI 调用 AI 控制面 `/api/ai/v1` 的**操作 playbook**：拿授权 token（人/密钥）→ 查状态 → 串口会话（ensure/send/stop）→ 烧录 → 观察+取证 → 侦听台控制与帧查询 → 推荐调用顺序 → 与前端关系 → 错误码速查。
 - **理由**：AI 需要通过 AI 控制面操作真机（cco/sta 串口、烧录、日志观察取证），但没有一份「AI 可直接执行的步骤说明书」；`docs/16-AI操作指南.md` 是给人看的完整文档，skill 是给 AI 的浓缩执行指引。位置沿用 ADR-19 的 `.agents/skills/` 约定，通用 agent 标准目录可加载。
 - **影响**：`.agents/skills/ai-control-plane/SKILL.md` 新增（194 行），frontmatter 含 `name/description/argument-hint/metadata`，13 章节；内容基于 2026-08-20 对全部 AI 工具的实测（授权/状态/审计/会话/发送/观察/取证/烧录校验/侦听台均正常）。不修改任何代码。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-30 P1 AI 观察接口与有界证据
+
+- **日期**：2026-08-23
+- **状态**：✅ 生效
+- **决定**：在既有模块日志与侦听台服务上实现**有界 AI observation**：
+  - module matcher 支持 `literal`/`live` 兼容、`regex`、`loghook_rule`、`sequence`、`not_seen` 及 `cursor_range`；live absence 在未完成可信窗口时不误报成功（`timed_out + condition_met=false + reason=live_window_unverified`）。
+  - listener 支持 index 固定的 `cursor_range`、首尾/越界/裁剪校验、复合 `index_id + frame_id` 深链和 Artifact。
+  - observation 的 422 输入映射、路径型字段拒绝、malformed target 预检、Artifact 授权、幂等请求指纹/资源授权和跨资源冲突防泄露全覆盖。
+  - 测试基础设施使用 `HPLC_TEST_DATA_ROOT` 优先、旧 `测试文件/` 回退；该根只在 pytest/test helper 消费，不进入生产包，也不移动或复制历史数据。
+- **理由**：AI 需要声明式观察三源日志并取回结构化结论，同时必须把输入、安全与幂等边界收紧到可验证的程度（P1 是后续 P2-P8 的接口地基）。
+- **影响**：9 个提交（`327a7db..1af6335`），验收离线证据：changed-test 集 194 passed + loghooks 34 + listener index/history 32 + listener app fixture 37 + packaging 14 + unsafe/malformed 定向 3。自动化边界**不证明**真实串口因果、发送、烧录或设备行为。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-31 P2 项目内 observe-workbench-logs 观察技能
+
+- **日期**：2026-08-23
+- **状态**：✅ 生效
+- **决定**：新增项目内、显式调用的 AI 观察技能 `skills/observe-workbench-logs/`：
+  - 仅提供 `status`/`observe`/`wait`/`artifact`/`listener-schema`/`frame-detail` 六命令；`allow_implicit_invocation=false`，只读观察不碰硬件。
+  - Token 唯一来源 `WORKBENCH_AI_TOKEN`，无 CLI 参数/位置参数/配置文件值/URL userinfo/明文输出；`observe` 默认 dry-run 零 HTTP，仅 `--execute` 才 POST `/api/ai/v1/observations`。
+  - 客户端无 ensure/start/stop/send/flash/烧录/串口打开/operation cancel/产品文件读取能力；wait 单次服务端 ≤30s、终态即停、不 cancel；Artifact 只读服务端登记对象。
+  - 不安装个人技能、不启动服务、不 push、不碰硬件。
+- **理由**：AI 改代码后需要声明式验证「真实运行中是否走到」，但技能必须是只读观察、默认零副作用，避免 AI 误触发硬件操作。
+- **影响**：`SKILL.md` + `agents/openai.yaml` + `scripts/workbench_ai_client.py`（293 行）+ `references/api-contract.md` + mock 测试 16 passed；`quick_validate` Skill is valid。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-32 P3 串口 Profile Store（四槽默认禁用）
+
+- **日期**：2026-08-23
+- **状态**：✅ 生效
+- **决定**：新增 `libs/shared/serial_profile.py` `SerialProfileStore`：
+  - 固定四槽 `module_log.cco` / `module_log.sta` / `listener.main` / `simcon.main`，默认 `enabled:false`。
+  - 首次无文件返回默认禁用槽、不落盘；`update_slot` 后原子写入 `runtime_dir`。
+  - 选 `mapping_id` 从 `serial_ports.json` 回填默认波特率/数据位/校验/停止，可覆盖；`serial_ports.json` 只读不被修改。
+  - 非法参数/未知映射/未知槽报错。
+- **理由**：统一串口配置需要一份可保存、可校验、不破坏 `serial_ports.json` 现场映射的 Profile 存储，供后续一键应用与配置页使用。
+- **影响**：`libs/shared/serial_profile.py` + `test_serial_profile.py` 11 passed（含既有 serial 测试 6 passed 无回归）。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-33 P4 串口 Profile 一键应用 + REST 三接口
+
+- **日期**：2026-08-23
+- **状态**：✅ 生效
+- **决定**：
+  - `SerialProfileApplier` 固定顺序**侦听台→CCO→STA→模拟集中器**；逐槽状态 `started/reused/stopped/unchanged/skipped/failed`；相同且已运行返回 unchanged/reused；禁用槽仅停托管会话（title 前缀 `托管-`，不影响人工动态会话）；单槽失败继续后续槽，不回滚成功项。
+  - `serial_profile_api.py`：`GET/PUT /api/serial-profile`（只保存不碰硬件）+ `POST /api/serial-profile/apply`（只读已保存版本）。
+  - `sim_concentrator/api.py` 暴露 `simcon_open_io/close_io`；workbench app 经 `SimconProfileAdapter` 注入 applier（不经 HTTP 回调）。
+  - `serial_profile.py` 增 `device_for`（mapping_id→可打开设备）。
+- **理由**：四槽串口需要「一键应用」把已保存 Profile 落到真实串口服务，同时要逐槽可观测、部分失败可继续，且托管会话与人工会话互不干扰。
+- **影响**：applier 6 + REST 5 = 11 passed；workbench 全量 196 passed 无回归。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-34 P5 左侧分组导航 + hash 路由 + 抽屉/折叠
+
+- **日期**：2026-08-23
+- **状态**：✅ 生效
+- **决定**：
+  - `app.js` 三组导航（验证/设备/维护）；`ensureFrame` 保活契约保留（首次创建只赋 src，切页只隐藏/显示）；切页写 `location.hash` 支持深链/刷新/前进后退。
+  - 桌面端侧栏可折叠为图标栏（localStorage 保存）；窄屏(<860px)改可键盘关闭抽屉（Escape/遮罩关闭、焦点回归）。
+  - `index.html/styles.css` 新增 `wb-sidebar` 分组菜单 + `wb-overlay` 遮罩 + 折叠按钮 + `@media` 响应式。
+  - 新增 `maintenance.html`（维护组：版本/主题/挂载状态）与 `serial-profile.html` 占位（P6 完善）。
+- **理由**：功能页增多后需要分组导航与深链支持，同时保留 P2 起 iframe 保活语义，避免切换页签重载丢失会话。
+- **影响**：`test_shell_navigation.py` 7 测试；`node --check app.js` 通过；workbench 全量 203 passed 无回归。
+- **被取代**：无（新增决策）。
+
+---
+
+## ADR-35 P6 串口配置页（四槽保存/一键应用/刷新状态）
+
+- **日期**：2026-08-23
+- **状态**：✅ 生效
+- **决定**：`serial-profile.html/js` 原生静态配置页，固定四槽（CCO/STA/侦听台/模拟集中器）：
+  - 保存(PUT)/一键应用(POST apply)/刷新状态(GET) 三动作各自独立。
+  - 每槽：启用、映射下拉（`port_details` 提供）、波特率/校验、状态/占用/应用结果。
+  - 启用未选串口→内联报错；重复映射 apply 前阻止且零副作用；部分失败保留成功状态，提供可聚焦错误摘要（`tabindex`+focus）。
+- **理由**：P4 的一键应用需要一个可视化操作页，让用户在浏览器里完成四槽配置与应用，并给出可访问的失败提示。
+- **影响**：`serial-profile.js`（345 行）+ 前端测试 `test_serial_profile_frontend.py`（110 行，8 测试）；`node --check` 通过；workbench 全量 211 passed 无回归。
 - **被取代**：无（新增决策）。

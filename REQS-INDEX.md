@@ -10,6 +10,8 @@
 | 0001 | 串口全程监控 + XMODEM 烧录一体化（serial-flash-session） | 大需求 | ✅ 已完成 | master | 2026-08-11 |
 | 0002 | 项目拆分（侦听台/模块日志）+ 日志分类存储 | 大需求 | ✅ 已完成 | master | 2026-08-11 |
 | 0003 | Windows 串口网关 + WSL 虚拟串口 | 大需求 | ⛔ 已屏蔽（暂不实现） | master | 2026-08-17 |
+| 0004 | AI 工作台串口状态保持、统一映射与模块日志动态页签（workbench-serial-sessions） | 大需求 | ✅ 已完成 | master | 2026-08-20 |
+| 0005 | P1-P6 AI 观察与串口 Profile（有界 observation、observe-workbench-logs 技能、四槽 Profile 一键应用、分组导航） | 大需求 | ✅ 已完成（P7/P8 未启动） | codex/p1-ai-observation（已合 master） | 2026-08-24 |
 
 ## 使用说明
 

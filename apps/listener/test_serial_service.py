@@ -358,7 +358,8 @@ class SharedSerialCatalogIntegrationTest(unittest.TestCase):
             port_catalog=catalog,
         )
         fake = [mock.Mock(device="/dev/ttyUSB0", description="CP210x")]
-        with mock.patch("listener.serial_service.list_ports.comports", return_value=fake):
+        with mock.patch("listener.serial_service.os.name", "posix"), \
+             mock.patch("listener.serial_service.list_ports.comports", return_value=fake):
             ports = svc.list_available_ports()
         self.assertEqual(ports[0]["mapping_id"], "listener")
         self.assertEqual(ports[0]["label"], "侦听台")
@@ -398,7 +399,8 @@ class SharedSerialCatalogIntegrationTest(unittest.TestCase):
                 return b""
 
         fake_port = mock.Mock(device="/dev/ttyUSB0", description="fake")
-        with mock.patch("listener.serial_service.list_ports.comports", return_value=[fake_port]), \
+        with mock.patch("listener.serial_service.os.name", "posix"), \
+             mock.patch("listener.serial_service.list_ports.comports", return_value=[fake_port]), \
              mock.patch("listener.serial_service.serial.Serial", FakeSerial):
             service.start(port="COM4")
             status = service.status()
