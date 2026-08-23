@@ -28,7 +28,9 @@ class InvalidObservation(ValueError):
     pass
 
 
-_FORBIDDEN_OBSERVATION_KEYS = frozenset({"path", "file", "files", "root"})
+_FORBIDDEN_OBSERVATION_KEYS = frozenset({
+    "path", "file", "files", "root", "directory", "upload", "test_data_root",
+})
 _MAX_CURSOR_RANGE = 10_000
 _MAX_LISTENER_CURSOR_RANGE = 500
 _MODULE_LOG_LOCAL_TIMEZONE = datetime.now().astimezone().tzinfo or timezone.utc
@@ -393,15 +395,22 @@ class AIControlService:
         return {"listener": result, "source_stopped_operations": stopped_operations}
 
     @staticmethod
-    def _reject_unsafe_observation_input(value: Any) -> None:
+    def _reject_unsafe_observation_input(value: Any, *, _location: tuple[str, ...] = ()) -> None:
         if isinstance(value, dict):
             for key, nested in value.items():
-                if str(key).casefold() in _FORBIDDEN_OBSERVATION_KEYS:
+                field = str(key).casefold()
+                # `match.where[].path` is the established parsed-frame field
+                # selector (for example `analysis.full.beacon.flag`), not a
+                # filesystem input. Every other path-shaped field is rejected.
+                selector_path = field == "path" and _location[-2:] == ("match", "where")
+                if field in _FORBIDDEN_OBSERVATION_KEYS and not selector_path:
                     raise InvalidObservation("观察请求不得提供 path/file/files/root")
-                AIControlService._reject_unsafe_observation_input(nested)
+                AIControlService._reject_unsafe_observation_input(
+                    nested, _location=_location + (field,),
+                )
         elif isinstance(value, list):
             for nested in value:
-                AIControlService._reject_unsafe_observation_input(nested)
+                AIControlService._reject_unsafe_observation_input(nested, _location=_location)
 
     @staticmethod
     def _line_seq(line: dict) -> int:
@@ -688,6 +697,9 @@ class AIControlService:
         return self.store.by_client_request_id(client_request_id)
 
     def create_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
+        # Reject every filesystem-shaped field before looking up an idempotency
+        # replay, so a reused key cannot bypass the request boundary.
+        self._reject_unsafe_observation_input(request)
         source = str(request.get("source") or "")
         replay_fingerprint = self._observation_replay_fingerprint(request)
         existing = self.store.by_client_request_id(client_request_id)
@@ -700,7 +712,6 @@ class AIControlService:
             )
         if source != "module_log":
             raise InvalidObservation("source 仅支持 module_log 或 listener")
-        self._reject_unsafe_observation_input(request)
         target = request.get("target") or {}
         session_id = str(target.get("session_id") or "")
         if not session_id:

@@ -277,6 +277,49 @@ def test_listener_cursor_range_api_maps_invalid_input_to_422(window, target, det
     assert detail in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "observation_request",
+    [
+        {
+            "source": "listener", "target": {"mapping_id": "listener-main"},
+            "window": {"mode": "live", "start": "now", "timeout_seconds": 60},
+            "match": {"kind": "frame_query", "frame_kind": "central_beacon"},
+            "context": {"upload": {"test_data_root": "D:/fixtures"}},
+        },
+        {
+            "source": "listener", "target": {"mapping_id": "listener-main"},
+            "window": {
+                "type": "cursor_range", "index_id": "idx-listener-test",
+                "start_frame_id": 1, "end_frame_id": 1,
+            },
+            "match": {"kind": "frame_query", "frame_kind": "central_beacon"},
+            "root": "D:/fixtures",
+        },
+    ],
+)
+def test_listener_observation_rejects_nested_or_top_level_filesystem_input_before_creating_state(observation_request):
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create"], resources=["listener-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ai/v1/observations", json=observation_request, headers=_auth_header(token),
+    )
+
+    assert response.status_code == 422
+    assert "观察请求不得提供" in response.json()["detail"]
+    assert not app.state.ai_control_service.store._operations
+    assert not app.state.ai_control_service.store._artifacts
+
+
 def _module_cursor_observation(session_id="ms-cco", value="boot"):
     return {
         "source": "module_log", "target": {"session_id": session_id},
