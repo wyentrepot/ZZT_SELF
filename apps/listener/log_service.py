@@ -1109,7 +1109,7 @@ class LogFileService:
 
     def list_frames(
         self, offset=0, limit=100, query="", nid="", start_time="", end_time="",
-        after_id=None,
+        after_id=None, start_id=None, end_id=None,
     ) -> dict:
         if offset < 0:
             raise ValueError("offset 不能小于 0")
@@ -1119,6 +1119,13 @@ class LogFileService:
         end_bound = self._time_range_bound(end_time, is_end=True)
         if start_bound and end_bound and start_bound > end_bound:
             raise ValueError("结束时间不能早于起始时间")
+        for value, name in ((start_id, "start_id"), (end_id, "end_id")):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ValueError(f"{name} 必须是整数")
+            if value is not None and value < 0:
+                raise ValueError(f"{name} 不能小于 0")
+        if start_id is not None and end_id is not None and start_id > end_id:
+            raise ValueError("end_id 不能小于 start_id")
 
         conditions = []
         parameters = []
@@ -1138,6 +1145,12 @@ class LogFileService:
         if end_bound:
             conditions.append("log_time <= ?")
             parameters.append(end_bound)
+        if start_id is not None:
+            conditions.append("id >= ?")
+            parameters.append(start_id)
+        if end_id is not None:
+            conditions.append("id <= ?")
+            parameters.append(end_id)
         where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         with self._connect() as connection:

@@ -1,8 +1,10 @@
 """AI control authorization and operation service tests."""
 from __future__ import annotations
 
+import pytest
+
 from workbench.ai_auth import AuthorizationStore
-from workbench.ai_operations import AIControlService
+from workbench.ai_operations import AIControlService, InvalidObservation
 
 
 class FakeModuleService:
@@ -162,6 +164,17 @@ class FakeListenerLogService:
                 "parse_error": None,
             },
         ]
+        self.indexes = {
+            self.index_id: self.frames,
+            "idx-listener-other": [
+                {
+                    "id": 1, "frame_id": 1, "sequence": "other-000001",
+                    "log_time": "11:00:01.000",
+                    "summary": {"FrmType": "中央信标", "flag": 1},
+                    "parse_error": None,
+                },
+            ],
+        }
 
     def status(self):
         return {
@@ -172,16 +185,25 @@ class FakeListenerLogService:
     def list_indexes(self):
         return {
             "current_index_id": self.index_id,
-            "indexes": [{"index_id": self.index_id, "kind": "serial", "is_current": True}],
+            "indexes": [
+                {"index_id": self.index_id, "kind": "serial", "is_current": True},
+                {"index_id": "idx-listener-other", "kind": "serial", "is_current": False},
+            ],
         }
 
     def list_index_frames(self, index_id, **filters):
-        if index_id != self.index_id:
+        if index_id not in self.indexes:
             raise KeyError(index_id)
-        rows = list(self.frames)
+        rows = list(self.indexes[index_id])
         after_id = filters.get("after_id")
         if after_id is not None:
             rows = [item for item in rows if item["frame_id"] > after_id]
+        start_id = filters.get("start_id")
+        if start_id is not None:
+            rows = [item for item in rows if item["frame_id"] >= start_id]
+        end_id = filters.get("end_id")
+        if end_id is not None:
+            rows = [item for item in rows if item["frame_id"] <= end_id]
         start_time = filters.get("start_time") or ""
         end_time = filters.get("end_time") or ""
         if start_time:
@@ -193,16 +215,17 @@ class FakeListenerLogService:
             rows = [item for item in rows if query in str(item["summary"])]
         limit = int(filters.get("limit", 100))
         offset = int(filters.get("offset", 0))
+        total = len(rows)
         rows = rows[offset:offset + limit]
         return {
-            "index_id": index_id, "items": rows, "total": len(self.frames),
+            "index_id": index_id, "items": rows, "total": total,
             "offset": offset, "limit": limit, "after_id": rows[-1]["frame_id"] if rows else None,
         }
 
     def get_index_frame(self, index_id, frame_id):
-        if index_id != self.index_id:
+        if index_id not in self.indexes:
             raise KeyError(index_id)
-        for frame in self.frames:
+        for frame in self.indexes[index_id]:
             if frame["frame_id"] == frame_id:
                 return {
                     **frame,
@@ -250,6 +273,112 @@ def test_listener_time_range_observation_returns_versioned_frame_keys():
         "index_id": "idx-listener-test", "frame_id": 1,
     }
     assert service.status()["listener"]["index_capability"] == "versioned"
+
+
+def _listener_cursor_request(index_id="idx-listener-test", start_frame_id=1, end_frame_id=3):
+    return {
+        "source": "listener",
+        "target": {"mapping_id": "listener-main"},
+        "window": {
+            "type": "cursor_range",
+            "index_id": index_id,
+            "start_frame_id": start_frame_id,
+            "end_frame_id": end_frame_id,
+        },
+        "match": {"kind": "frame_query", "frame_kind": "central_beacon", "selector": "all"},
+    }
+
+
+def test_listener_cursor_range_is_closed_and_preserves_composite_deep_links_and_artifact():
+    log_service = FakeListenerLogService()
+    service = AIControlService(listener_service=FakeListenerService(), log_service=log_service)
+
+    operation = service.create_observation(
+        _listener_cursor_request(), actor="ai:grant-test", client_request_id="listener-cursor-1",
+    )
+
+    assert operation["state"] == "matched"
+    assert operation["result"]["condition_met"] is True
+    assert operation["result"]["index"]["index_id"] == "idx-listener-test"
+    assert operation["result"]["index"]["start_frame_id"] == 1
+    assert operation["result"]["index"]["end_frame_id"] == 3
+    assert operation["result"]["snippet"][0]["frame_key"] == {
+        "index_id": "idx-listener-test", "frame_id": 1,
+    }
+    assert [item["frame_key"] for item in operation["result"]["matches"]] == [
+        {"index_id": "idx-listener-test", "frame_id": 1},
+        {"index_id": "idx-listener-test", "frame_id": 2},
+        {"index_id": "idx-listener-test", "frame_id": 3},
+    ]
+    assert operation["result"]["matches"][-1]["detail_url"].endswith("idx-listener-test/frames/3")
+    artifact_id = operation["result"]["artifact_id"]
+    assert service.read_artifact(artifact_id)["content"]["index"]["end_frame_id"] == 3
+    service.log_service = None
+    assert service.create_observation(
+        _listener_cursor_request(), actor="ai:grant-test", client_request_id="listener-cursor-1",
+    )["operation_id"] == operation["operation_id"]
+
+
+def test_listener_cursor_range_honours_single_frame_empty_hole_and_index_isolation():
+    log_service = FakeListenerLogService()
+    log_service.indexes["idx-listener-test"] = [
+        log_service.frames[0], log_service.frames[2],
+    ]
+    service = AIControlService(listener_service=FakeListenerService(), log_service=log_service)
+
+    single = service.create_observation(
+        _listener_cursor_request(start_frame_id=1, end_frame_id=1), actor="ai:grant-test",
+    )
+    empty_hole = service.create_observation(
+        _listener_cursor_request(start_frame_id=2, end_frame_id=2), actor="ai:grant-test",
+    )
+    other_index = service.create_observation(
+        _listener_cursor_request(index_id="idx-listener-other", start_frame_id=1, end_frame_id=1),
+        actor="ai:grant-test",
+    )
+
+    assert [item["frame_key"] for item in single["result"]["matches"]] == [
+        {"index_id": "idx-listener-test", "frame_id": 1},
+    ]
+    assert empty_hole["state"] == "succeeded"
+    assert empty_hole["result"]["condition_met"] is False
+    assert empty_hole["result"]["matches"] == []
+    assert other_index["result"]["matches"][0]["frame_key"] == {
+        "index_id": "idx-listener-other", "frame_id": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "observation_request, message",
+    [
+        (_listener_cursor_request(start_frame_id=3, end_frame_id=1), "start_frame_id 不能大于"),
+        (_listener_cursor_request(start_frame_id=-1, end_frame_id=1), "不能为负数"),
+        (_listener_cursor_request(start_frame_id=True, end_frame_id=1), "必须是整数"),
+        (_listener_cursor_request(start_frame_id="1", end_frame_id=1), "必须是整数"),
+        (_listener_cursor_request(start_frame_id=1, end_frame_id=501), "范围过大"),
+        (_listener_cursor_request(start_frame_id=1, end_frame_id=4), "超出索引边界"),
+        (_listener_cursor_request(index_id="idx-unknown", start_frame_id=1, end_frame_id=1), "不存在"),
+        ({
+            **_listener_cursor_request(),
+            "target": {"mapping_id": "listener-main", "index_id": "idx-listener-other"},
+        }, "不一致"),
+        ({
+            **_listener_cursor_request(),
+            "target": {"mapping_id": "listener-main", "capture": "idx-listener-other"},
+        }, "不一致"),
+        ({
+            **_listener_cursor_request(),
+            "window": {"type": "cursor_range", "index_id": "idx-listener-test", "start_frame_id": 1},
+        }, "必须提供"),
+    ],
+)
+def test_listener_cursor_range_rejects_invalid_or_cross_index_input(observation_request, message):
+    service = AIControlService(
+        listener_service=FakeListenerService(), log_service=FakeListenerLogService(),
+    )
+
+    with pytest.raises(InvalidObservation, match=message):
+        service.create_observation(observation_request, actor="ai:grant-test")
 
 
 def test_flash_operation_is_idempotent_and_waits_for_the_shared_session_state():

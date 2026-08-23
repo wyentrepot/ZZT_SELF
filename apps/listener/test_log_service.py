@@ -188,6 +188,27 @@ class LogFileServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.list_frames(start_time="10:00:00", end_time="09:00:00")
 
+    def test_list_frames_filters_closed_frame_id_range_without_filling_holes(self):
+        lines = [
+            b"[1][09:00:00.000]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+            b"[2][09:00:01.000]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+            b"[3][09:00:02.000]7E FF 02 FF 00 00 00 00 00 00 7E\r\n",
+        ]
+        directory, path = _write_log(lines)
+        self.addCleanup(directory.cleanup)
+        service = LogFileService(
+            FakeParserService(), Path(self.temp_dir.name) / "cursor-range.sqlite3"
+        )
+        self.addCleanup(service.close)
+        service.index_file(path)
+
+        page = service.list_frames(start_id=2, end_id=2)
+
+        self.assertEqual(page["total"], 1)
+        self.assertEqual([item["frame_id"] for item in page["items"]], [2])
+        with self.assertRaises(ValueError):
+            service.list_frames(start_id=3, end_id=2)
+
     def test_list_frames_filters_by_nid(self):
         directory, path = _write_log([LOG_LINE, LOG_LINE, LOG_LINE])
         self.addCleanup(directory.cleanup)

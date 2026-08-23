@@ -187,6 +187,94 @@ def test_listener_frame_detail_uses_index_and_frame_composite_key():
     assert data["analysis"]["full"]["beacon"]["flag"] == 1
 
 
+def test_listener_cursor_range_api_returns_artifact_composite_keys_and_honours_idempotency_key():
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create", "evidence:read"], resources=["listener-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app)
+    request = {
+        "source": "listener",
+        "target": {"mapping_id": "listener-main"},
+        "window": {
+            "type": "cursor_range", "index_id": "idx-listener-test",
+            "start_frame_id": 1, "end_frame_id": 3,
+        },
+        "match": {"kind": "frame_query", "frame_kind": "central_beacon", "selector": "all"},
+    }
+    headers = {**_auth_header(token), "Idempotency-Key": "listener-cursor-api-1"}
+
+    created = client.post("/api/ai/v1/observations", json=request, headers=headers)
+    retried = client.post("/api/ai/v1/observations", json=request, headers=headers)
+
+    assert created.status_code == 202
+    assert retried.status_code == 202
+    assert retried.json()["operation_id"] == created.json()["operation_id"]
+    result = created.json()["result"]
+    assert result["condition_met"] is True
+    assert result["matches"][-1]["frame_key"] == {
+        "index_id": "idx-listener-test", "frame_id": 3,
+    }
+    artifact = client.get(
+        f"/api/ai/v1/artifacts/{result['artifact_id']}/content", headers=_auth_header(token),
+    )
+    assert artifact.status_code == 200
+    assert artifact.json()["content"]["index"]["end_frame_id"] == 3
+
+
+@pytest.mark.parametrize(
+    "window, target, detail",
+    [
+        (
+            {"type": "cursor_range", "index_id": "idx-listener-test", "start_frame_id": 3, "end_frame_id": 1},
+            {"mapping_id": "listener-main"}, "start_frame_id 不能大于",
+        ),
+        (
+            {"type": "cursor_range", "index_id": "idx-listener-test", "start_frame_id": 1, "end_frame_id": 501},
+            {"mapping_id": "listener-main"}, "范围过大",
+        ),
+        (
+            {"type": "cursor_range", "index_id": "idx-unknown", "start_frame_id": 1, "end_frame_id": 1},
+            {"mapping_id": "listener-main"}, "不存在",
+        ),
+        (
+            {"type": "cursor_range", "index_id": "idx-listener-test", "start_frame_id": 1, "end_frame_id": 1},
+            {"mapping_id": "listener-main", "index_id": "idx-listener-other"}, "不一致",
+        ),
+    ],
+)
+def test_listener_cursor_range_api_maps_invalid_input_to_422(window, target, detail):
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create"], resources=["listener-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ai/v1/observations",
+        json={
+            "source": "listener", "target": target, "window": window,
+            "match": {"kind": "frame_query", "frame_kind": "central_beacon"},
+        },
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 422
+    assert detail in response.json()["detail"]
+
+
 def test_flash_api_requires_scope_and_authorized_firmware_root():
     auth = AuthorizationStore()
     _, token = auth.create_grant(

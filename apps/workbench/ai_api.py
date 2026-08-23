@@ -188,7 +188,10 @@ def create_ai_router(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @router.post("/observations", status_code=202)
-    def create_observation(request: dict[str, Any], authorization: str | None = Header(None)):
+    def create_observation(
+        request: dict[str, Any], authorization: str | None = Header(None),
+        idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+    ):
         target = request.get("target") or {}
         resource = str(target.get("mapping_id") or "listener-main")
         if target.get("session_id"):
@@ -199,7 +202,8 @@ def create_ai_router(
         grant = grant_from_header(authorization, "observation:create", resource)
         try:
             operation = control.create_observation(
-                request, actor=actor(grant), client_request_id=str(request.get("client_request_id") or ""),
+                request, actor=actor(grant),
+                client_request_id=str(request.get("client_request_id") or idempotency_key or ""),
             )
             return {
                 "operation_id": operation["operation_id"], "state": operation["state"],

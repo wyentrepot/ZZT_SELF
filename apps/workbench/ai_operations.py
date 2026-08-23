@@ -28,6 +28,7 @@ class InvalidObservation(ValueError):
 
 _FORBIDDEN_OBSERVATION_KEYS = frozenset({"path", "file", "files", "root"})
 _MAX_CURSOR_RANGE = 10_000
+_MAX_LISTENER_CURSOR_RANGE = 500
 _MODULE_LOG_LOCAL_TIMEZONE = datetime.now().astimezone().tzinfo or timezone.utc
 
 
@@ -861,14 +862,18 @@ class AIControlService:
             matches.append(entry)
         result = {
             "source": "listener",
+            "condition_met": bool(matches),
             "index": {
                 "index_id": index_id,
                 "source_log_path": status.get("source_path"),
                 "start_frame_id": payload.get("start_frame_id", 0),
             },
             "matches": matches,
+            "snippet": matches[:10],
             "artifact_id": None,
         }
+        if payload["window"]["mode"] == "cursor_range":
+            result["index"]["end_frame_id"] = payload["window"]["end_frame_id"]
         if operation_id:
             artifact = self.store.register_artifact(
                 operation_id=operation_id,
@@ -880,32 +885,103 @@ class AIControlService:
         return result
 
     def _listener_last_frame_id(self, index_id: str) -> int:
+        bounds = self._listener_frame_bounds(index_id)
+        return bounds[1] if bounds is not None else 0
+
+    def _listener_frame_bounds(self, index_id: str) -> tuple[int, int] | None:
         service = self._listener_log_or_error()
         first = service.list_index_frames(index_id, offset=0, limit=1)
         total = int(first.get("total", 0))
         if total < 1:
-            return 0
+            return None
         page = service.list_index_frames(index_id, offset=max(total - 1, 0), limit=1)
         items = page.get("items") or []
         if not items:
-            return 0
-        return int(items[-1].get("frame_id", items[-1].get("id", 0)))
+            return None
+        first_items = first.get("items") or []
+        if not first_items:
+            return None
+        return (
+            int(first_items[0].get("frame_id", first_items[0].get("id", 0))),
+            int(items[-1].get("frame_id", items[-1].get("id", 0))),
+        )
+
+    @staticmethod
+    def _normalise_listener_cursor_id(value: Any, *, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise InvalidObservation(f"listener cursor_range {field} 必须是整数")
+        if value < 0:
+            raise InvalidObservation(f"listener cursor_range {field} 不能为负数")
+        return value
 
     def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
-        service = self._listener_log_or_error()
+        existing = self.store.by_client_request_id(client_request_id)
+        if existing is not None:
+            return existing
+        self._listener_log_or_error()
         target = request.get("target") or {}
-        index_id = self._listener_current_index_id(str(target.get("index_id") or ""))
         window = request.get("window") or {}
-        mode = str(window.get("mode") or "live")
-        if mode not in ("live", "time_range"):
-            raise InvalidObservation("listener window.mode 仅支持 live 或 time_range")
+        window_type = window.get("type")
+        if window_type is not None:
+            if window_type != "cursor_range":
+                raise InvalidObservation("listener window.type 仅支持 cursor_range")
+            if window.get("mode") not in (None, "cursor_range"):
+                raise InvalidObservation("listener window.type 与 window.mode 不一致")
+            mode = "cursor_range"
+        else:
+            mode = str(window.get("mode") or "live")
+        if mode not in ("live", "time_range", "cursor_range"):
+            raise InvalidObservation("listener window.mode 仅支持 live、time_range 或 cursor_range")
+        target_index_id = str(target.get("index_id") or "")
+        target_capture = str(target.get("capture") or "")
+        cursor_start = None
+        cursor_end = None
+        if mode == "cursor_range":
+            cursor_index_id = window.get("index_id")
+            if not isinstance(cursor_index_id, str) or not cursor_index_id:
+                raise InvalidObservation("listener cursor_range 必须提供 index_id")
+            if target_index_id and target_index_id != cursor_index_id:
+                raise InvalidObservation("listener cursor_range index_id 与 target.index_id 不一致")
+            if target_capture and target_capture != "current" and target_capture != cursor_index_id:
+                raise InvalidObservation("listener cursor_range index_id 与 target.capture 不一致")
+            try:
+                index_id = self._listener_current_index_id(cursor_index_id)
+            except KeyError as exc:
+                raise InvalidObservation("listener cursor_range index_id 不存在") from exc
+            if "start_frame_id" not in window or "end_frame_id" not in window:
+                raise InvalidObservation("listener cursor_range 必须提供 start_frame_id 和 end_frame_id")
+            cursor_start = self._normalise_listener_cursor_id(
+                window["start_frame_id"], field="start_frame_id",
+            )
+            cursor_end = self._normalise_listener_cursor_id(
+                window["end_frame_id"], field="end_frame_id",
+            )
+            if cursor_start > cursor_end:
+                raise InvalidObservation("listener cursor_range start_frame_id 不能大于 end_frame_id")
+            if cursor_end - cursor_start + 1 > _MAX_LISTENER_CURSOR_RANGE:
+                raise InvalidObservation("listener cursor_range 范围过大")
+            bounds = self._listener_frame_bounds(index_id)
+            if bounds is None or cursor_start < bounds[0] or cursor_end > bounds[1]:
+                raise InvalidObservation("listener cursor_range 超出索引边界")
+        else:
+            try:
+                index_id = self._listener_current_index_id(target_index_id)
+            except KeyError as exc:
+                raise InvalidObservation("listener index_id 不存在") from exc
         if mode == "live" and str(window.get("start") or "now") != "now":
             raise InvalidObservation("listener live 观察仅支持 start=now")
         if mode == "time_range" and (not window.get("start") or not window.get("end")):
             raise InvalidObservation("listener time_range 必须提供 start 和 end")
-        timeout = int(window.get("timeout_seconds", 180))
-        if mode == "live" and not 1 <= timeout <= 3600:
-            raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
+        timeout = 180
+        if mode == "live":
+            if isinstance(window.get("timeout_seconds", 180), bool):
+                raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
+            try:
+                timeout = int(window.get("timeout_seconds", 180))
+            except (TypeError, ValueError) as exc:
+                raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间") from exc
+            if not 1 <= timeout <= 3600:
+                raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
         match = request.get("match") or {}
         if str(match.get("kind") or "") not in ("parsed_frame", "frame_query"):
             raise InvalidObservation("listener 观察仅支持 parsed_frame 或 frame_query")
@@ -920,11 +996,16 @@ class AIControlService:
                 "start": window.get("start", "now"),
                 "end": window.get("end"),
                 "timeout_seconds": timeout,
+                "start_frame_id": cursor_start,
+                "end_frame_id": cursor_end,
             },
             "match": match,
             "completion": request.get("completion") or {},
-            "start_frame_id": self._listener_last_frame_id(index_id) if mode == "live" else 0,
-            "deadline_monotonic": time.monotonic() + timeout,
+            "start_frame_id": (
+                self._listener_last_frame_id(index_id) if mode == "live"
+                else cursor_start if mode == "cursor_range" else 0
+            ),
+            "deadline_monotonic": time.monotonic() + timeout if mode == "live" else None,
         }
         operation = self.store.create("observation", actor, payload, client_request_id=client_request_id)
         if operation["state"] != "created":
@@ -933,7 +1014,7 @@ class AIControlService:
             actor=actor, action="listener.observation.create", resource=resource,
             result="waiting" if mode == "live" else "querying", operation_id=operation["operation_id"],
         )
-        if mode == "time_range":
+        if mode in ("time_range", "cursor_range"):
             return self._refresh_listener_observation(operation["operation_id"], complete=True)
         return self.store.set_state(operation["operation_id"], "waiting")
 
@@ -952,9 +1033,12 @@ class AIControlService:
             filters = {"offset": 0, "limit": 500}
             if window["mode"] == "live":
                 filters["after_id"] = payload["start_frame_id"]
-            else:
+            elif window["mode"] == "time_range":
                 filters["start_time"] = window["start"]
                 filters["end_time"] = window["end"]
+            else:
+                filters["start_id"] = window["start_frame_id"]
+                filters["end_id"] = window["end_frame_id"]
             page = self._listener_log_or_error().list_index_frames(payload["index_id"], **filters)
             candidates = []
             for frame in page.get("items") or []:
