@@ -275,6 +275,94 @@ def test_listener_cursor_range_api_maps_invalid_input_to_422(window, target, det
     assert detail in response.json()["detail"]
 
 
+def _module_cursor_observation(session_id="ms-cco", value="boot"):
+    return {
+        "source": "module_log", "target": {"session_id": session_id},
+        "window": {"mode": "cursor_range", "start_seq": 1, "end_seq": 1},
+        "match": {"kind": "literal", "value": value},
+    }
+
+
+def _listener_cursor_observation(selector="all"):
+    return {
+        "source": "listener", "target": {"mapping_id": "listener-main"},
+        "window": {
+            "type": "cursor_range", "index_id": "idx-listener-test",
+            "start_frame_id": 1, "end_frame_id": 3,
+        },
+        "match": {"kind": "frame_query", "frame_kind": "central_beacon", "selector": selector},
+    }
+
+
+def test_observation_idempotency_rejects_cross_resource_source_and_body_collisions_without_leakage():
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create", "evidence:read"], resources=["*"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    app.state.ai_control_service.module_service.sessions["ms-sta"] = {
+        **app.state.ai_control_service.module_service.sessions["ms-cco"],
+        "session_id": "ms-sta", "port_identity": {"mapping_id": "sta-main"},
+    }
+    client = TestClient(app)
+
+    cases = [
+        (_module_cursor_observation(), _module_cursor_observation(session_id="ms-sta")),
+        (_module_cursor_observation(), _listener_cursor_observation()),
+        (_listener_cursor_observation(selector="all"), _listener_cursor_observation(selector="first")),
+    ]
+    for number, (first_request, conflicting_request) in enumerate(cases):
+        headers = {**_auth_header(token), "Idempotency-Key": f"collision-{number}"}
+        created = client.post("/api/ai/v1/observations", json=first_request, headers=headers)
+        conflict = client.post("/api/ai/v1/observations", json=conflicting_request, headers=headers)
+
+        assert created.status_code == 202
+        assert conflict.status_code == 409
+        assert conflict.json()["detail"] == "幂等键与既有请求不一致"
+        assert conflict.json()["code"] == "409"
+        assert "operation_id" not in conflict.json()
+        assert "result" not in conflict.json()
+        assert "artifact_id" not in conflict.text
+
+
+def test_observation_idempotency_checks_existing_resource_authorization_before_returning_a_replay():
+    auth = AuthorizationStore()
+    _, cco_token = auth.create_grant(
+        scopes=["observation:create", "evidence:read"], resources=["cco-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    _, listener_token = auth.create_grant(
+        scopes=["observation:create"], resources=["listener-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app)
+    headers = {"Idempotency-Key": "authorization-replay"}
+
+    created = client.post(
+        "/api/ai/v1/observations", json=_module_cursor_observation(),
+        headers={**headers, **_auth_header(cco_token)},
+    )
+    denied = client.post(
+        "/api/ai/v1/observations", json=_listener_cursor_observation(),
+        headers={**headers, **_auth_header(listener_token)},
+    )
+
+    assert created.status_code == 202
+    assert denied.status_code == 403
+    assert "operation_id" not in denied.json()
+    assert "artifact_id" not in denied.text
+
+
 def test_flash_api_requires_scope_and_authorized_firmware_root():
     auth = AuthorizationStore()
     _, token = auth.create_grant(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import threading
@@ -11,6 +12,10 @@ from pathlib import Path
 
 
 TERMINAL_STATES = frozenset({"matched", "succeeded", "timed_out", "cancelled", "source_stopped", "error", "interrupted"})
+
+
+class IdempotencyConflict(RuntimeError):
+    """A client idempotency key was reused for a different request."""
 
 
 def now_iso() -> str:
@@ -82,16 +87,34 @@ class OperationStore:
         temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         os.replace(temporary, self._storage_path)
 
-    def create(self, kind: str, actor: str, payload: dict, *, client_request_id: str = "") -> dict:
+    @staticmethod
+    def _idempotency_fingerprint(kind: str, payload: dict) -> str:
+        canonical = json.dumps(
+            {"kind": str(kind), "payload": payload},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def create(self, kind: str, actor: str, payload: dict, *, client_request_id: str = "",
+               idempotency_fingerprint: str | None = None,
+               idempotency_replay_fingerprint: str | None = None) -> dict:
         with self._changed:
+            fingerprint = idempotency_fingerprint or self._idempotency_fingerprint(kind, payload)
             if client_request_id and client_request_id in self._request_ids:
-                return copy.deepcopy(self._operations[self._request_ids[client_request_id]])
+                existing = self._operations[self._request_ids[client_request_id]]
+                if existing.get("idempotency_fingerprint") != fingerprint:
+                    raise IdempotencyConflict("幂等键与既有请求不一致")
+                return copy.deepcopy(existing)
             operation_id = "op-" + uuid.uuid4().hex[:16]
             operation = {
                 "operation_id": operation_id, "kind": kind, "actor": actor,
                 "state": "created", "created_at": now_iso(), "updated_at": now_iso(),
                 "version": 1, "payload": copy.deepcopy(payload), "result": None, "error": None,
                 "client_request_id": client_request_id or None,
+                "idempotency_fingerprint": fingerprint if client_request_id else None,
+                "idempotency_replay_fingerprint": (
+                    idempotency_replay_fingerprint if client_request_id else None
+                ),
             }
             self._operations[operation_id] = operation
             if client_request_id:

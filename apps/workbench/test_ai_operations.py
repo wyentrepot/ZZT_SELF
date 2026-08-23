@@ -348,6 +348,46 @@ def test_listener_cursor_range_honours_single_frame_empty_hole_and_index_isolati
     }
 
 
+def test_listener_historical_cursor_result_uses_its_index_source_path_not_current_index(tmp_path):
+    from listener.index_registry import ListenerIndexRegistry
+    from listener.log_service import LogFileService
+
+    class Parser:
+        def parse_summary(self, value):
+            return {"simple": {"FrmType": "中央信标"}}
+
+        def parse(self, value):
+            return {"full": {"raw": value}}
+
+    first_source = tmp_path / "first.log"
+    second_source = tmp_path / "second.log"
+    first_source.write_bytes(b"[1][10:00:00.000]7E FF 02 FF 00 7E\r\n")
+    second_source.write_bytes(b"[2][11:00:00.000]7E FF 02 FF 00 7E\r\n")
+    registry = ListenerIndexRegistry(tmp_path / "indexes")
+    log_service = LogFileService(Parser(), tmp_path / "legacy.sqlite3", index_registry=registry)
+    try:
+        first_index_id = log_service.index_file(first_source)["index_id"]
+        log_service.index_file(second_source)
+        assert log_service.status()["source_path"] == str(second_source)
+
+        service = AIControlService(listener_service=FakeListenerService(), log_service=log_service)
+        operation = service.create_observation(
+            _listener_cursor_request(index_id=first_index_id, start_frame_id=1, end_frame_id=1),
+            actor="ai:grant-test",
+        )
+
+        assert operation["state"] == "matched"
+        assert operation["result"]["index"]["index_id"] == first_index_id
+        assert operation["result"]["index"]["source_log_path"] == str(first_source)
+        assert operation["result"]["matches"][0]["frame_key"] == {
+            "index_id": first_index_id, "frame_id": 1,
+        }
+        artifact_id = operation["result"]["artifact_id"]
+        assert service.read_artifact(artifact_id)["content"]["index"]["source_log_path"] == str(first_source)
+    finally:
+        log_service.close()
+
+
 @pytest.mark.parametrize(
     "observation_request, message",
     [
@@ -427,6 +467,26 @@ def test_operation_store_persists_terminal_records_and_interrupts_inflight_work(
     restored = OperationStore(storage_path=path)
     assert restored.get(pending["operation_id"])["state"] == "interrupted"
     assert restored.get(completed["operation_id"])["state"] == "succeeded"
+
+
+def test_operation_store_rejects_idempotency_key_collisions_by_fingerprint():
+    from workbench.ai_store import IdempotencyConflict, OperationStore
+
+    store = OperationStore()
+    first = store.create(
+        "observation", "ai:grant", {"source": "module_log"},
+        client_request_id="collision", idempotency_fingerprint="fingerprint-a",
+    )
+
+    assert store.create(
+        "observation", "ai:grant", {"source": "module_log"},
+        client_request_id="collision", idempotency_fingerprint="fingerprint-a",
+    )["operation_id"] == first["operation_id"]
+    with pytest.raises(IdempotencyConflict, match="幂等键与既有请求不一致"):
+        store.create(
+            "observation", "ai:grant", {"source": "listener"},
+            client_request_id="collision", idempotency_fingerprint="fingerprint-b",
+        )
 
 
 def test_registered_artifact_is_persisted_and_never_reads_a_caller_path(tmp_path):

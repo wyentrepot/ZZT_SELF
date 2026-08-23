@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 
 from .ai_auth import AuthorizationError, AuthorizationStore
 from .ai_operations import AIControlService, InvalidObservation, SessionBusy, SourceUnavailable
+from .ai_store import IdempotencyConflict
 
 
 def create_ai_router(
@@ -200,10 +201,16 @@ def create_ai_router(
             except KeyError:
                 resource = str(target["session_id"])
         grant = grant_from_header(authorization, "observation:create", resource)
+        client_request_id = str(request.get("client_request_id") or idempotency_key or "")
+        existing = control.idempotent_operation(client_request_id)
+        if existing is not None:
+            grant_from_header(
+                authorization, "observation:create", control.operation_resource(existing["operation_id"]),
+            )
         try:
             operation = control.create_observation(
                 request, actor=actor(grant),
-                client_request_id=str(request.get("client_request_id") or idempotency_key or ""),
+                client_request_id=client_request_id,
             )
             return {
                 "operation_id": operation["operation_id"], "state": operation["state"],
@@ -211,6 +218,8 @@ def create_ai_router(
             }
         except InvalidObservation as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except KeyError as exc:

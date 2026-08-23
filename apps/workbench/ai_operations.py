@@ -1,6 +1,8 @@
 """Safe orchestration adapters for the AI workbench control plane."""
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -655,18 +657,36 @@ class AIControlService:
             ),
         }
 
+    @staticmethod
+    def _observation_idempotency_fingerprint(identity: dict) -> str:
+        canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _observation_request_identity(request: dict) -> dict:
+        return {key: value for key, value in request.items() if key != "client_request_id"}
+
+    @classmethod
+    def _observation_replay_fingerprint(cls, request: dict) -> str:
+        return cls._observation_idempotency_fingerprint(cls._observation_request_identity(request))
+
+    def idempotent_operation(self, client_request_id: str) -> dict | None:
+        return self.store.by_client_request_id(client_request_id)
+
     def create_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
         source = str(request.get("source") or "")
+        replay_fingerprint = self._observation_replay_fingerprint(request)
+        existing = self.store.by_client_request_id(client_request_id)
+        if existing is not None and existing.get("idempotency_replay_fingerprint") == replay_fingerprint:
+            return existing
         if source == "listener":
             return self._create_listener_observation(
                 request, actor=actor, client_request_id=client_request_id,
+                replay_fingerprint=replay_fingerprint,
             )
         if source != "module_log":
             raise InvalidObservation("source 仅支持 module_log 或 listener")
         self._reject_unsafe_observation_input(request)
-        existing = self.store.by_client_request_id(client_request_id)
-        if existing is not None:
-            return existing
         target = request.get("target") or {}
         session_id = str(target.get("session_id") or "")
         if not session_id:
@@ -749,7 +769,27 @@ class AIControlService:
             "completion": completion,
             "log_path": session.get("log_file"),
         }
-        operation = self.store.create("observation", actor, payload, client_request_id=client_request_id)
+        fingerprint = self._observation_idempotency_fingerprint({
+            "semantic": {
+                "kind": "observation",
+                "source": source,
+                "resource": {"mapping_id": payload["target"]["mapping_id"], "session_id": session_id},
+                "match": match,
+                "window": {
+                    "mode": mode, "start": payload["window"]["start"], "end": payload["window"]["end"],
+                    "start_seq": payload["window"]["start_seq"], "end_seq": payload["window"]["end_seq"],
+                    "timeout_seconds": timeout,
+                },
+                "context": context,
+                "completion": completion,
+            },
+            "request": self._observation_request_identity(request),
+        })
+        operation = self.store.create(
+            "observation", actor, payload, client_request_id=client_request_id,
+            idempotency_fingerprint=fingerprint,
+            idempotency_replay_fingerprint=replay_fingerprint,
+        )
         if operation["state"] != "created":
             return operation
         self.store.audit(
@@ -845,7 +885,6 @@ class AIControlService:
     def _listener_result(self, payload: dict, selected: list[tuple[dict, dict | None]],
                          operation_id: str = "") -> dict:
         index_id = payload["index_id"]
-        status = self._listener_log_or_error().status()
         matches = []
         for frame, detail in selected:
             frame_id = int(frame.get("frame_id", frame.get("id")))
@@ -865,13 +904,15 @@ class AIControlService:
             "condition_met": bool(matches),
             "index": {
                 "index_id": index_id,
-                "source_log_path": status.get("source_path"),
                 "start_frame_id": payload.get("start_frame_id", 0),
             },
             "matches": matches,
             "snippet": matches[:10],
             "artifact_id": None,
         }
+        source_log_path = self._listener_index_source_path(index_id)
+        if source_log_path is not None:
+            result["index"]["source_log_path"] = source_log_path
         if payload["window"]["mode"] == "cursor_range":
             result["index"]["end_frame_id"] = payload["window"]["end_frame_id"]
         if operation_id:
@@ -883,6 +924,21 @@ class AIControlService:
             )
             result["artifact_id"] = artifact["artifact_id"]
         return result
+
+    def _listener_index_source_path(self, index_id: str) -> str | None:
+        """Return source metadata for this exact versioned index, never the current index's state."""
+        try:
+            indexes = self._listener_log_or_error().list_indexes().get("indexes") or []
+        except Exception:
+            return None
+        record = next(
+            (item for item in indexes if isinstance(item, dict) and item.get("index_id") == index_id),
+            None,
+        )
+        if not isinstance(record, dict):
+            return None
+        source_path = record.get("source_path")
+        return str(source_path) if source_path else None
 
     def _listener_last_frame_id(self, index_id: str) -> int:
         bounds = self._listener_frame_bounds(index_id)
@@ -914,10 +970,8 @@ class AIControlService:
             raise InvalidObservation(f"listener cursor_range {field} 不能为负数")
         return value
 
-    def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
-        existing = self.store.by_client_request_id(client_request_id)
-        if existing is not None:
-            return existing
+    def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "",
+                                     replay_fingerprint: str = "") -> dict:
         self._listener_log_or_error()
         target = request.get("target") or {}
         window = request.get("window") or {}
@@ -1007,7 +1061,31 @@ class AIControlService:
             ),
             "deadline_monotonic": time.monotonic() + timeout if mode == "live" else None,
         }
-        operation = self.store.create("observation", actor, payload, client_request_id=client_request_id)
+        fingerprint = self._observation_idempotency_fingerprint({
+            "semantic": {
+                "kind": "observation",
+                "source": "listener",
+                "resource": {
+                    "mapping_id": resource,
+                    "index_id": index_id,
+                    "capture": target_capture or "current",
+                },
+                "match": match,
+                "window": {
+                    "mode": mode, "start": payload["window"]["start"], "end": payload["window"]["end"],
+                    "start_frame_id": cursor_start, "end_frame_id": cursor_end,
+                    "timeout_seconds": timeout,
+                },
+                "completion": request.get("completion") or {},
+                "context": request.get("context") or {},
+            },
+            "request": self._observation_request_identity(request),
+        })
+        operation = self.store.create(
+            "observation", actor, payload, client_request_id=client_request_id,
+            idempotency_fingerprint=fingerprint,
+            idempotency_replay_fingerprint=replay_fingerprint,
+        )
         if operation["state"] != "created":
             return operation
         self.store.audit(
