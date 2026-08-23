@@ -412,6 +412,15 @@ class AIControlService:
             for nested in value:
                 AIControlService._reject_unsafe_observation_input(nested, _location=_location)
 
+    def validate_observation_request(self, request: Any) -> None:
+        """Validate the common API boundary before resource or replay access."""
+        if not isinstance(request, dict):
+            raise InvalidObservation("观察请求必须是对象")
+        self._reject_unsafe_observation_input(request)
+        target = request.get("target")
+        if target is not None and not isinstance(target, dict):
+            raise InvalidObservation("观察请求 target 必须是对象")
+
     @staticmethod
     def _line_seq(line: dict) -> int:
         value = line.get("seq")
@@ -699,7 +708,7 @@ class AIControlService:
     def create_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
         # Reject every filesystem-shaped field before looking up an idempotency
         # replay, so a reused key cannot bypass the request boundary.
-        self._reject_unsafe_observation_input(request)
+        self.validate_observation_request(request)
         source = str(request.get("source") or "")
         replay_fingerprint = self._observation_replay_fingerprint(request)
         existing = self.store.by_client_request_id(client_request_id)

@@ -320,6 +320,87 @@ def test_listener_observation_rejects_nested_or_top_level_filesystem_input_befor
     assert not app.state.ai_control_service.store._artifacts
 
 
+@pytest.mark.parametrize(
+    "observation_request, detail",
+    [
+        (
+            {
+                "source": "listener", "target": [{"root": "D:/fixtures"}],
+                "window": {"mode": "live", "start": "now", "timeout_seconds": 60},
+                "match": {"kind": "frame_query", "frame_kind": "central_beacon"},
+            },
+            "观察请求不得提供",
+        ),
+        (
+            {
+                "source": "listener", "target": [],
+                "window": {
+                    "type": "cursor_range", "index_id": "idx-listener-test",
+                    "start_frame_id": 1, "end_frame_id": 1,
+                },
+                "match": {"kind": "frame_query", "frame_kind": "central_beacon"},
+            },
+            "target 必须是对象",
+        ),
+    ],
+)
+def test_observation_api_preflights_malformed_target_before_resource_access(observation_request, detail):
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create"], resources=["listener-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/ai/v1/observations", json=observation_request, headers=_auth_header(token),
+    )
+
+    assert response.status_code == 422
+    assert detail in response.json()["detail"]
+    assert "operation_id" not in response.json()
+    assert "artifact_id" not in response.text
+    assert not app.state.ai_control_service.store._operations
+    assert not app.state.ai_control_service.store._artifacts
+
+
+def test_observation_api_rejects_unsafe_malformed_replay_before_returning_existing_operation():
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["observation:create"], resources=["listener-main"], ttl_seconds=60,
+        created_by="human",
+    )
+    app = create_workbench_app(
+        module_log_factory=_module_factory,
+        listener_factory=_listener_factory_with_versioned_index,
+        ai_auth_store=auth,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    headers = {**_auth_header(token), "Idempotency-Key": "unsafe-target-replay"}
+    safe_request = _listener_cursor_observation()
+
+    created = client.post("/api/ai/v1/observations", json=safe_request, headers=headers)
+    before_operations = len(app.state.ai_control_service.store._operations)
+    before_artifacts = len(app.state.ai_control_service.store._artifacts)
+    rejected = client.post(
+        "/api/ai/v1/observations",
+        json={**safe_request, "target": [{"root": "D:/fixtures"}]}, headers=headers,
+    )
+
+    assert created.status_code == 202
+    assert rejected.status_code == 422
+    assert "operation_id" not in rejected.json()
+    assert "result" not in rejected.json()
+    assert "artifact_id" not in rejected.text
+    assert len(app.state.ai_control_service.store._operations) == before_operations
+    assert len(app.state.ai_control_service.store._artifacts) == before_artifacts
+
+
 def _module_cursor_observation(session_id="ms-cco", value="boot"):
     return {
         "source": "module_log", "target": {"session_id": session_id},

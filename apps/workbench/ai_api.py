@@ -207,21 +207,22 @@ def create_ai_router(
         request: dict[str, Any], authorization: str | None = Header(None),
         idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     ):
-        target = request.get("target") or {}
-        resource = str(target.get("mapping_id") or "listener-main")
-        if target.get("session_id"):
-            try:
-                resource = control.session_resource(str(target["session_id"]))
-            except KeyError:
-                resource = str(target["session_id"])
-        grant = grant_from_header(authorization, "observation:create", resource)
-        client_request_id = str(request.get("client_request_id") or idempotency_key or "")
-        existing = control.idempotent_operation(client_request_id)
-        if existing is not None:
-            grant_from_header(
-                authorization, "observation:create", control.operation_resource(existing["operation_id"]),
-            )
         try:
+            control.validate_observation_request(request)
+            target = request.get("target") or {}
+            resource = str(target.get("mapping_id") or "listener-main")
+            if target.get("session_id"):
+                try:
+                    resource = control.session_resource(str(target["session_id"]))
+                except KeyError:
+                    resource = str(target["session_id"])
+            grant = grant_from_header(authorization, "observation:create", resource)
+            client_request_id = str(request.get("client_request_id") or idempotency_key or "")
+            existing = control.idempotent_operation(client_request_id)
+            if existing is not None:
+                grant_from_header(
+                    authorization, "observation:create", control.operation_resource(existing["operation_id"]),
+                )
             operation = control.create_observation(
                 request, actor=actor(grant),
                 client_request_id=client_request_id,
