@@ -291,6 +291,43 @@ def test_wait_timeout_parameter_bounded(fake_transport, monkeypatch):
     assert int(qs["timeout_seconds"][0]) <= 30
 
 
+def test_wait_rejects_timeout_over_30(fake_transport, monkeypatch):
+    """wait 请求 timeout > 30 时安全失败，不发请求。"""
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    from workbench_ai_client import main
+
+    rc = main(["wait", "--operation-id", "op-1", "--timeout-seconds", "45", "--execute"])
+    assert rc != 0
+    assert fake_transport.calls == []
+
+
+def test_non_2xx_response_fails_safely(fake_transport, monkeypatch, capsys):
+    """服务端非 2xx：安全失败，脱敏错误 + 非零退出码。"""
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    fake_transport.respond("GET", "http://127.0.0.1:8790/api/ai/v1/status", {
+        "detail": "缺少 Bearer token",
+    }, status=401)
+    from workbench_ai_client import main
+
+    rc = main(["status", "--execute"])
+    assert rc != 0
+    assert fake_transport.calls == [{"method": "GET",
+                                     "url": "http://127.0.0.1:8790/api/ai/v1/status",
+                                     "headers": {"Accept": "application/json",
+                                                 "Authorization": "Bearer tok-x"},
+                                     "body": None, "timeout": 30.0}]
+
+
+def test_public_host_base_url_rejected(fake_transport, monkeypatch):
+    """公网 host 的 base URL 必须被拒绝（防 Token 外泄）。"""
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    from workbench_ai_client import main
+
+    rc = main(["status", "--base-url", "http://attacker.example.com:8790", "--execute"])
+    assert rc != 0
+    assert fake_transport.calls == []
+
+
 # ---------------------------------------------------------------------------
 # artifact / frame-detail 保留服务端 ID 与复合深链
 # ---------------------------------------------------------------------------

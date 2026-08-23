@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -29,19 +31,26 @@ TOKEN_ENV = "WORKBENCH_AI_TOKEN"
 
 TERMINAL_STATES = {"matched", "timed_out", "cancelled", "error", "interrupted", "source_stopped"}
 
-# 危险命令白名单之外的动作——本客户端绝不提供
-_FORBIDDEN = ("ensure", "start", "stop", "send", "flash", "burn", "cancel")
+# 危险命令白名单之外的动作——本客户端绝不提供（由 argparse 子命令集合天然保证，无独立代码）
 
 
 class ClientError(Exception):
     """安全失败：脱敏、可读、退出码非零。"""
 
 
+# 高熵 Token 形态：长度 ≥ 20 且不含空白（避免把普通路径/ID 误打码）
+_TOKEN_LIKE = re.compile(r"^[A-Za-z0-9._~+/=-]{20,}$")
+
+
 def _redact(value: str) -> str:
-    """若字符串疑似 Token 则打码；通用脱敏兜底。"""
+    """脱敏：对 Token 形态串、Bearer 头、URL userinfo 一律打码。"""
     if not value:
         return value
-    if "tok-" in value.lower() or value.startswith("Bearer "):
+    # Authorization: Bearer <token> 整体打码
+    if value.startswith("Bearer "):
+        return "Bearer <redacted>"
+    # 独立的 token 形态串打码
+    if _TOKEN_LIKE.fullmatch(value.strip()):
         return "<redacted>"
     return value
 
@@ -61,10 +70,29 @@ def _normalize_base_url(base_url: str) -> str:
         raise ClientError(f"非法 base URL（仅允许 http/https）：{_redact(base_url)}")
     if parsed.username is not None or parsed.password is not None:
         raise ClientError("base URL 不得包含 userinfo（用户名/密码）")
-    if parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
-        # 允许局域网地址（docs/16），但禁止任何非本机形态的恶意 URL；此处只校验形态
-        pass
+    host = parsed.hostname or ""
+    _require_private_or_loopback_host(host, base_url)
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def _require_private_or_loopback_host(host: str, base_url: str) -> None:
+    """base URL 的 host 仅允许本机/回环与私网网段，拒绝公网/任意 host。
+
+    防止 Authorization Token 被发送到不受信任的地址（P2 安全契约：
+    base URL 仅允许规范化本机工作台地址或局域网私网地址）。
+    """
+    lower = host.lower()
+    if lower in ("127.0.0.1", "localhost", "::1", "[::1]", ""):
+        return
+    # IPv6 字面量去掉方括号后解析
+    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    try:
+        addr = ipaddress.ip_address(candidate)
+    except ValueError:
+        raise ClientError(f"非法 base URL host：{_redact(base_url)}")
+    if addr.is_loopback or addr.is_private or addr.is_link_local:
+        return
+    raise ClientError(f"拒绝非私网 base URL host：{_redact(base_url)}（仅允许本机/局域网）")
 
 
 def transport_request(method: str, url: str, *, headers: dict | None = None,
