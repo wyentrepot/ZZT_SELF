@@ -402,3 +402,4 @@ use/
 # 本地工具目录（node_modules 等运行时产物不入库）
 .kilo/
 reasonix.toml
+.worktrees/
