@@ -78,11 +78,16 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
     # 模拟集中器验证工具（第三页签后端）：挂载独立子应用到 /api/simcon
     # 子应用路由用相对路径（prefix=""），避免 mount 前缀 + 路由前缀双前缀
     from sim_concentrator.api import create_simcon_app
+    _simcon_sub = create_simcon_app(prefix="", resource_registry=resource_registry)
     app.mount(
         "/api/simcon",
-        create_simcon_app(prefix="", resource_registry=resource_registry),
+        _simcon_sub,
         name="simcon",
     )
+    # P4：把 simcon 的 open/close 服务函数提升到 module_log state，供统一工作台
+    # SerialProfileApplier 经适配器注入（不经 HTTP 回调）。
+    app.state.simcon_open_io = getattr(_simcon_sub.state, "simcon_open_io", None)
+    app.state.simcon_close_io = getattr(_simcon_sub.state, "simcon_close_io", None)
 
     @app.get("/module-serial")
     def module_serial_page():

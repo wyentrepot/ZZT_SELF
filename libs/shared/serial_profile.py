@@ -77,6 +77,10 @@ class SerialProfileStore:
                 return mapping.as_dict()
         raise UnknownMappingError(f"未知映射：{mapping_id}")
 
+    def device_for(self, mapping_id: str, platform_name: str | None = None) -> str:
+        """解析 mapping_id 到可打开的串口设备/COM 名（P4 apply 用）。"""
+        return self._mapping_by_id(mapping_id)["device"]
+
     def _default_profile(self) -> dict[str, Any]:
         """四槽默认禁用，不落盘。"""
         return {

@@ -158,6 +158,18 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         if io is not None:
             io.close()
 
+    # P4：把 open/close 服务函数暴露到 state，供统一工作台 SerialProfileApplier
+    # 以适配器方式注入（不经 HTTP 回调，避免服务层自调网络）。
+    def simcon_open_io(resolved: dict[str, Any]) -> None:
+        _open_io(resolved)
+
+    def simcon_close_io() -> None:
+        _close_io()
+
+    app.state.simcon_open_io = simcon_open_io
+    app.state.simcon_close_io = simcon_close_io
+    app.state.simcon_catalog = catalog
+
     @app.get(f"{prefix}/status")
     async def status():
         io = _io()

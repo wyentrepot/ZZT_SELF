@@ -234,6 +234,36 @@ def create_workbench_app(
         admin_key=ai_admin_key or os.environ.get("WORKBENCH_AI_ADMIN_KEY"),
     ))
 
+    # ---- 3.5 串口 Profile（P4）：GET/PUT 只保存 + POST apply 一键应用 ----
+    from .serial_profile_api import _profile_runtime_dir as _prof_dir
+    from shared.serial_profile import SerialProfileStore as _ProfileStore
+    from .serial_profile_api import create_serial_profile_router
+    from .serial_profile_applier import SerialProfileApplier, SimconProfileAdapter
+
+    _profile_store = _ProfileStore(runtime_dir=_prof_dir())
+    _simcon_open = getattr(getattr(_ml_sub, "state", None), "simcon_open_io", None)
+    _simcon_close = getattr(getattr(_ml_sub, "state", None), "simcon_close_io", None)
+    _simcon_adapter = None
+    if _simcon_open is not None and _simcon_close is not None:
+        try:
+            from sim_concentrator.serial_io import resolve_serial_config
+            _simcon_adapter = SimconProfileAdapter(
+                open_io=_simcon_open, close_io=_simcon_close, resolve=resolve_serial_config,
+            )
+        except Exception:  # noqa: BLE001 - 依赖缺失则 simcon 槽跳过
+            _simcon_adapter = None
+    app.state.serial_profile_store = _profile_store
+    app.state.serial_profile_applier = SerialProfileApplier(
+        module_service=getattr(app.state, "module_serial_service", None),
+        listener_service=getattr(app.state, "listener_service", None),
+        simcon_service=_simcon_adapter,
+        profile_store=_profile_store,
+    )
+    app.include_router(create_serial_profile_router(
+        profile_store=_profile_store,
+        applier=app.state.serial_profile_applier,
+    ))
+
     # ---- 4. 编排路由 ----
     app.include_router(orchestration_router)
 
