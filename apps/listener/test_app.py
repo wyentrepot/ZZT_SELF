@@ -6,6 +6,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from conftest import hplc_test_data_root
 from listener.app import create_app
 from listener.index_registry import ListenerIndexRegistry
 from listener.log_service import LogFileService
@@ -367,9 +368,9 @@ class FsApiTests(unittest.TestCase):
 
     def test_list_real_workspace_directory_finds_sample_log(self):
         """集成验证：真实日志目录可被 fs API 浏览到样本文件。"""
-        # ADR-14 后：测试文件/ 位于仓库根（apps/listener → apps → 根）
-        workspace = Path(__file__).resolve().parents[2]
-        target = workspace / "测试文件"
+        # Test-only root: environment override first, legacy repository path
+        # second.  The application continues to receive a concrete API path.
+        target = hplc_test_data_root()
         response = self.client.get(
             "/api/fs/list", params={"path": str(target)}
         )
