@@ -536,13 +536,15 @@ class AIControlService:
                 continue
         return matched
 
-    def _matching_sequence_lines(self, lines: list[dict], match: dict, *, module: str) -> list[dict]:
+    def _matching_sequence_groups(self, lines: list[dict], match: dict, *, module: str) -> list[list[dict]]:
         step_hits = [self._matching_leaf_lines(lines, step, module=module) for step in match["steps"]]
         positions = [{self._line_seq(line): line for line in hits} for hits in step_hits]
         ordered = sorted(lines, key=self._line_seq)
+        groups: list[list[dict]] = []
+        previous_group_end = -1
         for first in ordered:
             first_seq = self._line_seq(first)
-            if first_seq not in positions[0]:
+            if first_seq <= previous_group_end or first_seq not in positions[0]:
                 continue
             selected = [positions[0][first_seq]]
             previous_seq = first_seq
@@ -561,13 +563,18 @@ class AIControlService:
             if first_ms is None or last_ms is None or last_ms < first_ms:
                 continue
             if last_ms - first_ms <= match["max_interval_ms"]:
-                return selected
-        return []
+                groups.append(selected)
+                # Sequence matches are intentionally greedy and non-overlapping:
+                # a line consumed by one completion cannot start the next one.
+                previous_group_end = self._line_seq(selected[-1])
+        return groups
 
-    def _module_match_lines(self, lines: list[dict], match: dict, *, module: str) -> list[dict]:
+    def _module_match_lines(self, lines: list[dict], match: dict, *, module: str) -> tuple[list[dict], int]:
         if match["kind"] == "sequence":
-            return self._matching_sequence_lines(lines, match, module=module)
-        return self._matching_leaf_lines(lines, match, module=module)
+            groups = self._matching_sequence_groups(lines, match, module=module)
+            return [line for group in groups for line in group], len(groups)
+        matched = self._matching_leaf_lines(lines, match, module=module)
+        return matched, len(matched)
 
     @staticmethod
     def _bounded_snippet(lines: list[dict], matches: list[dict], context: dict) -> list[dict]:
@@ -607,6 +614,42 @@ class AIControlService:
         )
         result["log"]["artifact_id"] = artifact["artifact_id"]
         return result
+
+    @staticmethod
+    def _normalise_bounded_observation_int(value: Any, *, field: str,
+                                           minimum: int, maximum: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise InvalidObservation(f"{field} 必须是整数")
+        if not minimum <= value <= maximum:
+            raise InvalidObservation(f"{field} 必须在 {minimum} 到 {maximum} 之间")
+        return value
+
+    @classmethod
+    def _normalise_observation_context(cls, context: Any) -> dict:
+        if context is None:
+            context = {}
+        if not isinstance(context, dict):
+            raise InvalidObservation("context 必须是对象")
+        return {
+            "before": cls._normalise_bounded_observation_int(
+                context.get("before", 20), field="context.before", minimum=0, maximum=100,
+            ),
+            "after": cls._normalise_bounded_observation_int(
+                context.get("after", 30), field="context.after", minimum=0, maximum=100,
+            ),
+        }
+
+    @classmethod
+    def _normalise_observation_completion(cls, completion: Any) -> dict:
+        if completion is None:
+            completion = {}
+        if not isinstance(completion, dict):
+            raise InvalidObservation("completion 必须是对象")
+        return {
+            "match_count": cls._normalise_bounded_observation_int(
+                completion.get("match_count", 1), field="completion.match_count", minimum=1, maximum=100,
+            ),
+        }
 
     def create_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
         source = str(request.get("source") or "")
@@ -683,7 +726,8 @@ class AIControlService:
                 raise InvalidObservation("cursor_range 起点已被内存环形缓冲裁剪")
             if end_seq > last_retained:
                 raise InvalidObservation("cursor_range 尚未闭合或超出当前内存缓冲")
-        context = request.get("context") or {}
+        context = self._normalise_observation_context(request.get("context"))
+        completion = self._normalise_observation_completion(request.get("completion"))
         payload = {
             "source": source,
             "target": {"session_id": session_id, "mapping_id": self.session_resource(session_id)},
@@ -697,9 +741,8 @@ class AIControlService:
                        "start_time_ms": start_time_ms, "end_time_ms": end_time_ms},
             "start_seq": start_seq,
             "deadline_monotonic": time.monotonic() + timeout if mode == "live" else None,
-            "context": {"before": min(max(int(context.get("before", 20)), 0), 100),
-                        "after": min(max(int(context.get("after", 30)), 0), 100)},
-            "completion": request.get("completion") or {},
+            "context": context,
+            "completion": completion,
             "log_path": session.get("log_file"),
         }
         operation = self.store.create("observation", actor, payload, client_request_id=client_request_id)
@@ -960,12 +1003,36 @@ class AIControlService:
             return self._refresh_listener_observation(operation_id)
         return self._refresh_module_observation(operation_id)
 
+    def _finish_module_live_deadline(self, operation_id: str, operation: dict, payload: dict) -> dict:
+        """Finish a live observation without evaluating data first seen after its deadline."""
+        condition_met = payload["match"]["kind"] == "not_seen"
+        result = self._module_observation_result(
+            payload, condition_met=condition_met, matches=[], all_lines=[], operation_id=operation_id,
+        )
+        if not condition_met:
+            return self.store.set_state(operation_id, "timed_out", result=result)
+        matched = self.store.set_state(operation_id, "matched", result=result)
+        self.store.audit(
+            actor=operation["actor"], action="observation.match",
+            resource=payload["target"]["mapping_id"], result="matched",
+            operation_id=operation_id,
+        )
+        return matched
+
     def _refresh_module_observation(self, operation_id: str, *, complete: bool = False) -> dict:
         operation = self.store.get(operation_id)
         if operation["state"] not in ("created", "waiting"):
             return operation
         payload = operation["payload"]
         try:
+            if (
+                payload["window"]["mode"] == "live"
+                and time.monotonic() >= payload["deadline_monotonic"]
+            ):
+                # Module rows do not carry an arrival timestamp.  Once this
+                # process first observes the deadline as elapsed, accepting
+                # the current buffer would let post-window rows influence it.
+                return self._finish_module_live_deadline(operation_id, operation, payload)
             session_id = payload["target"]["session_id"]
             all_lines = self._module_lines(session_id)
             if payload["window"]["mode"] == "cursor_range":
@@ -983,7 +1050,7 @@ class AIControlService:
                 candidates = [line for line in all_lines if self._line_seq(line) > payload["start_seq"]]
             match = payload["match"]
             if match["kind"] == "not_seen":
-                counterexamples = self._module_match_lines(
+                counterexamples, _ = self._module_match_lines(
                     candidates, match["matcher"], module=payload["module"],
                 )
                 if counterexamples:
@@ -992,11 +1059,7 @@ class AIControlService:
                         all_lines=all_lines, operation_id=operation_id,
                     )
                     return self.store.set_state(operation_id, "succeeded", result=result)
-                deadline_reached = (
-                    payload["window"]["mode"] == "live"
-                    and time.monotonic() >= payload["deadline_monotonic"]
-                )
-                if complete or deadline_reached:
+                if complete:
                     result = self._module_observation_result(
                         payload, condition_met=True, matches=[], all_lines=all_lines,
                         operation_id=operation_id,
@@ -1009,9 +1072,10 @@ class AIControlService:
                     )
                     return matched
                 return operation
-            matching = self._module_match_lines(candidates, match, module=payload["module"])
-            required = max(int((payload.get("completion") or {}).get("match_count", 1)), 1)
-            matched_count = 1 if match["kind"] == "sequence" and matching else len(matching)
+            matching, matched_count = self._module_match_lines(
+                candidates, match, module=payload["module"],
+            )
+            required = payload["completion"]["match_count"]
             if matching and matched_count >= required:
                 result = self._module_observation_result(
                     payload, condition_met=True, matches=matching, all_lines=all_lines,

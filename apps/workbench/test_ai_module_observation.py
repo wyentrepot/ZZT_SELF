@@ -373,3 +373,253 @@ def test_observation_rejects_any_caller_supplied_file_system_key():
             },
             actor="ai:grant-test",
         )
+
+
+@pytest.mark.parametrize(
+    "match,late_lines",
+    [
+        ({"kind": "literal", "value": "late marker"}, [_line(2, "late marker")]),
+        ({"kind": "regex", "value": "late\\s+marker"}, [_line(2, "late marker")]),
+        (
+            {
+                "kind": "sequence",
+                "steps": [
+                    {"kind": "literal", "value": "late begin"},
+                    {"kind": "literal", "value": "late finish"},
+                ],
+                "max_interval_ms": 500,
+            },
+            [
+                _line(2, "late begin", "2026-08-23T12:00:00.000+00:00"),
+                _line(3, "late finish", "2026-08-23T12:00:00.100+00:00"),
+            ],
+        ),
+        ({"kind": "loghook_rule", "rule_id": "common.join_onnet"}, [_line(2, "onnet cnt = 12")]),
+    ],
+)
+def test_live_matchers_ignore_lines_first_observed_after_deadline(monkeypatch, match, late_lines):
+    import workbench.ai_operations as operations
+
+    service = _service_with(_line(1, "boot"))
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 100.0)
+    operation = service.create_observation(
+        _request(match, {"mode": "live", "start": "now", "timeout_seconds": 1}),
+        actor="ai:grant-test",
+    )
+    service.module_service.lines.extend(late_lines)
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 102.0)
+
+    result = service.wait_operation(operation["operation_id"], timeout_seconds=0)
+
+    assert result["state"] == "timed_out"
+    assert result["result"]["condition_met"] is False
+    assert result["result"]["log"]["match_lines"] == []
+
+
+def test_not_seen_ignores_counterexample_first_observed_after_deadline(monkeypatch):
+    import workbench.ai_operations as operations
+
+    service = _service_with(_line(1, "boot"))
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 100.0)
+    operation = service.create_observation(
+        _request(
+            {"kind": "not_seen", "matcher": {"kind": "literal", "value": "panic"}},
+            {"mode": "live", "start": "now", "timeout_seconds": 1},
+        ),
+        actor="ai:grant-test",
+    )
+    service.module_service.lines.append(_line(2, "panic"))
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 102.0)
+
+    result = service.wait_operation(operation["operation_id"], timeout_seconds=0)
+
+    assert result["state"] == "matched"
+    assert result["result"]["condition_met"] is True
+    assert result["result"]["log"]["match_lines"] == []
+
+
+def test_sequence_counts_two_non_overlapping_completed_sequences():
+    service = _service_with(
+        _line(2, "begin", "2026-08-23T12:00:00.000+00:00"),
+        _line(3, "finish", "2026-08-23T12:00:00.100+00:00"),
+        _line(4, "begin", "2026-08-23T12:00:01.000+00:00"),
+        _line(5, "finish", "2026-08-23T12:00:01.100+00:00"),
+    )
+
+    result = service.create_observation(
+        {
+            **_request(
+                {
+                    "kind": "sequence",
+                    "steps": [
+                        {"kind": "literal", "value": "begin"},
+                        {"kind": "literal", "value": "finish"},
+                    ],
+                    "max_interval_ms": 500,
+                },
+                {"mode": "cursor_range", "start_seq": 2, "end_seq": 5},
+            ),
+            "completion": {"match_count": 2},
+        },
+        actor="ai:grant-test",
+    )
+
+    assert result["state"] == "matched"
+    assert result["result"]["log"]["match_lines"] == [2, 3, 4, 5]
+
+
+def test_sequence_completion_count_does_not_reuse_an_overlapping_step_line():
+    service = _service_with(
+        _line(2, "begin", "2026-08-23T12:00:00.000+00:00"),
+        _line(3, "finish begin", "2026-08-23T12:00:00.100+00:00"),
+        _line(4, "finish", "2026-08-23T12:00:00.200+00:00"),
+    )
+
+    result = service.create_observation(
+        {
+            **_request(
+                {
+                    "kind": "sequence",
+                    "steps": [
+                        {"kind": "literal", "value": "begin"},
+                        {"kind": "literal", "value": "finish"},
+                    ],
+                    "max_interval_ms": 500,
+                },
+                {"mode": "cursor_range", "start_seq": 2, "end_seq": 4},
+            ),
+            "completion": {"match_count": 2},
+        },
+        actor="ai:grant-test",
+    )
+
+    assert result["state"] == "succeeded"
+    assert result["result"]["condition_met"] is False
+
+
+@pytest.mark.parametrize(
+    "request_update",
+    [
+        {"context": []},
+        {"context": {"before": "1"}},
+        {"context": {"after": True}},
+        {"context": {"before": -1}},
+        {"context": {"after": 101}},
+        {"completion": []},
+        {"completion": {"match_count": "2"}},
+        {"completion": {"match_count": True}},
+        {"completion": {"match_count": 0}},
+        {"completion": {"match_count": 101}},
+    ],
+)
+def test_context_and_completion_reject_invalid_types_or_ranges(request_update):
+    service = _service_with(_line(1, "boot"))
+    request = {
+        **_request(
+            {"kind": "literal", "value": "marker"},
+            {"mode": "live", "start": "now", "timeout_seconds": 60},
+        ),
+        **request_update,
+    }
+
+    with pytest.raises(InvalidObservation):
+        service.create_observation(request, actor="ai:grant-test")
+
+
+def test_live_sequence_with_incomplete_prefix_times_out_at_deadline(monkeypatch):
+    import workbench.ai_operations as operations
+
+    service = _service_with(_line(1, "boot"))
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 100.0)
+    operation = service.create_observation(
+        _request(
+            {
+                "kind": "sequence",
+                "steps": [
+                    {"kind": "literal", "value": "begin"},
+                    {"kind": "literal", "value": "finish"},
+                ],
+                "max_interval_ms": 500,
+            },
+            {"mode": "live", "start": "now", "timeout_seconds": 1},
+        ),
+        actor="ai:grant-test",
+    )
+    service.module_service.lines.append(_line(2, "begin"))
+
+    assert service.wait_operation(operation["operation_id"], timeout_seconds=0)["state"] == "waiting"
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 102.0)
+
+    result = service.wait_operation(operation["operation_id"], timeout_seconds=0)
+
+    assert result["state"] == "timed_out"
+    assert result["result"]["condition_met"] is False
+
+
+def test_cursor_sequence_rejects_a_trimmed_start_before_evaluating_steps():
+    service = _service_with(_line(3, "finish"))
+
+    with pytest.raises(InvalidObservation):
+        service.create_observation(
+            _request(
+                {
+                    "kind": "sequence",
+                    "steps": [
+                        {"kind": "literal", "value": "begin"},
+                        {"kind": "literal", "value": "finish"},
+                    ],
+                    "max_interval_ms": 500,
+                },
+                {"mode": "cursor_range", "start_seq": 2, "end_seq": 3},
+            ),
+            actor="ai:grant-test",
+        )
+
+
+def test_regex_rejects_invalid_syntax_and_limits_scanned_text_to_4096_characters():
+    service = _service_with(_line(2, "x" * 4096 + " marker"))
+
+    with pytest.raises(InvalidObservation):
+        service.create_observation(
+            _request(
+                {"kind": "regex", "value": "("},
+                {"mode": "live", "start": "now", "timeout_seconds": 60},
+            ),
+            actor="ai:grant-test",
+        )
+
+    result = service.create_observation(
+        _request(
+            {"kind": "regex", "value": "marker"},
+            {"mode": "cursor_range", "start_seq": 2, "end_seq": 2},
+        ),
+        actor="ai:grant-test",
+    )
+
+    assert result["state"] == "succeeded"
+    assert result["result"]["condition_met"] is False
+
+
+def test_regex_timeout_is_treated_as_no_match(monkeypatch):
+    import workbench.ai_operations as operations
+
+    calls = []
+
+    class TimeoutPattern:
+        def search(self, text, *, timeout):
+            calls.append((text, timeout))
+            raise TimeoutError
+
+    monkeypatch.setattr(operations.regex, "compile", lambda *args, **kwargs: TimeoutPattern())
+    service = _service_with(_line(2, "candidate"))
+
+    result = service.create_observation(
+        _request(
+            {"kind": "regex", "value": "candidate"},
+            {"mode": "cursor_range", "start_seq": 2, "end_seq": 2},
+        ),
+        actor="ai:grant-test",
+    )
+
+    assert result["state"] == "succeeded"
+    assert calls == [("candidate", 0.1)]
