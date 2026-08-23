@@ -16,23 +16,76 @@ body {
 }
 h1 { font-size: var(--fs-2xl); margin-bottom: var(--sp-1-5); }
 .sub { color: var(--fg-dim); font-size: var(--fs-sm); margin-bottom: var(--sp-5); }
-.card {
+.toolbar { display: flex; gap: 10px; margin-bottom: var(--sp-5); flex-wrap: wrap; }
+.toolbar button {
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--fg-default);
+  border-radius: var(--tab-radius);
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: var(--tab-fs);
+  font-family: inherit;
+}
+.toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.error-summary {
+  border: 1px solid #c0392b;
+  background: rgba(192, 57, 43, 0.12);
+  color: #e74c3c;
+  border-radius: var(--tab-radius);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+}
+.error-summary[hidden] { display: none; }
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--sp-4); }
+.slot-card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--card-radius);
   padding: var(--card-padding);
-  margin-bottom: var(--sp-4);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
   box-shadow: var(--card-shadow);
 }
+.slot-card h2 { font-size: var(--section-title-fs); margin: 0 0 var(--sp-2); color: var(--section-title-color); display: flex; align-items: center; gap: 8px; }
+.slot-card .slot-id { color: var(--fg-dim); font-size: var(--fs-xs); font-family: ui-monospace, Consolas, monospace; }
+.slot-card .enabled-row { display: flex; align-items: center; gap: 8px; margin-bottom: var(--sp-3); }
+.field { margin-bottom: 10px; }
+.field label { display: block; font-size: var(--fs-sm); color: var(--fg-dim); margin-bottom: 4px; }
+.field select, .field input {
+  width: 100%; box-sizing: border-box;
+  border: 1px solid var(--card-border); border-radius: var(--tab-radius);
+  background: var(--card-bg); color: var(--fg-default);
+  padding: 6px 8px; font-size: var(--fs-sm); font-family: inherit;
+}
+.field .error { color: #e74c3c; font-size: var(--fs-xs); margin-top: 4px; min-height: 14px; }
+.slot-status { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--card-border); font-size: var(--fs-sm); }
+.slot-status dl { margin: 0; display: grid; grid-template-columns: 72px 1fr; gap: 4px 8px; }
+.slot-status dt { color: var(--fg-dim); }
+.slot-status dd { margin: 0; }
+.result { margin-top: 8px; font-size: var(--fs-sm); }
+.result.ok { color: #27ae60; }
+.result.fail { color: #e74c3c; }
 </style>
 </head>
-<body>
+<body data-api-base="/api">
 <h1>串口配置</h1>
-<div class="sub">设备组：四槽运行 Profile 保存与一键应用</div>
-<div class="card">
-  <p>串口配置页面（P6 完善）：此处将提供 CCO 日志 / STA 日志 / 侦听台 / 模拟集中器 四槽配置、保存、一键应用与刷新状态。</p>
+<div class="sub">设备组：四槽运行 Profile 保存与一键应用（P6）</div>
+
+<div class="error-summary" id="errorSummary" tabindex="0" hidden></div>
+
+<div class="toolbar">
+  <button type="button" id="btnSave">保存</button>
+  <button type="button" id="btnApply">一键应用</button>
+  <button type="button" id="btnRefresh">刷新状态</button>
+  <span id="saveHint" style="color:var(--fg-dim);font-size:var(--fs-sm);align-self:center;"></span>
 </div>
+
+<div class="slot-grid" id="slotGrid">
+  <!-- 四槽卡片由 serial-profile.js 渲染 -->
+</div>
+
+<script src="/static/pages/serial-profile/serial-profile.js"></script>
 </body>
 </html>
