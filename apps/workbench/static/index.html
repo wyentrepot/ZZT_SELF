@@ -8,25 +8,35 @@
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-<header class="wb-header">
-  <div class="wb-brand">
-    <span class="wb-logo">AI</span>
-    <div>
-      <div class="wb-title">AI 闭环研发验证工作台</div>
-      <div class="wb-sub" id="wb-status">统一集成程序 · 侦听台 / 模块日志 / 模拟集中器 / 验证工作台</div>
+<div class="wb-app">
+  <header class="wb-header">
+    <div class="wb-brand">
+      <span class="wb-logo">AI</span>
+      <div>
+        <div class="wb-title">AI 闭环研发验证工作台</div>
+        <div class="wb-sub" id="wb-status">统一集成程序 · 侦听台 / 模块日志 / 模拟集中器 / 验证工作台</div>
+      </div>
     </div>
+    <div class="wb-header-actions">
+      <div class="wb-themes" id="wbThemes">
+        <button class="theme-dot active" data-theme="theme-deepblue" title="深蓝科技">🌊</button>
+        <button class="theme-dot" data-theme="theme-emerald" title="暗色翡翠">🌿</button>
+        <button class="theme-dot" data-theme="theme-charcoal" title="炭黑灰金">✦</button>
+        <button class="theme-dot" data-theme="theme-indigo" title="靛蓝玻璃">🔮</button>
+      </div>
+      <button class="wb-collapse-btn" id="wbCollapseBtn" type="button" aria-label="折叠侧栏" aria-expanded="true" title="折叠/展开侧栏">☰</button>
+    </div>
+  </header>
+  <div class="wb-body">
+    <aside class="wb-sidebar" id="wb-sidebar" aria-label="主导航">
+      <nav class="wb-nav-groups" id="wbNavGroups"></nav>
+    </aside>
+    <div class="wb-overlay" id="wbOverlay" hidden></div>
+    <main class="wb-main" id="wbMain">
+      <div id="wb-panels" class="wb-panels" aria-live="polite"></div>
+    </main>
   </div>
-  <nav class="wb-tabs" id="wb-tabs"></nav>
-  <div class="wb-themes" id="wbThemes">
-    <button class="theme-dot active" data-theme="theme-deepblue" title="深蓝科技">🌊</button>
-    <button class="theme-dot" data-theme="theme-emerald" title="暗色翡翠">🌿</button>
-    <button class="theme-dot" data-theme="theme-charcoal" title="炭黑灰金">✦</button>
-    <button class="theme-dot" data-theme="theme-indigo" title="靛蓝玻璃">🔮</button>
-  </div>
-</header>
-<main class="wb-main">
-  <div id="wb-panels" class="wb-panels" aria-live="polite"></div>
-</main>
+</div>
 <script src="/static/app.js"></script>
 </body>
 </html>

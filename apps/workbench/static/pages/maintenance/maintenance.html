@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工作台状态</title>
+<link rel="stylesheet" href="/static/tokens.css">
+<style>
+body {
+  background: var(--bg-gradient);
+  color: var(--fg-default);
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  padding: var(--sp-5);
+  line-height: var(--lh-relax);
+  min-height: 100vh;
+}
+h1 { font-size: var(--fs-2xl); margin-bottom: var(--sp-1-5); }
+.sub { color: var(--fg-dim); font-size: var(--fs-sm); margin-bottom: var(--sp-5); }
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: var(--card-padding);
+  margin-bottom: var(--sp-4);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--card-shadow);
+}
+.card h2 { font-size: var(--section-title-fs); margin-bottom: var(--section-title-mb); color: var(--section-title-color); }
+dl { margin: 0; display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; }
+dt { color: var(--fg-dim); }
+dd { margin: 0; font-family: ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<h1>工作台状态</h1>
+<div class="sub">维护组：主题、版本与后端挂载状态（P5）</div>
+
+<div class="card">
+  <h2>平台信息</h2>
+  <dl id="platformInfo">
+    <dt>应用</dt><dd>AI 闭环研发验证工作台</dd>
+    <dt>版本</dt><dd id="ver">…</dd>
+    <dt>模块日志</dt><dd id="mod">…</dd>
+    <dt>侦听台</dt><dd id="lis">…</dd>
+  </dl>
+</div>
+
+<div class="card">
+  <h2>主题</h2>
+  <p>右上角主题色板（🌊 🌿 ✦ 🔮）可切换全局主题；此处为当前主题说明。</p>
+  <p id="currentTheme">当前主题：<span id="themeName">深蓝科技</span></p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var themeNames = {
+    "theme-deepblue": "深蓝科技",
+    "theme-emerald": "暗色翡翠",
+    "theme-charcoal": "炭黑灰金",
+    "theme-indigo": "靛蓝玻璃"
+  };
+  function refresh() {
+    var cls = document.documentElement.className;
+    var nameEl = document.getElementById("themeName");
+    if (nameEl) nameEl.textContent = themeNames[cls] || "深蓝科技";
+    fetch("/api/platform-version")
+      .then(function (r) { return r.json(); })
+      .then(function (info) {
+        if (document.getElementById("ver")) document.getElementById("ver").textContent = info.version || "?";
+        if (document.getElementById("mod")) document.getElementById("mod").textContent = info.module_log_mounted ? "已挂载 ✓" : "未挂载 ✗";
+        if (document.getElementById("lis")) document.getElementById("lis").textContent = info.listener_mounted ? "已挂载 ✓" : "未挂载 ✗";
+      })
+      .catch(function () {});
+  }
+  window.addEventListener("wb-theme-change", function (e) {
+    if (e.data && e.data.type === "wb-theme-change") {
+      document.documentElement.className = e.data.theme;
+      refresh();
+    }
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>
