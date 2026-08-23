@@ -189,7 +189,7 @@ def test_cursor_sequence_reports_false_for_wrong_order_or_interval(lines, max_in
     assert result["result"]["log"]["artifact_id"].startswith("art-")
 
 
-def test_not_seen_live_matches_only_after_its_deadline(monkeypatch):
+def test_not_seen_live_without_trusted_deadline_coverage_times_out(monkeypatch):
     import workbench.ai_operations as operations
 
     service = _service_with(_line(1, "boot"))
@@ -205,9 +205,10 @@ def test_not_seen_live_matches_only_after_its_deadline(monkeypatch):
 
     result = service.wait_operation(operation["operation_id"], timeout_seconds=0)
 
-    assert result["state"] == "matched"
-    assert result["result"]["condition_met"] is True
+    assert result["state"] == "timed_out"
+    assert result["result"]["condition_met"] is False
     assert result["result"]["log"]["match_lines"] == []
+    assert result["result"]["reason"] == "live_window_unverified"
 
 
 def test_not_seen_cursor_counterexample_returns_minimal_evidence():
@@ -416,7 +417,31 @@ def test_live_matchers_ignore_lines_first_observed_after_deadline(monkeypatch, m
     assert result["result"]["log"]["match_lines"] == []
 
 
-def test_not_seen_ignores_counterexample_first_observed_after_deadline(monkeypatch):
+def test_not_seen_does_not_claim_absence_when_window_counterexample_is_first_polled_after_deadline(monkeypatch):
+    import workbench.ai_operations as operations
+
+    service = _service_with(_line(1, "boot"))
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 100.0)
+    operation = service.create_observation(
+        _request(
+            {"kind": "not_seen", "matcher": {"kind": "literal", "value": "panic"}},
+            {"mode": "live", "start": "now", "timeout_seconds": 1},
+        ),
+        actor="ai:grant-test",
+    )
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 100.5)
+    service.module_service.lines.append(_line(2, "panic"))
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 102.0)
+
+    result = service.wait_operation(operation["operation_id"], timeout_seconds=0)
+
+    assert result["state"] == "timed_out"
+    assert result["result"]["condition_met"] is False
+    assert result["result"]["log"]["match_lines"] == []
+    assert result["result"]["reason"] == "live_window_unverified"
+
+
+def test_not_seen_live_counterexample_polled_before_deadline_ends_false_immediately(monkeypatch):
     import workbench.ai_operations as operations
 
     service = _service_with(_line(1, "boot"))
@@ -429,9 +454,25 @@ def test_not_seen_ignores_counterexample_first_observed_after_deadline(monkeypat
         actor="ai:grant-test",
     )
     service.module_service.lines.append(_line(2, "panic"))
-    monkeypatch.setattr(operations.time, "monotonic", lambda: 102.0)
+    monkeypatch.setattr(operations.time, "monotonic", lambda: 100.5)
 
     result = service.wait_operation(operation["operation_id"], timeout_seconds=0)
+
+    assert result["state"] == "succeeded"
+    assert result["result"]["condition_met"] is False
+    assert result["result"]["log"]["match_lines"] == [2]
+
+
+def test_not_seen_closed_cursor_range_is_trusted_coverage_and_matches_absence():
+    service = _service_with(_line(2, "normal"), _line(3, "still normal"))
+
+    result = service.create_observation(
+        _request(
+            {"kind": "not_seen", "matcher": {"kind": "literal", "value": "panic"}},
+            {"mode": "cursor_range", "start_seq": 2, "end_seq": 3},
+        ),
+        actor="ai:grant-test",
+    )
 
     assert result["state"] == "matched"
     assert result["result"]["condition_met"] is True

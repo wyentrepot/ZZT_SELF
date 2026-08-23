@@ -590,7 +590,8 @@ class AIControlService:
         return lines[max(0, first_index - before): first_index + after + 1]
 
     def _module_observation_result(self, payload: dict, *, condition_met: bool,
-                                   matches: list[dict], all_lines: list[dict], operation_id: str) -> dict:
+                                   matches: list[dict], all_lines: list[dict], operation_id: str,
+                                   reason: str | None = None) -> dict:
         seqs = [self._line_seq(line) for line in matches]
         result = {
             "source": "module_log",
@@ -606,6 +607,8 @@ class AIControlService:
             },
             "snippet": self._bounded_snippet(all_lines, matches, payload["context"]),
         }
+        if reason is not None:
+            result["reason"] = reason
         artifact = self.store.register_artifact(
             operation_id=operation_id,
             resource=payload["target"]["mapping_id"],
@@ -1003,21 +1006,13 @@ class AIControlService:
             return self._refresh_listener_observation(operation_id)
         return self._refresh_module_observation(operation_id)
 
-    def _finish_module_live_deadline(self, operation_id: str, operation: dict, payload: dict) -> dict:
-        """Finish a live observation without evaluating data first seen after its deadline."""
-        condition_met = payload["match"]["kind"] == "not_seen"
+    def _finish_module_live_deadline(self, operation_id: str, payload: dict) -> dict:
+        """Finish an unverified live window without using post-deadline buffer state."""
         result = self._module_observation_result(
-            payload, condition_met=condition_met, matches=[], all_lines=[], operation_id=operation_id,
+            payload, condition_met=False, matches=[], all_lines=[], operation_id=operation_id,
+            reason="live_window_unverified",
         )
-        if not condition_met:
-            return self.store.set_state(operation_id, "timed_out", result=result)
-        matched = self.store.set_state(operation_id, "matched", result=result)
-        self.store.audit(
-            actor=operation["actor"], action="observation.match",
-            resource=payload["target"]["mapping_id"], result="matched",
-            operation_id=operation_id,
-        )
-        return matched
+        return self.store.set_state(operation_id, "timed_out", result=result)
 
     def _refresh_module_observation(self, operation_id: str, *, complete: bool = False) -> dict:
         operation = self.store.get(operation_id)
@@ -1032,7 +1027,7 @@ class AIControlService:
                 # Module rows do not carry an arrival timestamp.  Once this
                 # process first observes the deadline as elapsed, accepting
                 # the current buffer would let post-window rows influence it.
-                return self._finish_module_live_deadline(operation_id, operation, payload)
+                return self._finish_module_live_deadline(operation_id, payload)
             session_id = payload["target"]["session_id"]
             all_lines = self._module_lines(session_id)
             if payload["window"]["mode"] == "cursor_range":
