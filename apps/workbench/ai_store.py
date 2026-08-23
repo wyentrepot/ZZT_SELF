@@ -106,6 +106,16 @@ class OperationStore:
                 raise KeyError(operation_id)
             return copy.deepcopy(self._operations[operation_id])
 
+    def by_client_request_id(self, client_request_id: str) -> dict | None:
+        """Return the already-created operation for an idempotency key, if any."""
+        if not client_request_id:
+            return None
+        with self._lock:
+            operation_id = self._request_ids.get(str(client_request_id))
+            if operation_id is None:
+                return None
+            return copy.deepcopy(self._operations[operation_id])
+
     def set_state(self, operation_id: str, state: str, *, result=None, error: str | None = None) -> dict:
         with self._changed:
             operation = self._operations.get(operation_id)

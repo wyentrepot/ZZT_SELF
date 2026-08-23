@@ -56,6 +56,8 @@ hiddenimports = [
     "workbench.ai_auth",
     "workbench.ai_operations",
     "workbench.ai_store",
+    # Bounded AI module-log regex observations.
+    "regex",
     "workbench.api",
     "workbench.orchestration",
     "workbench.orchestration.models",

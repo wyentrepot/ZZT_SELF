@@ -6,10 +6,11 @@ from pathlib import Path
 from listener.app import DEFAULT_DLL
 from shared.dotnet_parser import DotNetHplcParser
 from shared.test_fixtures import GW_FRAME_HEX
+from conftest import hplc_test_data_root
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DLL_REL = "libs/shared/dll/bin/Debug/GwHPLCAnalysis.dll"
-TEST_FILE = Path("测试文件/测试文本.txt")
+TEST_FILE = hplc_test_data_root() / "测试文本.txt"
 LISTENER_TEST_DATA = Path("apps/listener/test_data/gw_log_sample.txt")
 
 

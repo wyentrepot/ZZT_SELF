@@ -10,8 +10,9 @@ from pathlib import Path
 
 from shared.dotnet_parser import DotNetHplcParser
 from shared.parser_service import ParserService
+from conftest import hplc_test_data_root
 
-SAMPLE = Path("测试文件/并发抄表-样本.txt")
+SAMPLE = hplc_test_data_root() / "并发抄表-样本.txt"
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DLL_PATH = (REPO_ROOT / "libs" / "shared" / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll").resolve()
 

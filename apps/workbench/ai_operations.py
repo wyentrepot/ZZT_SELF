@@ -5,6 +5,12 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+import regex
+
+from loghooks.engine import Engine
+from loghooks.rules import RuleLoader
+from loghooks.sources import ParsedLine
+
 from .ai_store import OperationStore, TERMINAL_STATES
 
 
@@ -18,6 +24,11 @@ class SessionBusy(RuntimeError):
 
 class InvalidObservation(ValueError):
     pass
+
+
+_FORBIDDEN_OBSERVATION_KEYS = frozenset({"path", "file", "files", "root"})
+_MAX_CURSOR_RANGE = 10_000
+_MODULE_LOG_LOCAL_TIMEZONE = datetime.now().astimezone().tzinfo or timezone.utc
 
 
 def _iso_now() -> str:
@@ -364,6 +375,239 @@ class AIControlService:
         )
         return {"listener": result, "source_stopped_operations": stopped_operations}
 
+    @staticmethod
+    def _reject_unsafe_observation_input(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if str(key).casefold() in _FORBIDDEN_OBSERVATION_KEYS:
+                    raise InvalidObservation("观察请求不得提供 path/file/files/root")
+                AIControlService._reject_unsafe_observation_input(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                AIControlService._reject_unsafe_observation_input(nested)
+
+    @staticmethod
+    def _line_seq(line: dict) -> int:
+        value = line.get("seq")
+        if isinstance(value, bool):
+            raise InvalidObservation("模块日志 seq 必须是整数")
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise InvalidObservation("模块日志缺少稳定 seq") from exc
+
+    def _module_lines(self, session_id: str) -> list[dict]:
+        if self.module_service is None:
+            raise SourceUnavailable("模块日志服务不可用")
+        raw = self.module_service.logs_session(session_id, after=-1).get("lines", [])
+        lines = [dict(line) for line in raw if isinstance(line, dict)]
+        return sorted(lines, key=self._line_seq)
+
+    @staticmethod
+    def _normalise_leaf_match(match: dict, *, module: str) -> dict:
+        if not isinstance(match, dict):
+            raise InvalidObservation("match 必须是对象")
+        kind = str(match.get("kind") or "").strip()
+        case_sensitive = bool(match.get("case_sensitive", True))
+        if kind == "literal":
+            value = match.get("value")
+            if not isinstance(value, str) or not value:
+                raise InvalidObservation("literal 匹配器必须提供非空 value")
+            if len(value) > 512:
+                raise InvalidObservation("literal 匹配器过长")
+            return {"kind": kind, "value": value, "case_sensitive": case_sensitive}
+        if kind == "regex":
+            value = match.get("value")
+            if not isinstance(value, str) or not value:
+                raise InvalidObservation("regex 匹配器必须提供非空 value")
+            if len(value) > 256:
+                raise InvalidObservation("regex pattern 不能超过 256 字符")
+            flags = 0 if case_sensitive else regex.IGNORECASE
+            try:
+                regex.compile(value, flags)
+            except regex.error as exc:
+                raise InvalidObservation("regex pattern 非法") from exc
+            return {"kind": kind, "value": value, "case_sensitive": case_sensitive}
+        if kind == "loghook_rule":
+            rule_id = match.get("rule_id")
+            if not isinstance(rule_id, str) or not rule_id:
+                raise InvalidObservation("loghook_rule 必须提供 rule_id")
+            loader = RuleLoader().load_all()
+            rule = next((item for item in loader.filter_by_module(module) if item.id == rule_id), None)
+            if rule is None or "module_log" not in rule.source:
+                raise InvalidObservation("loghook_rule 不存在或不适用于当前模块")
+            return {"kind": kind, "rule_id": rule_id}
+        raise InvalidObservation("match.kind 仅支持 literal、regex、loghook_rule、sequence 或 not_seen")
+
+    @classmethod
+    def _normalise_module_match(cls, match: dict, *, module: str) -> dict:
+        if not isinstance(match, dict):
+            raise InvalidObservation("match 必须是对象")
+        kind = str(match.get("kind") or "").strip()
+        if kind == "sequence":
+            steps = match.get("steps")
+            if not isinstance(steps, list) or not 1 <= len(steps) <= 16:
+                raise InvalidObservation("sequence.steps 必须是 1 到 16 个叶子匹配器")
+            if isinstance(match.get("max_interval_ms"), bool):
+                raise InvalidObservation("sequence.max_interval_ms 必须是正整数")
+            try:
+                max_interval_ms = int(match.get("max_interval_ms"))
+            except (TypeError, ValueError) as exc:
+                raise InvalidObservation("sequence 必须提供 max_interval_ms") from exc
+            if not 1 <= max_interval_ms <= 3_600_000:
+                raise InvalidObservation("sequence.max_interval_ms 必须在 1 到 3600000 之间")
+            return {
+                "kind": kind,
+                "steps": [cls._normalise_leaf_match(step, module=module) for step in steps],
+                "max_interval_ms": max_interval_ms,
+            }
+        if kind == "not_seen":
+            inner = match.get("matcher")
+            if not isinstance(inner, dict) or inner.get("kind") in ("sequence", "not_seen"):
+                raise InvalidObservation("not_seen 只能包装一个 literal、regex 或 loghook_rule 叶子")
+            return {"kind": kind, "matcher": cls._normalise_leaf_match(inner, module=module)}
+        return cls._normalise_leaf_match(match, module=module)
+
+    @staticmethod
+    def _line_timestamp_ms(line: dict) -> float | None:
+        value = line.get("ts")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value) * 1000
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = datetime.strptime(text, "%Y%m%d-%H:%M:%S:%f")
+            except ValueError:
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_MODULE_LOG_LOCAL_TIMEZONE)
+        return parsed.timestamp() * 1000
+
+    @staticmethod
+    def _parsed_module_line(line: dict, index: int) -> ParsedLine:
+        text = str(line.get("text") or "")
+        return ParsedLine(
+            source="module_log", raw=text, text=text,
+            time=str(line.get("ts") or ""), direction=str(line.get("dir") or ""),
+            metadata={"_idx": index},
+        )
+
+    def _matching_loghook_lines(self, lines: list[dict], match: dict, *, module: str) -> list[dict]:
+        loader = RuleLoader().load_all()
+        rule = next(
+            (item for item in loader.filter_by_module(module) if item.id == match["rule_id"]),
+            None,
+        )
+        if rule is None:
+            raise InvalidObservation("loghook_rule 不存在或不适用于当前模块")
+        engine = Engine([rule], source="module_log")
+        matched_indexes: list[int] = []
+        for index, line in enumerate(lines):
+            events_before = len(engine.events)
+            engine.feed(self._parsed_module_line(line, index))
+            for event in engine.events[events_before:]:
+                if event.rule_id == rule.id and event.source_line_idx is not None:
+                    matched_indexes.append(event.source_line_idx)
+        return [lines[index] for index in dict.fromkeys(matched_indexes) if 0 <= index < len(lines)]
+
+    def _matching_leaf_lines(self, lines: list[dict], match: dict, *, module: str) -> list[dict]:
+        kind = match["kind"]
+        if kind == "loghook_rule":
+            return self._matching_loghook_lines(lines, match, module=module)
+        if kind == "literal":
+            needle = match["value"] if match["case_sensitive"] else match["value"].lower()
+            return [
+                line for line in lines
+                if needle in (str(line.get("text") or "") if match["case_sensitive"]
+                              else str(line.get("text") or "").lower())
+            ]
+        flags = 0 if match["case_sensitive"] else regex.IGNORECASE
+        compiled = regex.compile(match["value"], flags)
+        matched = []
+        for line in lines:
+            try:
+                if compiled.search(str(line.get("text") or "")[:4096], timeout=0.1):
+                    matched.append(line)
+            except TimeoutError:
+                continue
+        return matched
+
+    def _matching_sequence_lines(self, lines: list[dict], match: dict, *, module: str) -> list[dict]:
+        step_hits = [self._matching_leaf_lines(lines, step, module=module) for step in match["steps"]]
+        positions = [{self._line_seq(line): line for line in hits} for hits in step_hits]
+        ordered = sorted(lines, key=self._line_seq)
+        for first in ordered:
+            first_seq = self._line_seq(first)
+            if first_seq not in positions[0]:
+                continue
+            selected = [positions[0][first_seq]]
+            previous_seq = first_seq
+            for candidates in positions[1:]:
+                next_line = next((line for line in ordered if self._line_seq(line) > previous_seq
+                                  and self._line_seq(line) in candidates), None)
+                if next_line is None:
+                    selected = []
+                    break
+                selected.append(next_line)
+                previous_seq = self._line_seq(next_line)
+            if not selected:
+                continue
+            first_ms = self._line_timestamp_ms(selected[0])
+            last_ms = self._line_timestamp_ms(selected[-1])
+            if first_ms is None or last_ms is None or last_ms < first_ms:
+                continue
+            if last_ms - first_ms <= match["max_interval_ms"]:
+                return selected
+        return []
+
+    def _module_match_lines(self, lines: list[dict], match: dict, *, module: str) -> list[dict]:
+        if match["kind"] == "sequence":
+            return self._matching_sequence_lines(lines, match, module=module)
+        return self._matching_leaf_lines(lines, match, module=module)
+
+    @staticmethod
+    def _bounded_snippet(lines: list[dict], matches: list[dict], context: dict) -> list[dict]:
+        if not matches:
+            return []
+        hit_seqs = {AIControlService._line_seq(line) for line in matches}
+        first_index = next(
+            (index for index, line in enumerate(lines) if AIControlService._line_seq(line) in hit_seqs),
+            0,
+        )
+        before = context["before"]
+        after = context["after"]
+        return lines[max(0, first_index - before): first_index + after + 1]
+
+    def _module_observation_result(self, payload: dict, *, condition_met: bool,
+                                   matches: list[dict], all_lines: list[dict], operation_id: str) -> dict:
+        seqs = [self._line_seq(line) for line in matches]
+        result = {
+            "source": "module_log",
+            "session_id": payload["target"]["session_id"],
+            "condition_met": condition_met,
+            "matched_at": _iso_now() if condition_met else None,
+            "log": {
+                "artifact_id": None,
+                "path": payload["log_path"],
+                "line_start": min(seqs) if seqs else None,
+                "line_end": max(seqs) if seqs else None,
+                "match_lines": seqs,
+            },
+            "snippet": self._bounded_snippet(all_lines, matches, payload["context"]),
+        }
+        artifact = self.store.register_artifact(
+            operation_id=operation_id,
+            resource=payload["target"]["mapping_id"],
+            kind="module_log_observation_result",
+            content=result,
+        )
+        result["log"]["artifact_id"] = artifact["artifact_id"]
+        return result
+
     def create_observation(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
         source = str(request.get("source") or "")
         if source == "listener":
@@ -372,48 +616,102 @@ class AIControlService:
             )
         if source != "module_log":
             raise InvalidObservation("source 仅支持 module_log 或 listener")
+        self._reject_unsafe_observation_input(request)
+        existing = self.store.by_client_request_id(client_request_id)
+        if existing is not None:
+            return existing
         target = request.get("target") or {}
         session_id = str(target.get("session_id") or "")
         if not session_id:
             raise InvalidObservation("module_log 观察必须提供 target.session_id")
-        match = request.get("match") or {}
-        if match.get("kind") != "literal" or not isinstance(match.get("value"), str) or not match["value"]:
-            raise InvalidObservation("当前仅支持非空 literal 匹配器")
-        if len(match["value"]) > 512:
-            raise InvalidObservation("literal 匹配器过长")
-        window = request.get("window") or {}
-        if window.get("mode", "live") != "live" or window.get("start", "now") != "now":
-            raise InvalidObservation("当前基础实现仅支持 live / start=now")
-        timeout = int(window.get("timeout_seconds", 180))
-        if not 1 <= timeout <= 3600:
-            raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
         if self.module_service is None:
             raise SourceUnavailable("模块日志服务不可用")
         session = self.module_service.get_session(session_id)
-        baseline = self.module_service.logs_session(session_id, after=-1).get("lines", [])
-        start_seq = max((int(line.get("seq", -1)) for line in baseline), default=-1)
+        module = str(session.get("module") or "common").lower()
+        match = self._normalise_module_match(request.get("match") or {}, module=module)
+        window = request.get("window") or {}
+        mode = str(window.get("mode") or "live")
+        if mode not in ("live", "time_range", "cursor_range"):
+            raise InvalidObservation("module_log window.mode 仅支持 live、time_range 或 cursor_range")
+        timeout = 0
+        baseline = self._module_lines(session_id)
+        start_seq = max((self._line_seq(line) for line in baseline), default=-1)
+        end_seq = None
+        start_time_ms = None
+        end_time_ms = None
+        if mode == "live":
+            if str(window.get("start") or "now") != "now":
+                raise InvalidObservation("module_log live 观察仅支持 start=now")
+            if isinstance(window.get("timeout_seconds", 180), bool):
+                raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
+            try:
+                timeout = int(window.get("timeout_seconds", 180))
+            except (TypeError, ValueError) as exc:
+                raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间") from exc
+            if not 1 <= timeout <= 3600:
+                raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
+        elif mode == "time_range":
+            start_time_ms = self._line_timestamp_ms({"ts": window.get("start")})
+            end_time_ms = self._line_timestamp_ms({"ts": window.get("end")})
+            if start_time_ms is None or end_time_ms is None or start_time_ms > end_time_ms:
+                raise InvalidObservation("time_range 必须提供递增的 ISO 8601 start/end")
+            retained_times = [
+                timestamp for line in baseline
+                if (timestamp := self._line_timestamp_ms(line)) is not None
+            ]
+            if not retained_times:
+                raise InvalidObservation("time_range 当前内存日志没有可归一化时间")
+            if start_time_ms < min(retained_times) or end_time_ms > max(retained_times):
+                raise InvalidObservation("time_range 超出当前保留的内存日志边界")
+        else:
+            if isinstance(window.get("start_seq"), bool) or isinstance(window.get("end_seq"), bool):
+                raise InvalidObservation("cursor_range start_seq/end_seq 必须是整数")
+            try:
+                start_seq = int(window.get("start_seq"))
+                end_seq = int(window.get("end_seq"))
+            except (TypeError, ValueError) as exc:
+                raise InvalidObservation("cursor_range 必须提供 start_seq/end_seq") from exc
+            if start_seq > end_seq:
+                raise InvalidObservation("cursor_range start_seq 不能大于 end_seq")
+            if end_seq - start_seq + 1 > _MAX_CURSOR_RANGE:
+                raise InvalidObservation("cursor_range 范围过大")
+            if not baseline:
+                raise InvalidObservation("cursor_range 当前没有可用内存日志")
+            first_retained = self._line_seq(baseline[0])
+            last_retained = self._line_seq(baseline[-1])
+            if start_seq < first_retained:
+                raise InvalidObservation("cursor_range 起点已被内存环形缓冲裁剪")
+            if end_seq > last_retained:
+                raise InvalidObservation("cursor_range 尚未闭合或超出当前内存缓冲")
         context = request.get("context") or {}
         payload = {
-            "source": source, "target": {
-                "session_id": session_id, "mapping_id": self.session_resource(session_id),
-            }, "match": {
-                "kind": "literal", "value": match["value"],
-                "case_sensitive": bool(match.get("case_sensitive", True)),
-            },
-            "start_seq": start_seq, "deadline_monotonic": time.monotonic() + timeout,
+            "source": source,
+            "target": {"session_id": session_id, "mapping_id": self.session_resource(session_id)},
+            "module": module,
+            "match": match,
+            "window": {"mode": mode,
+                       "start": "now" if mode == "live" else window.get("start") if mode == "time_range" else None,
+                       "end": window.get("end") if mode == "time_range" else None,
+                       "start_seq": start_seq if mode == "cursor_range" else None,
+                       "end_seq": end_seq,
+                       "start_time_ms": start_time_ms, "end_time_ms": end_time_ms},
+            "start_seq": start_seq,
+            "deadline_monotonic": time.monotonic() + timeout if mode == "live" else None,
             "context": {"before": min(max(int(context.get("before", 20)), 0), 100),
                         "after": min(max(int(context.get("after", 30)), 0), 100)},
+            "completion": request.get("completion") or {},
             "log_path": session.get("log_file"),
         }
         operation = self.store.create("observation", actor, payload, client_request_id=client_request_id)
-        if operation["state"] == "created":
-            operation = self.store.set_state(operation["operation_id"], "waiting")
-            self.store.audit(
-                actor=actor, action="observation.create",
-                resource=operation["payload"]["target"]["mapping_id"],
-                result="waiting", operation_id=operation["operation_id"],
-            )
-        return operation
+        if operation["state"] != "created":
+            return operation
+        self.store.audit(
+            actor=actor, action="observation.create", resource=payload["target"]["mapping_id"],
+            result="waiting" if mode == "live" else "querying", operation_id=operation["operation_id"],
+        )
+        if mode != "live":
+            return self._refresh_module_observation(operation["operation_id"], complete=True)
+        return self.store.set_state(operation["operation_id"], "waiting")
 
     def _listener_current_index_id(self, requested: str = "") -> str:
         service = self._listener_log_or_error()
@@ -660,52 +958,85 @@ class AIControlService:
         payload = operation["payload"]
         if payload.get("source") == "listener":
             return self._refresh_listener_observation(operation_id)
-        if time.monotonic() >= payload["deadline_monotonic"]:
-            return self.store.set_state(operation_id, "timed_out", result={"source": payload["source"]})
+        return self._refresh_module_observation(operation_id)
+
+    def _refresh_module_observation(self, operation_id: str, *, complete: bool = False) -> dict:
+        operation = self.store.get(operation_id)
+        if operation["state"] not in ("created", "waiting"):
+            return operation
+        payload = operation["payload"]
         try:
             session_id = payload["target"]["session_id"]
-            new_lines = self.module_service.logs_session(session_id, after=payload["start_seq"]).get("lines", [])
-            needle = payload["match"]["value"]
-            if not payload["match"]["case_sensitive"]:
-                needle = needle.lower()
-            matching = []
-            for line in new_lines:
-                text = str(line.get("text", ""))
-                candidate = text if payload["match"]["case_sensitive"] else text.lower()
-                if needle in candidate:
-                    matching.append(line)
-            if not matching:
+            all_lines = self._module_lines(session_id)
+            if payload["window"]["mode"] == "cursor_range":
+                candidates = [
+                    line for line in all_lines
+                    if payload["window"]["start_seq"] <= self._line_seq(line) <= payload["window"]["end_seq"]
+                ]
+            elif payload["window"]["mode"] == "time_range":
+                candidates = [
+                    line for line in all_lines
+                    if (line_ms := self._line_timestamp_ms(line)) is not None
+                    and payload["window"]["start_time_ms"] <= line_ms <= payload["window"]["end_time_ms"]
+                ]
+            else:
+                candidates = [line for line in all_lines if self._line_seq(line) > payload["start_seq"]]
+            match = payload["match"]
+            if match["kind"] == "not_seen":
+                counterexamples = self._module_match_lines(
+                    candidates, match["matcher"], module=payload["module"],
+                )
+                if counterexamples:
+                    result = self._module_observation_result(
+                        payload, condition_met=False, matches=counterexamples[:1],
+                        all_lines=all_lines, operation_id=operation_id,
+                    )
+                    return self.store.set_state(operation_id, "succeeded", result=result)
+                deadline_reached = (
+                    payload["window"]["mode"] == "live"
+                    and time.monotonic() >= payload["deadline_monotonic"]
+                )
+                if complete or deadline_reached:
+                    result = self._module_observation_result(
+                        payload, condition_met=True, matches=[], all_lines=all_lines,
+                        operation_id=operation_id,
+                    )
+                    matched = self.store.set_state(operation_id, "matched", result=result)
+                    self.store.audit(
+                        actor=operation["actor"], action="observation.match",
+                        resource=payload["target"]["mapping_id"], result="matched",
+                        operation_id=operation_id,
+                    )
+                    return matched
                 return operation
-            all_lines = self.module_service.logs_session(session_id, after=-1).get("lines", [])
-            match_seqs = {line.get("seq") for line in matching}
-            first_index = next(index for index, line in enumerate(all_lines) if line.get("seq") in match_seqs)
-            before = payload["context"]["before"]
-            after = payload["context"]["after"]
-            snippet = all_lines[max(0, first_index - before): first_index + after + 1]
-            session = self.module_service.get_session(session_id)
-            seqs = [int(line["seq"]) for line in matching]
-            result = {
-                "source": "module_log", "session_id": session_id, "matched_at": _iso_now(),
-                "log": {
-                    "artifact_id": None, "path": session.get("log_file") or payload["log_path"],
-                    "line_start": min(seqs), "line_end": max(seqs), "match_lines": seqs,
-                },
-                "snippet": snippet,
-            }
-            artifact = self.store.register_artifact(
-                operation_id=operation_id,
-                resource=payload["target"]["mapping_id"],
-                kind="module_log_observation_result",
-                content=result,
-            )
-            result["log"]["artifact_id"] = artifact["artifact_id"]
-            matched = self.store.set_state(operation_id, "matched", result=result)
-            self.store.audit(
-                actor=operation["actor"], action="observation.match",
-                resource=payload["target"]["mapping_id"],
-                result="matched", operation_id=operation_id,
-            )
-            return matched
+            matching = self._module_match_lines(candidates, match, module=payload["module"])
+            required = max(int((payload.get("completion") or {}).get("match_count", 1)), 1)
+            matched_count = 1 if match["kind"] == "sequence" and matching else len(matching)
+            if matching and matched_count >= required:
+                result = self._module_observation_result(
+                    payload, condition_met=True, matches=matching, all_lines=all_lines,
+                    operation_id=operation_id,
+                )
+                matched = self.store.set_state(operation_id, "matched", result=result)
+                self.store.audit(
+                    actor=operation["actor"], action="observation.match",
+                    resource=payload["target"]["mapping_id"], result="matched",
+                    operation_id=operation_id,
+                )
+                return matched
+            if complete:
+                result = self._module_observation_result(
+                    payload, condition_met=False, matches=[], all_lines=all_lines,
+                    operation_id=operation_id,
+                )
+                return self.store.set_state(operation_id, "succeeded", result=result)
+            if time.monotonic() >= payload["deadline_monotonic"]:
+                result = self._module_observation_result(
+                    payload, condition_met=False, matches=[], all_lines=all_lines,
+                    operation_id=operation_id,
+                )
+                return self.store.set_state(operation_id, "timed_out", result=result)
+            return operation
         except Exception as exc:
             return self.store.set_state(operation_id, "error", error=str(exc))
 

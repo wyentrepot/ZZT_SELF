@@ -6,12 +6,25 @@ loghooks、sim_concentrator），测试文件分布在各项目内。此 conftes
 """
 import os
 import sys
+from pathlib import Path
 
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 for _sub in ("", "apps", "libs"):
     _p = os.path.join(_REPO_ROOT, _sub) if _sub else _REPO_ROOT
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+
+def hplc_test_data_root():
+    """Return external HPLC fixtures when configured, else the legacy root.
+
+    This helper is intentionally test-only: application packages must never
+    discover or read fixture data through an environment variable.
+    """
+    configured = os.environ.get("HPLC_TEST_DATA_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(_REPO_ROOT) / "测试文件"
 
 from shared.infra import ensure_paths  # noqa: E402
 

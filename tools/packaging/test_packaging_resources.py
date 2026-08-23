@@ -20,6 +20,7 @@ SPECS = {
         "workbench.ai_auth",
         "workbench.ai_operations",
         "workbench.ai_store",
+        "regex",
     },
     "module_log.spec": {"shared.serial_mapping"},
     "hplc_parser.spec": {
@@ -133,10 +134,16 @@ def test_build_dependency_bootstrap_includes_listener_and_module_requirements() 
     assert 'apps\\listener\\requirements.txt' in text
     assert 'apps\\module_log\\requirements.txt' in text
 
+
+def test_module_observation_regex_runtime_dependency_is_packaged() -> None:
+    requirements = (ROOT / "apps" / "module_log" / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "regex" in requirements
+
 def test_dependency_cache_is_bumped_for_new_listener_runtime_dependencies() -> None:
     text = (PACKAGING / "build_exe.bat").read_text(encoding="utf-8", errors="replace")
 
-    assert '.venv\\.deps_build_v2' in text
+    assert '.venv\\.deps_build_v3' in text
 
 def test_build_seed_does_not_overwrite_an_existing_operator_mapping() -> None:
     text = (PACKAGING / "build_exe.bat").read_text(encoding="utf-8", errors="replace")

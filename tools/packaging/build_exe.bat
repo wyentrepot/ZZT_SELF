@@ -38,11 +38,11 @@ set "PKG_CHOICE=1"
 goto :listener_web
 
 :install_deps
-if exist ".venv\.deps_build_v2" goto :deps_ok
+if exist ".venv\.deps_build_v3" goto :deps_ok
 echo [1/3] 安装依赖（打包 + 模块日志运行依赖）...
 ".venv\Scripts\python.exe" -m pip install -r "tools\packaging\requirements-build.txt" -r "apps\listener\requirements.txt" -r "apps\module_log\requirements.txt"
 if errorlevel 1 goto :failed
-echo. > ".venv\.deps_build_v2"
+echo. > ".venv\.deps_build_v3"
 :deps_ok
 exit /b 0
 
