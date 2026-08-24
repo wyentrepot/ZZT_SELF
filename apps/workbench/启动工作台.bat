@@ -75,6 +75,25 @@ if errorlevel 1 (
 del /q ".build_plain\src.tar" >nul 2>&1
 git rev-parse HEAD > ".build_plain\git-rev.txt"
 :ready
+REM ================================================================
+REM GwHPLCAnalysis.dll 是编译产物，不在 git 跟踪（libs/shared/dll/.gitignore
+REM 忽略 bin/），git archive 导出的明文副本 .build_plain\ 不包含它。
+REM 这里从主仓库复制一份过去，否则解析库不可用。
+REM ================================================================
+set "DLL_SRC=%~dp0..\..\libs\shared\dll\bin\Debug\GwHPLCAnalysis.dll"
+set "DLL_DST=%~dp0..\..\.build_plain\libs\shared\dll\bin\Debug"
+if exist "%DLL_SRC%" (
+    if not exist "%DLL_DST%" mkdir "%DLL_DST%"
+    copy /y "%DLL_SRC%" "%DLL_DST%\GwHPLCAnalysis.dll" >nul
+    if errorlevel 1 (
+        echo [警告] 复制 GwHPLCAnalysis.dll 到明文副本失败，解析库可能不可用。
+    ) else (
+        echo [准备] 已复制 GwHPLCAnalysis.dll 到明文副本。
+    )
+) else (
+    echo [警告] 未找到主仓库 GwHPLCAnalysis.dll，解析库不可用。
+    echo         可先运行仓库根目录 build_dll.bat 重新编译，或忽略本提示继续。
+)
 
 echo.
 echo [启动] AI 工作台 ^-^> http://127.0.0.1:8790/
