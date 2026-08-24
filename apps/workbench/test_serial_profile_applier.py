@@ -7,6 +7,11 @@
 - 单槽失败继续执行后续槽，不回滚成功项。
 - 响应逐槽返回 started/reused/stopped/unchanged/skipped/failed、原因及当前状态。
 - Apply 只读取已保存 Profile，不接受临时表单配置。
+
+平台说明：SerialProfileApplier 按 os.name 解析设备名（Windows=COM 名、
+Linux=/dev/tty* 名）。断言不硬编码设备名，而是用 profile_store.device_for(...)
+取当前平台实际解析结果，使 Windows/Linux 均可验证（与 apps/listener/
+test_serial_service.py 的平台测试风格一致，见 commit 305a3b0）。
 """
 from __future__ import annotations
 
@@ -186,10 +191,10 @@ def test_enabled_slots_start_in_fixed_order(profile_store):
     # 固定顺序：listener → module_log.cco → module_log.sta → simcon.main
     assert statuses == ["listener.main", "module_log.cco", "module_log.sta", "simcon.main"]
     assert listener.started == 1
-    assert listener._port == "COM4"
+    assert listener._port == profile_store.device_for("listener")
     assert len(module.started) == 2
     assert simcon.opened == 1
-    assert simcon.open_port == "COM24"
+    assert simcon.open_port == profile_store.device_for("simcon")
     for s in result["slots"]:
         assert s["status"] == "started"
 
@@ -201,7 +206,7 @@ def test_enabled_slots_start_in_fixed_order(profile_store):
 def test_reused_when_already_running(profile_store):
     profile_store.update_slot("listener.main", mapping_id="listener", enabled=True)
     listener = FakeListenerService()
-    listener.start(port="COM4")
+    listener.start(port=profile_store.device_for("listener"))
     listener.started = 99  # 记录初始调用
 
     module = FakeModuleService()
@@ -241,7 +246,7 @@ def test_partial_failure_continues_and_keeps_successes(profile_store):
     profile_store.update_slot("module_log.sta", mapping_id="sta-main", enabled=True)
 
     module = FakeModuleService()
-    module.fail_port = "COM8"  # cco 启动失败（device 解析为 COM8）
+    module.fail_port = profile_store.device_for("cco-main")  # cco 启动失败（device 解析结果）
     listener = FakeListenerService()
     result = _applier(profile_store, module, listener, FakeSimcon()).apply()
 
