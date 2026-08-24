@@ -1110,3 +1110,81 @@ tbody tr.selected td { color: #e5eff6; }
 [data-mode="serial"] { display: none; }
 body[data-source="serial"] [data-mode="log"] { display: none; }
 body[data-source="serial"] [data-mode="serial"] { display: block; }
+
+/* ---------- 网络承载评估 ---------- */
+.network-assessment-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 10px;
+  overflow: hidden;
+}
+.network-assessment-layout .list-panel { width: 100%; }
+.network-toolbar { display: flex; align-items: center; gap: 8px; }
+.network-toolbar .secondary-button,
+.network-toolbar .primary-button { height: 32px; }
+
+.network-top {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr);
+  gap: 10px;
+  padding: 12px 14px;
+}
+.network-snapshot {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.network-stat {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(120deg, rgba(69, 224, 194, .03), transparent 55%),
+    #0a141e;
+}
+.network-stat-label { display: block; color: var(--muted); font-size: 10px; }
+.network-stat-value {
+  display: block;
+  margin-top: 7px;
+  color: #dfe9f2;
+  font: 700 18px/1.1 Consolas, "Cascadia Mono", monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-chart-panel {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0a141e;
+}
+.network-chart-panel .detail-subtitle { margin: 0 0 8px; }
+.network-trend-chart {
+  display: block;
+  width: 100%;
+  height: 180px;
+  border-radius: 6px;
+}
+
+/* 评级三色：健康绿 / 亚健康黄 / 故障红 */
+.rating-healthy { color: #4dd27a; }
+.rating-degraded { color: #f2c14e; }
+.rating-fault { color: #ff7385; }
+.rating-unknown { color: #8195a8; }
+
+#network-cycle-rows .status-pill { min-width: 48px; justify-content: center; }
+#network-cycle-rows .status-pill.rating-healthy { color: #4dd27a; background: rgba(77, 210, 122, .14); }
+#network-cycle-rows .status-pill.rating-degraded { color: #f2c14e; background: rgba(242, 193, 78, .14); }
+#network-cycle-rows .status-pill.rating-fault { color: #ff7385; background: rgba(255, 115, 133, .14); }
+#network-cycle-rows .status-pill.rating-unknown { color: #8195a8; background: rgba(129, 149, 168, .12); }
+
+@media (max-width: 1240px) {
+  .network-top { grid-template-columns: 1fr; }
+  .network-snapshot { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .network-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

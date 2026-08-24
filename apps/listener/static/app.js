@@ -891,7 +891,9 @@ function switchView(name) {
   minuteElements.framesData.hidden = name !== "frames";
   minuteElements.view.hidden = name !== "minute";
   minuteElements.deleteConfigView.hidden = name !== "delete-config";
+  if (networkElements) networkElements.view.hidden = name !== "network-assessment";
   if (name === "minute") loadMinuteTaskList();
+  if (name === "network-assessment") loadNetworkStatus();
 }
 
 minuteElements.tabs.forEach((tab) => {
@@ -1502,3 +1504,300 @@ async function restoreSerialSession() {
 }
 
 restoreSerialSession().then(loadIndexedDetailFromLocation);
+
+// ---------- 网络承载评估 ----------
+// 对接后端：GET /api/network/status（轻量快照）、GET /api/network/assessment（周期明细+汇总）。
+// 后端未就绪时返回 503，前端需明确提示「后端未就绪」而非白屏。
+
+const networkElements = {
+  view: $("#network-assessment-view"),
+  error: $("#network-error"),
+  refresh: $("#network-refresh"),
+  assessment: $("#network-assessment-button"),
+  beaconPeriod: $("#network-beacon-period"),
+  latestRate: $("#network-latest-rate"),
+  latestRating: $("#network-latest-rating"),
+  overallHealth: $("#network-overall-health"),
+  chart: $("#network-trend-chart"),
+  rows: $("#network-cycle-rows"),
+};
+
+// 评级 → 中文标签 + 着色 class。兼容英文/中文/其他取值，未知评级归为灰色。
+function ratingMeta(rating) {
+  const r = String(rating ?? "").trim().toLowerCase();
+  if (["healthy", "good", "正常", "健康", "ok", "normal"].includes(r)) {
+    return { label: "健康", className: "rating-healthy" };
+  }
+  if (["degraded", "warning", "warn", "亚健康", "一般", "告警"].includes(r)) {
+    return { label: "亚健康", className: "rating-degraded" };
+  }
+  if (["fault", "error", "fail", "故障", "异常", "危险"].includes(r)) {
+    return { label: "故障", className: "rating-fault" };
+  }
+  return { label: rating || "未知", className: "rating-unknown" };
+}
+
+function formatBeaconPeriod(ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (v < 1000) return `${Math.round(v)} ms`;
+  if (v < 60000) return `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)} 秒`;
+  return `${(v / 60000).toFixed(1)} 分钟`;
+}
+
+function formatRate(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(1)}%`;
+}
+
+function formatCount(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString();
+}
+
+// 专用 fetch：保留 HTTP 状态码，供 503 降级判断
+async function fetchNetwork(url) {
+  let response;
+  try {
+    response = await fetch(url);
+  } catch {
+    const error = new Error("网络请求失败，后端可能未启动");
+    error.status = 0;
+    throw error;
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch { payload = null; }
+  if (!response.ok) {
+    const error = new Error((payload && (payload.detail || payload.message)) || `请求失败（HTTP ${response.status}）`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+function setNetworkLoading(loading) {
+  networkElements.view.querySelector(".list-panel")?.classList.toggle("is-loading", loading);
+}
+
+function showNetworkError(message) {
+  networkElements.error.textContent = message;
+  networkElements.error.hidden = false;
+}
+
+// 后端未就绪（503 / 无法连接）：快照区显示占位，不白屏
+function showNetworkNotReady() {
+  const placeholder = "后端未就绪";
+  networkElements.beaconPeriod.textContent = placeholder;
+  networkElements.latestRate.textContent = placeholder;
+  networkElements.latestRating.textContent = placeholder;
+  networkElements.latestRating.className = "network-stat-value rating-unknown";
+  networkElements.overallHealth.textContent = placeholder;
+  networkElements.overallHealth.className = "network-stat-value rating-unknown";
+  showNetworkError("网络承载评估后端未就绪（503），请确认 listener 后端已实现并启动 /api/network/* 接口。");
+}
+
+function renderNetworkSnapshot(data) {
+  const cycle = data.latest_cycle || (data.cycles && data.cycles[0]) || {};
+  const rate = cycle.success_rate ?? data.latest_success_rate ?? data.success_rate;
+  const rating = cycle.rating ?? data.latest_rating ?? data.rating;
+  const health = data.overall_health ?? data.health ?? data.overall;
+
+  networkElements.beaconPeriod.textContent = formatBeaconPeriod(data.beacon_period_ms ?? data.beacon_period);
+  networkElements.latestRate.textContent = formatRate(rate);
+
+  const ratingInfo = ratingMeta(rating);
+  networkElements.latestRating.textContent = ratingInfo.label;
+  networkElements.latestRating.className = `network-stat-value ${ratingInfo.className}`;
+
+  const healthInfo = ratingMeta(health);
+  networkElements.overallHealth.textContent = healthInfo.label;
+  networkElements.overallHealth.className = `network-stat-value ${healthInfo.className}`;
+}
+
+function renderNetworkAssessment(data) {
+  renderNetworkSnapshot(data);
+  const cycles = Array.isArray(data.cycles) ? data.cycles : [];
+  networkElements.rows.replaceChildren();
+
+  if (!cycles.length) {
+    const row = document.createElement("tr");
+    row.className = "empty-row";
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "暂无周期评估数据";
+    row.append(cell);
+    networkElements.rows.append(row);
+    drawSuccessRateChart([]);
+    return;
+  }
+
+  for (const cycle of cycles) {
+    const row = document.createElement("tr");
+    const ratingInfo = ratingMeta(cycle.rating);
+
+    const cells = [
+      cycle.start_time && cycle.end_time
+        ? `${cycle.start_time} ~ ${cycle.end_time}`
+        : cycle.start_time || cycle.end_time || "—",
+      formatBeaconPeriod(cycle.beacon_period_ms ?? cycle.beacon_period ?? data.beacon_period_ms),
+      formatCount(cycle.frame_count),
+      formatRate(cycle.success_rate),
+      formatRate(cycle.offline_rate),
+      formatCount(cycle.active_sta_count),
+    ];
+    cells.forEach((value, index) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      if (index === 0) cell.className = "route";
+      row.append(cell);
+    });
+
+    const ratingCell = document.createElement("td");
+    const pill = document.createElement("span");
+    pill.className = `status-pill ${ratingInfo.className}`;
+    pill.textContent = ratingInfo.label;
+    ratingCell.append(pill);
+    row.append(ratingCell);
+
+    networkElements.rows.append(row);
+  }
+
+  drawSuccessRateChart(cycles);
+}
+
+// 原生 canvas 折线图：周期成功率趋势（不引入外部库）
+function drawSuccessRateChart(cycles) {
+  const canvas = networkElements.chart;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.clientWidth || 640;
+  const cssHeight = 180;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const pad = { left: 40, right: 14, top: 14, bottom: 26 };
+  const plotW = Math.max(1, cssWidth - pad.left - pad.right);
+  const plotH = Math.max(1, cssHeight - pad.top - pad.bottom);
+
+  // 背景
+  ctx.fillStyle = "#0a141e";
+  ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+  // 网格 + Y 轴刻度（0–100%）
+  ctx.strokeStyle = "rgba(83, 102, 120, .16)";
+  ctx.fillStyle = "#698095";
+  ctx.font = "9px Consolas, monospace";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i += 1) {
+    const value = 100 - i * 25;
+    const y = pad.top + (i / 4) * plotH;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(pad.left + plotW, y);
+    ctx.stroke();
+    ctx.fillText(`${value}%`, pad.left - 7, y);
+  }
+
+  if (!cycles.length) {
+    ctx.fillStyle = "#536678";
+    ctx.font = "11px Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("暂无趋势数据", pad.left + plotW / 2, pad.top + plotH / 2);
+    return;
+  }
+
+  const points = cycles.map((cycle, index) => {
+    const rate = Number(cycle.success_rate);
+    if (!Number.isFinite(rate)) return null;
+    const x = pad.left + (cycles.length === 1 ? plotW / 2 : (index / (cycles.length - 1)) * plotW);
+    const y = pad.top + ((100 - Math.max(0, Math.min(100, rate))) / 100) * plotH;
+    return { x, y, rating: cycle.rating };
+  }).filter(Boolean);
+
+  // 连线
+  if (points.length > 1) {
+    ctx.beginPath();
+    ctx.strokeStyle = "#45e0c2";
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = "round";
+    points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+
+    // 线下渐变填充
+    const last = points[points.length - 1];
+    const first = points[0];
+    ctx.lineTo(last.x, pad.top + plotH);
+    ctx.lineTo(first.x, pad.top + plotH);
+    ctx.closePath();
+    const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+    gradient.addColorStop(0, "rgba(69, 224, 194, .22)");
+    gradient.addColorStop(1, "rgba(69, 224, 194, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fill();
+  }
+
+  // 数据点（按评级着色）
+  points.forEach((point) => {
+    const meta = ratingMeta(point.rating);
+    const color = meta.className === "rating-healthy" ? "#4dd27a"
+      : meta.className === "rating-degraded" ? "#f2c14e" : "#ff7385";
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(point.x, point.y, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // X 轴首尾时间标注
+  ctx.fillStyle = "#698095";
+  ctx.font = "9px Consolas, monospace";
+  ctx.textBaseline = "top";
+  const firstCycle = cycles[0];
+  const lastCycle = cycles[cycles.length - 1];
+  ctx.textAlign = "left";
+  ctx.fillText(firstCycle.start_time || "", pad.left, pad.top + plotH + 7);
+  ctx.textAlign = "right";
+  ctx.fillText(lastCycle.end_time || lastCycle.start_time || "", pad.left + plotW, pad.top + plotH + 7);
+}
+
+async function loadNetworkStatus() {
+  if (!networkElements.view) return;
+  networkElements.error.hidden = true;
+  setNetworkLoading(true);
+  try {
+    renderNetworkSnapshot(await fetchNetwork("/api/network/status"));
+  } catch (error) {
+    if (error.status === 503) showNetworkNotReady();
+    else showNetworkError(`快照加载失败：${error.message}`);
+  } finally {
+    setNetworkLoading(false);
+  }
+}
+
+async function loadNetworkAssessment() {
+  networkElements.error.hidden = true;
+  setNetworkLoading(true);
+  try {
+    renderNetworkAssessment(await fetchNetwork("/api/network/assessment"));
+  } catch (error) {
+    if (error.status === 503) showNetworkNotReady();
+    else showNetworkError(`详细评估加载失败：${error.message}`);
+  } finally {
+    setNetworkLoading(false);
+  }
+}
+
+networkElements.refresh.addEventListener("click", loadNetworkStatus);
+networkElements.assessment.addEventListener("click", loadNetworkAssessment);

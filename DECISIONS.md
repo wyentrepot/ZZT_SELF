@@ -41,6 +41,7 @@
 | 33 | P4 串口 Profile 一键应用：SerialProfileApplier 固定顺序（侦听台→CCO→STA→模拟集中器）+ 逐槽状态/部分成功 + GET/PUT/apply 三接口 | ✅ 生效 |
 | 34 | P5 左侧分组导航（验证/设备/维护）+ hash 路由 + 抽屉/折叠 + iframe 保活保留 | ✅ 生效 |
 | 35 | P6 串口配置页：四槽保存/一键应用/刷新状态、内联校验、错误摘要 | ✅ 生效 |
+| 36 | 按中央信标周期 + 网络隔离(NID+CCO MAC)的网络承载能力评估：纯 Python 信标识别 + 三级健康评级 + listener/workbench 双挂 + AI 查询 API | ✅ 生效 |
 
 ---
 
@@ -677,4 +678,18 @@
   - 启用未选串口→内联报错；重复映射 apply 前阻止且零副作用；部分失败保留成功状态，提供可聚焦错误摘要（`tabindex`+focus）。
 - **理由**：P4 的一键应用需要一个可视化操作页，让用户在浏览器里完成四槽配置与应用，并给出可访问的失败提示。
 - **影响**：`serial-profile.js`（345 行）+ 前端测试 `test_serial_profile_frontend.py`（110 行，8 测试）；`node --check` 通过；workbench 全量 211 passed 无回归。
+- **被取代**：无（新增决策）。
+
+## ADR-36 按中央信标周期 + 网络隔离的网络承载能力评估
+
+- **日期**：2026-08-25
+- **状态**：✅ 生效
+- **决定**：侦听台新增「网络承载能力评估」功能，按 CCO 实际发送的**中央信标周期**（实测值，非固定，随节点数变化，协议 1~10s）分桶评估网络健康度：
+  - **网络隔离**：每个网络由 **NID(24bit) + CCO MAC(48bit)** 联合唯一标识（NID 为主键、CCO MAC 二次确认，避免 NID 重号误并）；不同网络互不混算。NID 从 MPDU 帧控制字节 0-3 提取（所有帧通用），CCO MAC 从中央信标载荷（组网序列号后 6B）提取。
+  - **信标识别**：纯 Python 模块 `network_assessment.py`（无 DLL 依赖），识别中央信标帧（定界符=0 + 信标类型=2 + 源TEI=1），用日志时间戳求相邻到达间隔得实测周期；信标周期计数(32bit 每周期+1)作辅助校验；识别不出时退化为 SOF 帧簇检测或 fallback 标记不报错。
+  - **评级模型**：复用记忆库 B 类三级规则（通信成功率 健康≥98%/亚健康 90~98%/故障<90%；离线率 ≤2%/2~10%/>10%；汇总：全健康=健康、有亚健康无故障=亚健康、有故障=故障，优先处理成功率与离线率）。
+  - **接口**：`GET /api/network/assessment`（网络列表+每网络周期分桶+评级汇总）、`GET /api/network/status`（轻量快照，机器可读 healthy/degraded/fault，供 AI 调用查询网络状态）；log_service 未启用 503。
+  - **前端**：listener 新增「网络承载评估」页签（原生 JS + canvas 趋势图，深色终端风格），按 ADR-18 同步复制进 workbench（`/api/` → `/api/listener/`）。
+- **理由**：用户要求按中央信标周期（非固定值）评估每个周期网络承载能力，并按网络隔离分析（NID 网络内唯一）；记忆库已有 B 类运行指标健康度分级规则可复用。
+- **影响**：新增 `network_assessment.py`（extract_nid/extract_cco_mac/scan_beacon_periods/assess_periods/assess_by_network）+ `log_service.py` 抽样与聚合方法 + `app.py` 2 路由 + `test_network_assessment.py`(16 单测) + `smoke_network_assessment.py` + 前端 6 文件（listener 3 + workbench 3）。实测：真实 11.8MB 日志检出 1 网络（NID=6375261, CCO MAC=26-09-13-46-60-00）实测周期 2100ms（独立测量吻合），37 周期分桶成功率 94.59%；NID 297/297 与 DLL 一致；回归 169+ passed。
 - **被取代**：无（新增决策）。

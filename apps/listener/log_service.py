@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol
 
+from listener import network_assessment
+
 
 HEADER_PATTERN = re.compile(
     r"^\[(?P<sequence>[^\]]+)\]\[(?P<time>[^\]]+)\](?P<payload>.*)$"
@@ -1212,6 +1214,150 @@ class LogFileService:
             "total": total,
             "after_id": items[-1]["id"] if items else None,
         }
+
+    # ---------- 网络承载能力评估（按中央信标周期 + 网络隔离）----------
+
+    ASSESS_FRAME_SAMPLE = 2000
+    ASSESS_RECORD_SAMPLE = 3000
+    ASSESS_PAGE_SIZE = 500
+
+    @staticmethod
+    def _nid_from_summary(summary_json) -> Optional[int]:
+        """从 summary_json 的 SNID 键（24 位网络标识，8 位十六进制）解析 NID。"""
+        try:
+            simple = json.loads(summary_json or "{}")
+            snid = simple.get("SNID") or ""
+            return int(snid, 16) if snid else None
+        except (TypeError, ValueError):
+            return None
+
+    def sample_frames_for_assessment(
+        self, start_time="", end_time="", max_frames=None, page_size=None,
+    ) -> list:
+        """按时间窗口抽样 frames（raw_hex + log_time），附加纯 Python 提取的 NID。
+
+        按 id 等距取多个窗口（keyset 分页，避免全表加载/深 OFFSET），
+        覆盖整个日志时间跨度；适合信标周期扫描的输入。
+        """
+        max_frames = max_frames or self.ASSESS_FRAME_SAMPLE
+        page_size = page_size or self.ASSESS_PAGE_SIZE
+        conditions = []
+        parameters = []
+        self._append_time_range(conditions, parameters, start_time, end_time)
+        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT MIN(id), MAX(id) FROM frames {where_sql}", parameters
+            ).fetchone()
+            if row[0] is None:
+                return []
+            min_id, max_id = row[0], row[1]
+            span = max_id - min_id
+            window_count = max(1, min(page_size, span // page_size))
+            starts = [min_id + int(span * index / window_count) for index in range(window_count)]
+
+            frames = []
+            for start_id in starts:
+                if len(frames) >= max_frames:
+                    break
+                id_condition = [*conditions, "id >= ?"]
+                id_sql = f"WHERE {' AND '.join(id_condition)}"
+                rows = connection.execute(
+                    f"""
+                    SELECT id, log_time, raw_hex FROM frames
+                    {id_sql}
+                    ORDER BY id LIMIT ?
+                    """,
+                    [*parameters, start_id, page_size],
+                ).fetchall()
+                for r in rows:
+                    if len(frames) >= max_frames:
+                        break
+                    frames.append({
+                        "id": r["id"],
+                        "log_time": r["log_time"],
+                        "raw_hex": r["raw_hex"],
+                        "nid": network_assessment.extract_nid(r["raw_hex"]),
+                    })
+        return frames
+
+    def sample_reports_for_assessment(
+        self, start_time="", end_time="", max_records=None, page_size=None,
+    ) -> list:
+        """按时间窗口抽样 minute_reports，附加上报帧所属 NID（来自 SNID 键）。"""
+        max_records = max_records or self.ASSESS_RECORD_SAMPLE
+        page_size = page_size or self.ASSESS_PAGE_SIZE
+        conditions = []
+        parameters = []
+        self._append_time_range(
+            conditions, parameters, start_time, end_time, "minute_reports.log_time"
+        )
+        base_where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT MIN(id), MAX(id) FROM minute_reports {base_where}", parameters
+            ).fetchone()
+            if row[0] is None:
+                return []
+            min_id, max_id = row[0], row[1]
+            span = max_id - min_id
+            window_count = max(1, min(page_size, span // page_size))
+            starts = [min_id + int(span * index / window_count) for index in range(window_count)]
+
+            records = []
+            for start_id in starts:
+                if len(records) >= max_records:
+                    break
+                id_condition = [*conditions, "minute_reports.id >= ?"]
+                where_sql = f"WHERE {' AND '.join(id_condition)}"
+                rows = connection.execute(
+                    f"""
+                    SELECT minute_reports.id, minute_reports.time_seconds,
+                           minute_reports.station_key, minute_reports.response_result,
+                           minute_reports.report_count, minute_reports.application_error,
+                           frames.summary_json
+                    FROM minute_reports
+                    LEFT JOIN frames ON frames.id = minute_reports.frame_id
+                    {where_sql}
+                    ORDER BY minute_reports.id LIMIT ?
+                    """,
+                    [*parameters, start_id, page_size],
+                ).fetchall()
+                for r in rows:
+                    if len(records) >= max_records:
+                        break
+                    records.append({
+                        "frame_id": r["id"],
+                        "time_seconds": r["time_seconds"],
+                        "station_key": r["station_key"],
+                        "response_result": r["response_result"],
+                        "report_count": r["report_count"],
+                        "application_error": r["application_error"],
+                        "nid": self._nid_from_summary(r["summary_json"]),
+                    })
+        return records
+
+    def list_beacon_periods(
+        self, index_id=None, start_time="", end_time="",
+        max_frames=None, max_records=None,
+    ) -> dict:
+        """按网络隔离扫描中央信标周期并分桶评估网络承载能力。
+
+        返回 assess_by_network 的结构：
+          {networks: [{nid, cco_mac, beacon_period_ms, confidence, cycles,
+                       summary}], beacon_period_ms, overall_health}
+        识别不出信标时 networks 为空、beacon_period_ms=None，不抛异常。
+        """
+        service = self.open_index(index_id) if index_id else self
+        frames = service.sample_frames_for_assessment(
+            start_time, end_time, max_frames=max_frames
+        )
+        records = service.sample_reports_for_assessment(
+            start_time, end_time, max_records=max_records
+        )
+        return network_assessment.assess_by_network(frames, records)
 
     def list_indexes(self) -> dict:
         if self._index_registry is None:

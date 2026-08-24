@@ -112,6 +112,47 @@ class FakeLogService:
             "derived_period_minutes": 10,
         }
 
+    def list_beacon_periods(self, index_id="", start_time="", end_time=""):
+        self.last_network_query = (index_id, start_time, end_time)
+        return {
+            "networks": [
+                {
+                    "nid": 123,
+                    "cco_mac": "26-09-13-46-60-00",
+                    "beacon_period_ms": 3000,
+                    "confidence": 0.9,
+                    "scan_method": "central_beacon",
+                    "cycles": [
+                        {
+                            "period_start": 0,
+                            "period_end": 3000,
+                            "start_time": "00:00:00.000",
+                            "end_time": "00:00:03.000",
+                            "beacon_period_ms": 3000,
+                            "frame_count": 20,
+                            "success_count": 20,
+                            "success_rate": 100.0,
+                            "active_sta_count": 10,
+                            "offline_sta_count": 0,
+                            "offline_rate": 0.0,
+                            "report_count": 20,
+                            "level": "healthy",
+                            "rating": "healthy",
+                            "level_reason": "通信成功率 100.0%",
+                        }
+                    ],
+                    "summary": {
+                        "overall_health": "healthy",
+                        "avg_success_rate": 100.0,
+                        "offline_rate": 0.0,
+                        "counts": {"healthy": 1, "degraded": 0, "fault": 0},
+                    },
+                }
+            ],
+            "beacon_period_ms": 3000,
+            "overall_health": "healthy",
+        }
+
 
 class AppTests(unittest.TestCase):
     def setUp(self):
@@ -562,6 +603,84 @@ class VersionedIndexApiTests(unittest.TestCase):
         self.assertEqual(listing.status_code, 200)
         self.assertEqual(listing.json()["index_id"], self.first_index_id)
         self.assertEqual(listing.json()["items"][0]["frame_id"], 1)
+
+
+class NetworkAssessmentApiTests(unittest.TestCase):
+    """/api/network/assessment 与 /api/network/status 契约测试。"""
+
+    def setUp(self):
+        self.log_service = FakeLogService()
+        self.client = TestClient(create_app(FakeService(), self.log_service))
+
+    def test_assessment_returns_frontend_contract(self):
+        response = self.client.get("/api/network/assessment")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["beacon_period_ms"], 3000)
+        self.assertEqual(data["overall_health"], "healthy")
+        self.assertIsNone(data["fallback"])
+        net = data["networks"][0]
+        for key in ("nid", "cco_mac", "beacon_period_ms", "confidence", "cycles", "summary"):
+            self.assertIn(key, net)
+        cycle = net["cycles"][0]
+        for key in ("start_time", "end_time", "beacon_period_ms", "frame_count",
+                    "success_rate", "offline_rate", "active_sta_count", "rating"):
+            self.assertIn(key, cycle)
+        self.assertEqual(cycle["rating"], "healthy")
+        self.assertEqual(net["summary"]["overall_health"], "healthy")
+
+    def test_status_returns_light_snapshot(self):
+        response = self.client.get("/api/network/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["beacon_period_ms"], 3000)
+        self.assertEqual(data["overall_health"], "healthy")
+        self.assertIsNotNone(data["latest_cycle"])
+        net = data["networks"][0]
+        for key in ("nid", "cco_mac", "beacon_period_ms", "overall_health",
+                    "latest_success_rate"):
+            self.assertIn(key, net)
+
+    def test_assessment_passes_window_params(self):
+        response = self.client.get(
+            "/api/network/assessment?start_time=09:00:00&end_time=10:30:00"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self.log_service.last_network_query,
+            ("", "09:00:00", "10:30:00"),
+        )
+
+    def test_assessment_fallback_when_beacon_undetected(self):
+        class NoBeaconService(FakeLogService):
+            def list_beacon_periods(self, index_id="", start_time="", end_time=""):
+                return {"networks": [], "beacon_period_ms": None,
+                        "overall_health": None}
+
+        client = TestClient(create_app(FakeService(), NoBeaconService()))
+        response = client.get("/api/network/assessment")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["networks"], [])
+        self.assertIsNone(data["beacon_period_ms"])
+        self.assertEqual(data["fallback"], "beacon_undetected")
+        self.assertIn("message", data)
+
+    def test_status_fallback_when_beacon_undetected(self):
+        class NoBeaconService(FakeLogService):
+            def list_beacon_periods(self, index_id="", start_time="", end_time=""):
+                return {"networks": [], "beacon_period_ms": None,
+                        "overall_health": None}
+
+        client = TestClient(create_app(FakeService(), NoBeaconService()))
+        response = client.get("/api/network/status")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["fallback"], "beacon_undetected")
+
+    def test_endpoints_return_503_without_log_service(self):
+        client = TestClient(create_app(FakeService(), None))
+        self.assertEqual(client.get("/api/network/assessment").status_code, 503)
+        self.assertEqual(client.get("/api/network/status").status_code, 503)
 
 
 

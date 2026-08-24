@@ -29,6 +29,8 @@
         data-view="minute" aria-selected="false">分钟采集分析</button>
       <button class="view-tab" type="button" role="tab"
         data-view="delete-config" aria-selected="false">任务配置统计</button>
+      <button class="view-tab" type="button" role="tab"
+        data-view="network-assessment" aria-selected="false">网络承载评估</button>
     </nav>
 
     <section class="active-filter-bar" aria-label="全局分析筛选条件">
@@ -386,6 +388,69 @@
       </aside>
       </div>
 
+    </section>
+
+    <section id="network-assessment-view" class="network-assessment-layout" hidden>
+      <div class="list-panel">
+        <div class="panel-toolbar">
+          <div>
+            <span class="section-kicker">05 / 网络承载</span>
+            <h2>按中央信标周期的网络承载能力评估</h2>
+          </div>
+          <div class="network-toolbar">
+            <button id="network-refresh" class="secondary-button" type="button">刷新快照</button>
+            <button id="network-assessment-button" class="primary-button" type="button">
+              <span>详细评估</span><span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="network-error" class="error-banner" role="alert" hidden></div>
+
+        <div class="network-top">
+          <div class="network-snapshot" aria-label="网络承载快照">
+            <div class="network-stat">
+              <span class="network-stat-label">当前实测信标周期</span>
+              <strong id="network-beacon-period" class="network-stat-value">—</strong>
+            </div>
+            <div class="network-stat">
+              <span class="network-stat-label">最近周期成功率</span>
+              <strong id="network-latest-rate" class="network-stat-value">—</strong>
+            </div>
+            <div class="network-stat">
+              <span class="network-stat-label">最近周期评级</span>
+              <strong id="network-latest-rating" class="network-stat-value">—</strong>
+            </div>
+            <div class="network-stat">
+              <span class="network-stat-label">整体健康度</span>
+              <strong id="network-overall-health" class="network-stat-value">—</strong>
+            </div>
+          </div>
+          <div class="network-chart-panel" aria-label="周期成功率趋势">
+            <div class="detail-subtitle"><h3>周期成功率趋势</h3></div>
+            <canvas id="network-trend-chart" class="network-trend-chart"></canvas>
+          </div>
+        </div>
+
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>周期起止</th>
+                <th>实测周期值</th>
+                <th>帧数</th>
+                <th>通信成功率</th>
+                <th>离线率</th>
+                <th>活跃 STA 数</th>
+                <th>评级</th>
+              </tr>
+            </thead>
+            <tbody id="network-cycle-rows">
+              <tr class="empty-row"><td colspan="7">点击「详细评估」或「刷新快照」加载周期明细</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
   </main>
 

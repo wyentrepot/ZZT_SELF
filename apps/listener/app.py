@@ -362,6 +362,100 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             "filters": {"cco_tei": cco_tei.upper()},
         }
 
+    # ---------- 网络承载能力评估（按中央信标周期 + 网络隔离）----------
+
+    def _run_network_assessment(index_id="", start_time="", end_time=""):
+        """统一入口：调用 log_service 扫描网络并评估；无信标时走 fallback。"""
+        kwargs = {}
+        if index_id.strip():
+            kwargs["index_id"] = index_id
+        if start_time or end_time:
+            kwargs["start_time"] = start_time
+            kwargs["end_time"] = end_time
+        return log_service.list_beacon_periods(**kwargs)
+
+    @app.get("/api/network/assessment")
+    def network_assessment(
+        index_id: str = Query("", max_length=64),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+    ):
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            data = _run_network_assessment(index_id, start_time, end_time)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"网络评估失败：{exc}") from exc
+        networks = data.get("networks") or []
+        if not networks or not any(n.get("beacon_period_ms") for n in networks):
+            return {
+                "networks": [],
+                "beacon_period_ms": None,
+                "overall_health": None,
+                "fallback": "beacon_undetected",
+                "message": "未识别到中央信标帧（可能日志为其他设备帧或采样不足），"
+                           "无法按实测信标周期分桶评估",
+            }
+        return {
+            **data,
+            "fallback": None,
+        }
+
+    @app.get("/api/network/status")
+    def network_status(
+        index_id: str = Query("", max_length=64),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+    ):
+        """轻量快照（AI 查询用，≤1KB）：机器可读，评级枚举 healthy/degraded/fault。"""
+        if log_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            data = _run_network_assessment(index_id, start_time, end_time)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"网络评估失败：{exc}") from exc
+        networks = data.get("networks") or []
+        if not networks or not any(n.get("beacon_period_ms") for n in networks):
+            return {
+                "networks": [],
+                "beacon_period_ms": None,
+                "overall_health": None,
+                "latest_cycle": None,
+                "fallback": "beacon_undetected",
+            }
+        latest_cycle = None
+        latest_end = None
+        snapshots = []
+        for network in networks:
+            cycles = network.get("cycles") or []
+            if cycles:
+                last = cycles[-1]
+                if latest_end is None or (last.get("period_end") or 0) > latest_end:
+                    latest_end = last.get("period_end") or 0
+                    latest_cycle = {
+                        "start_time": last.get("start_time"),
+                        "end_time": last.get("end_time"),
+                        "success_rate": last.get("success_rate"),
+                        "rating": last.get("rating") or last.get("level"),
+                    }
+            snapshots.append({
+                "nid": network.get("nid"),
+                "cco_mac": network.get("cco_mac"),
+                "beacon_period_ms": network.get("beacon_period_ms"),
+                "overall_health": (network.get("summary") or {}).get("overall_health"),
+                "latest_success_rate": (
+                    (network.get("cycles") or [{}])[-1].get("success_rate")
+                    if network.get("cycles") else None
+                ),
+            })
+        return {
+            "networks": snapshots,
+            "beacon_period_ms": data.get("beacon_period_ms"),
+            "overall_health": data.get("overall_health"),
+            "latest_cycle": latest_cycle,
+            "fallback": None,
+        }
+
     @app.get("/api/logs/task-minute-analysis")
     def task_minute_analysis(task_no: str = Query(..., pattern=r"^\d{1,3}$"), period_minutes: int | None = Query(None, ge=1, le=1440), cco_tei: str = Query("001", pattern=r"^[0-9A-Fa-f]{3}$"), nid: str = Query("", max_length=16), start_time: str = Query("", max_length=12), end_time: str = Query("", max_length=12)):
         if log_service is None:
