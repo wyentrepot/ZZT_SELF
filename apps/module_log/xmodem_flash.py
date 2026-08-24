@@ -12,6 +12,7 @@ flash_xmodem_module.ps1 移植，纯 Python，无 pyserial 之外的依赖）。
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import time
 from typing import Callable, List, Optional
@@ -39,14 +40,25 @@ DEFAULT_RESPONSE_TIMEOUT_MS = 10000
 def resolve_bin_path(bin_path: str) -> pathlib.Path:
     """解析固件路径，支持 Windows 路径、UNC WSL 路径、WSL 内部路径。
 
-    服务运行在 Windows 侧，WSL 内部路径（/mnt/d/...、/home/...）Windows
-    Python 无法直接访问，这里转换为 Windows 可读路径：
-      - /mnt/d/... → D:\\...
-      - /mnt/c/... → C:\\...
-      - /home/... 、/root/... 等 WSL 内部 → \\\\wsl.localhost\\Ubuntu-22.04\\...
-      - 其他（Windows 路径 D:\\、UNC \\\\wsl.localhost\\）原样使用
+    平台感知：本函数可能运行在 Windows（PyInstaller 打包的 exe）或 Linux
+    （WSL 内源码运行）两种环境。
+      - Linux（os.name == 'posix'）：WSL 内部路径（/home/...、/mnt/...）直接
+        作为本机路径使用，Windows 可读的 D:\\、\\\\wsl.localhost\\... 原样保留。
+      - Windows（os.name == 'nt'）：WSL 内部路径（/mnt/d/...、/home/...）
+        Windows Python 无法直接访问，转换为 Windows 可读路径：
+          - /mnt/d/... → D:\\...
+          - /mnt/c/... → C:\\...
+          - /home/... 、/root/... 等 WSL 内部 → \\\\wsl.localhost\\Ubuntu-22.04\\...
+          - 其他（Windows 路径 D:\\、UNC \\\\wsl.localhost\\）原样使用
     返回的 Path 指向存在的文件；不存在则抛 FileNotFoundError。
     """
+    if os.name != "nt":
+        # WSL/Linux：Linux 路径直接使用；Windows 样式路径原样保留。
+        fw = pathlib.Path(bin_path)
+        if not fw.is_file():
+            raise FileNotFoundError(f"Firmware image not found: {bin_path} (resolved: {fw})")
+        return fw
+
     p = bin_path.replace("\\", "/")
     resolved: str | None = None
     # WSL 挂载盘符：/mnt/<盘符>/...

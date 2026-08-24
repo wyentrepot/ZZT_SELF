@@ -10,6 +10,28 @@ from module_log import xmodem_flash
 from module_log.module_serial_service import MAX_MEMORY_LINES, ModuleSerialService, _FlashReader
 
 
+class ResolveBinPathTest(unittest.TestCase):
+    """resolve_bin_path 平台感知：Linux 直接用 Linux 路径，Windows 转 UNC。"""
+
+    def test_linux_home_path_resolves_directly(self):
+        # 当前运行在 Linux（WSL）：/home/... 直接可用，不做 UNC 转换
+        if xmodem_flash.os.name != "posix":
+            self.skipTest("仅 Linux/WSL 环境验证")
+        with tempfile.TemporaryDirectory() as d:
+            fw = Path(d) / "fw.bin"
+            fw.write_bytes(b"x" * 16)
+            resolved = xmodem_flash.resolve_bin_path(str(fw))
+            self.assertEqual(resolved, fw)
+
+    def test_windows_path_kept_as_is_on_linux(self):
+        # Linux 下 Windows 样式路径不转换（原样返回，is_file 由调用方决定）
+        if xmodem_flash.os.name != "posix":
+            self.skipTest("仅 Linux/WSL 环境验证")
+        p = r"D:\firmware\fw.bin"
+        with self.assertRaises(FileNotFoundError):
+            xmodem_flash.resolve_bin_path(p)
+
+
 class BootloaderDetectTest(unittest.TestCase):
     def test_detects_image_prompt(self):
         # 传统 Linux root shell bootloader

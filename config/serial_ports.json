@@ -16,8 +16,8 @@
     },
     {
       "id": "cco-main",
-      "linux_device": "/dev/ttyACM0",
-      "windows_com": "COM8",
+      "linux_device": "/dev/ttyACM1",
+      "windows_com": "COM9",
       "label": "CCO 日志口",
       "usage": "module_log",
       "module": "cco",
@@ -29,8 +29,8 @@
     },
     {
       "id": "sta-main",
-      "linux_device": "/dev/ttyACM1",
-      "windows_com": "COM9",
+      "linux_device": "/dev/ttyACM0",
+      "windows_com": "COM8",
       "label": "STA 日志口",
       "usage": "module_log",
       "module": "sta",
