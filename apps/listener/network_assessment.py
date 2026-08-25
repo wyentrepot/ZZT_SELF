@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import statistics
 from typing import Iterable, Optional
@@ -54,6 +55,14 @@ SUCCESS_DEGRADED_MIN = 90.0  # 90~98 亚健康，<90 故障
 # 离线率阈值（含下界）
 OFFLINE_HEALTHY_MAX = 2.0    # <=2 健康
 OFFLINE_DEGRADED_MAX = 10.0  # 2~10 亚健康，>10 故障
+
+# 稳定性维度阈值（用户拍板规格）
+PROXY_CHANGE_RATIO_FAULT = 8.0   # 代理变更帧占比 >8% → 该周期稳定性降级
+ASSOC_RATIO_DEGRADED = 5.0       # 关联请求帧占比 >5% → 降级（默认值，可调）
+STABILITY_MIN_DURATION_S = 7200  # 日志总时长 >7200s(2h) 才启用稳定性判级
+# FrmType 精确中文串（C# DLL 输出的 simple.FrmType 取值）
+FRMTYPE_PROXY_CHANGE = "代理变更请求"
+FRMTYPE_ASSOC = "关联请求"
 
 _TIME_PATTERN = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$")
 
@@ -317,10 +326,15 @@ def _estimate_period(gaps: list[int]) -> dict:
 # 三级判定
 # ---------------------------------------------------------------------------
 
-def _classify(success_rate: Optional[float], offline_rate: Optional[float]) -> tuple[str, str]:
+def _classify(
+    success_rate: Optional[float],
+    offline_rate: Optional[float],
+    stability_level: Optional[str] = None,
+) -> tuple[str, str]:
     """按成功率和离线率给出周期评级与原因。
 
     返回 (level, reason)；离线率不可判定时仅用成功率。
+    stability_level: 稳定性维度等级（可选），传入时参与最差合并。
     """
     reasons = []
     levels = []
@@ -347,6 +361,10 @@ def _classify(success_rate: Optional[float], offline_rate: Optional[float]) -> t
             levels.append(FAULT)
             reasons.append(f"离线率 {offline_rate:.1f}%（故障）")
 
+    if stability_level is not None:
+        levels.append(stability_level)
+        reasons.append(f"稳定性：{stability_level}")
+
     if not levels:
         return HEALTHY, "无有效统计数据"
 
@@ -366,6 +384,106 @@ def _aggregate_level(levels: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 稳定性维度（帧型占比判级）
+# ---------------------------------------------------------------------------
+
+def _extract_frm_type(summary_json) -> str:
+    """从 summary_json 提取 simple.FrmType 取值，失败返回 "UNKNOWN"。
+
+    兼容两种结构：{"simple": {"FrmType": ...}} 与直接 {"FrmType": ...}。
+    """
+    if not summary_json:
+        return "UNKNOWN"
+    try:
+        data = json.loads(summary_json)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    if not isinstance(data, dict):
+        return "UNKNOWN"
+    simple = data.get("simple")
+    if isinstance(simple, dict) and "FrmType" in simple:
+        frm_type = simple["FrmType"]
+    else:
+        frm_type = data.get("FrmType")
+    return str(frm_type) if frm_type is not None else "UNKNOWN"
+
+
+def count_frame_types(frames: list[dict]) -> dict[str, int]:
+    """统计帧列表的 FrmType 分布（顶层计数）。
+
+    frames 每项含 summary_json（JSON 字符串）；缺失/解析失败/无 FrmType 计入
+    "UNKNOWN"。返回 {FrmType: 帧数}。
+    """
+    counter: dict[str, int] = {}
+    for item in frames:
+        frm_type = _extract_frm_type(item.get("summary_json") if isinstance(item, dict) else None)
+        counter[frm_type] = counter.get(frm_type, 0) + 1
+    return counter
+
+
+def _frames_duration_s(frames: list[dict]) -> float:
+    """帧列表日志时间跨度（秒），无有效时间返回 0。"""
+    absolute = _absolute_ms(
+        [item.get("log_time") if isinstance(item, dict) else None for item in frames]
+    )
+    valid = [ms for ms in absolute if ms is not None]
+    return (max(valid) - min(valid)) / 1000.0 if valid else 0.0
+
+
+def assess_stability(
+    frame_type_stats: dict, total_duration_s: float, beacon_period_ms: int,
+) -> dict:
+    """稳定性维度判级：代理变更/关联请求占比超阈值 → 降级。
+
+    返回：
+      {enabled, reason, assoc_count, assoc_ratio, proxy_change_count,
+       proxy_change_ratio, level}
+    日志总时长 <=7200s 时 enabled=False、reason="log_too_short"、level=HEALTHY，
+    只统计不判级；否则按 FrmType 计数算占比，任一超阈值即 DEGRADED。
+    """
+    total = sum(frame_type_stats.values()) if frame_type_stats else 0
+    assoc_count = frame_type_stats.get(FRMTYPE_ASSOC, 0)
+    proxy_count = frame_type_stats.get(FRMTYPE_PROXY_CHANGE, 0)
+    assoc_ratio = assoc_count * 100.0 / total if total else None
+    proxy_change_ratio = proxy_count * 100.0 / total if total else None
+
+    base = {
+        "assoc_count": assoc_count,
+        "assoc_ratio": round(assoc_ratio, 2) if assoc_ratio is not None else None,
+        "proxy_change_count": proxy_count,
+        "proxy_change_ratio": round(proxy_change_ratio, 2) if proxy_change_ratio is not None else None,
+    }
+
+    if total_duration_s <= STABILITY_MIN_DURATION_S:
+        return {
+            **base,
+            "enabled": False,
+            "reason": "log_too_short",
+            "level": HEALTHY,
+        }
+
+    reasons = []
+    level = HEALTHY
+    if proxy_change_ratio is not None and proxy_change_ratio > PROXY_CHANGE_RATIO_FAULT:
+        level = DEGRADED
+        reasons.append(
+            f"代理变更占比 {proxy_change_ratio:.2f}% 超阈值 {PROXY_CHANGE_RATIO_FAULT:.0f}%"
+        )
+    if assoc_ratio is not None and assoc_ratio > ASSOC_RATIO_DEGRADED:
+        level = DEGRADED
+        reasons.append(
+            f"关联请求占比 {assoc_ratio:.2f}% 超阈值 {ASSOC_RATIO_DEGRADED:.0f}%"
+        )
+
+    return {
+        **base,
+        "enabled": True,
+        "reason": "；".join(reasons) if reasons else None,
+        "level": level,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 周期分桶评估
 # ---------------------------------------------------------------------------
 
@@ -376,13 +494,15 @@ def _is_success(row: dict) -> bool:
     return row.get("response_result") == 0
 
 
-def assess_periods(records, beacon_period_ms: int, active_sta_set: set) -> list[dict]:
+def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
+                   stability_level: Optional[str] = None) -> list[dict]:
     """按实测信标周期分桶统计通信成功率/离线率并评级。
 
     records: 分钟上报记录列表，每条含
         time_seconds(绝对毫秒), station_key, response_result, report_count,
         application_error
     active_sta_set: 全日志活跃 STA 集合（弱代理离线判定的分母）。
+    stability_level: 稳定性维度等级（网络级汇总，可选），参与周期评级最差合并。
     """
     period_ms = int(beacon_period_ms or 0)
     if period_ms <= 0:
@@ -409,7 +529,7 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set) -> list[
             offline_count * 100.0 / len(active) if active else None
         )
 
-        level, level_reason = _classify(success_rate, offline_rate)
+        level, level_reason = _classify(success_rate, offline_rate, stability_level)
         end = start + period_ms
         cycles.append({
             "period_start": start,
@@ -424,6 +544,7 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set) -> list[
             "offline_sta_count": offline_count if active else None,
             "offline_rate": round(offline_rate, 2) if offline_rate is not None else None,
             "report_count": sum(row.get("report_count") or 0 for row in rows),
+            "stability_level": stability_level,  # 网络级稳定性汇总，逐桶透出
             "level": level,
             "rating": level,  # 前端契约字段
             "level_reason": level_reason,
@@ -431,9 +552,15 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set) -> list[
     return cycles
 
 
-def _network_summary(cycles: list[dict]) -> dict:
-    """网络级汇总：总体评级、平均成功率、离线率、各评级周期数。"""
+def _network_summary(cycles: list[dict], stability: Optional[dict] = None) -> dict:
+    """网络级汇总：总体评级、平均成功率、离线率、各评级周期数、稳定性。
+
+    stability: assess_stability 的返回（可选），其 level 参与总体最差合并，
+    并通过 summary.stability 字段透出。
+    """
     levels = [cycle["level"] for cycle in cycles]
+    if stability is not None:
+        levels = [*levels, stability["level"]]
     rates = [c["success_rate"] for c in cycles if c["success_rate"] is not None]
     offline = [c["offline_rate"] for c in cycles if c["offline_rate"] is not None]
     counts = {
@@ -441,12 +568,15 @@ def _network_summary(cycles: list[dict]) -> dict:
         DEGRADED: levels.count(DEGRADED),
         FAULT: levels.count(FAULT),
     }
-    return {
+    summary = {
         "overall_health": _aggregate_level(levels) if levels else HEALTHY,
         "avg_success_rate": round(statistics.mean(rates), 2) if rates else None,
         "offline_rate": round(statistics.mean(offline), 2) if offline else None,
         "counts": counts,
     }
+    if stability is not None:
+        summary["stability"] = stability
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +605,8 @@ def assess_by_network(frames, records) -> dict:
       {networks: [{nid, cco_mac, beacon_period_ms, confidence, scan_method,
                    cycles, summary}],
        beacon_period_ms, overall_health}
+    每个网络的 summary 含 stability 字段（assess_stability 整体结果，含
+    enabled/level/占比），cycles 每桶带 stability_level 汇总。
     """
     frame_groups: dict[tuple, list] = {}
     for item in frames:
@@ -514,11 +646,20 @@ def assess_by_network(frames, records) -> dict:
             row.get("station_key") for row in group_records if row.get("station_key")
         }
         scan = scan_beacon_periods(group_frames)
+
+        # 稳定性维度：按网络级整帧统计（代理变更/关联请求占比，分母为该网络总帧数）
+        frame_type_stats = count_frame_types(group_frames)
+        total_duration_s = _frames_duration_s(group_frames)
+        stability = assess_stability(
+            frame_type_stats, total_duration_s, scan["beacon_period_ms"] or 0
+        )
+
         cycles = []
         if scan["beacon_period_ms"] is not None:
             try:
                 cycles = assess_periods(
-                    group_records, scan["beacon_period_ms"], active_sta
+                    group_records, scan["beacon_period_ms"], active_sta,
+                    stability_level=stability["level"],
                 )
             except ValueError:
                 cycles = []
@@ -532,7 +673,7 @@ def assess_by_network(frames, records) -> dict:
             "record_count": len(group_records),
             "active_sta_count": len(active_sta),
             "cycles": cycles,
-            "summary": _network_summary(cycles),
+            "summary": _network_summary(cycles, stability=stability),
         })
 
     # 按 NID 排序，稳定输出

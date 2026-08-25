@@ -1234,10 +1234,10 @@ class LogFileService:
     def sample_frames_for_assessment(
         self, start_time="", end_time="", max_frames=None, page_size=None,
     ) -> list:
-        """按时间窗口抽样 frames（raw_hex + log_time），附加纯 Python 提取的 NID。
+        """按时间窗口抽样 frames（raw_hex + log_time + summary_json），附加纯 Python 提取的 NID。
 
         按 id 等距取多个窗口（keyset 分页，避免全表加载/深 OFFSET），
-        覆盖整个日志时间跨度；适合信标周期扫描的输入。
+        覆盖整个日志时间跨度；适合信标周期扫描与稳定性（FrmType）统计的输入。
         """
         max_frames = max_frames or self.ASSESS_FRAME_SAMPLE
         page_size = page_size or self.ASSESS_PAGE_SIZE
@@ -1265,7 +1265,7 @@ class LogFileService:
                 id_sql = f"WHERE {' AND '.join(id_condition)}"
                 rows = connection.execute(
                     f"""
-                    SELECT id, log_time, raw_hex FROM frames
+                    SELECT id, log_time, raw_hex, summary_json FROM frames
                     {id_sql}
                     ORDER BY id LIMIT ?
                     """,
@@ -1278,6 +1278,7 @@ class LogFileService:
                         "id": r["id"],
                         "log_time": r["log_time"],
                         "raw_hex": r["raw_hex"],
+                        "summary_json": r["summary_json"],
                         "nid": network_assessment.extract_nid(r["raw_hex"]),
                     })
         return frames

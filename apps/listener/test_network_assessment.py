@@ -1,4 +1,5 @@
 """network_assessment 单元测试：判定规则、NID/CCO MAC 提取、周期扫描、网络隔离。"""
+import json
 import unittest
 
 from listener import network_assessment as na
@@ -196,6 +197,118 @@ class NetworkIsolationTests(unittest.TestCase):
         result = na.assess_by_network(frames, records)
         self.assertEqual(len(result["networks"]), 1)
         self.assertEqual(result["networks"][0]["cco_mac"], "26-09-13-46-60-00")
+
+
+class StabilityDimensionTests(unittest.TestCase):
+    """稳定性维度：帧型统计、代理变更/关联请求占比判级、时长门槛、结构兼容。"""
+
+    @staticmethod
+    def _frame(frm_type, summary_shape="simple"):
+        """构造一帧（带 summary_json，兼容两种 FrmType 存放结构）。"""
+        if summary_shape == "direct":
+            summary = json.dumps({"FrmType": frm_type})
+        else:
+            summary = json.dumps({"simple": {"FrmType": frm_type}})
+        return {
+            "log_time": "08:00:00.000",
+            "raw_hex": build_gw_frame(frm_type=2),
+            "summary_json": summary,
+        }
+
+    def _frames(self, proxy_change=0, assoc=0, total=100, shape="simple"):
+        frames = [self._frame(na.FRMTYPE_PROXY_CHANGE, shape) for _ in range(proxy_change)]
+        frames += [self._frame(na.FRMTYPE_ASSOC, shape) for _ in range(assoc)]
+        frames += [self._frame("ACK", shape) for _ in range(total - proxy_change - assoc)]
+        return frames
+
+    def test_count_frame_types_proxy_change(self):
+        frames = self._frames(proxy_change=9)
+        stats = na.count_frame_types(frames)
+        self.assertEqual(stats[na.FRMTYPE_PROXY_CHANGE], 9)
+        self.assertEqual(stats["ACK"], 91)
+        self.assertEqual(sum(stats.values()), 100)
+
+    def test_count_frame_types_unknown_on_missing(self):
+        # summary_json 缺失/非 JSON/无 FrmType → 计入 UNKNOWN
+        frames = [
+            {"log_time": "08:00:00.000", "raw_hex": build_gw_frame(frm_type=2)},
+            {"log_time": "08:00:00.000", "raw_hex": build_gw_frame(frm_type=2),
+             "summary_json": "not-json"},
+            {"log_time": "08:00:00.000", "raw_hex": build_gw_frame(frm_type=2),
+             "summary_json": json.dumps({"foo": 1})},
+            self._frame("ACK"),
+        ]
+        stats = na.count_frame_types(frames)
+        self.assertEqual(stats["UNKNOWN"], 3)
+        self.assertEqual(stats["ACK"], 1)
+
+    def test_assess_stability_proxy_change_degraded(self):
+        # 100 帧里 9 个代理变更 → 9%>8% → 降级
+        stats = na.count_frame_types(self._frames(proxy_change=9))
+        result = na.assess_stability(stats, 3 * 3600, 3_000)
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["proxy_change_count"], 9)
+        self.assertAlmostEqual(result["proxy_change_ratio"], 9.0)
+        self.assertEqual(result["level"], na.DEGRADED)
+
+    def test_assess_stability_proxy_change_healthy(self):
+        # 100 帧里 7 个代理变更 → 7%<=8% → 健康
+        stats = na.count_frame_types(self._frames(proxy_change=7))
+        result = na.assess_stability(stats, 3 * 3600, 3_000)
+        self.assertEqual(result["level"], na.HEALTHY)
+        self.assertIsNone(result["reason"])
+
+    def test_assess_stability_duration_gate(self):
+        # 1.5h <= 7200s → enabled=False，只统计不判级
+        stats = na.count_frame_types(self._frames(proxy_change=20))
+        result = na.assess_stability(stats, 1.5 * 3600, 3_000)
+        self.assertFalse(result["enabled"])
+        self.assertEqual(result["reason"], "log_too_short")
+        self.assertEqual(result["level"], na.HEALTHY)
+        self.assertEqual(result["proxy_change_count"], 20)  # 仍统计
+
+    def test_assess_stability_assoc_degraded(self):
+        # 关联请求 6/100=6%>5% → 降级
+        stats = na.count_frame_types(self._frames(assoc=6))
+        result = na.assess_stability(stats, 3 * 3600, 3_000)
+        self.assertEqual(result["level"], na.DEGRADED)
+        self.assertAlmostEqual(result["assoc_ratio"], 6.0)
+
+    def test_assess_stability_assoc_healthy(self):
+        # 关联请求 4/100=4%<=5% → 健康
+        stats = na.count_frame_types(self._frames(assoc=4))
+        result = na.assess_stability(stats, 3 * 3600, 3_000)
+        self.assertEqual(result["level"], na.HEALTHY)
+
+    def test_count_frame_types_structure_compat(self):
+        # {"simple":{"FrmType":...}} 与直接 {"FrmType":...} 都能统计
+        frames = [
+            self._frame("ACK", "simple"),
+            self._frame("ACK", "direct"),
+            self._frame(na.FRMTYPE_ASSOC, "simple"),
+            self._frame(na.FRMTYPE_ASSOC, "direct"),
+        ]
+        stats = na.count_frame_types(frames)
+        self.assertEqual(stats["ACK"], 2)
+        self.assertEqual(stats[na.FRMTYPE_ASSOC], 2)
+
+    def test_assess_by_network_exposes_stability(self):
+        # 网络级评估：summary.stability 透出、cycles 带 stability_level
+        base = 8 * 3600
+        frame_dicts = []
+        for i in range(10):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frame_dicts.append({"log_time": t, "raw_hex": build_central_beacon(cnt=i)})
+            base += 3  # 3 秒一跳，保证信标周期可识别
+        frame_dicts[0] = {**frame_dicts[0],
+                          "summary_json": json.dumps({"simple": {"FrmType": na.FRMTYPE_PROXY_CHANGE}})}
+        records = [make_record(8 * 3600_000 + i * 3_000, f"STA{i}", nid=0x947F69)
+                   for i in range(12)]
+        result = na.assess_by_network(frame_dicts, records)
+        network = result["networks"][0]
+        self.assertIn("stability", network["summary"])
+        self.assertIn("stability_level", network["cycles"][0])
+        self.assertEqual(network["summary"]["stability"]["proxy_change_count"], 1)
 
 
 if __name__ == "__main__":
