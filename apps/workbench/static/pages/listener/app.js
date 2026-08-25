@@ -1520,6 +1520,7 @@ const networkElements = {
   overallHealth: $("#network-overall-health"),
   chart: $("#network-trend-chart"),
   rows: $("#network-cycle-rows"),
+  metrics: $("#network-metrics"),
 };
 
 // 评级 → 中文标签 + 着色 class。兼容英文/中文/其他取值，未知评级归为灰色。
@@ -1601,12 +1602,31 @@ function showNetworkNotReady() {
 }
 
 function renderNetworkSnapshot(data) {
-  const cycle = data.latest_cycle || (data.cycles && data.cycles[0]) || {};
-  const rate = cycle.success_rate ?? data.latest_success_rate ?? data.success_rate;
-  const rating = cycle.rating ?? data.latest_rating ?? data.rating;
-  const health = data.overall_health ?? data.health ?? data.overall;
+  // 契约对齐：后端没有顶层 latest_cycle/cycles，快照与周期均挂在 networks[].cycles
+  const networks = Array.isArray(data.networks) ? data.networks : [];
+  const first = networks[0] || {};
+  const cycle = data.latest_cycle
+    || (Array.isArray(first.cycles) ? first.cycles[0] : null)
+    || {};
 
-  networkElements.beaconPeriod.textContent = formatBeaconPeriod(data.beacon_period_ms ?? data.beacon_period);
+  const rate = cycle.success_rate
+    ?? data.latest_success_rate
+    ?? data.success_rate
+    ?? (first.summary && first.summary.avg_success_rate);
+
+  const rating = cycle.rating
+    ?? data.latest_rating
+    ?? data.rating
+    ?? (first.summary && first.summary.overall_health);
+
+  const health = data.overall_health
+    ?? data.health
+    ?? data.overall
+    ?? (first.summary && first.summary.overall_health);
+
+  networkElements.beaconPeriod.textContent = formatBeaconPeriod(
+    data.beacon_period_ms ?? data.beacon_period ?? first.beacon_period_ms
+  );
   networkElements.latestRate.textContent = formatRate(rate);
 
   const ratingInfo = ratingMeta(rating);
@@ -1620,53 +1640,253 @@ function renderNetworkSnapshot(data) {
 
 function renderNetworkAssessment(data) {
   renderNetworkSnapshot(data);
-  const cycles = Array.isArray(data.cycles) ? data.cycles : [];
-  networkElements.rows.replaceChildren();
+
+  // 契约对齐：后端没有顶层 cycles，周期来自每个网络的 networks[].cycles；
+  // 多网络时给每个 cycle 打上 _nid 来源标注。
+  const networks = Array.isArray(data.networks) ? data.networks : [];
+  const cycles = [];
+  for (const network of networks) {
+    if (!Array.isArray(network.cycles)) continue;
+    for (const cycle of network.cycles) {
+      cycles.push(Object.assign({}, cycle, { _nid: network.nid }));
+    }
+  }
+
+  renderNetworkMetrics(networks);
+  renderNetworkCycleRows(data, networks, cycles);
+  drawSuccessRateChart(cycles);
+}
+
+function makeElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined && text !== null) element.textContent = text;
+  return element;
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(1)}%`;
+}
+
+// 比例（0~1）→ 百分数：assoc_ratio / proxy_change_ratio 后端以小数返回
+function formatRatio(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+function formatFrameRate(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return `${n.toFixed(2)} 帧/s`;
+}
+
+// 通信成功率阈值：健康 ≥98 / 亚健康 90-98 / 故障 <90
+function levelForSuccessRate(value) {
+  if (value === null || value === undefined || value === "") {
+    return { label: "—", className: "rating-unknown" };
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) return { label: "—", className: "rating-unknown" };
+  if (n >= 98) return { label: "健康", className: "rating-healthy" };
+  if (n >= 90) return { label: "亚健康", className: "rating-degraded" };
+  return { label: "故障", className: "rating-fault" };
+}
+
+// 离线率阈值：健康 ≤2 / 亚健康 2-10 / 故障 >10
+function levelForOfflineRate(value) {
+  if (value === null || value === undefined || value === "") {
+    return { label: "—", className: "rating-unknown" };
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) return { label: "—", className: "rating-unknown" };
+  if (n <= 2) return { label: "健康", className: "rating-healthy" };
+  if (n <= 10) return { label: "亚健康", className: "rating-degraded" };
+  return { label: "故障", className: "rating-fault" };
+}
+
+function buildRouteValue(route) {
+  const parts = [];
+  if (route.route_remaining_s != null) parts.push(`路由剩余 ${route.route_remaining_s}s`);
+  if (route.route_remaining_ms != null) parts.push(`路由剩余 ${(route.route_remaining_ms / 1000).toFixed(1)}s`);
+  if (route.channel_change_count != null) parts.push(`信道变更 ${route.channel_change_count} 次`);
+  return parts.join(" · ") || "—";
+}
+
+function makeMetricRow(name, threshold, value, meta, note) {
+  const item = makeElement("div", "network-metric-item");
+  const row = makeElement("div", "network-metric-row");
+  row.append(
+    makeElement("span", "network-metric-name", name),
+    makeElement("span", "network-metric-threshold", `阈值：${threshold}`),
+    makeElement("span", "network-metric-value", value),
+    makeElement("span", `status-pill ${meta.className}`, meta.label),
+  );
+  item.append(row);
+  if (note) item.append(makeElement("div", "network-metric-note", note));
+  return item;
+}
+
+// 每网络一张指标卡：指标名 + 阈值 + 实际值 + 评级徽标
+function renderNetworkMetrics(networks) {
+  const container = networkElements.metrics;
+  if (!container) return;
+  container.replaceChildren();
+  if (!networks.length) return;
+
+  for (const network of networks) {
+    const summary = network.summary || {};
+    const overall = ratingMeta(summary.overall_health ?? summary.level);
+
+    const header = makeElement("div", "network-metric-card-header");
+    const title = makeElement("div", "network-metric-card-title");
+    title.append(makeElement("span", "network-metric-nid", `NID ${network.nid ?? "—"}`));
+    if (network.cco_mac) title.append(makeElement("span", "network-metric-mac", `CCO ${network.cco_mac}`));
+    if (network.beacon_period_ms) {
+      title.append(makeElement("span", "network-metric-mac", `实测周期 ${formatBeaconPeriod(network.beacon_period_ms)}`));
+    }
+    const overallBadge = makeElement("span", `status-pill ${overall.className}`, `整体 ${overall.label}`);
+    header.append(title, overallBadge);
+
+    const list = makeElement("div", "network-metric-list");
+
+    // 通信成功率 / 离线率：国网通用日志无 00E4 上报帧时为 null，显示 "—"
+    list.append(makeMetricRow(
+      "通信成功率",
+      "≥98 健康 / 90-98 亚健康 / <90 故障",
+      formatRate(summary.avg_success_rate),
+      levelForSuccessRate(summary.avg_success_rate),
+    ));
+    list.append(makeMetricRow(
+      "离线率",
+      "≤2 健康 / 2-10 亚健康 / >10 故障",
+      formatRate(summary.offline_rate),
+      levelForOfflineRate(summary.offline_rate),
+    ));
+
+    // 关联请求 / 代理变更：依赖 ≥2h 日志（stability.enabled）
+    const stability = summary.stability || {};
+    const stabilityEnabled = stability.enabled === true;
+    const stabilityMeta = stabilityEnabled
+      ? ratingMeta(stability.level)
+      : { label: "未启用", className: "rating-unknown" };
+    const stabilityNote = stabilityEnabled ? "" : `日志不足 2h，未启用${stability.reason ? `（${stability.reason}）` : ""}`;
+    list.append(makeMetricRow(
+      "关联请求",
+      ">5% 降级（≥2h 日志启用）",
+      formatRatio(stability.assoc_ratio),
+      stabilityMeta,
+      stabilityNote,
+    ));
+    list.append(makeMetricRow(
+      "代理变更",
+      ">8% 降级（≥2h 日志启用）",
+      formatRatio(stability.proxy_change_ratio),
+      stabilityMeta,
+      stabilityNote,
+    ));
+
+    // CSMA 帧密度（B 档）
+    const csma = summary.csma_congestion || {};
+    const csmaEnabled = csma.enabled !== false;
+    const csmaParts = [];
+    if (csma.csma_config_ratio != null) csmaParts.push(`CSMA 配置占比 ${formatPercent(csma.csma_config_ratio)}`);
+    if (csma.reason) csmaParts.push(csma.reason);
+    if (!csmaEnabled) csmaParts.push("未启用");
+    list.append(makeMetricRow(
+      "CSMA 帧密度（B 档）",
+      ">50 帧/s 降级 / >100 帧/s 故障",
+      formatFrameRate(csma.csma_density_peak),
+      csmaEnabled ? ratingMeta(csma.level) : { label: "未启用", className: "rating-unknown" },
+      csmaParts.join("；"),
+    ));
+
+    // 路由/信道（C 档）
+    const route = summary.route_channel || {};
+    const routeEnabled = route.enabled !== false;
+    const routeParts = [];
+    if (route.reason) routeParts.push(route.reason);
+    if (!routeEnabled) routeParts.push("未启用");
+    list.append(makeMetricRow(
+      "路由/信道（C 档）",
+      "路由剩余 <30s 或 信道变更 >10 次",
+      buildRouteValue(route),
+      routeEnabled ? ratingMeta(route.level) : { label: "未启用", className: "rating-unknown" },
+      routeParts.join("；"),
+    ));
+
+    const card = makeElement("div", "network-metric-card");
+    card.append(header, list);
+    container.append(card);
+  }
+}
+
+// 多网络时显示 NID 列，单网络隐藏
+function setNidColumnVisible(visible) {
+  const headCell = document.querySelector("#network-assessment-view thead .nid-th");
+  if (headCell) headCell.hidden = !visible;
+}
+
+function renderNetworkCycleRows(data, networks, cycles) {
+  const tbody = networkElements.rows;
+  tbody.replaceChildren();
+
+  const multi = networks.length > 1;
+  const colspan = 7 + (multi ? 1 : 0);
+  setNidColumnVisible(multi);
 
   if (!cycles.length) {
-    const row = document.createElement("tr");
-    row.className = "empty-row";
-    const cell = document.createElement("td");
-    cell.colSpan = 7;
-    cell.textContent = "暂无周期评估数据";
+    // 空态：优先展示后端返回的 fallback/message 文案，而非笼统的「暂无周期评估数据」
+    const message = data.fallback || data.message || "暂无周期评估数据";
+    const row = makeElement("tr", "empty-row");
+    const cell = makeElement("td", "", message);
+    cell.colSpan = colspan;
     row.append(cell);
-    networkElements.rows.append(row);
-    drawSuccessRateChart([]);
+    tbody.append(row);
     return;
   }
 
   for (const cycle of cycles) {
-    const row = document.createElement("tr");
-    const ratingInfo = ratingMeta(cycle.rating);
+    const row = makeElement("tr");
+    const ratingInfo = ratingMeta(cycle.rating ?? cycle.level);
 
-    const cells = [
+    const cells = [];
+    if (multi) cells.push(cycle._nid != null ? String(cycle._nid) : "—");
+    cells.push(
       cycle.start_time && cycle.end_time
         ? `${cycle.start_time} ~ ${cycle.end_time}`
         : cycle.start_time || cycle.end_time || "—",
       formatBeaconPeriod(cycle.beacon_period_ms ?? cycle.beacon_period ?? data.beacon_period_ms),
       formatCount(cycle.frame_count),
-      formatRate(cycle.success_rate),
-      formatRate(cycle.offline_rate),
-      formatCount(cycle.active_sta_count),
-    ];
+      formatCount(cycle.assoc_count),
+      formatCount(cycle.proxy_change_count),
+      formatFrameRate(cycle.frame_rate),
+    );
+
     cells.forEach((value, index) => {
-      const cell = document.createElement("td");
-      cell.textContent = value;
-      if (index === 0) cell.className = "route";
+      const cell = makeElement("td", "", value);
+      if (multi && index === 0) cell.className = "route nid-cell";
+      else if (!multi && index === 0) cell.className = "route";
       row.append(cell);
     });
 
-    const ratingCell = document.createElement("td");
-    const pill = document.createElement("span");
-    pill.className = `status-pill ${ratingInfo.className}`;
-    pill.textContent = ratingInfo.label;
-    ratingCell.append(pill);
+    const ratingCell = makeElement("td");
+    ratingCell.append(makeElement("span", `status-pill ${ratingInfo.className}`, ratingInfo.label));
+    // 有 00E4 上报帧时仍展示成功率/离线率；无则不加（成功率为 null）
+    const rateParts = [];
+    if (cycle.success_rate != null) rateParts.push(`成功率 ${formatRate(cycle.success_rate)}`);
+    if (cycle.offline_rate != null) rateParts.push(`离线率 ${formatRate(cycle.offline_rate)}`);
+    if (rateParts.length) {
+      ratingCell.append(makeElement("span", "cycle-rate-note", rateParts.join(" · ")));
+    }
     row.append(ratingCell);
-
-    networkElements.rows.append(row);
+    tbody.append(row);
   }
-
-  drawSuccessRateChart(cycles);
 }
 
 // 原生 canvas 折线图：周期成功率趋势（不引入外部库）
