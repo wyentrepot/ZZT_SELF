@@ -74,6 +74,10 @@ FRMTYPE_CENTRAL_BEACON_ALIASES = ("广播信标", "中央信标")
 # B 档：时隙占用/上行余量（CSMA 时隙占比阈值，对齐 A1「绑定:CSMA≈4:1」推算）
 SLOT_CSMA_RATIO_DEGRADED = 60.0  # CSMA 时隙占比 >60% → 降级（CSMA 占比过高→拥塞风险）
 SLOT_CSMA_RATIO_FAULT = 80.0     # CSMA 时隙占比 >80% → 故障（CSMA 接近满占，无上行余量）
+# B 档新定义：CSMA 时段实际帧密度/拥塞（国网通用无绑定时隙，改用帧密度判级）
+# 帧密度 = 非信标帧数 / 信标周期秒（帧/秒）；峰值超阈值判拥塞。初值可调。
+CSMA_DENSITY_DEGRADED = 50.0     # CSMA 时段帧密度峰值 >50 帧/秒 → 降级（竞争趋拥塞）
+CSMA_DENSITY_FAULT = 100.0       # CSMA 时段帧密度峰值 >100 帧/秒 → 故障（重度拥塞）
 # C 档：路由/信道切换
 ROUTE_ESTIMATE_REMAIN_LOW = 30.0  # 路由评估剩余时间 <30s 视为路由紧张 → 降级
 CHANNEL_CHANGE_FAULT = 10         # 信道变更事件次数 >10 视为频繁切换 → 降级
@@ -488,6 +492,175 @@ def _frames_duration_s(frames: list[dict]) -> float:
     return (max(valid) - min(valid)) / 1000.0 if valid else 0.0
 
 
+def assess_frames_periods(
+    frames: list[dict],
+    beacon_period_ms: int,
+    stability_level: Optional[str] = None,
+    csma_level: Optional[str] = None,
+    route_channel_level: Optional[str] = None,
+) -> list[dict]:
+    """按中央信标周期把【所有帧】分桶统计（不依赖 00E4 分钟上报记录）。
+
+    国网通用日志通常没有 00E4 分钟上报帧，原 assess_periods 依赖
+    minute_reports 导致 cycles 为空；本函数改为直接按帧时间戳分桶，
+    保证任何日志只要有帧就能产出周期评估。
+
+    frames: 帧列表，每条含 log_time（HH:MM:SS.mmm）/ raw_hex / summary_json。
+    返回桶列表，每桶：
+      {period_start, period_end, start_time, end_time, beacon_period_ms,
+       frame_count, beacon_frame_count, assoc_count, assoc_ratio,
+       proxy_change_count, proxy_change_ratio, frame_rate,
+       level, rating, level_reason}
+    帧时间解析失败全部跳过时返回 []。
+    """
+    period_ms = int(beacon_period_ms or 0)
+    if period_ms <= 0:
+        raise ValueError("beacon_period_ms 必须为正数")
+
+    # 用帧时间戳分桶（复用 _absolute_ms 处理跨天）
+    buckets: dict[int, list[dict]] = {}
+    for item in frames:
+        if not isinstance(item, dict):
+            continue
+        ms = _clock_ms(item.get("log_time"))
+        if ms is None:
+            continue
+        start = ms - (ms % period_ms)
+        buckets.setdefault(start, []).append(item)
+
+    order = {HEALTHY: 0, DEGRADED: 1, FAULT: 2}
+    levels = [lv for lv in (stability_level, csma_level, route_channel_level) if lv]
+
+    cycles = []
+    for start in sorted(buckets):
+        rows = buckets[start]
+        frame_count = len(rows)
+        # 帧型计数（该桶）
+        stats = count_frame_types(rows)
+        assoc_count = stats.get(FRMTYPE_ASSOC, 0)
+        proxy_change_count = stats.get(FRMTYPE_PROXY_CHANGE, 0)
+        beacon_count = sum(
+            stats.get(key, 0) for key in FRMTYPE_CENTRAL_BEACON_ALIASES
+        )
+        assoc_ratio = assoc_count * 100.0 / frame_count if frame_count else None
+        proxy_ratio = (
+            proxy_change_count * 100.0 / frame_count if frame_count else None
+        )
+        bucket_s = period_ms / 1000.0
+        frame_rate = frame_count / bucket_s if bucket_s else None
+
+        level, reason = HEALTHY, None
+        if levels:
+            worst = max(levels, key=lambda lv: order.get(lv, 0))
+            if worst != HEALTHY:
+                level = worst
+                reason = f"综合维度降级（{worst}）"
+        cycles.append({
+            "period_start": start,
+            "period_end": start + period_ms,
+            "start_time": _clock_text(start),
+            "end_time": _clock_text(start + period_ms),
+            "beacon_period_ms": period_ms,
+            "frame_count": frame_count,
+            "beacon_frame_count": beacon_count,
+            "assoc_count": assoc_count,
+            "assoc_ratio": round(assoc_ratio, 2) if assoc_ratio is not None else None,
+            "proxy_change_count": proxy_change_count,
+            "proxy_change_ratio": round(proxy_ratio, 2) if proxy_ratio is not None else None,
+            "frame_rate": round(frame_rate, 2) if frame_rate is not None else None,
+            "stability_level": stability_level,
+            "slot_level": csma_level,
+            "route_channel_level": route_channel_level,
+            "level": level,
+            "rating": level,
+            "level_reason": reason,
+        })
+    return cycles
+
+
+def assess_csma_congestion(frames: list[dict], beacon_period_ms: int) -> dict:
+    """B 档新定义：CSMA 时段实际帧密度/拥塞（不再用 CSMA 配置占比判级）。
+
+    国网通用场景无绑定时隙；网络好坏的时隙维度应反映 CSMA 竞争时段的
+    实际流量密度。按信标周期分桶，统计每桶「非信标帧数 / 周期秒」的帧密度，
+    峰值/均值超阈值判拥塞。
+
+    返回 {enabled, csma_density_mean, csma_density_peak, csma_config_ratio,
+          level, reason}。
+    - csma_config_ratio：CSMA 配置占信标周期比例（extract_slot_fields），
+      仅展示不判级（对齐用户确认：配置占比不是健康指标）。
+    - 阈值常量 CSMA_DENSITY_DEGRADED / CSMA_DENSITY_FAULT（帧/秒）。
+    """
+    period_ms = int(beacon_period_ms or 0)
+    if period_ms <= 0:
+        return {
+            "enabled": False, "csma_density_mean": None,
+            "csma_density_peak": None, "csma_config_ratio": None,
+            "level": HEALTHY, "reason": "invalid_period",
+        }
+
+    buckets: dict[int, list[dict]] = {}
+    for item in frames:
+        if not isinstance(item, dict):
+            continue
+        ms = _clock_ms(item.get("log_time"))
+        if ms is None:
+            continue
+        start = ms - (ms % period_ms)
+        buckets.setdefault(start, []).append(item)
+
+    if not buckets:
+        return {
+            "enabled": False, "csma_density_mean": None,
+            "csma_density_peak": None, "csma_config_ratio": None,
+            "level": HEALTHY, "reason": "no_frames",
+        }
+
+    bucket_s = period_ms / 1000.0
+    densities = []
+    for start, rows in buckets.items():
+        stats = count_frame_types(rows)
+        beacon_count = sum(
+            stats.get(key, 0) for key in FRMTYPE_CENTRAL_BEACON_ALIASES
+        )
+        non_beacon = len(rows) - beacon_count
+        if non_beacon > 0 and bucket_s:
+            densities.append(non_beacon / bucket_s)
+
+    # CSMA 配置占比（仅展示）：从中央信标 Detail 提取
+    config_ratio = None
+    for item in frames:
+        if not isinstance(item, dict):
+            continue
+        detail = _extract_detail(item.get("summary_json"))
+        slot_field = extract_slot_fields(detail)
+        if slot_field and slot_field.get("beacon_period_ms"):
+            config_ratio = round(
+                slot_field["csma_slot_ms"] * 100.0
+                / slot_field["beacon_period_ms"], 2
+            )
+            break
+
+    peak = max(densities) if densities else None
+    mean = sum(densities) / len(densities) if densities else None
+    level, reason = HEALTHY, None
+    if peak is not None and peak > CSMA_DENSITY_FAULT:
+        level = FAULT
+        reason = f"CSMA 时段帧密度峰值 {peak:.1f} 帧/秒 超故障阈值 {CSMA_DENSITY_FAULT:.0f}"
+    elif peak is not None and peak > CSMA_DENSITY_DEGRADED:
+        level = DEGRADED
+        reason = f"CSMA 时段帧密度峰值 {peak:.1f} 帧/秒 超降级阈值 {CSMA_DENSITY_DEGRADED:.0f}"
+
+    return {
+        "enabled": True,
+        "csma_density_mean": round(mean, 2) if mean is not None else None,
+        "csma_density_peak": round(peak, 2) if peak is not None else None,
+        "csma_config_ratio": config_ratio,
+        "level": level,
+        "reason": reason,
+    }
+
+
 def assess_stability(
     frame_type_stats: dict, total_duration_s: float, beacon_period_ms: int,
 ) -> dict:
@@ -817,7 +990,8 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
 
 def _network_summary(cycles: list[dict], stability: Optional[dict] = None,
                      slot: Optional[dict] = None,
-                     route_channel: Optional[dict] = None) -> dict:
+                     route_channel: Optional[dict] = None,
+                     csma: Optional[dict] = None) -> dict:
     """网络级汇总：总体评级、平均成功率、离线率、各评级周期数、稳定性。
 
     stability: assess_stability 的返回（可选），其 level 参与总体最差合并，
@@ -825,6 +999,8 @@ def _network_summary(cycles: list[dict], stability: Optional[dict] = None,
     slot: assess_slot 的返回（B 档，可选），level 参与最差合并，透出 summary.slot。
     route_channel: assess_route_channel 的返回（C 档，可选），level 参与最差
     合并，透出 summary.route_channel。
+    csma: assess_csma_congestion 的返回（B 档新定义，可选），level 参与最差
+    合并，透出 summary.csma_congestion。
     """
     levels = [cycle["level"] for cycle in cycles]
     if stability is not None:
@@ -833,8 +1009,10 @@ def _network_summary(cycles: list[dict], stability: Optional[dict] = None,
         levels = [*levels, slot["level"]]
     if route_channel is not None:
         levels = [*levels, route_channel["level"]]
-    rates = [c["success_rate"] for c in cycles if c["success_rate"] is not None]
-    offline = [c["offline_rate"] for c in cycles if c["offline_rate"] is not None]
+    if csma is not None:
+        levels = [*levels, csma["level"]]
+    rates = [c["success_rate"] for c in cycles if c.get("success_rate") is not None]
+    offline = [c["offline_rate"] for c in cycles if c.get("offline_rate") is not None]
     counts = {
         HEALTHY: levels.count(HEALTHY),
         DEGRADED: levels.count(DEGRADED),
@@ -852,6 +1030,8 @@ def _network_summary(cycles: list[dict], stability: Optional[dict] = None,
         summary["slot"] = slot
     if route_channel is not None:
         summary["route_channel"] = route_channel
+    if csma is not None:
+        summary["csma_congestion"] = csma
     return summary
 
 
@@ -950,18 +1130,42 @@ def assess_by_network(frames, records) -> dict:
         route_channel = assess_route_channel(
             frame_type_stats, route_fields, channel_fields
         )
+        # B 档新定义：CSMA 时段实际帧密度/拥塞（国网通用无 00E4 上报帧，
+        # 也保证 cycles 基于所有帧而非仅分钟上报记录）
+        csma = assess_csma_congestion(group_frames, scan["beacon_period_ms"] or 0)
 
         cycles = []
         if scan["beacon_period_ms"] is not None:
             try:
-                cycles = assess_periods(
-                    group_records, scan["beacon_period_ms"], active_sta,
+                # 主路径：按所有帧分桶（不依赖 00E4 分钟上报）
+                cycles = assess_frames_periods(
+                    group_frames, scan["beacon_period_ms"],
                     stability_level=stability["level"],
-                    slot_level=slot["level"],
+                    csma_level=csma["level"],
                     route_channel_level=route_channel["level"],
                 )
             except ValueError:
                 cycles = []
+            # 补充：若存在 00E4 分钟上报记录，另行算成功率/离线率并入（可选）
+            if group_records and cycles:
+                try:
+                    extra = assess_periods(
+                        group_records, scan["beacon_period_ms"], active_sta,
+                        stability_level=stability["level"],
+                        slot_level=slot["level"],
+                        route_channel_level=route_channel["level"],
+                    )
+                    # 用上报记录的成功率/离线率覆盖同周期字段（保持向前兼容）
+                    extra_by_start = {c["period_start"]: c for c in extra}
+                    for c in cycles:
+                        extra_c = extra_by_start.get(c["period_start"])
+                        if extra_c:
+                            c["success_rate"] = extra_c.get("success_rate")
+                            c["offline_rate"] = extra_c.get("offline_rate")
+                            c["success_count"] = extra_c.get("success_count")
+                            c["offline_sta_count"] = extra_c.get("offline_sta_count")
+                except ValueError:
+                    pass
         networks.append({
             "nid": nid,
             "cco_mac": cco_mac,
@@ -974,6 +1178,7 @@ def assess_by_network(frames, records) -> dict:
             "cycles": cycles,
             "summary": _network_summary(
                 cycles, stability=stability, slot=slot, route_channel=route_channel,
+                csma=csma,
             ),
         })
 

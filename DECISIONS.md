@@ -720,3 +720,14 @@
 - **理由**：用户要求 ABC 全纳入（时隙占用/上行余量、关联代理变更、路由跳数/信道切换），转向国网通用标准；Detail 文本是当前能拿到的结构化程度最高的数据源。
 - **影响**：`network_assessment.py` 新增 extract_slot_fields/assess_slot/extract_route_fields/extract_channel_fields/assess_route_channel + 常量（60/80/30/10）；接口 `summary.slot`、`summary.route_channel`、`cycles[].slot_level/route_channel_level`。单测 42 passed（原 25+新 17），回归 72 passed。A 档（ADR-37）+B/C 档（本 ADR）共同将判定从 2 维扩到 5 维。
 - **被取代**：无（新增决策，扩展 ADR-36/37）。
+
+## ADR-39 网络承载评估 cycles 修复 + B 档改定义（CSMA 帧密度）
+
+- **日期**：2026-08-25
+- **状态**：✅ 生效
+- **决定**：
+  1. **cycles 不再依赖 00E4 分钟上报记录**：原 `assess_by_network` 用 `minute_reports`（仅 00E4 分钟上报帧入库，log_service.py:340）分桶生成 cycles，国网通用日志无 00E4 → cycles 空 → 前端「暂无周期评估数据」。新增 `assess_frames_periods`：按中央信标周期把**所有帧**分桶统计（frame_count/beacon_frame_count/assoc/proxy 占比/frame_rate），保证任何日志只要有帧就能产出周期评估；00E4 上报记录存在时仍补充 success_rate/offline_rate（向后兼容）。
+  2. **B 档改定义**：放弃「CSMA 配置占信标周期比例 >60%/80%」判级（那是配置参数，非健康指标，且 A1 的 4:1 属安徽绑定时隙场景、国网通用无绑定时隙）。改为 `assess_csma_congestion`：统计 CSMA 时段**实际帧密度**（非信标帧数/周期秒），峰值 >50 帧/秒 降级、>100 帧/秒 故障（初值可调）。CSMA 配置占比仅作展示字段（csma_config_ratio）。
+- **理由**：用户实测「按中央信标周期的网络承载能力评估」页面显示「暂无周期评估数据」；根因是评估依赖安徽分钟采集专属的 00E4 上报帧。用户拍板 B 档改为 CSMA 时段实际帧密度/拥塞。
+- **影响**：`network_assessment.py` 新增 `assess_frames_periods`/`assess_csma_congestion` + 常量（CSMA_DENSITY_DEGRADED=50/FAULT=100）；`assess_by_network` cycles 主路径改用帧分桶；`_network_summary` 增 csma 参数透出 `summary.csma_congestion`；cycles 桶新增 stability_level/slot_level/route_channel_level 兼容字段。单测 42 passed，回归 72 passed。实测无 00E4 日志（COM4_090510，minute_reports=0）产出 221 个周期（修复前为 0）。
+- **被取代**：无（新增决策，修正 ADR-38 的 B 档判级口径）。
