@@ -30,9 +30,15 @@ import re
 import statistics
 from typing import Iterable, Optional
 
-# 协议规定的中央信标周期范围：1~10 秒
+# 到达间隔推算的合法范围：交错网络里相邻中央信标到达间隔应在 1~10 秒，
+# 超出视为乱序/异常（仅用于 _estimate_period 的间隔过滤，不约束信标参数路径）。
 BEACON_PERIOD_MIN_MS = 1_000
 BEACON_PERIOD_MAX_MS = 10_000
+# 信标参数路径的合法范围：Detail「信标周期Xms」是协议权威值（同相线周期），
+# 实际设备可配置更大（实测 14878ms），故放宽为 500ms~120s；低于 500ms 视为
+# 解析异常，高于 120s 超出常见信标周期（路由周期 20~420s 是另一概念）。
+BEACON_PARAM_MIN_MS = 500
+BEACON_PARAM_MAX_MS = 120_000
 # 同一信标被重复抓包的时间窗口（实测重复抓包间隔 <200ms，留 800ms 余量）
 BEACON_DUP_WINDOW_MS = 800
 # 中央信标识别成功所需的最少去重样本数（间隔数）
@@ -230,9 +236,11 @@ def scan_beacon_periods(frames) -> dict:
       识别不出信标时 beacon_period_ms=None，不抛异常。
 
     周期判定优先读中央信标 Detail 里的「信标周期Xms」参数：协议定义的
-    「信标周期」= 同相线 CCO 中央信标重复间隔（约 1~10s），而相邻中央信标
-    到达间隔在三相交错网络里是三相轮发的短间隔（约 1/3），不能代表同相线
-    周期，故参数优先（用户拍板）。参数提取失败/越界时才退回到达间隔推算。
+    「信标周期」= 同相线 CCO 中央信标重复间隔，是协议权威值（实测设备可配
+    置 14878ms 等大周期）；而相邻中央信标到达间隔在三相交错网络里是三相
+    轮发的短间隔（约 1/3），不能代表同相线周期，故参数优先（用户拍板）。
+    参数落在 [BEACON_PARAM_MIN_MS, BEACON_PARAM_MAX_MS]（500ms~120s）即采
+    信；提取失败/越界时才退回到达间隔推算（1~10s）。
     """
     records = []
     for item in frames:
@@ -251,7 +259,9 @@ def scan_beacon_periods(frames) -> dict:
     # 参数优先路径（路径零）：读取中央信标帧 Detail 的「信标周期Xms」。
     # 中央信标判定：FrmType ∈ 中央信标别名，或解码 frm_type 为信标帧
     # （FRM_TYPE_BEACON，中央信标周期性广播时隙分配）。收集成功样本的众数，
-    # 落在协议范围 [1s,10s] 内即直接返回，不再用到达间隔推算。
+    # 落在信标参数范围 [BEACON_PARAM_MIN_MS, BEACON_PARAM_MAX_MS]（500ms~
+    # 120s）内即直接返回（协议权威值，不受 1~10s 间隔推算范围约束），不再
+    # 用到达间隔推算。
     period_params = []
     for item in frames:
         if isinstance(item, (tuple, list)):
@@ -273,7 +283,7 @@ def scan_beacon_periods(frames) -> dict:
             period_params.append(fields["beacon_period_ms"])
     if period_params:
         param_mode = statistics.mode(period_params)
-        if BEACON_PERIOD_MIN_MS <= param_mode <= BEACON_PERIOD_MAX_MS:
+        if BEACON_PARAM_MIN_MS <= param_mode <= BEACON_PARAM_MAX_MS:
             sample_count = len(period_params)
             return {
                 "beacon_period_ms": param_mode,

@@ -1114,12 +1114,20 @@ body[data-source="serial"] [data-mode="serial"] { display: block; }
 /* ---------- 网络承载评估 ---------- */
 .network-assessment-layout {
   display: flex;
+  flex-direction: column; /* 明确纵向：快照 / 指标卡 / 明细表自上而下排列，避免并排挤压 */
   flex: 1 1 auto;
   min-height: 0;
   margin-top: 10px;
-  overflow: hidden;
+  overflow-x: hidden; /* 页面整体纵向滚动，取代原先各区块内部小滚动条 */
+  overflow-y: auto;
 }
-.network-assessment-layout .list-panel { width: 100%; }
+.network-assessment-layout .list-panel {
+  width: 100%;
+  flex: 1 0 auto; /* 内容短时撑满容器高度，内容长时随内容自然增高交由页面滚动 */
+  overflow: visible; /* 不再作为内部滚动容器，避免裁剪指标卡 / 拦截表格表头 sticky */
+}
+/* 去掉 .list-panel 的 overflow:hidden 裁剪后，补齐其顶部圆角保持观感 */
+.network-assessment-layout .panel-toolbar { border-radius: 10px 10px 0 0; }
 .network-toolbar { display: flex; align-items: center; gap: 8px; }
 .network-toolbar .secondary-button,
 .network-toolbar .primary-button { height: 32px; }
@@ -1183,9 +1191,9 @@ body[data-source="serial"] [data-mode="serial"] { display: block; }
 
 /* ---------- 网络指标卡片 ---------- */
 .network-metrics-block {
-  flex: 0 1 auto;
-  max-height: min(46vh, 460px);
-  overflow-y: auto;
+  flex: 0 0 auto; /* 不收缩，指标卡区按内容高度自然展开，卡片不被压缩 */
+  max-height: none; /* 去掉 46vh/460px 上限，多网络时全部卡片完整显示 */
+  overflow: visible; /* 不启用卡内滚动，改由页面整体滚动查看 */
   padding: 10px 14px 0;
 }
 .network-metrics-block .detail-subtitle { margin: 0 0 10px; }
@@ -1237,6 +1245,12 @@ body[data-source="serial"] [data-mode="serial"] { display: block; }
 .network-metric-row .status-pill.rating-degraded { color: #f2c14e; background: rgba(242, 193, 78, .14); }
 .network-metric-row .status-pill.rating-fault { color: #ff7385; background: rgba(255, 115, 133, .14); }
 .network-metric-row .status-pill.rating-unknown { color: #8195a8; background: rgba(129, 149, 168, .12); }
+
+/* 周期明细表：跟随内容高度自然展开，不再内部滚动，与指标卡一起由页面整体滚动 */
+.network-assessment-layout .table-shell {
+  flex: 1 0 auto; /* 明细行少时撑满剩余高度，行多时随内容增高交由页面滚动 */
+  overflow: visible;
+}
 
 /* NID 列与周期表 */
 .nid-th { width: 90px; }

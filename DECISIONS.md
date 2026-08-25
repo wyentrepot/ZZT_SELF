@@ -743,3 +743,14 @@
 - **理由**：用户拍板方案 1（优先读信标参数），并指出到达间隔会受三相交错影响算错周期。
 - **影响**：`scan_beacon_periods` method 新增 `beacon_param`；`extract_slot_fields` 正则兼容。实测两日志（162044/090510）均从到达间隔 2100ms → 参数 2094ms（method=beacon_param，conf 1.0），与信标 Detail `信标周期2094ms` 吻合。单测 48 passed，全 listener 201 passed。
 - **被取代**：无（新增决策，修正 ADR-36/38 的周期口径）。
+
+## ADR-41 信标参数周期范围放宽 + 前端指标卡布局修复
+
+- **日期**：2026-08-25
+- **状态**：✅ 生效
+- **决定**：
+  1. **beacon_param 周期范围放宽**：原 beacon_param 路径用 [1000,10000]ms（协议 1~10s）限制参数周期，导致设备配置更大周期（实测并发抄表大文件 `信标周期14878ms`≈14.9s）越界回退到 sof_cluster 间隔推算、误算 1.7s。新增 `BEACON_PARAM_MIN_MS=500` / `BEACON_PARAM_MAX_MS=120000` 用于参数采信范围；到达间隔兜底 `_estimate_period` 仍限 1~10s（交错间隔语义）。
+  2. **前端指标卡布局修复**：`network-assessment-layout` 改为纵向 flex + 页面整体滚动，`.network-metrics-block` 去掉 `max-height:min(46vh,460px)` 截断（`max-height:none`+不可收缩），`.list-panel`/`.table-shell` 放开 overflow——多网络指标卡完整展开不被明细表掩盖/截断，表头 sticky 仍生效。
+- **理由**：用户反馈信标周期仍显示 1.7s（实测为该大文件真实周期 14.9s 被硬编码 1~10s 上界误拦）；指标卡被下方明细表截断掩盖。
+- **影响**：`network_assessment.py` 新增 `BEACON_PARAM_MIN_MS/MAX_MS`（500/120000）；`styles.css`（listener+workbench 双挂）网络评估布局改纵向+整体滚动、指标卡无高度截断。实测大文件 53 万帧：1700ms(sof_cluster,conf0.248) → **14878ms(beacon_param,conf1.0)**。单测 51 passed，全 listener 201+ passed。
+- **被取代**：无（新增决策，修正 ADR-40 的参数范围口径）。

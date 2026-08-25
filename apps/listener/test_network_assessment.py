@@ -224,8 +224,9 @@ class BeaconParamPriorityTests(unittest.TestCase):
         self.assertEqual(result["method"], "central_beacon")
         self.assertAlmostEqual(result["beacon_period_ms"], 2_000, delta=100)
 
-    def test_param_out_of_range_falls_back(self):
-        # Detail 信标周期 500ms（低于协议下界 1s）→ 不可信，回退到达间隔推算
+    def test_param_below_min_falls_back(self):
+        # Detail 信标周期 300ms < BEACON_PARAM_MIN_MS(500ms) → 视为解析异常，
+        # 参数不采信，回退到达间隔推算
         base = 8 * 3600
         frames = []
         for i in range(10):
@@ -235,7 +236,7 @@ class BeaconParamPriorityTests(unittest.TestCase):
                 "raw_hex": build_central_beacon(cnt=i),
                 "summary_json": json.dumps(
                     {"FrmType": "中央信标",
-                     "Detail": "|时隙分配[信标周期500ms 信标时隙长度16ms "
+                     "Detail": "|时隙分配[信标周期300ms 信标时隙长度16ms "
                                "RF信标时隙长度16ms CSMA时隙大小500ms]|"}
                 ),
             })
@@ -243,6 +244,63 @@ class BeaconParamPriorityTests(unittest.TestCase):
         result = na.scan_beacon_periods(frames)
         self.assertEqual(result["method"], "central_beacon")
         self.assertAlmostEqual(result["beacon_period_ms"], 2_000, delta=100)
+
+    def _param_beacon_frames(self, period_ms, count=5, gap_s=2):
+        """构造 count 条中央信标帧，Detail 统一带「信标周期{period_ms}ms」参数。"""
+        detail = (
+            f"|时隙分配[信标周期{period_ms}ms 信标时隙长度16ms "
+            f"RF信标时隙长度16ms CSMA时隙大小500ms]|"
+        )
+        base = 8 * 3600
+        frames = []
+        for i in range(count):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frames.append({
+                "log_time": t,
+                "raw_hex": build_central_beacon(cnt=i),
+                "summary_json": json.dumps(
+                    {"FrmType": "中央信标", "Detail": detail}
+                ),
+            })
+            base += gap_s
+        return frames
+
+    def test_param_14878ms_accepted(self):
+        # 实测设备信标周期 14878ms（>10s），参数路径直接采信，不再越界回退到
+        # 间隔推算（修复前该值超出 [1s,10s] 会回退算出错误的 1700ms）
+        detail = (
+            "|时隙分配[信标周期14878ms 信标时隙长度36ms RF信标时隙长度36ms "
+            "CSMA时隙大小500ms]|"
+        )
+        base = 8 * 3600
+        frames = []
+        for i in range(5):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frames.append({
+                "log_time": t,
+                "raw_hex": build_central_beacon(cnt=i),
+                "summary_json": json.dumps(
+                    {"FrmType": "中央信标", "Detail": detail}
+                ),
+            })
+            base += 2
+        result = na.scan_beacon_periods(frames)
+        self.assertEqual(result["method"], "beacon_param")
+        self.assertEqual(result["beacon_period_ms"], 14878)
+        self.assertEqual(result["sample_count"], 5)
+        self.assertEqual(result["interval_count"], 0)
+
+    def test_param_boundary_min_accepted(self):
+        # 参数恰好 500ms（BEACON_PARAM_MIN_MS 下界，含）→ 采信
+        result = na.scan_beacon_periods(self._param_beacon_frames(500))
+        self.assertEqual(result["method"], "beacon_param")
+        self.assertEqual(result["beacon_period_ms"], 500)
+
+    def test_param_boundary_max_accepted(self):
+        # 参数恰好 120000ms（BEACON_PARAM_MAX_MS 上界，含）→ 采信
+        result = na.scan_beacon_periods(self._param_beacon_frames(120_000))
+        self.assertEqual(result["method"], "beacon_param")
+        self.assertEqual(result["beacon_period_ms"], 120_000)
 
     def test_assess_by_network_scan_method_beacon_param(self):
         # 网络级：帧带 Detail 参数时，scan_method 应为 beacon_param、周期取参数值
