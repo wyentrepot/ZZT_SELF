@@ -159,6 +159,103 @@ class BeaconPeriodTests(unittest.TestCase):
         self.assertEqual(result["method"], "undetected")
 
 
+class BeaconParamPriorityTests(unittest.TestCase):
+    """scan_beacon_periods 参数优先：中央信标 Detail「信标周期Xms」为权威周期。
+
+    协议「信标周期」= 同相线 CCO 中央信标重复间隔；相邻到达间隔在三相交错
+    网络里是短间隔，不能代表同相线周期，故 Detail 参数优先（用户拍板）。
+    """
+
+    SLOT_PARAM_DETAIL = (
+        "|关联标志|组网seq:238|信标条目:4|站点能力[全网]|路由参数[CCO "
+        "|时隙分配[信标周期6000ms 信标时隙长度16ms RF信标时隙长度16ms "
+        "CSMA时隙大小500ms]|无线路由参数"
+    )
+
+    def _beacon_frame(self, seconds, cnt):
+        t = f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}.000"
+        return {
+            "log_time": t,
+            "raw_hex": build_central_beacon(cnt=cnt),
+            "summary_json": json.dumps(
+                {"FrmType": "中央信标", "Detail": self.SLOT_PARAM_DETAIL}
+            ),
+        }
+
+    def test_param_wins_over_inter_arrival(self):
+        # 5 条中央信标帧，Detail 带「信标周期6000ms」；时间戳故意 2s 一跳
+        # （三相交错短间隔）→ 参数路径优先返回 6000 而非 2000
+        base = 8 * 3600
+        frames = [self._beacon_frame(base + i * 2, cnt=i) for i in range(5)]
+        result = na.scan_beacon_periods(frames)
+        self.assertEqual(result["method"], "beacon_param")
+        self.assertEqual(result["beacon_period_ms"], 6000)
+        self.assertEqual(result["sample_count"], 5)
+        self.assertEqual(result["interval_count"], 0)
+        self.assertAlmostEqual(result["confidence"], 5 / 8, delta=1e-3)
+
+    def test_fallback_when_no_detail_param(self):
+        # 纯 hex 无 summary_json → 无 Detail 参数 → 走到达间隔推算（central_beacon）
+        frames = []
+        base = 8 * 3600
+        for i in range(10):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frames.append((t, build_central_beacon(cnt=i)))
+            base += 2
+        result = na.scan_beacon_periods(frames)
+        self.assertEqual(result["method"], "central_beacon")
+        self.assertAlmostEqual(result["beacon_period_ms"], 2_000, delta=100)
+
+    def test_fallback_when_detail_missing_slot_config(self):
+        # summary_json 存在但 Detail 无「时隙分配」参数 → 仍走到达间隔推算
+        base = 8 * 3600
+        frames = []
+        for i in range(10):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frames.append({
+                "log_time": t,
+                "raw_hex": build_central_beacon(cnt=i),
+                "summary_json": json.dumps(
+                    {"FrmType": "中央信标", "Detail": "|组网seq:238|"}
+                ),
+            })
+            base += 2
+        result = na.scan_beacon_periods(frames)
+        self.assertEqual(result["method"], "central_beacon")
+        self.assertAlmostEqual(result["beacon_period_ms"], 2_000, delta=100)
+
+    def test_param_out_of_range_falls_back(self):
+        # Detail 信标周期 500ms（低于协议下界 1s）→ 不可信，回退到达间隔推算
+        base = 8 * 3600
+        frames = []
+        for i in range(10):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frames.append({
+                "log_time": t,
+                "raw_hex": build_central_beacon(cnt=i),
+                "summary_json": json.dumps(
+                    {"FrmType": "中央信标",
+                     "Detail": "|时隙分配[信标周期500ms 信标时隙长度16ms "
+                               "RF信标时隙长度16ms CSMA时隙大小500ms]|"}
+                ),
+            })
+            base += 2
+        result = na.scan_beacon_periods(frames)
+        self.assertEqual(result["method"], "central_beacon")
+        self.assertAlmostEqual(result["beacon_period_ms"], 2_000, delta=100)
+
+    def test_assess_by_network_scan_method_beacon_param(self):
+        # 网络级：帧带 Detail 参数时，scan_method 应为 beacon_param、周期取参数值
+        base = 8 * 3600
+        frame_dicts = []
+        for i in range(5):
+            frame_dicts.append(self._beacon_frame(base + i * 2, cnt=i))
+        result = na.assess_by_network(frame_dicts, [])
+        network = result["networks"][0]
+        self.assertEqual(network["scan_method"], "beacon_param")
+        self.assertEqual(network["beacon_period_ms"], 6000)
+
+
 class NetworkIsolationTests(unittest.TestCase):
     """两个不同 NID 帧流分别估出各自周期，不混算。"""
 
@@ -331,6 +428,19 @@ class SlotAndRouteChannelDimensionTests(unittest.TestCase):
     def test_extract_slot_fields_none(self):
         self.assertIsNone(na.extract_slot_fields("|组网seq:238|"))
         self.assertIsNone(na.extract_slot_fields(None))
+
+    def test_extract_slot_fields_alloc_variant(self):
+        # 实测 DLL Detail 用「时隙分配」而非「时隙配置」，两种写法都应能提取
+        detail = (
+            "|关联标志|组网seq:238|信标条目:4|站点能力[全网]|路由参数[CCO "
+            "|时隙分配[信标周期2094ms 信标时隙长度16ms "
+            "RF信标时隙长度16ms CSMA时隙大小500ms]|无线路由参数"
+        )
+        fields = na.extract_slot_fields(detail)
+        self.assertEqual(fields["beacon_period_ms"], 2094)
+        self.assertEqual(fields["beacon_slot_ms"], 16)
+        self.assertEqual(fields["rf_beacon_slot_ms"], 16)
+        self.assertEqual(fields["csma_slot_ms"], 500)
 
     def test_assess_slot_healthy(self):
         # 500/2094 ≈ 23.9% → 健康

@@ -7,7 +7,8 @@
       · 中央信标（FCH[0]&7==0 定界符=信标；MPDU[0]&7==2 信标类型=中央信标）
       · CCO MAC（MPDU[2:8]，6 字节）
       · 信标周期计数（MPDU[8:12]，小端 UInt32，上电从 0 每周期 +1）
-  - 按实测相邻信标到达间隔（去重重复抓包）估算信标周期。
+  - 按实测相邻信标到达间隔（去重重复抓包）估算信标周期；中央信标帧 Detail
+    携带「信标周期Xms」权威参数时优先采用（同相线周期，用户拍板）。
   - 按网络（NID，能取到 CCO MAC 时用联合键）隔离分组统计。
 
 三级判定（记忆库 B 类规则）：
@@ -85,8 +86,10 @@ CHANNEL_CHANGE_FAULT = 10         # 信道变更事件次数 >10 视为频繁切
 _TIME_PATTERN = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$")
 
 # B 档/C 档 Detail 文本提取正则（实测格式）
+# DLL 输出中央信标 Detail 用「时隙分配[...]」（实测 COM4_20260812），
+# 旧代码误写成「时隙配置」导致提取不到；两种写法均兼容。
 _SLOT_CONFIG_RE = re.compile(
-    r"时隙配置\[信标周期(\d+)ms 信标时隙长度(\d+)ms "
+    r"时隙(?:分配|配置)\[信标周期(\d+)ms 信标时隙长度(\d+)ms "
     r"RF信标时隙长度(\d+)ms CSMA时隙大小(\d+)ms\]"
 )
 _ROUTE_REMAIN_RE = re.compile(r"路由评估剩余时间[:：](\d+)\s*[sS秒]")
@@ -223,8 +226,13 @@ def scan_beacon_periods(frames) -> dict:
 
     返回：
       {beacon_period_ms, confidence, method, sample_count, interval_count}
-      method ∈ {"central_beacon", "sof_cluster", "undetected"}
+      method ∈ {"beacon_param", "central_beacon", "sof_cluster", "undetected"}
       识别不出信标时 beacon_period_ms=None，不抛异常。
+
+    周期判定优先读中央信标 Detail 里的「信标周期Xms」参数：协议定义的
+    「信标周期」= 同相线 CCO 中央信标重复间隔（约 1~10s），而相邻中央信标
+    到达间隔在三相交错网络里是三相轮发的短间隔（约 1/3），不能代表同相线
+    周期，故参数优先（用户拍板）。参数提取失败/越界时才退回到达间隔推算。
     """
     records = []
     for item in frames:
@@ -239,6 +247,41 @@ def scan_beacon_periods(frames) -> dict:
 
     times = [r[0] for r in records]
     absolute = _absolute_ms(times)
+
+    # 参数优先路径（路径零）：读取中央信标帧 Detail 的「信标周期Xms」。
+    # 中央信标判定：FrmType ∈ 中央信标别名，或解码 frm_type 为信标帧
+    # （FRM_TYPE_BEACON，中央信标周期性广播时隙分配）。收集成功样本的众数，
+    # 落在协议范围 [1s,10s] 内即直接返回，不再用到达间隔推算。
+    period_params = []
+    for item in frames:
+        if isinstance(item, (tuple, list)):
+            summary_json, raw_hex = None, item[1]
+        else:
+            summary_json = item.get("summary_json")
+            raw_hex = item.get("raw_hex")
+        is_central_beacon = False
+        if _extract_frm_type(summary_json) in FRMTYPE_CENTRAL_BEACON_ALIASES:
+            is_central_beacon = True
+        else:
+            frame = _decode_frame(raw_hex)
+            if frame is not None and frame["frm_type"] == FRM_TYPE_BEACON:
+                is_central_beacon = True
+        if not is_central_beacon:
+            continue
+        fields = extract_slot_fields(_extract_detail(summary_json))
+        if fields and fields.get("beacon_period_ms"):
+            period_params.append(fields["beacon_period_ms"])
+    if period_params:
+        param_mode = statistics.mode(period_params)
+        if BEACON_PERIOD_MIN_MS <= param_mode <= BEACON_PERIOD_MAX_MS:
+            sample_count = len(period_params)
+            return {
+                "beacon_period_ms": param_mode,
+                "confidence": round(min(1.0, sample_count / 8.0), 3),
+                "method": "beacon_param",
+                "sample_count": sample_count,
+                "interval_count": 0,
+            }
 
     # 路径一：中央信标周期计数去重
     beacons = []  # (absolute_ms, cnt)
@@ -721,7 +764,8 @@ def assess_stability(
 def extract_slot_fields(detail: str) -> Optional[dict]:
     """从 Detail 文本提取时隙配置字段（中央信标周期性广播）。
 
-    实测格式：时隙配置[信标周期2094ms 信标时隙长度16ms RF信标时隙长度16ms CSMA时隙大小500ms]
+    实测格式（DLL 输出）：时隙分配[信标周期2094ms 信标时隙长度16ms RF信标时隙长度16ms CSMA时隙大小500ms]
+    旧版本 DLL 输出「时隙配置[...]」同样兼容。
     返回 {beacon_period_ms, beacon_slot_ms, rf_beacon_slot_ms, csma_slot_ms}，
     无时隙配置或信标周期非法返回 None。
     """

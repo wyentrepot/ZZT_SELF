@@ -731,3 +731,15 @@
 - **理由**：用户实测「按中央信标周期的网络承载能力评估」页面显示「暂无周期评估数据」；根因是评估依赖安徽分钟采集专属的 00E4 上报帧。用户拍板 B 档改为 CSMA 时段实际帧密度/拥塞。
 - **影响**：`network_assessment.py` 新增 `assess_frames_periods`/`assess_csma_congestion` + 常量（CSMA_DENSITY_DEGRADED=50/FAULT=100）；`assess_by_network` cycles 主路径改用帧分桶；`_network_summary` 增 csma 参数透出 `summary.csma_congestion`；cycles 桶新增 stability_level/slot_level/route_channel_level 兼容字段。单测 42 passed，回归 72 passed。实测无 00E4 日志（COM4_090510，minute_reports=0）产出 221 个周期（修复前为 0）。
 - **被取代**：无（新增决策，修正 ADR-38 的 B 档判级口径）。
+
+## ADR-40 信标周期优先读中央信标 Detail 参数（beacon_param）
+
+- **日期**：2026-08-25
+- **状态**：✅ 生效
+- **决定**：信标周期计算改为**优先读中央信标 Detail 里的 `信标周期Xms` 参数**（协议权威值），到达间隔推算降为兜底：
+  - **背景**：用户（资深工程师）指出真实信标周期是「同相线 CCO 中央信标周期」，约 1~10s（协议上界常见 10s）；原实现用「相邻中央信标到达间隔」推算，得到三相交错后的短间隔（实测 2.1s/1.7s），非同相线周期。hy3 查证 06 号 4.2.1.1 + 南网 73 号确认：CCO 在 A/B/C 三相分时交错发中央信标，协议「信标周期」= 一相上的重复间隔；周期计数全局每周期+1、同周期三相共享。
+  - **实现**：`scan_beacon_periods` 新增参数优先路径——遍历中央信标帧，经 `_extract_detail`+`extract_slot_fields` 提取 `beacon_period_ms` 取众数，落在 1000~10000ms 内直接返回 `method="beacon_param"`；提取不到/越界才回退原间隔推算。
+  - **附带修复**：`_SLOT_CONFIG_RE` 正则从 `时隙配置[` 改为 `时隙(?:分配|配置)[`（实测 DLL 输出是 `时隙分配[...]`，原正则字段名差"分配/配置"一字导致提取不到）。
+- **理由**：用户拍板方案 1（优先读信标参数），并指出到达间隔会受三相交错影响算错周期。
+- **影响**：`scan_beacon_periods` method 新增 `beacon_param`；`extract_slot_fields` 正则兼容。实测两日志（162044/090510）均从到达间隔 2100ms → 参数 2094ms（method=beacon_param，conf 1.0），与信标 Detail `信标周期2094ms` 吻合。单测 48 passed，全 listener 201 passed。
+- **被取代**：无（新增决策，修正 ADR-36/38 的周期口径）。
