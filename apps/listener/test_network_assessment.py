@@ -311,5 +311,179 @@ class StabilityDimensionTests(unittest.TestCase):
         self.assertEqual(network["summary"]["stability"]["proxy_change_count"], 1)
 
 
+class SlotAndRouteChannelDimensionTests(unittest.TestCase):
+    """B 档时隙占用 + C 档路由/信道：Detail 文本提取与判级、合并。"""
+
+    SLOT_DETAIL = (
+        "|时隙配置[信标周期2094ms 信标时隙长度16ms "
+        "RF信标时隙长度16ms CSMA时隙大小500ms]|"
+    )
+
+    def test_extract_slot_fields(self):
+        fields = na.extract_slot_fields(self.SLOT_DETAIL)
+        self.assertEqual(fields, {
+            "beacon_period_ms": 2094,
+            "beacon_slot_ms": 16,
+            "rf_beacon_slot_ms": 16,
+            "csma_slot_ms": 500,
+        })
+
+    def test_extract_slot_fields_none(self):
+        self.assertIsNone(na.extract_slot_fields("|组网seq:238|"))
+        self.assertIsNone(na.extract_slot_fields(None))
+
+    def test_assess_slot_healthy(self):
+        # 500/2094 ≈ 23.9% → 健康
+        result = na.assess_slot({}, [na.extract_slot_fields(self.SLOT_DETAIL)])
+        self.assertTrue(result["enabled"])
+        self.assertAlmostEqual(result["csma_ratio"], 23.88, delta=0.1)
+        self.assertEqual(result["csma_slot_ms"], 500)
+        self.assertEqual(result["beacon_period_ms"], 2094)
+        self.assertEqual(result["level"], na.HEALTHY)
+        self.assertIsNone(result["reason"])
+
+    def test_assess_slot_degraded(self):
+        # 1300/2000 = 65% > 60% → 降级
+        detail = ("|时隙配置[信标周期2000ms 信标时隙长度16ms "
+                  "RF信标时隙长度16ms CSMA时隙大小1300ms]|")
+        result = na.assess_slot({}, [na.extract_slot_fields(detail)])
+        self.assertAlmostEqual(result["csma_ratio"], 65.0)
+        self.assertEqual(result["level"], na.DEGRADED)
+
+    def test_assess_slot_fault(self):
+        # 1700/2000 = 85% > 80% → 故障
+        detail = ("|时隙配置[信标周期2000ms 信标时隙长度16ms "
+                  "RF信标时隙长度16ms CSMA时隙大小1700ms]|")
+        result = na.assess_slot({}, [na.extract_slot_fields(detail)])
+        self.assertAlmostEqual(result["csma_ratio"], 85.0)
+        self.assertEqual(result["level"], na.FAULT)
+
+    def test_assess_slot_no_data_disabled(self):
+        result = na.assess_slot({"ACK": 5}, [])
+        self.assertFalse(result["enabled"])
+        self.assertEqual(result["level"], na.HEALTHY)
+        self.assertEqual(result["reason"], "no_slot_config")
+
+    def test_assess_slot_multi_sample_mode(self):
+        # 多帧时隙配置：CSMA/信标周期取众数作代表，占比取均值
+        healthy = na.extract_slot_fields(self.SLOT_DETAIL)
+        bad = na.extract_slot_fields(
+            "|时隙配置[信标周期2000ms 信标时隙长度16ms "
+            "RF信标时隙长度16ms CSMA时隙大小1700ms]|"
+        )
+        result = na.assess_slot({}, [healthy, healthy, bad])
+        # 均值占比 (23.9% + 23.9% + 85%) / 3 ≈ 44.6% < 60% → 健康
+        self.assertAlmostEqual(result["csma_ratio"], (23.88 * 2 + 85.0) / 3, delta=0.1)
+        self.assertEqual(result["csma_slot_ms"], 500)  # 众数
+        self.assertEqual(result["beacon_period_ms"], 2094)  # 众数
+        self.assertEqual(result["level"], na.HEALTHY)
+
+    def test_extract_route_fields(self):
+        detail = "|路由评估剩余时间:50s| |经PCO通信成功数:81|"
+        fields = na.extract_route_fields(detail)
+        self.assertEqual(fields["route_estimate_s"], 50)
+        self.assertEqual(fields["pco_success_count"], 81)
+
+    def test_extract_route_fields_none(self):
+        self.assertIsNone(na.extract_route_fields("|组网seq:238|"))
+        self.assertIsNone(na.extract_route_fields(None))
+
+    def test_extract_channel_fields(self):
+        # 三种实测/近似格式都能识别，无相关内容返回 None
+        self.assertEqual(
+            na.extract_channel_fields("|信道变更[信道:1 剩余:30s]|"),
+            {"channel": 1, "remain_s": 30},
+        )
+        self.assertEqual(
+            na.extract_channel_fields("|无线信道变更[信道:2 剩余:20s]|"),
+            {"channel": 2, "remain_s": 20},
+        )
+        self.assertEqual(
+            na.extract_channel_fields("|信道切换剩余时间:15s|"),
+            {"channel": None, "remain_s": 15},
+        )
+        self.assertIsNone(na.extract_channel_fields("|组网seq:238|"))
+
+    def test_assess_route_channel_route_low_degraded(self):
+        # 路由评估剩余 20s < 30s → 降级
+        routes = [{"route_estimate_s": 20, "pco_success_count": 81}]
+        result = na.assess_route_channel({}, routes, [])
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["route_estimate_s"], 20)
+        self.assertEqual(result["level"], na.DEGRADED)
+
+    def test_assess_route_channel_many_channel_changes_degraded(self):
+        # 信道变更 11 次 > 10 → 降级
+        channels = [{"channel": 1, "remain_s": 30}] * 11
+        result = na.assess_route_channel({}, [], channels)
+        self.assertEqual(result["channel_change_count"], 11)
+        self.assertEqual(result["level"], na.DEGRADED)
+
+    def test_assess_route_channel_healthy(self):
+        routes = [{"route_estimate_s": 50, "pco_success_count": 81}]
+        result = na.assess_route_channel({}, routes, [])
+        self.assertEqual(result["level"], na.HEALTHY)
+        self.assertIsNone(result["reason"])
+
+    def test_assess_route_channel_takes_min_remaining(self):
+        # 多条路由字段取最紧张（最小）剩余时间
+        routes = [
+            {"route_estimate_s": 120, "pco_success_count": 81},
+            {"route_estimate_s": 20, "pco_success_count": 5},
+        ]
+        result = na.assess_route_channel({}, routes, [])
+        self.assertEqual(result["route_estimate_s"], 20)
+        self.assertEqual(result["level"], na.DEGRADED)
+
+    def test_assess_route_channel_no_data_disabled(self):
+        result = na.assess_route_channel({}, [], [])
+        self.assertFalse(result["enabled"])
+        self.assertEqual(result["level"], na.HEALTHY)
+        self.assertEqual(result["reason"], "no_route_channel_data")
+
+    def test_merge_slot_fault_dominates_cycle(self):
+        # 成功率健康 + 稳定性健康 + 时隙故障 → 周期故障（最差合并）
+        records = [make_record(1_000 + i * 100, f"STA{i % 5}") for i in range(20)]
+        cycles = na.assess_periods(
+            records, 3_000, {f"STA{i}" for i in range(5)},
+            stability_level=na.HEALTHY,
+            slot_level=na.FAULT,
+            route_channel_level=na.HEALTHY,
+        )
+        self.assertEqual(cycles[0]["success_rate"], 100.0)
+        self.assertEqual(cycles[0]["level"], na.FAULT)
+        self.assertIn("时隙占用：fault", cycles[0]["level_reason"])
+        self.assertIn("slot_level", cycles[0])
+        self.assertIn("route_channel_level", cycles[0])
+
+    def test_assess_by_network_exposes_slot_and_route_channel(self):
+        # 网络级评估：summary.slot / summary.route_channel 透出，B 档可用
+        base = 8 * 3600
+        frame_dicts = []
+        slot_detail = ("|时隙配置[信标周期2000ms 信标时隙长度16ms "
+                       "RF信标时隙长度16ms CSMA时隙大小500ms]|")
+        for i in range(10):
+            t = f"{base // 3600:02d}:{(base % 3600) // 60:02d}:{base % 60:02d}.000"
+            frame_dicts.append({
+                "log_time": t,
+                "raw_hex": build_central_beacon(cnt=i),
+                "summary_json": json.dumps(
+                    {"FrmType": "广播信标", "Detail": slot_detail}
+                ),
+            })
+            base += 3  # 3 秒一跳，保证信标周期可识别
+        records = [make_record(8 * 3600_000 + i * 3_000, f"STA{i}", nid=0x947F69)
+                   for i in range(12)]
+        result = na.assess_by_network(frame_dicts, records)
+        network = result["networks"][0]
+        self.assertIn("slot", network["summary"])
+        self.assertIn("route_channel", network["summary"])
+        self.assertTrue(network["summary"]["slot"]["enabled"])
+        self.assertEqual(network["summary"]["slot"]["csma_slot_ms"], 500)
+        self.assertEqual(network["summary"]["slot"]["beacon_period_ms"], 2000)
+        # 帧里无路由/信道字段 → C 档 disabled
+        self.assertFalse(network["summary"]["route_channel"]["enabled"])
+
+
 if __name__ == "__main__":
     unittest.main()

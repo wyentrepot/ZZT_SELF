@@ -707,3 +707,16 @@
 - **理由**：原判定依赖安徽分钟采集上报帧过于偏科；用户要求转向国网通用标准，纳入关联请求/代理变更稳定性指标，并明确 8% 阈值与 2h 时间门槛。
 - **影响**：`network_assessment.py` 新增帧型统计 + 稳定性判定 + 周期合并；`log_service.py` 帧型数据接入与日志时长计算；接口 `cycles` 新增 assoc_count/assoc_ratio/proxy_change_count/proxy_change_ratio/stability_level 字段。A 档落地后继续 B/C 档（时隙占用/路由/信道）。
 - **被取代**：无（新增决策，扩展 ADR-36）。
+
+## ADR-38 网络承载评估 B/C 档指标：时隙占用/上行余量 + 路由/信道切换
+
+- **日期**：2026-08-25
+- **状态**：✅ 生效
+- **决定**：网络承载能力评估进一步扩展 B 档（时隙占用/上行余量）与 C 档（路由/信道切换）指标，均从 `simple.Detail` 文本正则提取（C# DLL 已解析但未结构化的字段）：
+  - **B 档时隙占用**：中央信标 Detail 的 `时隙配置[信标周期Xms … CSMA时隙大小Xms]`，算 CSMA 时隙占信标周期比例；**>60% 降级、>80% 故障**（CSMA 接近满占=无上行余量，对齐记忆库 A1 的 4:1 正常基准）。
+  - **C 档路由/信道**：`路由评估剩余时间<30s` → 降级（路由紧张）；信道变更事件 >10 次 → 降级（频繁切换）。
+  - **合并规则**：B/C 档 level 与 A 档 stability、通信成功率、离线率**最差合并**为周期/网络评级；汇总任一故障即故障。
+  - 数据源为中央信标/发现帧的 Detail 文本（实测格式已确认），网络级统计即可，不必逐桶。
+- **理由**：用户要求 ABC 全纳入（时隙占用/上行余量、关联代理变更、路由跳数/信道切换），转向国网通用标准；Detail 文本是当前能拿到的结构化程度最高的数据源。
+- **影响**：`network_assessment.py` 新增 extract_slot_fields/assess_slot/extract_route_fields/extract_channel_fields/assess_route_channel + 常量（60/80/30/10）；接口 `summary.slot`、`summary.route_channel`、`cycles[].slot_level/route_channel_level`。单测 42 passed（原 25+新 17），回归 72 passed。A 档（ADR-37）+B/C 档（本 ADR）共同将判定从 2 维扩到 5 维。
+- **被取代**：无（新增决策，扩展 ADR-36/37）。

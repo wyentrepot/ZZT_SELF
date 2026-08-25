@@ -16,6 +16,11 @@
   汇总：全健康=健康；有亚健康无故障=亚健康；有故障=故障
   离线率弱代理：某 STA 周期窗口无上报=该周期离线；active_sta 取全日志活跃 STA
   集合；无法判定时 offline_rate=None 并从评级剔除（仅用成功率）。
+
+B 档/C 档（从 summary_json 的 Detail 文本提取，网络级统计）：
+  B 档时隙占用：CSMA 时隙占比=CSMA时隙大小/信标周期，>60% 降级、>80% 故障。
+  C 档路由/信道：路由评估剩余时间 <30s 或信道变更 >10 次 → 降级。
+  判定与 A 档稳定性一起最差合并进周期/网络评级。
 """
 from __future__ import annotations
 
@@ -63,8 +68,29 @@ STABILITY_MIN_DURATION_S = 7200  # 日志总时长 >7200s(2h) 才启用稳定性
 # FrmType 精确中文串（C# DLL 输出的 simple.FrmType 取值）
 FRMTYPE_PROXY_CHANGE = "代理变更请求"
 FRMTYPE_ASSOC = "关联请求"
+# 中央信标 FrmType 别名（V1.0.23 后 DLL 输出「中央信标」，实测日志 COM4_20260812 为「广播信标」）
+FRMTYPE_CENTRAL_BEACON_ALIASES = ("广播信标", "中央信标")
+
+# B 档：时隙占用/上行余量（CSMA 时隙占比阈值，对齐 A1「绑定:CSMA≈4:1」推算）
+SLOT_CSMA_RATIO_DEGRADED = 60.0  # CSMA 时隙占比 >60% → 降级（CSMA 占比过高→拥塞风险）
+SLOT_CSMA_RATIO_FAULT = 80.0     # CSMA 时隙占比 >80% → 故障（CSMA 接近满占，无上行余量）
+# C 档：路由/信道切换
+ROUTE_ESTIMATE_REMAIN_LOW = 30.0  # 路由评估剩余时间 <30s 视为路由紧张 → 降级
+CHANNEL_CHANGE_FAULT = 10         # 信道变更事件次数 >10 视为频繁切换 → 降级
 
 _TIME_PATTERN = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$")
+
+# B 档/C 档 Detail 文本提取正则（实测格式）
+_SLOT_CONFIG_RE = re.compile(
+    r"时隙配置\[信标周期(\d+)ms 信标时隙长度(\d+)ms "
+    r"RF信标时隙长度(\d+)ms CSMA时隙大小(\d+)ms\]"
+)
+_ROUTE_REMAIN_RE = re.compile(r"路由评估剩余时间[:：](\d+)\s*[sS秒]")
+_PCO_SUCCESS_RE = re.compile(r"经PCO通信成功数[:：](\d+)")
+# 信道变更/切换：支持 信道变更[...] 与 无线信道变更[...]（内部含 信道/剩余 键）
+_CHANNEL_CHANGE_BRACKET_RE = re.compile(r"(?:信道变更|无线信道变更)\[([^\]]*)\]")
+_CHANNEL_SWITCH_REMAIN_RE = re.compile(r"信道切换剩余时间[:：](\d+)\s*[sS秒]")
+_CHANNEL_MARKERS = ("信道变更", "无线信道变更", "信道切换")
 
 
 # ---------------------------------------------------------------------------
@@ -330,11 +356,14 @@ def _classify(
     success_rate: Optional[float],
     offline_rate: Optional[float],
     stability_level: Optional[str] = None,
+    slot_level: Optional[str] = None,
+    route_channel_level: Optional[str] = None,
 ) -> tuple[str, str]:
     """按成功率和离线率给出周期评级与原因。
 
     返回 (level, reason)；离线率不可判定时仅用成功率。
-    stability_level: 稳定性维度等级（可选），传入时参与最差合并。
+    stability_level/slot_level/route_channel_level: 稳定性/B 档/C 档等级
+    （可选），传入时参与最差合并。
     """
     reasons = []
     levels = []
@@ -364,6 +393,14 @@ def _classify(
     if stability_level is not None:
         levels.append(stability_level)
         reasons.append(f"稳定性：{stability_level}")
+
+    if slot_level is not None:
+        levels.append(slot_level)
+        reasons.append(f"时隙占用：{slot_level}")
+
+    if route_channel_level is not None:
+        levels.append(route_channel_level)
+        reasons.append(f"路由/信道：{route_channel_level}")
 
     if not levels:
         return HEALTHY, "无有效统计数据"
@@ -406,6 +443,27 @@ def _extract_frm_type(summary_json) -> str:
     else:
         frm_type = data.get("FrmType")
     return str(frm_type) if frm_type is not None else "UNKNOWN"
+
+
+def _extract_detail(summary_json) -> str:
+    """从 summary_json 提取 simple.Detail 文本（|...| 分隔），失败返回 ""。
+
+    兼容两种结构：{"simple": {"Detail": ...}} 与直接 {"Detail": ...}。
+    """
+    if not summary_json:
+        return ""
+    try:
+        data = json.loads(summary_json)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    simple = data.get("simple")
+    if isinstance(simple, dict) and "Detail" in simple:
+        detail = simple["Detail"]
+    else:
+        detail = data.get("Detail")
+    return str(detail) if detail is not None else ""
 
 
 def count_frame_types(frames: list[dict]) -> dict[str, int]:
@@ -484,6 +542,202 @@ def assess_stability(
 
 
 # ---------------------------------------------------------------------------
+# B 档：时隙占用/上行余量
+# ---------------------------------------------------------------------------
+
+def extract_slot_fields(detail: str) -> Optional[dict]:
+    """从 Detail 文本提取时隙配置字段（中央信标周期性广播）。
+
+    实测格式：时隙配置[信标周期2094ms 信标时隙长度16ms RF信标时隙长度16ms CSMA时隙大小500ms]
+    返回 {beacon_period_ms, beacon_slot_ms, rf_beacon_slot_ms, csma_slot_ms}，
+    无时隙配置或信标周期非法返回 None。
+    """
+    if not detail:
+        return None
+    match = _SLOT_CONFIG_RE.search(detail)
+    if not match:
+        return None
+    period, slot, rf_slot, csma = (int(v) for v in match.groups())
+    if period <= 0:
+        return None
+    return {
+        "beacon_period_ms": period,
+        "beacon_slot_ms": slot,
+        "rf_beacon_slot_ms": rf_slot,
+        "csma_slot_ms": csma,
+    }
+
+
+def assess_slot(frame_type_stats: dict, slot_fields_list: list) -> dict:
+    """B 档时隙占用判级：CSMA 时隙占比 = CSMA时隙大小 / 信标周期。
+
+    信标周期性广播时隙配置，网络级统计即可（不必逐桶）：取各信标 Detail
+    提取的时隙字段，占比均值判级（>60% 降级、>80% 故障），CSMA 值/信标周期
+    取众数作代表。返回 {enabled, csma_ratio, csma_slot_ms, beacon_period_ms,
+    sample_count, beacon_frame_count, level, reason}；拿不到时隙字段时
+    enabled=False、level=HEALTHY、reason="no_slot_config"。
+    """
+    fields = [
+        f for f in (slot_fields_list or [])
+        if f and f.get("beacon_period_ms") and f.get("csma_slot_ms")
+    ]
+    beacon_frame_count = (
+        sum(frame_type_stats.get(key, 0) for key in FRMTYPE_CENTRAL_BEACON_ALIASES)
+        if frame_type_stats else 0
+    )
+    if not fields:
+        return {
+            "enabled": False,
+            "csma_ratio": None,
+            "csma_slot_ms": None,
+            "beacon_period_ms": None,
+            "sample_count": 0,
+            "beacon_frame_count": beacon_frame_count,
+            "level": HEALTHY,
+            "reason": "no_slot_config",
+        }
+
+    ratios = [f["csma_slot_ms"] * 100.0 / f["beacon_period_ms"] for f in fields]
+    csma_ratio = sum(ratios) / len(ratios)
+    csma_slot_ms = statistics.mode([f["csma_slot_ms"] for f in fields])
+    beacon_period_ms = statistics.mode([f["beacon_period_ms"] for f in fields])
+
+    if csma_ratio > SLOT_CSMA_RATIO_FAULT:
+        level = FAULT
+        reason = (
+            f"CSMA 时隙占比 {csma_ratio:.1f}% 超故障阈值 "
+            f"{SLOT_CSMA_RATIO_FAULT:.0f}%"
+        )
+    elif csma_ratio > SLOT_CSMA_RATIO_DEGRADED:
+        level = DEGRADED
+        reason = (
+            f"CSMA 时隙占比 {csma_ratio:.1f}% 超降级阈值 "
+            f"{SLOT_CSMA_RATIO_DEGRADED:.0f}%"
+        )
+    else:
+        level = HEALTHY
+        reason = None
+
+    return {
+        "enabled": True,
+        "csma_ratio": round(csma_ratio, 2),
+        "csma_slot_ms": csma_slot_ms,
+        "beacon_period_ms": beacon_period_ms,
+        "sample_count": len(fields),
+        "beacon_frame_count": beacon_frame_count,
+        "level": level,
+        "reason": reason,
+    }
+
+
+# ---------------------------------------------------------------------------
+# C 档：路由/信道切换
+# ---------------------------------------------------------------------------
+
+def extract_route_fields(detail: str) -> Optional[dict]:
+    """从 Detail 文本提取路由评估字段（发现列表/信标）。
+
+    实测格式：|路由评估剩余时间:50s|、|经PCO通信成功数:81|（可选项）。
+    返回 {route_estimate_s, pco_success_count}，无路由评估剩余时间返回 None。
+    """
+    if not detail:
+        return None
+    remain_match = _ROUTE_REMAIN_RE.search(detail)
+    if not remain_match:
+        return None
+    pco_match = _PCO_SUCCESS_RE.search(detail)
+    return {
+        "route_estimate_s": int(remain_match.group(1)),
+        "pco_success_count": int(pco_match.group(1)) if pco_match else None,
+    }
+
+
+def extract_channel_fields(detail: str) -> Optional[dict]:
+    """从 Detail 文本提取信道变更/切换字段（信标）。
+
+    兼容实测/近似格式：
+      信道变更[信道:X 剩余:Ys]
+      无线信道变更[...]（内部含 信道/剩余 键）
+      信道切换剩余时间:X s
+    只要出现任一信道变更关键词即视为一次事件（兜底）。返回
+    {channel, remain_s}；无信道变更相关内容返回 None。
+    """
+    if not detail:
+        return None
+    fields = {"channel": None, "remain_s": None}
+
+    bracket = _CHANNEL_CHANGE_BRACKET_RE.search(detail)
+    if bracket:
+        inner = bracket.group(1)
+        channel_match = re.search(r"信道[:：](\d+)", inner)
+        remain_match = re.search(r"剩余[:：](\d+)\s*[sS秒]?", inner)
+        if channel_match:
+            fields["channel"] = int(channel_match.group(1))
+        if remain_match:
+            fields["remain_s"] = int(remain_match.group(1))
+        return fields
+
+    switch_match = _CHANNEL_SWITCH_REMAIN_RE.search(detail)
+    if switch_match:
+        fields["remain_s"] = int(switch_match.group(1))
+        return fields
+
+    if any(marker in detail for marker in _CHANNEL_MARKERS):
+        return fields  # 兜底：仅出现关键词，无法提取数值也计一次事件
+    return None
+
+
+def assess_route_channel(
+    frame_type_stats: dict, route_fields_list: list, channel_fields_list: list,
+) -> dict:
+    """C 档路由/信道判级。
+
+    路由评估剩余时间 <30s（路由紧张）或信道变更事件 >10 次（频繁切换）→
+    降级。返回 {enabled, route_estimate_s, channel_change_count, level, reason}；
+    既无路由也无信道字段时 enabled=False、level=HEALTHY、reason="no_route_channel_data"。
+    """
+    routes = [
+        f for f in (route_fields_list or [])
+        if f and f.get("route_estimate_s") is not None
+    ]
+    channels = [f for f in (channel_fields_list or []) if f]
+    if not routes and not channels:
+        return {
+            "enabled": False,
+            "route_estimate_s": None,
+            "channel_change_count": 0,
+            "level": HEALTHY,
+            "reason": "no_route_channel_data",
+        }
+
+    # 取最紧张（最小）的路由评估剩余时间，避免被单次乐观值掩盖
+    route_estimate_s = min(f["route_estimate_s"] for f in routes) if routes else None
+    channel_change_count = len(channels)
+
+    reasons = []
+    level = HEALTHY
+    if route_estimate_s is not None and route_estimate_s < ROUTE_ESTIMATE_REMAIN_LOW:
+        level = DEGRADED
+        reasons.append(
+            f"路由评估剩余时间 {route_estimate_s}s 低于阈值 "
+            f"{ROUTE_ESTIMATE_REMAIN_LOW:.0f}s"
+        )
+    if channel_change_count > CHANNEL_CHANGE_FAULT:
+        level = DEGRADED
+        reasons.append(
+            f"信道变更事件 {channel_change_count} 次超阈值 {CHANNEL_CHANGE_FAULT}"
+        )
+
+    return {
+        "enabled": True,
+        "route_estimate_s": route_estimate_s,
+        "channel_change_count": channel_change_count,
+        "level": level,
+        "reason": "；".join(reasons) if reasons else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 周期分桶评估
 # ---------------------------------------------------------------------------
 
@@ -495,7 +749,9 @@ def _is_success(row: dict) -> bool:
 
 
 def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
-                   stability_level: Optional[str] = None) -> list[dict]:
+                   stability_level: Optional[str] = None,
+                   slot_level: Optional[str] = None,
+                   route_channel_level: Optional[str] = None) -> list[dict]:
     """按实测信标周期分桶统计通信成功率/离线率并评级。
 
     records: 分钟上报记录列表，每条含
@@ -503,6 +759,8 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
         application_error
     active_sta_set: 全日志活跃 STA 集合（弱代理离线判定的分母）。
     stability_level: 稳定性维度等级（网络级汇总，可选），参与周期评级最差合并。
+    slot_level: B 档时隙占用等级（网络级汇总，可选）。
+    route_channel_level: C 档路由/信道等级（网络级汇总，可选）。
     """
     period_ms = int(beacon_period_ms or 0)
     if period_ms <= 0:
@@ -529,7 +787,10 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
             offline_count * 100.0 / len(active) if active else None
         )
 
-        level, level_reason = _classify(success_rate, offline_rate, stability_level)
+        level, level_reason = _classify(
+            success_rate, offline_rate, stability_level,
+            slot_level, route_channel_level,
+        )
         end = start + period_ms
         cycles.append({
             "period_start": start,
@@ -545,6 +806,8 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
             "offline_rate": round(offline_rate, 2) if offline_rate is not None else None,
             "report_count": sum(row.get("report_count") or 0 for row in rows),
             "stability_level": stability_level,  # 网络级稳定性汇总，逐桶透出
+            "slot_level": slot_level,            # 网络级 B 档汇总，逐桶透出
+            "route_channel_level": route_channel_level,  # 网络级 C 档汇总，逐桶透出
             "level": level,
             "rating": level,  # 前端契约字段
             "level_reason": level_reason,
@@ -552,15 +815,24 @@ def assess_periods(records, beacon_period_ms: int, active_sta_set: set,
     return cycles
 
 
-def _network_summary(cycles: list[dict], stability: Optional[dict] = None) -> dict:
+def _network_summary(cycles: list[dict], stability: Optional[dict] = None,
+                     slot: Optional[dict] = None,
+                     route_channel: Optional[dict] = None) -> dict:
     """网络级汇总：总体评级、平均成功率、离线率、各评级周期数、稳定性。
 
     stability: assess_stability 的返回（可选），其 level 参与总体最差合并，
     并通过 summary.stability 字段透出。
+    slot: assess_slot 的返回（B 档，可选），level 参与最差合并，透出 summary.slot。
+    route_channel: assess_route_channel 的返回（C 档，可选），level 参与最差
+    合并，透出 summary.route_channel。
     """
     levels = [cycle["level"] for cycle in cycles]
     if stability is not None:
         levels = [*levels, stability["level"]]
+    if slot is not None:
+        levels = [*levels, slot["level"]]
+    if route_channel is not None:
+        levels = [*levels, route_channel["level"]]
     rates = [c["success_rate"] for c in cycles if c["success_rate"] is not None]
     offline = [c["offline_rate"] for c in cycles if c["offline_rate"] is not None]
     counts = {
@@ -576,6 +848,10 @@ def _network_summary(cycles: list[dict], stability: Optional[dict] = None) -> di
     }
     if stability is not None:
         summary["stability"] = stability
+    if slot is not None:
+        summary["slot"] = slot
+    if route_channel is not None:
+        summary["route_channel"] = route_channel
     return summary
 
 
@@ -606,7 +882,9 @@ def assess_by_network(frames, records) -> dict:
                    cycles, summary}],
        beacon_period_ms, overall_health}
     每个网络的 summary 含 stability 字段（assess_stability 整体结果，含
-    enabled/level/占比），cycles 每桶带 stability_level 汇总。
+    enabled/level/占比）、slot 字段（B 档 assess_slot 结果）、route_channel
+    字段（C 档 assess_route_channel 结果），cycles 每桶带 stability_level /
+    slot_level / route_channel_level 汇总。
     """
     frame_groups: dict[tuple, list] = {}
     for item in frames:
@@ -654,12 +932,33 @@ def assess_by_network(frames, records) -> dict:
             frame_type_stats, total_duration_s, scan["beacon_period_ms"] or 0
         )
 
+        # B 档/C 档：从各帧 summary_json 的 Detail 文本收集时隙/路由/信道字段
+        # （网络级统计，中央信标周期性广播时隙配置、发现列表/信标携带路由/信道信息）
+        slot_fields, route_fields, channel_fields = [], [], []
+        for item in group_frames:
+            detail = _extract_detail(item.get("summary_json"))
+            slot_field = extract_slot_fields(detail)
+            if slot_field is not None:
+                slot_fields.append(slot_field)
+            route_field = extract_route_fields(detail)
+            if route_field is not None:
+                route_fields.append(route_field)
+            channel_field = extract_channel_fields(detail)
+            if channel_field is not None:
+                channel_fields.append(channel_field)
+        slot = assess_slot(frame_type_stats, slot_fields)
+        route_channel = assess_route_channel(
+            frame_type_stats, route_fields, channel_fields
+        )
+
         cycles = []
         if scan["beacon_period_ms"] is not None:
             try:
                 cycles = assess_periods(
                     group_records, scan["beacon_period_ms"], active_sta,
                     stability_level=stability["level"],
+                    slot_level=slot["level"],
+                    route_channel_level=route_channel["level"],
                 )
             except ValueError:
                 cycles = []
@@ -673,7 +972,9 @@ def assess_by_network(frames, records) -> dict:
             "record_count": len(group_records),
             "active_sta_count": len(active_sta),
             "cycles": cycles,
-            "summary": _network_summary(cycles, stability=stability),
+            "summary": _network_summary(
+                cycles, stability=stability, slot=slot, route_channel=route_channel,
+            ),
         })
 
     # 按 NID 排序，稳定输出
