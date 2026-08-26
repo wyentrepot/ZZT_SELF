@@ -117,6 +117,16 @@ def test_dry_run_status_emits_no_http_and_prints_plan(fake_transport, capsys, mo
     assert plan["execute"] is False
 
 
+def test_global_base_url_before_command_is_preserved(fake_transport, capsys):
+    """公共参数放在子命令前时，子解析器不能用默认值覆盖它。"""
+    from workbench_ai_client import main
+
+    main(["--base-url", "http://127.0.0.2:8790", "status"])
+
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["url"] == "http://127.0.0.2:8790/api/ai/v1/status"
+
+
 def test_dry_run_observe_requires_no_token(fake_transport, capsys, monkeypatch):
     """observe 默认 dry-run：无 Token 也能成功输出脱敏计划，零 HTTP。"""
     monkeypatch.delenv("WORKBENCH_AI_TOKEN", raising=False)
@@ -208,6 +218,20 @@ def test_token_never_appears_in_output(fake_transport, monkeypatch, capsys):
         assert "tok-super-secret" not in str(call.get("body") or b"")
 
 
+def test_server_echo_of_actual_token_is_redacted(fake_transport, monkeypatch, capsys):
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-super-secret")
+    fake_transport.respond("GET", "http://127.0.0.1:8790/api/ai/v1/status", {
+        "detail": "upstream echoed tok-super-secret",
+    }, status=500)
+    from workbench_ai_client import main
+
+    rc = main(["status", "--execute"])
+
+    captured = capsys.readouterr().out + capsys.readouterr().err
+    assert rc != 0
+    assert "tok-super-secret" not in captured
+
+
 def test_base_url_userinfo_rejected(fake_transport, monkeypatch, capsys):
     """带 userinfo 的 base URL（如 http://user:pass@host）必须被拒绝。"""
     monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
@@ -254,6 +278,61 @@ def test_execute_listener_observe_requires_index(fake_transport, monkeypatch, ca
     ])
     assert rc != 0
     assert fake_transport.calls == []
+
+
+
+def test_execute_listener_observe_uses_listener_contract(fake_transport, monkeypatch):
+    """listener 必须发送 frame_query，而不是 module literal 契约。"""
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    fake_transport.respond("POST", "http://127.0.0.1:8790/api/ai/v1/observations", {
+        "operation_id": "op-listener", "state": "created",
+    }, status=202)
+    from workbench_ai_client import main
+
+    main([
+        "observe", "--source", "listener", "--index-id", "idx-7",
+        "--kind", "frame_query", "--frame-kind", "central_beacon",
+        "--selector", "first_per_minute", "--execute",
+    ])
+
+    body = json.loads(fake_transport.calls[0]["body"])
+    assert body["target"] == {"index_id": "idx-7", "mapping_id": "listener-main"}
+    assert body["window"] == {"mode": "live", "start": "now", "timeout_seconds": 120}
+    assert body["match"] == {
+        "kind": "frame_query", "frame_kind": "central_beacon", "selector": "first_per_minute",
+    }
+
+
+def test_observe_uses_explicit_idempotency_key(fake_transport, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    fake_transport.respond("POST", "http://127.0.0.1:8790/api/ai/v1/observations", {
+        "operation_id": "op-1", "state": "created",
+    }, status=202)
+    from workbench_ai_client import main
+
+    main([
+        "observe", "--source", "module_log", "--session-id", "ms-1",
+        "--kind", "literal", "--value", "x", "--client-request-id", "obs-retry-1", "--execute",
+    ])
+
+    assert fake_transport.calls[0]["headers"]["Idempotency-Key"] == "obs-retry-1"
+def test_listener_cursor_range_uses_frame_id_contract(fake_transport, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    fake_transport.respond("POST", "http://127.0.0.1:8790/api/ai/v1/observations", {
+        "operation_id": "op-listener-cursor", "state": "matched",
+    }, status=202)
+    from workbench_ai_client import main
+
+    main([
+        "observe", "--source", "listener", "--index-id", "idx-7",
+        "--kind", "parsed_frame", "--frame-kind", "central_beacon",
+        "--mode", "cursor_range", "--start-frame-id", "10", "--end-frame-id", "20", "--execute",
+    ])
+
+    body = json.loads(fake_transport.calls[0]["body"])
+    assert body["window"] == {
+        "type": "cursor_range", "index_id": "idx-7", "start_frame_id": 10, "end_frame_id": 20,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +395,17 @@ def test_non_2xx_response_fails_safely(fake_transport, monkeypatch, capsys):
                                      "headers": {"Accept": "application/json",
                                                  "Authorization": "Bearer tok-x"},
                                      "body": None, "timeout": 30.0}]
+
+
+def test_private_network_base_url_is_rejected(fake_transport, monkeypatch):
+    """本技能只向本机 workbench 发送 Token，不允许局域网地址。"""
+    monkeypatch.setenv("WORKBENCH_AI_TOKEN", "tok-x")
+    from workbench_ai_client import main
+
+    rc = main(["status", "--base-url", "http://192.168.1.9:8790", "--execute"])
+
+    assert rc != 0
+    assert fake_transport.calls == []
 
 
 def test_public_host_base_url_rejected(fake_transport, monkeypatch):

@@ -43,9 +43,12 @@ _TOKEN_LIKE = re.compile(r"^[A-Za-z0-9._~+/=-]{20,}$")
 
 
 def _redact(value: str) -> str:
-    """脱敏：对 Token 形态串、Bearer 头、URL userinfo 一律打码。"""
+    """脱敏：实际 Token、Token 形态串、Bearer 头、URL userinfo 一律打码。"""
     if not value:
         return value
+    token = os.environ.get(TOKEN_ENV, "").strip()
+    if token:
+        value = value.replace(token, "<redacted>")
     # Authorization: Bearer <token> 整体打码
     if value.startswith("Bearer "):
         return "Bearer <redacted>"
@@ -71,28 +74,23 @@ def _normalize_base_url(base_url: str) -> str:
     if parsed.username is not None or parsed.password is not None:
         raise ClientError("base URL 不得包含 userinfo（用户名/密码）")
     host = parsed.hostname or ""
-    _require_private_or_loopback_host(host, base_url)
+    _require_loopback_host(host, base_url)
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
 
 
-def _require_private_or_loopback_host(host: str, base_url: str) -> None:
-    """base URL 的 host 仅允许本机/回环与私网网段，拒绝公网/任意 host。
-
-    防止 Authorization Token 被发送到不受信任的地址（P2 安全契约：
-    base URL 仅允许规范化本机工作台地址或局域网私网地址）。
-    """
+def _require_loopback_host(host: str, base_url: str) -> None:
+    """只允许本机回环地址，避免 Authorization Token 离开本机工作台。"""
     lower = host.lower()
-    if lower in ("127.0.0.1", "localhost", "::1", "[::1]", ""):
+    if lower in ("localhost", ""):
         return
-    # IPv6 字面量去掉方括号后解析
     candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     try:
         addr = ipaddress.ip_address(candidate)
     except ValueError:
         raise ClientError(f"非法 base URL host：{_redact(base_url)}")
-    if addr.is_loopback or addr.is_private or addr.is_link_local:
+    if addr.is_loopback:
         return
-    raise ClientError(f"拒绝非私网 base URL host：{_redact(base_url)}（仅允许本机/局域网）")
+    raise ClientError(f"拒绝非本机 base URL host：{_redact(base_url)}（仅允许 loopback）")
 
 
 def transport_request(method: str, url: str, *, headers: dict | None = None,
@@ -125,17 +123,19 @@ class Client:
     def _url(self, path: str) -> str:
         return self.base_url + path
 
-    def _headers(self, token: str | None) -> dict:
+    def _headers(self, token: str | None, extra_headers: dict | None = None) -> dict:
         headers = {"Accept": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        headers.update(extra_headers or {})
         return headers
 
     def _http(self, method: str, path: str, *, body: dict | None = None,
-              token: str | None = None, timeout: float | None = None) -> dict:
+              token: str | None = None, timeout: float | None = None,
+              extra_headers: dict | None = None) -> dict:
         url = self._url(path)
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        headers = self._headers(token)
+        headers = self._headers(token, extra_headers)
         if data is not None:
             headers["Content-Type"] = "application/json"
         return transport_request(method, url, headers=headers, body=data, timeout=timeout)
@@ -147,20 +147,27 @@ class Client:
         return self._maybe_execute("status", "GET", path, token=token)
 
     def observe(self, *, source: str, session_id: str | None, index_id: str | None,
-                kind: str, value: str | None, window: dict, token: str | None = None) -> dict:
+                kind: str, value: str | None, frame_kind: str | None,
+                selector: str, window: dict, client_request_id: str | None,
+                token: str | None = None) -> dict:
         if source == "module_log":
             if not session_id:
                 raise ClientError("module_log observe 必须提供 --session-id（既有后端会话）")
+            if kind not in {"literal", "regex", "loghook_rule", "sequence", "not_seen"}:
+                raise ClientError("module_log --kind 必须是文本日志匹配器")
             target: dict = {"session_id": session_id}
+            match: dict = {"kind": kind}
+            if value is not None:
+                match["value"] = value
         elif source == "listener":
             if not index_id:
                 raise ClientError("listener observe 必须提供 --index-id（既有索引）")
+            if kind not in {"parsed_frame", "frame_query"} or not frame_kind:
+                raise ClientError("listener 必须提供 --kind parsed_frame/frame_query 和 --frame-kind")
             target = {"index_id": index_id, "mapping_id": "listener-main"}
+            match = {"kind": kind, "frame_kind": frame_kind, "selector": selector}
         else:
             raise ClientError(f"不支持的 source：{source}（仅 module_log / listener）")
-        match: dict = {"kind": kind}
-        if value is not None:
-            match["value"] = value
         body = {
             "source": source,
             "target": target,
@@ -169,8 +176,9 @@ class Client:
             "context": {"before": 20, "after": 30},
             "lifecycle": {"ensure_source_running": False, "on_finish": "leave_running"},
         }
+        extra_headers = {"Idempotency-Key": client_request_id} if client_request_id else None
         return self._maybe_execute("observe", "POST", "/api/ai/v1/observations",
-                                   body=body, token=token)
+                                   body=body, token=token, extra_headers=extra_headers)
 
     def wait(self, operation_id: str, timeout_seconds: int = 30,
              token: str | None = None) -> dict:
@@ -195,7 +203,8 @@ class Client:
     # -- 执行骨架 -----------------------------------------------------------
 
     def _maybe_execute(self, action: str, method: str, path: str, *,
-                       body: dict | None = None, token: str | None = None) -> dict:
+                       body: dict | None = None, token: str | None = None,
+                       extra_headers: dict | None = None) -> dict:
         if not self.execute:
             # dry-run：只打印规范化、脱敏的请求计划，不发 HTTP、不建 operation
             plan = {
@@ -209,7 +218,8 @@ class Client:
             return plan
         if token is None:
             token = _load_token()
-        result = self._http(method, path, body=body, token=token, timeout=30.0)
+        result = self._http(method, path, body=body, token=token, timeout=30.0,
+                            extra_headers=extra_headers)
         if result["status"] >= 400:
             detail = result["body"].get("detail", result["body"])
             raise ClientError(f"{method} {path} 失败（HTTP {result['status']}）：{_redact(str(detail))}")
@@ -220,55 +230,69 @@ class Client:
 def _parse_window(args: argparse.Namespace) -> dict:
     if args.mode == "live":
         return {"mode": "live", "start": "now", "timeout_seconds": args.timeout_seconds}
-    if args.mode == "cursor_range":
-        w: dict = {"mode": "cursor_range"}
-        if getattr(args, "start_seq", None) is not None:
-            w["start_seq"] = args.start_seq
-        if getattr(args, "end_seq", None) is not None:
-            w["end_seq"] = args.end_seq
-        return w
+    if args.mode == "cursor_range" and args.source == "module_log":
+        if args.start_seq is None or args.end_seq is None:
+            raise ClientError("module cursor_range 必须提供 --start-seq 和 --end-seq")
+        return {"mode": "cursor_range", "start_seq": args.start_seq, "end_seq": args.end_seq}
+    if args.mode == "cursor_range" and args.source == "listener":
+        if args.index_id is None or args.start_frame_id is None or args.end_frame_id is None:
+            raise ClientError("listener cursor_range 必须提供 --index-id、--start-frame-id 和 --end-frame-id")
+        return {"type": "cursor_range", "index_id": args.index_id,
+                "start_frame_id": args.start_frame_id, "end_frame_id": args.end_frame_id}
     raise ClientError(f"暂不支持窗口模式：{args.mode}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
     # 公共参数：--base-url / --execute 既允许在顶层，也允许在子命令后出现
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--base-url", default=DEFAULT_BASE_URL,
-                        help=f"工作台地址（默认 {DEFAULT_BASE_URL}）")
-    common.add_argument("--execute", action="store_true",
-                        help="真正发出 HTTP（默认 dry-run 仅打印脱敏计划）")
+    root_common = argparse.ArgumentParser(add_help=False)
+    root_common.add_argument("--base-url", default=DEFAULT_BASE_URL,
+                             help=f"工作台地址（默认 {DEFAULT_BASE_URL}）")
+    root_common.add_argument("--execute", action="store_true",
+                             help="真正发出 HTTP（默认 dry-run 仅打印脱敏计划）")
 
     parser = argparse.ArgumentParser(
         prog="observe-workbench-logs",
         description="项目内 AI 观察技能客户端：显式调用、默认 dry-run、六命令只读。",
-        parents=[common],
+        parents=[root_common],
     )
+    sub_common = argparse.ArgumentParser(add_help=False)
+    sub_common.add_argument("--base-url", default=argparse.SUPPRESS,
+                            help=f"工作台地址（默认 {DEFAULT_BASE_URL}）")
+    sub_common.add_argument("--execute", action="store_true", default=argparse.SUPPRESS,
+                            help="真正发出 HTTP（默认 dry-run 仅打印脱敏计划）")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("status", parents=[common], help="查询工作台/会话/观察任务状态")
-    sub.add_parser("listener-schema", parents=[common], help="查询侦听台帧语义与字段选择器")
+    sub.add_parser("status", parents=[sub_common], help="查询工作台/会话/观察任务状态")
+    sub.add_parser("listener-schema", parents=[sub_common], help="查询侦听台帧语义与字段选择器")
 
-    p_observe = sub.add_parser("observe", parents=[common],
+    p_observe = sub.add_parser("observe", parents=[sub_common],
                                help="对既有 module session 或 listener index 创建观察")
     p_observe.add_argument("--source", choices=["module_log", "listener"], required=True)
     p_observe.add_argument("--session-id", help="module_log 既有后端会话")
     p_observe.add_argument("--index-id", help="listener 既有索引")
-    p_observe.add_argument("--kind", choices=["literal", "regex", "loghook_rule", "sequence", "not_seen"],
-                           required=True)
-    p_observe.add_argument("--value", help="literal/regex 的匹配文本；loghook_rule 的 rule_id")
+    p_observe.add_argument("--kind", choices=[
+        "literal", "regex", "loghook_rule", "sequence", "not_seen", "parsed_frame", "frame_query",
+    ], required=True)
+    p_observe.add_argument("--value", help="module 文本匹配值或 rule_id")
+    p_observe.add_argument("--frame-kind", help="listener 帧种类，如 central_beacon")
+    p_observe.add_argument("--selector", choices=["first", "last", "all", "first_per_minute", "nth"],
+                           default="first", help="listener 命中选择器")
     p_observe.add_argument("--mode", choices=["live", "cursor_range"], default="live")
     p_observe.add_argument("--timeout-seconds", type=int, default=120, help="live 模式超时（秒）")
-    p_observe.add_argument("--start-seq", type=int, help="cursor_range 起始 seq（module）")
-    p_observe.add_argument("--end-seq", type=int, help="cursor_range 结束 seq（module）")
+    p_observe.add_argument("--start-seq", type=int, help="module cursor_range 起始 seq")
+    p_observe.add_argument("--end-seq", type=int, help="module cursor_range 结束 seq")
+    p_observe.add_argument("--start-frame-id", type=int, help="listener cursor_range 起始 frame_id")
+    p_observe.add_argument("--end-frame-id", type=int, help="listener cursor_range 结束 frame_id")
+    p_observe.add_argument("--client-request-id", help="observe 重试时复用的 Idempotency-Key")
 
-    p_wait = sub.add_parser("wait", parents=[common], help="有界轮询既有 operation 到终态")
+    p_wait = sub.add_parser("wait", parents=[sub_common], help="有界轮询既有 operation 到终态")
     p_wait.add_argument("--operation-id", required=True)
     p_wait.add_argument("--timeout-seconds", type=int, default=30)
 
-    p_artifact = sub.add_parser("artifact", parents=[common], help="读取服务端登记的 Artifact")
+    p_artifact = sub.add_parser("artifact", parents=[sub_common], help="读取服务端登记的 Artifact")
     p_artifact.add_argument("--artifact-id", required=True)
 
-    p_frame = sub.add_parser("frame-detail", parents=[common],
+    p_frame = sub.add_parser("frame-detail", parents=[sub_common],
                              help="读取侦听台帧详情（index_id + frame_id 复合深链）")
     p_frame.add_argument("--index-id", required=True)
     p_frame.add_argument("--frame-id", required=True)
@@ -288,18 +312,12 @@ def main(argv: list[str] | None = None) -> int:
         elif cmd == "listener-schema":
             client.listener_schema()
         elif cmd == "observe":
-            if not args.execute:
-                # dry-run 不需要 token，也不需要既有目标之外的参数
-                window = _parse_window(args)
-                client.observe(source=args.source, session_id=args.session_id,
-                               index_id=args.index_id, kind=args.kind, value=args.value,
-                               window=window, token=None)
-            else:
-                window = _parse_window(args)
-                token = _load_token()
-                client.observe(source=args.source, session_id=args.session_id,
-                               index_id=args.index_id, kind=args.kind, value=args.value,
-                               window=window, token=token)
+            window = _parse_window(args)
+            token = _load_token() if args.execute else None
+            client.observe(source=args.source, session_id=args.session_id,
+                           index_id=args.index_id, kind=args.kind, value=args.value,
+                           frame_kind=args.frame_kind, selector=args.selector, window=window,
+                           client_request_id=args.client_request_id, token=token)
         elif cmd == "wait":
             client.wait(args.operation_id, timeout_seconds=args.timeout_seconds, token=token)
         elif cmd == "artifact":

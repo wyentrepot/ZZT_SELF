@@ -13,14 +13,14 @@
   输出、异常文本或 URL userinfo。
 - 默认 dry-run：只输出规范化、脱敏的 JSON 计划（`execute:false`），零 HTTP、零 operation。
   仅显式 `--execute` 发请求。
-- 客户端是只读观察：不提供 `ensure/start/stop/send/flash/烧录/串口打开/文件扫描/cancel`。
+- 客户端是硬件非侵入观察：不提供 `ensure/start/stop/send/flash/烧录/串口打开/文件扫描/cancel`。
 
 ## 2. 六命令 → 端点
 
 | 命令 | 方法 + 路径 | 只读/写入 | 说明 |
 |---|---|---|---|
 | `status` | `GET /api/ai/v1/status` | 只读 | 工作台/会话/观察任务状态 |
-| `observe` | `POST /api/ai/v1/observations` | 写入（建 operation） | 对既有 module session 或 listener index 创建有界观察 |
+| `observe` | `POST /api/ai/v1/observations` | 写入 operation/audit | 对既有 module session 或 listener index 创建有界观察，不控制硬件 |
 | `wait` | `GET /api/ai/v1/operations/{operation_id}/wait?timeout_seconds=N` | 只读 | 有界轮询到终态；单次 N≤30；不发 cancel |
 | `artifact` | `GET /api/ai/v1/artifacts/{artifact_id}` | 只读 | 读服务端登记 Artifact 的 manifest |
 | `listener-schema` | `GET /api/ai/v1/listener/schema` | 只读 | 帧语义与字段选择器 |
@@ -44,8 +44,8 @@
   - `listener` target 必须 `index_id`（既有索引），`mapping_id` 默认 `listener-main`。
 - `window.mode`：`live`（`start:"now"` + `timeout_seconds`）、`cursor_range`
   （`start_seq`/`end_seq` 闭区间，module 日志 seq）。
-- `match.kind`：`literal` / `regex` / `loghook_rule` / `sequence` / `not_seen`；
-  `value` 为 literal/regex 文本或 loghook rule_id。
+- module `match.kind`：`literal` / `regex` / `loghook_rule` / `sequence` / `not_seen`；`value` 为文本或 rule_id。
+- listener `match.kind`：`parsed_frame` / `frame_query`，必须有 `frame_kind`，可选 selector。
 - `lifecycle.ensure_source_running`：本客户端固定 `false`（不启动串口来源）。
 
 ## 4. operation 状态

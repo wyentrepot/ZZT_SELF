@@ -1,12 +1,12 @@
 name: observe-workbench-logs
 description: >-
-  HPLC meter-reading workbench AI observation skill (read-only). Query status,
+  ZZT_SELF workbench AI observation skill (hardware-non-invasive). Query status,
   create bounded observations on existing module sessions or listener indexes,
   wait to terminal state, read artifacts, and fetch listener frame detail.
-  Observation-only: never ensures/starts/stops/flashes serial or scans files.
+  Never ensures/starts/stops/sends/flashes serial or scans files; observe creates an auditable bounded operation.
 metadata:
   author: reasonix
-  version: "1.0.0"
-  applies-to: D:/2-侦听台改造
+  version: "1.1.0"
+  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF
 policy:
   allow_implicit_invocation: false
