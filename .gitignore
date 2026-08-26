@@ -91,6 +91,8 @@ StyleCopReport.xml
 *.tmp_proj
 *_wpftmp.csproj
 *.log
+# 例外：tools/taiti/高频采集 的 samples 精简样例需入库（作单测/演示回归基线）
+!tools/taiti/高频采集/**/samples/*.log
 *.vspscc
 *.vssscc
 .builds

@@ -1,0 +1,13 @@
+name: hf-collect-analysis
+description: >-
+  ZZT_SELF high-frequency HPLC collection failure analysis skill. Given three local
+  HPLC logs (台体 / CCO / 侦听台), cross-locate which meters fail to respond on time
+  (抄读超时 / 补抄超 3 次) and the root cause (STA/电表未响应 vs 网络拥堵).
+  Runs tools/taiti/高频采集 (taish/cco/sniff/cross via run.py). Read-only over
+  local log files; never touches serial/hardware/flash.
+metadata:
+  author: reasonix
+  version: "2.0.0"
+  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF
+policy:
+  allow_implicit_invocation: false

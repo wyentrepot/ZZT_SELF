@@ -42,6 +42,8 @@
 | 34 | P5 左侧分组导航（验证/设备/维护）+ hash 路由 + 抽屉/折叠 + iframe 保活保留 | ✅ 生效 |
 | 35 | P6 串口配置页：四槽保存/一键应用/刷新状态、内联校验、错误摘要 | ✅ 生效 |
 | 36 | 按中央信标周期 + 网络隔离(NID+CCO MAC)的网络承载能力评估：纯 Python 信标识别 + 三级健康评级 + listener/workbench 双挂 + AI 查询 API | ✅ 生效 |
+| 42 | 高频采集失败分析收口为工具包 + 技能：tools/scripts/hf_collect_analyze + skills/hf-collect-analysis + 精简样例入库 | ❌ 已取代（目录由 ADR-43 调整为 tools/taiti/高频采集） |
+| 43 | 高频采集分析迁入 tools/taiti/高频采集 扩展系列：按日志来源分 台体/CCO/侦听台 子目录 + run.py 四命令入口 | ✅ 生效 |
 
 ---
 
@@ -754,3 +756,40 @@
 - **理由**：用户反馈信标周期仍显示 1.7s（实测为该大文件真实周期 14.9s 被硬编码 1~10s 上界误拦）；指标卡被下方明细表截断掩盖。
 - **影响**：`network_assessment.py` 新增 `BEACON_PARAM_MIN_MS/MAX_MS`（500/120000）；`styles.css`（listener+workbench 双挂）网络评估布局改纵向+整体滚动、指标卡无高度截断。实测大文件 53 万帧：1700ms(sof_cluster,conf0.248) → **14878ms(beacon_param,conf1.0)**。单测 51 passed，全 listener 201+ passed。
 - **被取代**：无（新增决策，修正 ADR-40 的参数范围口径）。
+
+## ADR-42 高频采集失败分析收口为工具包 + 技能
+
+- **日期**：2026-08-26
+- **状态**：✅ 生效
+- **决定**：将临时目录 `_tmp_hf_analyze/` 的两个高频采集失败分析脚本（`analyze_taish.py` / `analyze_cross.py`）正式收口为**项目内可复用能力**，采用「命令行工具包 + 项目技能」双形态：
+  1. **工具包**：`tools/scripts/hf_collect_analyze/`（`taish` + `cross` 两个子命令，`python -m hf_collect_analyze` 入口），复用 `libs/parser_lib` 与 `libs/sim_concentrator.frame_codec`，新增单测 `tools/scripts/test_hf_collect_analyze.py`（14 用例）。
+  2. **技能**：`skills/hf-collect-analysis/`（SKILL.md + agents/openai.yaml + references/analysis-rules.md + scripts/run_analysis.py 包装入口），显式调用、只读日志文件、不碰硬件，分析口径沉淀在 references。
+  3. **精简样例入库**：`tools/scripts/hf_collect_analyze/samples/` 三份样例（台体 GBK / CCO UTF-8 / 侦听台 UTF-8，由原始 8MB/4MB/12MB 日志筛选，共 ~978KB），供单测与演示回归。
+- **理由**：用户要求把高频采集分析做成扩展脚本，下次直接用；`_tmp_hf_analyze` 本就是临时目录（README 注明"后续可并入台体报文分析扩展"）。日志筛选这类机械活尝试分发给 codebuddy/opencode（MCP），但当前 opencode provider 未认证模型不可用，改由父代理直接完成。
+- **影响**：`_tmp_hf_analyze/` 保留为历史参考（其 README/analyze_taish.py/analyze_cross.py/.gitignore 为既有已跟踪文件，测试数据/精简样例由 .gitignore 排除不入库）；新增 `tools/scripts/hf_collect_analyze/` 与 `skills/hf-collect-analysis/`；REQS-INDEX 登记需求 0006。`analyze_taish.py` 的 `_REPO` 路径改为 `parents[3]`（适配新目录层级），CCO 读取编码由 `utf-8` 改为 `utf-8-sig`（样例带 BOM，原脚本用 `replace` 吞掉 BOM 头仍能跑，收口后更稳健）；taish 收口版删除未使用的 frame_codec import 与死代码 `_decode_addr_from_frame`。
+- **被取代**：无（新增决策；`_tmp_hf_analyze` 为临时目录，不取代任何既有 ADR）。
+
+## ADR-43 高频采集分析迁入 tools/taiti/高频采集 扩展系列（按日志来源分目录）
+
+- **日期**：2026-08-26
+- **状态**：✅ 生效
+- **决定**：将 ADR-42 收口的高频采集分析从 `tools/scripts/hf_collect_analyze/` 迁入
+  **`tools/taiti/高频采集/`**（台体扩展系列），并按日志来源分类：
+  - `台体/` —— 台体日志分析（analyze_taish.py + samples）
+  - `CCO/` —— CCO 日志二次证据（analyze_cco.py + samples）
+  - `侦听台/` —— 侦听台 HPLC 报文二次证据（analyze_sniff.py + samples）
+  - 根：`run.py`（taish/cco/sniff/cross 四命令统一入口）+ `README.md` + `分析规则.md` + 单测
+  - 技能 `skills/hf-collect-analysis/` 同步升级 2.0.0，入口指向 `tools/taiti/高频采集/run.py`
+- **理由**：用户要求"这类分析放到扩展系列中，tools 目录下，并分类好台体文件夹"。
+  高频采集属台体（taiti）分析扩展，按日志来源分子目录比扁平包更清晰、可扩展
+  （后续台体其他分析可并列 `tools/taiti/<主题>/`）。
+- **影响**：
+  - 新目录 `tools/taiti/高频采集/`（README/分析规则/run.py/三子目录+各自 samples/单测 16 用例）。
+  - 删除 `tools/scripts/hf_collect_analyze/` 与旧单测 `tools/scripts/test_hf_collect_analyze.py`。
+  - `_REPO` 路径推导从 `parents[3]` 改为 `parents[4]`（新目录深一层）。
+  - cross 拆分为 CCO/侦听台两模块，由 run.py 组合；修复 run.py 参数解析 bug
+    （--start/--end 的值被误当表地址）。
+  - 入口用 `run.py` 而非 `python -m`（中文包名在 `-m` 下不可用）。
+  - REQS-INDEX 0006 标题更新为 tools/taiti 路径。
+- **被取代**：取代 ADR-42 中"目录位置为 tools/scripts/hf_collect_analyze"的部分；
+  ADR-42 的"收口为工具包+技能+精简样例入库"本质仍生效。

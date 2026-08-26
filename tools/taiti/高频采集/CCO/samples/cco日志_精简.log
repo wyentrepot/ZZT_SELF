@@ -1,0 +1,388 @@
+[20260820_16:43:27_780]#1967263 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:27_781]#1967265 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0047 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:28_116]#1967296 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:28_116]#1967297 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0041 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:28_127]#1967326 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:28_128]#1967327 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0023 link hplc txType 0 bakRt 2 0008 0009 packs=0
+[20260820_16:43:28_467]#1967360 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:28_467]#1967362 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0039 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:43:28_803]#1967392 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:28_803]#1967393 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0037 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:28_830]#1967417 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:29_143]#1967419 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0046 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:43:29_155]#1967451 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:29_155]#1967452 | info | nwk.c (349)| aps tx retry_cnt 0 dst 002a link hplc txType 0 bakRt 2 0009 0023 packs=0
+[20260820_16:43:29_496]#1967487 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:29_496]#1967489 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0029 link hplc txType 0 bakRt 2 0009 0023 packs=0
+[20260820_16:43:29_831]#1967519 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:29_831]#1967521 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0042 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:29_844]#1967548 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:29_845]#1967550 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0038 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:31_860]#1971546 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000001,3,1,1,1,1967262,1971546,4284
+[20260820_16:43:32_470]#1971605 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:32_470]#1971606 | info | nwk.c (349)| aps tx retry_cnt 0 dst 003b link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:32_475]#1971659 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000004,3,1,4,1,1967355,1971659,4304
+[20260820_16:43:32_813]#1971719 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000006,3,1,6,1,1967415,1971719,4304
+[20260820_16:43:32_821]#1971727 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:32_822]#1971730 | info | nwk.c (349)| aps tx retry_cnt 0 dst 003a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:33_165]#1971803 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000008,3,1,8,1,1967485,1971803,4318
+[20260820_16:43:33_496]#1971805 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000009,3,1,9,1,1967516,1971805,4289
+[20260820_16:43:33_498]#1971816 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:33_499]#1971817 | info | nwk.c (349)| aps tx retry_cnt 0 dst 001a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:33_839]#1971840 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000010,3,1,10,1,1967545,1971840,4295
+[20260820_16:43:33_853]#1971884 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000003,3,1,3,1,1967324,1971884,4560
+[20260820_16:43:34_186]#1971899 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:34_186]#1971903 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0040 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:34_527]#1971935 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:34_529]#1971941 | info | nwk.c (349)| aps tx retry_cnt 0 dst 002b link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:43:34_870]#1971980 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000005,3,1,5,1,1967390,1971980,4590
+[20260820_16:43:34_871]#1971982 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000007,3,1,7,1,1967449,1971982,4533
+[20260820_16:43:34_878]#1971991 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:34_878]#1971992 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0035 link hplc txType 0 bakRt 0 0000 0000 packs=2
+[20260820_16:43:35_222]#1972041 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:35_223]#1972042 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0028 link hplc txType 0 bakRt 0 0000 0000 packs=2
+[20260820_16:43:35_562]#1972065 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:35_563]#1972066 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0036 link hplc txType 0 bakRt 0 0000 0000 packs=3
+[20260820_16:43:35_897]#1972167 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000002,3,1,2,1,1967294,1972167,4873
+[20260820_16:43:35_908]#1972224 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:35_910]#1972225 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0009 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:36_590]#1975886 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000013,3,1,11,1,1971603,1975886,4283
+[20260820_16:43:36_600]#1975945 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:36_601]#1975946 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0054 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:37_058]#1976016 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000014,3,1,12,1,1971725,1976016,4291
+[20260820_16:43:37_065]#1976074 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:37_065]#1976076 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0055 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:37_418]#1976390 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000015,3,1,13,1,1971813,1976390,4577
+[20260820_16:43:37_420]#1976392 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000017,3,1,15,1,1971927,1976392,4465
+[20260820_16:43:37_765]#1976473 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000019,3,1,17,1,1972037,1976473,4436
+[20260820_16:43:38_096]#1976485 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:38_096]#1976486 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004b link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:38_106]#1976509 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000016,3,1,14,1,1971895,1976509,4614
+[20260820_16:43:38_446]#1976542 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:38_446]#1976543 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0058 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:38_795]#1976574 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000001,3,1,19,1,1972222,1976574,4352
+[20260820_16:43:38_804]#1976584 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:38_805]#1976585 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0051 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:39_132]#1976625 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:39_132]#1976626 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0067 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:39_467]#1976877 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000018,3,1,16,1,1971989,1976877,4888
+[20260820_16:43:39_473]#1976897 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000020,3,1,18,1,1972063,1976897,4834
+[20260820_16:43:39_817]#1976940 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:39_817]#1976941 | info | nwk.c (349)| aps tx retry_cnt 0 dst 006b link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:40_153]#1976970 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:40_153]#1976971 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0060 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:40_508]#1980217 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000002,3,1,20,1,1975943,1980217,4274
+[20260820_16:43:40_849]#1980275 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:40_849]#1980276 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:40_964]#1980356 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000003,3,1,21,1,1976072,1980356,4284
+[20260820_16:43:41_430]#1980414 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:41_430]#1980416 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004f link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:41_441]#1980766 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000004,3,1,22,1,1976482,1980766,4284
+[20260820_16:43:41_779]#1980831 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000005,3,1,23,1,1976539,1980831,4292
+[20260820_16:43:42_115]#1980840 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:42_115]#1980841 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0052 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:42_123]#1980870 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000006,3,1,24,1,1976582,1980870,4288
+[20260820_16:43:42_465]#1980904 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:42_466]#1980905 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0053 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:42_800]#1980940 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000007,3,1,25,1,1976623,1980940,4317
+[20260820_16:43:42_810]#1980950 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:42_811]#1980952 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004e link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:43_146]#1980994 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:43_146]#1980995 | info | nwk.c (349)| aps tx retry_cnt 0 dst 005c link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:43_155]#1981226 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000008,3,1,26,1,1976937,1981226,4289
+[20260820_16:43:43_495]#1981286 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:43_495]#1981292 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:43_832]#1981796 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000009,3,1,27,1,1976966,1981796,4830
+[20260820_16:43:44_097]#1981855 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:44_097]#1981856 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0076 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:45_171]#1984696 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000011,3,1,29,1,1980413,1984696,4283
+[20260820_16:43:45_337]#1984759 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:45_337]#1984760 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0056 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:45_415]#1985139 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000012,3,1,30,1,1980836,1985139,4303
+[20260820_16:43:45_798]#1985199 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000013,3,1,31,1,1980901,1985199,4298
+[20260820_16:43:46_134]#1985207 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:46_134]#1985210 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0023 link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:43:46_143]#1985239 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000014,3,1,32,1,1980946,1985239,4293
+[20260820_16:43:46_475]#1985271 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:46_476]#1985274 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0049 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:46_812]#1985303 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000015,3,1,33,1,1980992,1985303,4311
+[20260820_16:43:46_817]#1985313 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:46_818]#1985314 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000b link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:43:47_160]#1985356 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:47_161]#1985359 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0009 link hplc txType 0 bakRt 2 0017 0008 packs=0
+[20260820_16:43:47_497]#1986156 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000017,3,1,35,1,1981853,1986156,4303
+[20260820_16:43:47_507]#1986214 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:47_508]#1986215 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0025 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:47_841]#1986269 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000010,3,1,28,1,1980273,1986269,5996
+[20260820_16:43:48_184]#1986329 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000016,3,1,34,1,1981283,1986329,5046
+[20260820_16:43:48_194]#1986337 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:48_194]#1986339 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0013 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:48_529]#1986384 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:48_530]#1986386 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0023 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:50_246]#1989710 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000018,3,1,36,1,1984755,1989710,4955
+[20260820_16:43:50_249]#1989714 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000001,3,1,39,1,1985311,1989714,4403
+[20260820_16:43:50_585]#1989743 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000019,3,1,37,1,1985205,1989743,4538
+[20260820_16:43:50_588]#1989746 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011101000020,3,1,38,1,1985264,1989746,4482
+[20260820_16:43:50_818]#1989778 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:50_819]#1989780 | info | nwk.c (349)| aps tx retry_cnt 0 dst 005a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:51_167]#1989811 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:51_167]#1989812 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0063 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:51_517]#1989840 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:51_518]#1989842 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:51_852]#1989871 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:51_852]#1989872 | info | nwk.c (349)| aps tx retry_cnt 0 dst 007a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:51_859]#1990496 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000003,3,1,41,1,1986212,1990496,4284
+[20260820_16:43:52_201]#1990555 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:52_201]#1990556 | info | nwk.c (349)| aps tx retry_cnt 0 dst 002e link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:52_211]#1990626 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000004,3,1,42,1,1986335,1990626,4291
+[20260820_16:43:52_542]#1990679 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000005,3,1,43,1,1986382,1990679,4297
+[20260820_16:43:52_878]#1990686 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:52_878]#1990689 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0059 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:52_894]#1990734 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:52_900]#1990735 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0069 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:53_224]#1991198 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000002,3,1,40,1,1985354,1991198,5844
+[20260820_16:43:53_400]#1991256 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:53_400]#1991259 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:54_667]#1994182 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000006,3,1,44,1,1989775,1994182,4407
+[20260820_16:43:54_671]#1994195 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000007,3,1,45,1,1989809,1994195,4386
+[20260820_16:43:55_007]#1994219 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000009,3,1,47,1,1989867,1994219,4352
+[20260820_16:43:55_158]#1994246 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:55_158]#1994248 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:55_506]#1994280 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:55_508]#1994281 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0022 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:55_844]#1994308 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:55_845]#1994310 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000e link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:43:55_853]#1994846 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000010,3,1,48,1,1990553,1994846,4293
+[20260820_16:43:56_195]#1994904 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:56_195]#1994905 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0012 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:56_535]#1994966 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000011,3,1,49,1,1990685,1994966,4281
+[20260820_16:43:56_546]#1995021 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000012,3,1,50,1,1990732,1995021,4289
+[20260820_16:43:56_879]#1995030 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:56_879]#1995031 | info | nwk.c (349)| aps tx retry_cnt 0 dst 006a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:57_221]#1995074 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:57_221]#1995075 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0071 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:57_223]#1996161 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:57_224]#1996162 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:57_565]#1996259 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000008,3,2,46,1,1989835,1996259,6424
+[20260820_16:43:57_566]#1996262 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000013,3,1,51,1,1991254,1996261,5007
+[20260820_16:43:57_908]#1996323 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:57_909]#1996325 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0021 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:43:59_497]#1999096 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000014,3,1,52,1,1994244,1999096,4852
+[20260820_16:43:59_677]#1999154 | info | nwk.c (255)| aps tx dst=
+[20260820_16:43:59_678]#1999155 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:00_152]#1999573 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000015,3,1,53,1,1994277,1999573,5296
+[20260820_16:44:00_157]#1999590 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000018,3,1,56,1,1995026,1999590,4564
+[20260820_16:44:00_496]#1999621 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000016,3,1,54,1,1994305,1999621,5316
+[20260820_16:44:00_499]#1999623 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000019,3,1,57,1,1995072,1999623,4551
+[20260820_16:44:00_838]#1999649 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000017,3,1,55,1,1994902,1999649,4747
+[20260820_16:44:00_849]#1999656 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:00_849]#1999659 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0050 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:01_269]#1999690 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:01_269]#1999691 | info | nwk.c (349)| aps tx retry_cnt 0 dst 002f link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:01_611]#1999721 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:01_611]#1999722 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0003 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:01_626]#1999750 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:01_627]#1999752 | info | nwk.c (349)| aps tx retry_cnt 0 dst 007b link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:01_961]#1999775 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:01_962]#1999780 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:02_298]#2000725 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000020,3,1,58,1,1996322,2000725,4403
+[20260820_16:44:02_645]#2000797 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:02_645]#2000799 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0045 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:04_053]#2003619 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011501000001,3,1,59,1,1999152,2003619,4467
+[20260820_16:44:04_258]#2003683 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:04_258]#2003685 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0043 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:04_604]#2003988 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011501000003,3,1,61,1,1999686,2003988,4302
+[20260820_16:44:04_611]#2004010 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011601000001,3,1,62,1,1999719,2004010,4291
+[20260820_16:44:04_948]#2004026 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011501000002,3,1,60,1,1999654,2004026,4372
+[20260820_16:44:04_963]#2004056 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:04_964]#2004059 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000f link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:05_305]#2004091 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:05_305]#2004092 | info | nwk.c (349)| aps tx retry_cnt 0 dst 002d link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:05_643]#2004123 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:05_644]#2004125 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=2
+[20260820_16:44:05_661]#2004144 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011601000002,3,1,63,1,1999747,2004144,4397
+[20260820_16:44:05_989]#2004196 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:05_989]#2004199 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:06_344]#2005991 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:06_344]#2005992 | info | nwk.c (349)| aps tx retry_cnt 1 dst 000a link hplc txType 0 bakRt 0 0000 0000 packs=2
+[20260820_16:44:06_668]#2006069 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011601000003,3,2,64,1,1999773,2006069,6296
+[20260820_16:44:07_013]#2006134 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:07_013]#2006135 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0023 link hplc txType 0 bakRt 2 0009 0008 packs=1
+[20260820_16:44:07_017]#2006188 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011701000001,3,1,65,1,2000795,2006188,5393
+[20260820_16:44:07_209]#2006244 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:07_210]#2006245 | info | nwk.c (349)| aps tx retry_cnt 0 dst 008e link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:09_740]#2009139 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011801000001,3,1,68,1,2004089,2009139,5050
+[20260820_16:44:10_081]#2009221 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011701000003,3,1,67,1,2004054,2009221,5167
+[20260820_16:44:10_086]#2009223 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011801000002,3,1,69,1,2004118,2009223,5105
+[20260820_16:44:10_088]#2009225 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011801000003,3,1,70,1,2004195,2009225,5030
+[20260820_16:44:10_420]#2009233 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:10_420]#2009235 | info | nwk.c (349)| aps tx retry_cnt 0 dst 007d link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:10_429]#2009258 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011701000002,3,1,66,1,2003682,2009258,5576
+[20260820_16:44:10_788]#2009287 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:10_788]#2009289 | info | nwk.c (349)| aps tx retry_cnt 0 dst 008b link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:11_128]#2009320 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:11_129]#2009321 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0009 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:11_469]#2009348 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:11_469]#2009350 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0014 link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:11_485]#2009379 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:11_486]#2009380 | info | nwk.c (349)| aps tx retry_cnt 0 dst 001c link hplc txType 0 bakRt 2 0008 0009 packs=0
+[20260820_16:44:11_817]#2010474 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011901000001,3,1,71,1,2006132,2010474,4342
+[20260820_16:44:12_158]#2010540 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:12_158]#2010542 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0082 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:12_161]#2010554 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011901000002,3,1,72,1,2006242,2010554,4312
+[20260820_16:44:12_503]#2010617 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:12_503]#2010618 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0086 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:14_896]#2014604 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012001000001,3,1,74,1,2009284,2014604,5320
+[20260820_16:44:15_264]#2014667 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:15_264]#2014669 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0088 link hplc txType 0 bakRt 1 0002 0000 packs=1
+[20260820_16:44:15_595]#2014704 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011901000003,3,1,73,1,2009231,2014704,5473
+[20260820_16:44:15_938]#2014761 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012001000002,3,1,75,1,2009318,2014761,5443
+[20260820_16:44:15_947]#2014774 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:15_947]#2014775 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0004 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:16_282]#2014818 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:16_283]#2014820 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:16_625]#2015540 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:16_625]#2015541 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0014 link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:16_634]#2015550 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:16_634]#2015551 | info | nwk.c (349)| aps tx retry_cnt 1 dst 001c link hplc txType 0 bakRt 2 0008 0009 packs=1
+[20260820_16:44:17_100]#2016680 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:17_100]#2016681 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0082 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:17_111]#2016730 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:17_111]#2016731 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0086 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:19_066]#2018764 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000002,3,2,78,1,2010535,2018764,8229
+[20260820_16:44:19_602]#2019126 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000001,3,2,77,1,2009375,2019126,9751
+[20260820_16:44:19_603]#2019129 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000003,3,2,79,1,2010613,2019129,8516
+[20260820_16:44:19_876]#2019213 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012001000003,3,2,76,1,2009344,2019213,9869
+[20260820_16:44:20_352]#2019841 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:20_353]#2019842 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0038 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:20_688]#2019874 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:20_688]#2019876 | info | nwk.c (349)| aps tx retry_cnt 0 dst 003c link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:20_695]#2019904 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:20_696]#2019906 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0026 link hplc txType 0 bakRt 2 0023 0009 packs=0
+[20260820_16:44:21_047]#2019936 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:21_048]#2019937 | info | nwk.c (349)| aps tx retry_cnt 0 dst 002b link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:21_380]#2019968 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:21_380]#2019970 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:21_399]#2019992 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:21_401]#2019993 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0014 link hplc txType 0 bakRt 2 0009 0008 packs=2
+[20260820_16:44:21_729]#2020027 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:21_730]#2020029 | info | nwk.c (349)| aps tx retry_cnt 0 dst 001c link hplc txType 0 bakRt 2 0008 0009 packs=2
+[20260820_16:44:22_068]#2020089 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000010,3,1,83,1,2019839,2020089,250
+[20260820_16:44:22_413]#2020637 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011401000013,3,1,87,1,2019966,2020637,671
+[20260820_16:44:22_415]#2020639 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012001000003,3,1,88,1,2019990,2020639,649
+[20260820_16:44:22_751]#2020657 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000017,3,1,86,1,2019933,2020657,724
+[20260820_16:44:23_094]#2020751 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000001,3,1,89,1,2020022,2020751,729
+[20260820_16:44:23_435]#2020812 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:23_435]#2020813 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004a link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:23_445]#2021029 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:23_445]#2021030 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0088 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:23_778]#2021089 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:23_778]#2021090 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0004 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:23_779]#2021109 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:23_780]#2021110 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:24_014]#2022902 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000004,3,2,80,1,2014665,2022902,8237
+[20260820_16:44:25_101]#2024623 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000006,3,2,82,1,2014814,2024623,9809
+[20260820_16:44:25_106]#2024664 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000012,3,1,85,1,2019902,2024664,4762
+[20260820_16:44:25_456]#2024684 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,011201000011,3,1,84,1,2019872,2024684,4812
+[20260820_16:44:25_799]#2024722 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:25_799]#2024723 | info | nwk.c (349)| aps tx retry_cnt 0 dst 005d link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:25_809]#2024753 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:25_809]#2024755 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004c link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:26_142]#2025096 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000007,3,1,90,1,2020810,2025096,4286
+[20260820_16:44:26_346]#2025153 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:26_346]#2025156 | info | nwk.c (349)| aps tx retry_cnt 0 dst 006c link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:27_620]#2027230 | info | nwk.c (349)| aps tx retry_cnt 2 dst 0000 link hplc txType 3 bakRt 0 0000 0000 packs=1
+[20260820_16:44:29_102]#2028686 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000005,3,3,81,1,2014772,2028686,13914
+[20260820_16:44:29_791]#2029203 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000008,3,1,91,1,2024720,2029203,4483
+[20260820_16:44:30_133]#2029267 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:30_133]#2029269 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0015 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:30_143]#2029282 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000009,3,1,92,1,2024751,2029282,4531
+[20260820_16:44:30_477]#2029341 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:30_477]#2029342 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004d link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:31_576]#2031249 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:31_577]#2031251 | info | nwk.c (349)| aps tx retry_cnt 1 dst 006c link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:34_885]#2034381 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:34_887]#2034382 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0014 link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:35_248]#2034416 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:35_248]#2034417 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0082 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:35_259]#2034446 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:35_261]#2034448 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0086 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:35_600]#2034476 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:35_600]#2034477 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0088 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:35_934]#2034506 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:35_934]#2034507 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0004 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:35_945]#2034533 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:35_947]#2034538 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0002 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:36_619]#2034693 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000003,3,1,98,1,2034440,2034693,253
+[20260820_16:44:36_962]#2034768 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000010,3,2,93,1,2025152,2034768,9616
+[20260820_16:44:36_963]#2034772 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000004,3,1,99,1,2034473,2034772,299
+[20260820_16:44:36_969]#2034792 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012001000003,3,1,96,1,2034379,2034792,413
+[20260820_16:44:37_311]#2034835 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000006,3,1,101,1,2034529,2034835,306
+[20260820_16:44:37_649]#2034870 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:37_649]#2034871 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000c link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:37_666]#2034902 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:37_990]#2034914 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0018 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:37_997]#2035538 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:37_998]#2035539 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0015 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:38_220]#2035598 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:38_220]#2035599 | info | nwk.c (349)| aps tx retry_cnt 1 dst 004d link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:39_168]#2038682 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000005,3,1,100,1,2034500,2038682,4182
+[20260820_16:44:39_515]#2038748 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:39_515]#2038749 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000d link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:39_523]#2038761 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000002,3,1,97,1,2034412,2038761,4349
+[20260820_16:44:39_858]#2038820 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:39_858]#2038821 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0032 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:39_868]#2039185 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000011,3,2,94,1,2029261,2039185,9924
+[20260820_16:44:40_110]#2039187 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000012,3,2,95,1,2029339,2039187,9848
+[20260820_16:44:41_472]#2040997 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:41_472]#2040998 | info | nwk.c (349)| aps tx retry_cnt 1 dst 000c link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:41_479]#2041008 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:41_480]#2041009 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0018 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:43_518]#2043043 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000013,3,2,102,1,2034868,2043042,8174
+[20260820_16:44:43_522]#2043091 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000014,3,2,103,1,2034900,2043091,8191
+[20260820_16:44:44_348]#2043850 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:44_350]#2043851 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0088 link hplc txType 0 bakRt 1 0002 0000 packs=0
+[20260820_16:44:44_686]#2043882 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:44_686]#2043883 | info | nwk.c (349)| aps tx retry_cnt 0 dst 006c link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:44_695]#2043912 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:44_696]#2043913 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0015 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:44_925]#2043942 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:45_289]#2043944 | info | nwk.c (349)| aps tx retry_cnt 0 dst 004d link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:45_296]#2043972 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:45_297]#2043975 | info | nwk.c (349)| aps tx retry_cnt 0 dst 000c link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:45_636]#2044005 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:45_637]#2044006 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0018 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:45_990]#2044707 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000010,3,1,107,1,2043880,2044707,827
+[20260820_16:44:45_996]#2044710 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000013,3,1,110,1,2043971,2044710,739
+[20260820_16:44:46_319]#2044711 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000014,3,1,111,1,2044002,2044711,709
+[20260820_16:44:46_326]#2044748 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000011,3,1,108,1,2043910,2044748,838
+[20260820_16:44:46_667]#2044779 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000012,3,1,109,1,2043940,2044779,839
+[20260820_16:44:47_005]#2044790 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:47_005]#2044791 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0007 link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:47_010]#2044811 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000004,3,1,106,1,2043848,2044811,963
+[20260820_16:44:47_350]#2044842 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:47_350]#2044845 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0031 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:47_690]#2044875 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:47_690]#2044876 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0009 link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:47_703]#2044905 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:47_704]#2044907 | info | nwk.c (349)| aps tx retry_cnt 0 dst 001e link hplc txType 0 bakRt 0 0000 0000 packs=0
+[20260820_16:44:48_032]#68510043040000000080630198900000010000012201f101000300320068170043050100000122010047550501010010020000fe1916681700430501
+[20260820_16:44:48_033]#000001220100475505010140000200007d1b16ec16
+[20260820_16:44:48_033]#010000012201
+[20260820_16:44:48_038]#11030000010223037400280a68170043050100000122010047550501010010020000fe1916681700430501000001220100475505010140000200007d
+[20260820_16:44:48_038]#2044937 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:48_038]#012201000001
+[20260820_16:44:48_039]#2044938 | info | nwk.c (349)| aps tx retry_cnt 0 dst 008c link hplc txType 0 bakRt 1 0002 0000 packs=1
+[20260820_16:44:48_045]#68510043040000000081630198900000020000012201f101000300320068170043050200000122010029fd0501010010020000fe1916681700430502
+[20260820_16:44:48_046]#00000122010029fd05010140000200007d1b160416
+[20260820_16:44:48_375]#020000012201
+[20260820_16:44:48_376]#11030000010223037500280a68170043050200000122010029fd0501010010020000fe191668170043050200000122010029fd05010140000200007d
+[20260820_16:44:48_382]#2044964 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:48_382]#012201000002
+[20260820_16:44:48_383]#2044965 | info | nwk.c (349)| aps tx retry_cnt 0 dst 0027 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:48_393]#2045127 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:48_399]#2045128 | info | nwk.c (349)| aps tx retry_cnt 1 dst 000d link hplc txType 0 bakRt 2 0009 0008 packs=0
+[20260820_16:44:48_719]#2045177 | info | nwk.c (255)| aps tx dst=
+[20260820_16:44:48_720]#2045178 | info | nwk.c (349)| aps tx retry_cnt 1 dst 0032 link hplc txType 0 bakRt 0 0000 0000 packs=1
+[20260820_16:44:48_732]#2046922 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000015,3,2,104,1,2038741,2046922,8181
+[20260820_16:44:49_062]#2047001 | info | aps_transdata_state.c (956)| recv,ApsReadRecord,2,012101000016,3,2,105,1,2038818,2047001,8183
