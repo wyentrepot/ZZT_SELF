@@ -15,7 +15,7 @@
 | 7 | 对照解析页来源卡片化（串口/导入文件互斥二选一）+ 深色终端精致化美化 | ✅ 生效 |
 | 8 | module_log exe 打包修正：spec 补 loghooks 模块 + rules 数据文件 | ✅ 生效 |
 | 9 | 一键启动脚本统一为 GBK + CRLF 编码，修复中文 cmd 下乱码一闪而过 | ✅ 生效 |
-| 10 | 新增 sim_concentrator 模拟集中器模块：统一用 adapter_10376，独立可读写串口，REST/CLI 验证任务闭环 | ✅ 生效 |
+| 10 | 新增 sim_concentrator 模拟集中器模块：统一用 adapter_10376，独立可读写串口，REST/CLI 验证任务闭环 | ⚠️ 部分被取代（帧格式口径由 ADR-44 改为单 68，模块定位/验证闭环/REST-CLI 仍生效） |
 | 11 | module_log 启动脚本编码修正回 GBK（ADR-9 落地补漏）+ test_launcher 断言同步 | ✅ 生效 |
 | 12 | OpenViking 记忆后端 embedding/VLM 切换到火山方舟（doubao-embedding-vision + doubao-seed-code） | ✅ 生效 |
 | 13 | 模拟集中器前端可视化：module_log 新增第三页签「模拟集中器」，挂载 simcon 子应用 | ✅ 生效 |
@@ -44,6 +44,7 @@
 | 36 | 按中央信标周期 + 网络隔离(NID+CCO MAC)的网络承载能力评估：纯 Python 信标识别 + 三级健康评级 + listener/workbench 双挂 + AI 查询 API | ✅ 生效 |
 | 42 | 高频采集失败分析收口为工具包 + 技能：tools/scripts/hf_collect_analyze + skills/hf-collect-analysis + 精简样例入库 | ❌ 已取代（目录由 ADR-43 调整为 tools/taiti/高频采集） |
 | 43 | 高频采集分析迁入 tools/taiti/高频采集 扩展系列：按日志来源分 台体/CCO/侦听台 子目录 + run.py 四命令入口 | ✅ 生效 |
+| 44 | 13762 协议库重构：彻底重构为 Q/GDW 10376.2 单 68 标准帧（推翻双 68 信封，同步改 sim_concentrator/loghooks/测试） | ✅ 生效 |
 
 ---
 
@@ -793,3 +794,35 @@
   - REQS-INDEX 0006 标题更新为 tools/taiti 路径。
 - **被取代**：取代 ADR-42 中"目录位置为 tools/scripts/hf_collect_analyze"的部分；
   ADR-42 的"收口为工具包+技能+精简样例入库"本质仍生效。
+
+## ADR-44 13762 协议库重构：彻底重构为 Q/GDW 10376.2 单 68 标准帧（推翻双 68 信封）
+
+- **日期**：2026-08-27
+- **状态**：✅ 生效
+- **决定**：
+  - 将 `libs/parser_lib/adapters/adapter_10376` 从现有的**双 68 信封**
+    （`68|L(2B)|68|AFN|SEQ|RTUA(6)|MSAA|PW(2)|用户数据|CS|16`）**彻底重构**为
+    **Q/GDW 10376.2—2019 单 68 标准帧**：
+    `68H | L(2B) | C(1B) | 用户数据(L1) | CS(1B) | 16H`，其中用户数据 =
+    `R(信息域) | A(地址域) | AFN(应用功能码) | 应用数据`。
+  - 帧格式基准以 codebuddy/hy3 核查蒸馏目录结论为准（已存 `docs/协议/13762库设计/帧格式核查结论.md`）：
+    1376.2 权威帧格式为单 68，不存在双 68；AFN/Fn 应用层语义保留现有正确映射。
+  - **同步改造既有调用方**：`sim_concentrator`（frame_codec/runner/responder/matcher/serial_io）、
+    `loghooks/sources.py` 的 `parse_concentrator_10376`、相关测试（约 60+ 用例）全部适配单 68。
+  - 新库能力：**输入 JSON → 构帧 bytes；输入 bytes → 解析 JSON**，无 IO、纯函数；
+    645/698 作为内嵌帧继续复用现有适配器递归解析。
+  - 本重构允许临时保留一个双 68 兼容入口（如 `decode_legacy_dual68`）供过渡期测试比对，
+    不作为长期 API。
+- **理由**：
+  - 用户重新设计需求："构建 13762 协议的解析与构建库，参考蒸馏目录文档，能解析能构建，
+    645/698 内嵌可复用对应库"。
+  - codebuddy/hy3 核查确认：现有双 68 信封与 Q/GDW 10376.2 权威标准不符，
+    `test_10376_doc.py` 亦自述"文档帧为单68H，适配器为双68H，文档帧直接 decode 会被拒"。
+  - 双 68 是"应用层正确、链路层错配"的历史妥协（按抓包帧实现），本次重构根除该病根。
+- **影响**：
+  - `adapter_10376` 全部重写：build_frame / try_extract / confidence / decode 改为单 68。
+  - `sim_concentrator.frame_codec` 的 build_13762_frame/decode_frame/scan_frame 适配单 68。
+  - 6 省 doc 测试 + sim_concentrator 测试 + loghooks 测试需同步改写为单 68 帧样本。
+  - 风险：sim_concentrator 与真实设备/抓包帧的互操作行为改变，需回归验证。
+- **被取代**：取代 ADR-10 中"帧格式统一走 adapter_10376（双 68 AFN/SEQ/RTUA/MSAA/PW 信封）"
+  的口径；ADR-10 的模块定位/验证闭环/串口通道/REST-CLI 架构不受影响，仍生效。

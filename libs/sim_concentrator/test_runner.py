@@ -1,8 +1,6 @@
-"""runner 执行闭环单元测试：用假 SerialIO 驱动下发→应答→匹配→判定。"""
+"""runner 执行闭环单元测试：用假 SerialIO 驱动下发→应答→匹配→判定（单 68）。"""
 from sim_concentrator.frame_codec import build_13762_frame, decode_frame
 from sim_concentrator.runner import build_send_frame, execute_task
-
-RTSA = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])  # 展示: 070919051620
 
 
 class FakeIO:
@@ -48,8 +46,7 @@ class FakeIO:
 
 
 def _confirm_reply(seq=1):
-    return build_13762_frame(afn=0x00, seq=seq, rtsa=RTSA, msaa=0x01,
-                             pw=0x0000, userdata=b"\x00")
+    return build_13762_frame(afn=0x00, fn=1, direction="up", info={"seq": seq})
 
 
 class TestBuildSendFrame:
@@ -57,8 +54,8 @@ class TestBuildSendFrame:
         raw = build_send_frame({"afn": 0x01, "rtsa": "070919051620",
                                 "userdata": "00"})
         d = decode_frame(raw)
-        # 构造时 rtsa 展示顺序 → 线上字节反转，解析回来应等于展示值
-        assert d["fields"]["终端地址RTUA"]["value"] == "070919051620"
+        # rtsa → 地址域 src+dst
+        assert "070919051620" in d["fields"]["地址域A"]["value"]
 
     def test_userdata_hex_str(self):
         raw = build_send_frame({"afn": 0x02, "rtsa": "070919051620",
@@ -83,8 +80,7 @@ class TestExecuteTask:
         assert out["steps"][0]["result"] == "pass"
 
     def test_expect_afn_mismatch_fail(self):
-        # 收到错误 AFN 帧不立即判 fail：跳过继续等（CCO 会插播主动上报帧），
-        # 超时仍未收到期望帧才 fail
+        # 收到错误 AFN 帧不立即判 fail：跳过继续等，超时仍未收到期望帧才 fail
         task = {
             "id": "t2",
             "port": "COM_TEST",
@@ -95,13 +91,11 @@ class TestExecuteTask:
                  "expect": {"afn": 0x00}, "expect_timeout": 0.3},
             ],
         }
-        io = FakeIO(responses=[build_13762_frame(afn=0x03, seq=1, rtsa=RTSA,
-                                                 msaa=0x01, pw=0, userdata=b"\x00")])
+        io = FakeIO(responses=[build_13762_frame(afn=0x03, fn=1, direction="up")])
         out = execute_task(task, io=io)
         assert out["summary"]["verdict"] == "fail"
         assert out["steps"][0]["result"] == "fail"
         assert "超时" in out["steps"][0]["reason"]
-        # 记录到了收到但不匹配的帧
         assert len(out["steps"][0].get("received_hex", [])) == 1
 
     def test_expect_timeout_fail(self):
@@ -130,7 +124,6 @@ class TestExecuteTask:
         assert out["summary"]["verdict"] == "pass"
 
     def test_step_responder_override(self):
-        # 任务级关闭应答，但步骤级开：发 01H，应答引擎回确认，期望收到确认
         task = {
             "id": "t5", "port": "COM_TEST",
             "enable_responder": False,
@@ -144,9 +137,6 @@ class TestExecuteTask:
                 },
             ],
         }
-        # 假串口无法真正联动 responder，这里改为：步骤 responder 存在时由 runner 挂载，
-        # 但 FakeIO 不回放 → 超时。因此该用例改为验证"步骤级 responders 会触发应答"需真实联动。
-        # 简单验证：步骤带 responders 仍能正常执行（预期收到确认帧由 FakeIO 回放）。
         io = FakeIO(responses=[_confirm_reply()])
         out = execute_task(task, io=io)
         assert out["summary"]["verdict"] == "pass"

@@ -66,7 +66,9 @@ class TestAPI:
         r = client.post("/api/simcon/open", json={})
 
         assert r.status_code == 200
-        assert captured["port"] == "/dev/ttyUSB1"
+        import os
+        expected_port = "COM24" if os.name == "nt" else "/dev/ttyUSB1"
+        assert captured["port"] == expected_port
         assert captured["baudrate"] == 9600
         assert captured["parity"] == "E"
         assert captured["bytesize"] == 8
@@ -85,7 +87,9 @@ class TestAPI:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["port"] == "/dev/ttyUSB1"
+        import os
+        expected_port = "COM24" if os.name == "nt" else "/dev/ttyUSB1"
+        assert body["port"] == expected_port
         assert body["baudrate"] == 9600
         assert body["mapping_id"] == "simcon"
         assert body["port_identity"]["windows_com"] == "COM24"

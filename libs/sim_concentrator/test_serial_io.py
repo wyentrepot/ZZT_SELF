@@ -44,9 +44,8 @@ class FakeSerial:
         self.is_open = False
 
 
-def _frame(afn=0x01, seq=0x01):
-    return build_13762_frame(afn=afn, seq=seq, rtsa=RTSA, msaa=0x01,
-                             pw=0x0000, userdata=b"\x00")
+def _frame(afn=0x01, fn=1):
+    return build_13762_frame(afn=afn, fn=fn, info={"seq": 1})
 
 
 def test_serial_io_read_thread_splits_frames():
@@ -100,10 +99,13 @@ def test_list_ports_returns_list():
 
 
 def test_resolve_simcon_mapping_alias_uses_platform_device_and_defaults():
+    import os
     resolved = resolve_serial_config(port="COM24")
 
     assert resolved["mapping_id"] == "simcon"
-    assert resolved["port"] == "/dev/ttyUSB1"
+    # 平台自适应：Windows→COM24，POSIX→/dev/ttyUSB1
+    expected = "COM24" if os.name == "nt" else "/dev/ttyUSB1"
+    assert resolved["port"] == expected
     assert resolved["baudrate"] == 9600
     assert resolved["parity"] == "E"
     assert resolved["bytesize"] == 8

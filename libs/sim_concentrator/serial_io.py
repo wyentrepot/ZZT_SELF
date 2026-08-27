@@ -24,17 +24,13 @@ from shared.serial_resources import SerialResourceConflict, SerialResourceRegist
 
 from sim_concentrator.frame_codec import (
     scan_frame,
-    scan_local_frame,
     frame_to_hex,
     hex_to_bytes,
 )
 
 
 def scan_any_frame(buf: bytes):
-    """先尝试 CCO 本地协议（单 68）切帧，失败再尝试标准 1376.2（双 68）。"""
-    frame, consumed = scan_local_frame(buf)
-    if frame is not None:
-        return frame, consumed
+    """切一帧（单 68 统一：CCO 本地 = 单 68 标准帧）。"""
     return scan_frame(buf)
 
 

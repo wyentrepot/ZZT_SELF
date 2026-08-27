@@ -1,13 +1,10 @@
-"""loghooks 第三来源 concentrator_10376 解析器测试（原占位 → 真实现）。"""
+"""loghooks 第三来源 concentrator_10376 解析器测试（单 68 标准帧，ADR-44）。"""
 from sim_concentrator.frame_codec import build_13762_frame, frame_to_hex
 from loghooks.sources import get_parser, parse_concentrator_10376
 
-RTSA = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])  # 展示: 070919051620
 
-
-def _frame_hex(afn=0x01, seq=0x01, userdata=b"\x00"):
-    raw = build_13762_frame(afn=afn, seq=seq, rtsa=RTSA, msaa=0x01,
-                            pw=0x0000, userdata=userdata)
+def _frame_hex(afn=0x01, fn=1, seq=1, appdata=b""):
+    raw = build_13762_frame(afn=afn, fn=fn, info={"seq": seq}, appdata=appdata)
     return frame_to_hex(raw)
 
 
@@ -26,7 +23,6 @@ def test_parse_plain_hex_line():
     assert pl.fields is not None
     assert pl.fields["structure"] == "1376.2"
     assert pl.fields["fields"]["AFN"]["raw"] == 0x01
-    assert pl.fields["fields"]["终端地址RTUA"]["value"] == "070919051620"
 
 
 def test_parse_timestamped_line():
@@ -39,10 +35,10 @@ def test_parse_timestamped_line():
 
 
 def test_parse_nested_645_fields():
-    f645 = bytes.fromhex("6812345678901268910800000100123456783416")
-    userdata = bytes([0x00, 0x01]) + f645
-    raw = build_13762_frame(afn=0x02, seq=0x01, rtsa=RTSA, msaa=0x01,
-                            pw=0x0000, userdata=userdata)
+    # 数据转发 AFN=02H F1：应用数据 = 协议类型(02) + 长度 + 645帧
+    f645 = bytes.fromhex("6812345678901268910833333433AB896745CC16")
+    appdata = bytes([0x02, len(f645)]) + f645
+    raw = build_13762_frame(afn=0x02, fn=1, appdata=appdata)
     hx = frame_to_hex(raw)
     pl = parse_concentrator_10376(hx)
     assert pl is not None

@@ -92,20 +92,35 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
         return build_local_13762_frame(afn=afn, fn=fn, buff=buff,
                                        ctrl=ctrl, info=info, seq=seq)
 
+    # 标准 1376.2（单 68 标准帧，Q/GDW 10376.2 信封）：
+    #   afn / fn（信息类标识，默认 F1）
+    #   appdata 或 userdata：应用数据单元（可含内嵌 645/698 帧）
+    #   info：信息域 R dict（含 seq 报文序列号）
+    #   address：地址域 A dict {src, relay[], dst}
+    #   direction："down" / "up"（默认 down）
+    #   comm_mode：通信方式（默认 3 HPLC）
     afn = _to_int(send.get("afn", 0x00))
-    seq = _to_int(send.get("seq", 0), 10)
-    msaa = _to_int(send.get("msaa", 0x01))
-    pw = _to_int(send.get("pw", 0x0000))
+    fn = _to_int(send.get("fn", 1), 10)
 
-    rtsa_raw = send.get("rtsa")
-    if isinstance(rtsa_raw, str):
-        rtsa = bytes.fromhex(rtsa_raw.replace(" ", ""))[::-1][:6]  # 人读顺序 → 线上字节
-    elif rtsa_raw is None:
-        rtsa = bytes(6)  # 未指定终端地址：全零兜底
-    else:
-        rtsa = bytes(rtsa_raw)[:6]
+    info = dict(send.get("info") or {})
+    # 兼容：旧任务的 seq 字段映射为信息域报文序列号
+    if "seq" in send and "seq" not in info:
+        info["seq"] = _to_int(send.get("seq"), 10)
 
-    ud = send.get("userdata", b"")
+    address = send.get("address")
+    # 兼容：旧任务的 rtsa（人读顺序 hex）映射为地址域 src+dst
+    # （单 68 地址域 = 源A1 + 中继A2 + 目的A3；下行场景 A1=主节点、A3=从节点。
+    #   rtsa 是集中器抄表链路地址，映射为 A1 与 A3 同址，保证地址域长度自洽。）
+    if address is None and send.get("rtsa"):
+        rtsa_raw = send["rtsa"]
+        if isinstance(rtsa_raw, str):
+            rtsa_str = rtsa_raw.replace(" ", "")
+            address = {"src": rtsa_str, "dst": rtsa_str}
+        else:
+            addr_str = "".join(f"{b:02X}" for b in bytes(rtsa_raw)[::-1])
+            address = {"src": addr_str, "dst": addr_str}
+
+    ud = send.get("appdata", send.get("userdata", b""))
     if isinstance(ud, str):
         userdata = hex_to_bytes(ud)
     elif isinstance(ud, list):
@@ -113,8 +128,12 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
     else:
         userdata = bytes(ud)
 
-    return build_13762_frame(afn=afn, seq=seq, rtsa=rtsa, msaa=msaa,
-                             pw=pw, userdata=userdata)
+    return build_13762_frame(
+        afn=afn, fn=fn, appdata=userdata,
+        direction=send.get("direction", "down"),
+        comm_mode=_to_int(send.get("comm_mode", 3)),
+        info=info, address=address,
+    )
 
 
 def _rtsa_to_show(rtsa: bytes) -> str:

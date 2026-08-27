@@ -5,10 +5,10 @@
 
   - 645（FT1.2）：68 | A(6) | 68(pos7) | C | L | ... ，pos3 是地址字节（绝不可能是 0x68）
   - 698.45     ：68 | L(2) | C(非0x68) | SA | CA | HCS | APDU | FCS | 16
-  - 1376.2     ：68 | L(2) | 68(pos3) | AFN | SEQ | RTUA(6) | MSAA | PW | 用户数据 | CS | 16
+  - 1376.2（单68, ADR-44）：68 | L(2) | C(非0x68) | R(6) | A | AFN | DT1 | DT2 | ... | CS | 16
 
-即 1376.2 的第二个 0x68 固定在 pos3，而 645 在 pos7、698 在 pos3 是控制域 ——
-这个位置差异是三者互不抢占的关键。
+单 68 重构后，1376.2 与 698.45 在帧头（68|L|C）上同构，需靠 AFN 合法性
+（_AFN_NAMES）与 CS 校验（控制域起）区分；645 因 pos3 是地址字节天然隔离。
 """
 import os
 
@@ -51,10 +51,9 @@ def _f698():
 
 
 def _f1376():
-    # 1376.2 AFN=02 数据转发，用户数据内嵌一帧 645
-    rtsa = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])
-    return build_1376(afn=0x02, seq=0x01, rtsa=rtsa, msaa=0x01,
-                      pw=0x0000, userdata=bytes([0x12, 0x34]) + _f645())
+    # 1376.2 单 68 标准帧，AFN=02 数据转发，应用数据内嵌一帧 645
+    return build_1376(afn=0x02, fn=1, direction="down",
+                      appdata=bytes([0x02, 0x0A]) + _f645())
 
 
 def test_router_routes_645(router):

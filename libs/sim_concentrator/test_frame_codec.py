@@ -1,4 +1,4 @@
-"""frame_codec 层单元测试：构帧→解析往返、嵌套 645/698、帧提取。"""
+"""frame_codec 层单元测试：单 68 构帧→解析往返、嵌套 645/698、帧提取。"""
 import os
 
 import pytest
@@ -20,46 +20,50 @@ def _f645():
     return bytes.fromhex("68 12 34 56 78 90 12 68 91 08 00 00 00 01 00 12 34 56 34 16".replace(" ", ""))
 
 
+def _f698():
+    # 一条简单 698.45 链路层帧（用 adapter_698 build 构造）
+    from parser_lib.adapters.adapter_698 import build_frame as build_698
+    return build_698(
+        apdu=bytes.fromhex("85 01 02 00 00 00 00 01 00"),
+        addr_bytes=bytes.fromhex("11 22 33 44 55 66"),
+    )
+
+
 def test_build_roundtrip_basic():
-    rtsa = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])
-    raw = build_13762_frame(afn=0x01, seq=0x01, rtsa=rtsa, msaa=0x01,
-                            pw=0x0000, userdata=b"\x00")
-    assert raw[0] == 0x68 and raw[3] == 0x68 and raw[-1] == 0x16
+    raw = build_13762_frame(afn=0x01, fn=1, info={"seq": 1})
+    assert raw[0] == 0x68 and raw[3] != 0x68 and raw[-1] == 0x16  # 单68
     L = raw[1] | (raw[2] << 8)
-    assert L == len(raw) - 2
-    assert sum(raw[1:-2]) % 256 == raw[-2]  # CS 正确
+    assert L == len(raw)  # 单68：L = 整帧长
+    assert sum(raw[3:-2]) % 256 == raw[-2]  # CS 正确（从控制域起）
 
 
 def test_build_roundtrip_decode_envelope():
-    rtsa = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])
-    raw = build_13762_frame(afn=0x01, seq=0x01, rtsa=rtsa, msaa=0x01,
-                            pw=0x0000, userdata=b"\x00")
+    raw = build_13762_frame(afn=0x01, fn=1, direction="down",
+                            info={"seq": 1, "module_id": 1},
+                            address={"src": "070919051620", "dst": "999999999999"})
     d = decode_frame(raw)
     assert d["structure"] == "1376.2"
     assert "AFN" in d["fields"]
-    assert "数据转发" in str(d["fields"]["AFN"]["value"]) or "初始化" in str(d["fields"]["AFN"]["value"])
-    # 终端地址展示为人读顺序（反转）：20 16 05 19 09 07 -> 07 09 19 05 16 20
-    assert d["fields"]["终端地址RTUA"]["value"] == "070919051620"
+    assert "初始化" in str(d["fields"]["AFN"]["value"])
+    # 地址域 src/dst 解析
+    assert "070919051620" in d["fields"]["地址域A"]["value"]
+    assert "999999999999" in d["fields"]["地址域A"]["value"]
 
 
 def test_decode_nested_645():
-    rtsa = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])
-    # AFN=02H 数据转发：用户数据 = DAD(2B) + 645 帧
-    userdata = bytes([0x00, 0x01]) + _f645()
-    raw = build_13762_frame(afn=0x02, seq=0x01, rtsa=rtsa, msaa=0x01,
-                            pw=0x0000, userdata=userdata)
+    # AFN=02H 数据转发 F1：应用数据 = 协议类型(02) + 报文长度 + 645帧
+    appdata = bytes([0x02, len(_f645())]) + _f645()
+    raw = build_13762_frame(afn=0x02, fn=1, appdata=appdata)
     d = decode_frame(raw)
     assert len(d["nested"]) == 1
     assert d["nested"][0]["structure"] == "645"
-    # DAD 应被解析出
+    # 通信协议类型应被解析
     names = [it["name"] for it in d["items"]]
-    assert "数据单元标识DAD" in names
+    assert "通信协议类型" in names
 
 
 def test_extract_frame_roundtrip_and_partial():
-    raw = build_13762_frame(afn=0x01, seq=0x01,
-                            rtsa=bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07]),
-                            msaa=0x01, pw=0x0000, userdata=b"\x00")
+    raw = build_13762_frame(afn=0x01, fn=1, info={"seq": 1})
     # 完整帧可切出
     got = extract_frame(raw)
     assert got == raw
@@ -72,9 +76,7 @@ def test_extract_frame_roundtrip_and_partial():
 
 
 def test_hex_conversions():
-    raw = build_13762_frame(afn=0x01, seq=0x01,
-                            rtsa=bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07]),
-                            msaa=0x01, pw=0x0000, userdata=b"\x00")
+    raw = build_13762_frame(afn=0x01, fn=1, info={"seq": 1})
     hx = frame_to_hex(raw)
     assert hx == " ".join(f"{b:02X}" for b in raw)
     assert hex_to_bytes(hx) == raw
@@ -82,9 +84,7 @@ def test_hex_conversions():
 
 
 def test_scan_frame_skips_dirty_bytes():
-    raw = build_13762_frame(afn=0x01, seq=0x01,
-                            rtsa=bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07]),
-                            msaa=0x01, pw=0x0000, userdata=b"\x00")
+    raw = build_13762_frame(afn=0x01, fn=1, info={"seq": 1})
     # 前导脏字节 + 帧 + 半包
     frame, consumed = scan_frame(b"\xaa\xbb" + raw + raw[:5])
     assert frame == raw

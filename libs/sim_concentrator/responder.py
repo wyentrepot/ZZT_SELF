@@ -1,7 +1,7 @@
 """应答引擎：模块上行帧 → 模拟集中器自动应答下行帧。
 
 支持两种帧格式：
-- 标准 1376.2（双 68）：68 L 68 AFN SEQ RTUA MSAA PW ... CS 16
+- 标准 1376.2（单 68，Q/GDW 10376.2）：68 L C R A AFN DT1 DT2 ... CS 16
 - CCO 本地协议（单 68）：68 L ctrl info afn DT1 DT2 buff CS 16
 
 内置应答规则表（默认模板）覆盖常见 AFN；验证任务可传入自定义应答模板
@@ -16,12 +16,14 @@
 reply 字段说明（构造应答帧的参数）：
 - afn:    应答帧的 AFN（如 0x00 确认、0x03 查询数据返回）
 - userdata_builder: "confirm" | "deny" | "echo" | "copy_rtsa" 或 callable
-- seq:    可选，缺省沿用上行帧 seq
+- fn:     应答帧的 Fn（默认 F1）
+- info:   应答帧信息域 dict（含 seq 报文序列号）
+- address: 应答帧地址域 dict
 - userdata: 可选，直接给定字节
-- format: "local"（缺省按上行帧同格式；"standard" 强制双 68）
+- format: "local"（缺省按上行帧同格式）
 
 匹配逻辑：
-- 上行帧先 decode 得到信封字段（自动识别单/双 68）；
+- 上行帧先 decode 得到信封字段（单 68）；
 - 依次遍历规则，取第一个 match 命中的；
 - 用例提供的覆盖规则优先于内置表。
 """
@@ -67,11 +69,9 @@ class ReplyRule:
         afn = m.get("afn")
         if afn is not None:
             expect = _norm_afn(afn)
-            # 信封 AFN：本地帧取 decoded["afn"]，标准帧取 fields.AFN
-            got = None
-            if "afn" in decoded and isinstance(decoded["afn"], int):
-                got = decoded["afn"]
-            else:
+            # 统一单 68：AFN 取 fields.AFN.raw（或兼容顶层 afn）
+            got = decoded.get("afn")
+            if not isinstance(got, int):
                 afn_field = decoded.get("fields", {}).get("AFN", {})
                 got = afn_field.get("raw")
                 if not isinstance(got, int):
@@ -82,11 +82,12 @@ class ReplyRule:
                 return False
         fn = m.get("fn")
         if fn is not None:
-            # 本地帧直接有 fn；标准帧 FN 在用户数据区，本期按本地帧语义处理
+            # 统一单 68：FN 取 fields.FN.raw（或兼容顶层 fn）
             got_fn = decoded.get("fn")
-            if got_fn is None:
-                return False
-            if got_fn != int(fn):
+            if not isinstance(got_fn, int):
+                fn_field = decoded.get("fields", {}).get("FN", {})
+                got_fn = fn_field.get("raw")
+            if not isinstance(got_fn, int) or got_fn != int(fn):
                 return False
         return True
 
@@ -107,12 +108,12 @@ class Responder:
 
     # -- 主入口 ---------------------------------------------------------
     def reply_for(self, raw: bytes, seq_override: Optional[int] = None) -> Optional[bytes]:
-        """对上行帧构造应答帧；无匹配规则返回 None（不应答）。"""
+        """对上行帧构造应答帧；无匹配规则返回 None（不应答）。
+
+        单 68 统一帧（CCO 本地 = 单 68 标准，无需区分），一律 decode_frame。
+        """
         try:
-            if _is_local_frame(raw):
-                decoded = decode_local_13762_frame(raw)
-            else:
-                decoded = decode_frame(raw)
+            decoded = decode_frame(raw)
         except Exception:
             return None
         rule = self._find(decoded)
@@ -156,24 +157,29 @@ class Responder:
                     buff = bytes(ud or b"")
             return build_local_13762_frame(afn=afn, fn=fn, buff=buff)
 
-        # 标准帧：构造双 68 确认帧
-        rtsa_show = decoded.get("fields", {}).get("终端地址RTUA", {}).get("value", "")
-        try:
-            rtsa_bytes = bytes.fromhex(rtsa_show)[::-1] if rtsa_show else bytes(6)
-        except ValueError:
-            rtsa_bytes = bytes(6)
-
+        # 标准帧（单 68）：构造应答帧
+        # 从上行帧 fields 提取 seq（信息域R报文序列号）与地址域 A
+        info_field = decoded.get("fields", {}).get("信息域R", {})
+        info_raw = info_field.get("raw", "")
+        info_bytes = bytes.fromhex(info_raw) if isinstance(info_raw, str) and info_raw else None
         seq = seq_override
+        if seq is None and info_bytes is not None and len(info_bytes) >= 6:
+            seq = info_bytes[5]  # 信息域第6字节 = 报文序列号
         if seq is None:
-            seq = decoded.get("fields", {}).get("SEQ", {}).get("raw", 0)
-            if not isinstance(seq, int):
-                seq = 0
+            seq = 0
+
+        # 地址域：沿用上行帧地址（src/dst），供应答帧回包
+        addr_field = decoded.get("fields", {}).get("地址域A", {})
+        addr_value = addr_field.get("value", "")
+        address = None
+        if isinstance(addr_value, str) and addr_value and addr_value != "(无)":
+            # 地址域 hex 形如 "123456789012999999999999"（src+dst 连续 BCD）
+            s = addr_value
+            if len(s) >= 24:
+                address = {"src": s[0:12], "dst": s[12:24]}
 
         afn = _norm_afn(r.get("afn", 0x00))
-        msaa = _norm_afn(r.get("msaa", 0x01)) or 0x01
-        pw = r.get("pw", 0x0000)
-        if isinstance(pw, str):
-            pw = int(pw, 16)
+        fn = int(r.get("fn", 1))
 
         ub = r.get("userdata_builder", "none")
         if isinstance(ub, str):
@@ -183,9 +189,10 @@ class Responder:
                 userdata = b"\x01"
             elif ub == "echo":
                 userdata = bytes.fromhex(
-                    decoded.get("raw_hex", ""))[15:-2] if decoded.get("raw_hex") else b""
+                    decoded.get("raw_hex", ""))[4:-2] if decoded.get("raw_hex") else b""
             elif ub == "copy_rtsa":
-                userdata = bytes.fromhex(rtsa_show)
+                userdata = bytes.fromhex(
+                    decoded.get("raw_hex", ""))[4:-2] if decoded.get("raw_hex") else b""
             else:
                 userdata = r.get("userdata", b"")
         else:
@@ -196,8 +203,11 @@ class Responder:
         elif not isinstance(userdata, bytes):
             userdata = bytes(userdata)
 
-        return build_13762_frame(afn=afn, seq=seq, rtsa=rtsa_bytes,
-                                 msaa=msaa, pw=pw, userdata=userdata)
+        return build_13762_frame(
+            afn=afn, fn=fn, appdata=userdata,
+            direction="down", info={"seq": seq} if info_bytes is not None else None,
+            address=address,
+        )
 
 
 # ---------------------------------------------------------------------------
