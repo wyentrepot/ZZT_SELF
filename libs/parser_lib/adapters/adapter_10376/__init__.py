@@ -410,6 +410,164 @@ def _scan_payload_nested(payload: bytes):
     return _scan_nested(payload)
 
 # ---------------------------------------------------------------------------
+# 构建侧：应用数据单元编码（参数 → appdata 字节）
+# 与解析侧 _app_items 对称，覆盖现有用例聚焦的 AFN/Fn（ADR-5）。
+# 未覆盖的 (afn, fn) 抛 UnsupportedFn，不静默产出错帧。
+# 帧字节序约定（据安徽已验证帧核查）：多字节 BIN 一律小端（低字节在前）。
+# ---------------------------------------------------------------------------
+
+class UnsupportedFn(ValueError):
+    """未覆盖的 AFN/Fn 应用数据模板。"""
+
+
+def _u8(v, name: str, lo: int = 0, hi: int = 0xFF) -> int:
+    iv = int(v)
+    if not (lo <= iv <= hi):
+        raise ValueError(f"{name}={iv} 越界 [{lo},{hi}]")
+    return iv
+
+
+def _u16(v, name: str) -> int:
+    iv = int(v)
+    if not (0 <= iv <= 0xFFFF):
+        raise ValueError(f"{name}={iv} 越界 [0,65535]")
+    return iv
+
+
+def _bcd_bytes(addr, name: str = "地址") -> bytes:
+    s = str(addr).strip()
+    if not s.isdigit():
+        raise ValueError(f"{name} 必须为 BCD 数字串: {addr!r}")
+    if len(s) != 12:
+        raise ValueError(f"{name} 必须为 12 位 BCD: {s}")
+    return _str_to_bcd(s, 6)
+
+
+def _encode_11f231(params: dict) -> bytes:
+    """11H-F231 采集任务配置（安徽分钟级采集扩展）。
+
+    数据单元：任务号(1B) 启用/删除(1B) 协议类型(1B) 采集周期(1B)
+              [单相表组][三相表组][其他表组]
+    每组：固定值(1B 0x00/0x01/0x02) 数据项数量(1B)
+          预计回复总长度(2B BIN 小端) 数据项标识(4B each) 回复长度(1B each)
+    删除时数据项数量填 0，无后续字段；三组固定值始终写出。
+    """
+    task_no = _u8(params.get("task_no", 0), "task_no", 1, 15)
+    action_raw = params.get("action", "enable")
+    action = {"enable": 1, "delete": 0, 1: 1, 0: 0}.get(
+        action_raw if not isinstance(action_raw, int) else action_raw)
+    if action is None:
+        raise ValueError(f"action 非法: {action_raw!r}（应为 enable/delete 或 0/1）")
+    protocol = _u8(params.get("protocol", 2), "protocol", 2, 3)
+    cycle = _u8(params.get("cycle_min", 0), "cycle_min", 0, 0xFF)
+
+    items = params.get("items") or []
+    # 按 meter_type 分组（0单相 → 1三相 → 2其他），保持组内原序
+    groups = {0: [], 1: [], 2: []}
+    for it in items:
+        mt = _u8(it.get("meter_type", 0), "items[].meter_type", 0, 2)
+        groups[mt].append(it)
+
+    out = bytearray([task_no, action, protocol, cycle])
+    for mt, fixed in ((0, 0x00), (1, 0x01), (2, 0x02)):
+        g = groups[mt]
+        out.append(fixed)
+        out.append(_u8(len(g), f"meter_type={mt} 数据项数量", 0, 0xFF))
+        if not g:
+            continue
+        total = sum(_u16(it.get("reply_len", 0), "items[].reply_len") for it in g)
+        out += total.to_bytes(2, "little")
+        for it in g:
+            item_hex = str(it.get("item", "")).replace(" ", "")
+            if len(item_hex) != 8:
+                raise ValueError(f"数据项标识必须为 4B hex: {it.get('item')!r}")
+            out += bytes.fromhex(item_hex)
+            out.append(_u8(it.get("reply_len", 0), "items[].reply_len"))
+    return bytes(out)
+
+
+def _encode_11f232(params: dict) -> bytes:
+    """11H-F232 采集任务关联档案配置。
+
+    数据单元：任务号(1B) 档案个数(2B BIN 小端) 档案地址(6B BCD × N)。
+    """
+    task_no = _u8(params.get("task_no", 0), "task_no", 1, 15)
+    meters = params.get("meters") or []
+    out = bytearray([task_no])
+    out += _u16(len(meters), "档案个数").to_bytes(2, "little")
+    for m in meters:
+        # 支持 {"addr": "..."} 或直接 BCD 字符串
+        addr = m.get("addr") if isinstance(m, dict) else m
+        out += _bcd_bytes(addr, "档案地址")
+    return bytes(out)
+
+
+def _encode_app_data(afn: int, fn: int, params: Optional[dict]) -> bytes:
+    """按 AFN/Fn 把业务参数编码为应用数据单元字节。
+
+    覆盖（聚焦现有用例）：
+        AFN  FN      说明
+        00H  F1      确认/否认（status=1 → 1B 否认；缺省空确认）
+        03H  F10     查询本地通信模块运行模式（无数据单元）
+        10H  F4      路由运行状态查询（无数据单元）
+        10H  F2      查询从节点信息（start 2B 小端 + count 1B）
+        10H  F230    采集任务数量查询（无数据单元）
+        10H  F231    采集任务配置查询（task_no + protocol）
+        11H  F1      添加从节点档案（action + addr 6B BCD + protocol）
+        11H  F231    采集任务配置（分组编码）
+        11H  F232    采集任务关联档案配置
+    未覆盖的 (afn, fn) 抛 UnsupportedFn。
+    """
+    params = params or {}
+    afn = int(afn) & 0xFF
+    fn = int(fn)
+
+    # 查询类（无数据单元）
+    if (afn, fn) in ((0x03, 10), (0x10, 4), (0x10, 230), (0x01, 1)):
+        return b""
+    if (afn, fn) == (0x00, 1):  # 确认/否认
+        status = params.get("status")
+        if status in (None, 0, "0", "confirm", "ok"):
+            return b""
+        if status in (1, "1", "deny", "ng"):
+            return b"\x01"
+        raise ValueError(f"00H-F1 status 非法: {status!r}")
+    if (afn, fn) == (0x10, 2):  # 查询从节点信息
+        out = bytearray()
+        out += _u16(params.get("start", 0), "start").to_bytes(2, "little")
+        out.append(_u8(params.get("count", 0), "count"))
+        return bytes(out)
+    if (afn, fn) == (0x10, 231):  # 查询任务配置
+        return bytes([
+            _u8(params.get("task_no", 0), "task_no", 1, 15),
+            _u8(params.get("protocol", 2), "protocol", 2, 3),
+        ])
+    if (afn, fn) == (0x11, 1):  # 添加从节点档案（安徽扩展）
+        action_raw = params.get("action", "add")
+        action = {"add": 1, "delete": 0, 1: 1, 0: 0}.get(
+            action_raw if not isinstance(action_raw, int) else action_raw)
+        if action is None:
+            raise ValueError(f"action 非法: {action_raw!r}")
+        out = bytearray([action])
+        addr = params.get("addr", params.get("sta"))
+        out += _bcd_bytes(addr, "档案地址")
+        out.append(_u8(params.get("protocol", 2), "protocol", 2, 3))
+        return bytes(out)
+    if (afn, fn) == (0x11, 231):
+        return _encode_11f231(params)
+    if (afn, fn) == (0x11, 232):
+        return _encode_11f232(params)
+
+    raise UnsupportedFn(
+        f"未覆盖 Fn 0x{afn:02X}-F{fn}（应用数据模板未建立，契约约定明确报错）")
+
+
+def encode_app_data(afn: int, fn: int, params: Optional[dict] = None) -> bytes:
+    """对外导出：参数 → 应用数据字节（纯函数）。"""
+    return _encode_app_data(afn, fn, params)
+
+
+# ---------------------------------------------------------------------------
 # 构帧（单 68 标准帧）
 # ---------------------------------------------------------------------------
 
@@ -662,7 +820,9 @@ def build_frame_json(req: dict) -> dict:
         fn = int(fn_raw.replace("F", "")) if isinstance(fn_raw, str) else int(fn_raw)
         data = req.get("data") or {}
         appdata = b""
-        if "raw" in data:
+        if "params" in data:
+            appdata = encode_app_data(afn, fn, data["params"])
+        elif "raw" in data:
             appdata = bytes.fromhex(str(data["raw"]).replace(" ", ""))
         elif "nested_645" in data:
             from parser_lib.adapters.adapter_645 import build_frame as build_645

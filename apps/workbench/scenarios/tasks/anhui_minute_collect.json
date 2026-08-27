@@ -1,11 +1,12 @@
 {
   "id": "anhui_minute_collect",
   "name": "安徽分钟采集闭环（集中器 ↔ CCO 交互）",
+  "profile": "anhui",
   "module": "cco",
   "port": "COM24",
   "baudrate": 9600,
   "enable_responder": true,
-  "description": "模拟集中器(集中器角色)经 COM24 与安徽 CCO 交互：主动下发查询/配置并匹配回复(第一部分)，等待 CCO 主动上报(第二部分，recv_only/历史查询，超时判 fail)。CCO 主动上报由 responder 统一回 00H-F1 确认。帧格式为 CCO 本地协议(单68)：68 L ctrl info afn DT1 DT2 buff CS 16。依据《安徽集中器交互报文.md》与 CCO 固件 gw13762.c。",
+  "description": "模拟集中器(集中器角色)经 COM24 与安徽 CCO 交互：主动下发查询/配置并匹配回复(第一部分)，等待 CCO 主动上报(第二部分，recv_only/历史查询，超时判 fail)。CCO 主动上报由 responder 统一回 00H-F1 确认。用例语义化（ADR-5）：send 仅写 afn/fn + 业务参数，构帧由 scenario_codec 完成。依据《安徽集中器交互报文.md》与 CCO 固件 gw13762.c。",
   "responders": [
     {
       "id": "anhui.ack",
@@ -26,43 +27,65 @@
   "steps": [
     {
       "name": "查询路由运行状态 (10H-F4, 组网确认)",
-      "send": {"format": "local", "afn": 16, "fn": 4, "buff": ""},
+      "send": {"afn": "10", "fn": "F4"},
       "expect": {"format": "local", "afn": 16, "fn": 4},
       "expect_timeout": 5.0
     },
     {
       "name": "查询从节点信息 (10H-F2)",
-      "send": {"format": "local", "afn": 16, "fn": 2, "buff": "00 00 10"},
+      "send": {
+        "afn": "10",
+        "fn": "F2",
+        "params": {"start": 0, "count": 16}
+      },
       "expect": {"format": "local", "afn": 16, "fn": 2},
       "expect_timeout": 5.0
     },
     {
       "name": "查询采集任务数量 (10H-F230)",
-      "send": {"format": "local", "afn": 16, "fn": 230, "buff": ""},
+      "send": {"afn": "10", "fn": "F230"},
       "expect": {"format": "local", "afn": 16, "fn": 230},
       "expect_timeout": 5.0
     },
     {
       "name": "查询任务配置 (10H-F231, 任务7/协议645)",
-      "send": {"format": "local", "afn": 16, "fn": 231, "buff": "07 02"},
+      "send": {
+        "afn": "10",
+        "fn": "F231",
+        "params": {"task_no": 7, "protocol": 2}
+      },
       "expect": {"format": "local", "afn": 16, "fn": 231},
       "expect_timeout": 5.0
     },
     {
       "name": "配置采集任务 (11H-F231, 启用任务7/645/周期5分钟/单相1数据项)",
-      "send": {"format": "local", "afn": 17, "fn": 231, "buff": "07 01 02 05 00 01 04 00 02 01 01 00 04 01 00 02 00"},
+      "send": {
+        "afn": "11",
+        "fn": "F231",
+        "params": {
+          "task_no": 7,
+          "action": "enable",
+          "protocol": 2,
+          "cycle_min": 5,
+          "items": [{"meter_type": 0, "item": "02010100", "reply_len": 4}]
+        }
+      },
       "expect": {"format": "local", "afn": 17, "fn": 231},
       "expect_timeout": 5.0
     },
     {
       "name": "关联档案到任务 (11H-F232, 任务7/档案2个)",
-      "send": {"format": "local", "afn": 17, "fn": 232, "buff": "07 02 00 01 33 00 00 00 01 01 33 00 00 00 02"},
+      "send": {
+        "afn": "11",
+        "fn": "F232",
+        "params": {"task_no": 7, "meters": ["013300000001", "013300000002"]}
+      },
       "expect": {"format": "local", "afn": 17, "fn": 232},
       "expect_timeout": 5.0
     },
     {
       "name": "查询本地通信模块运行模式 (03H-F10)",
-      "send": {"format": "local", "afn": 3, "fn": 10},
+      "send": {"afn": "03", "fn": "F10"},
       "expect": {"format": "local", "afn": 3, "fn": 10},
       "expect_timeout": 5.0
     },

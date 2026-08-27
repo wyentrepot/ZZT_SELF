@@ -29,6 +29,11 @@ from sim_concentrator.frame_codec import (
 from sim_concentrator.matcher import match_frame
 from sim_concentrator.responder import Responder
 from sim_concentrator.serial_io import SerialIO, resolve_serial_config
+from sim_concentrator.scenario_codec import (
+    ScenarioCodecError,
+    build_send,
+    load_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,37 +49,34 @@ def _to_int(v, base: int = 16):
     return v
 
 
-def build_send_frame(send: Optional[dict] = None) -> bytes:
-    """按 send 参数构造一帧。
+def build_send_frame(send: Optional[dict] = None,
+                     profile: Optional[dict] = None,
+                     seq: int = 1) -> bytes:
+    """按 send 参数构造一帧（语义化主路径，ADR-5）。
 
     send = {
-        # 标准 1376.2（双 68）：
-        "afn": 0x02 | "02",
-        "seq": 1,
-        "rtsa": "070919051620" | [0x20,0x16,...],   # 人读顺序 hex 或字节列表
-        "msaa": 1,
-        "pw": 0,
-        "userdata": "00 01 68..." | "000168..." | [bytes],
-
-        # CCO 本地协议（单 68），format="local"：
-        "format": "local",
-        "afn": 0x10,                 # AFN 码
-        "fn": 230,                   # Fn 码（自动编码为 DT1/DT2）
-        "buff": "00 01" | [0x00,0x01],   # 数据区（可选）
-        "ctrl": 0x03,                # 控制域（可选，默认 0x03 下行宽带载波）
-        "info": [0]*6,               # 信息域 6B（可选）
+        # 语义化（默认）：afn/fn + 最小业务参数，经 scenario_codec + 13762 库构帧
+        "afn": "11" | 0x11,
+        "fn": "F231" | 231,
+        "params": {...},        # 该 AFN/Fn 的数据单元字段
+        "direction": "down" | "up",
+        "comm_mode": 3,          # 可选，覆盖 profile
     }
 
-    未指定 format 时默认标准 1376.2。
+    profile：task.profile 加载的全局信息（cco_addr / sta_archives / comm_mode）。
+    seq：报文序列号（seq_auto=true 时注入 info.seq）。
+
+    send.raw 整帧 hex 直发已彻底移除（契约约定，ADR-5），传入即报错。
     """
     send = send or {}
 
-    # 原始帧直接发送（格式：local）：send.raw = "68 17 00 ... 16" 完整帧 hex
-    # 用于下发经真机验证的完整帧（L/CS 由外部给定，不做重新构帧）
+    # raw 整帧直发：契约已移除
     if send.get("raw"):
-        return hex_to_bytes(send["raw"])
+        raise ScenarioCodecError(
+            "send.raw 已移除（ADR-5 用例语义化），请改用 afn/fn + params 描述命令")
 
     if send.get("format") == "local":
+        # 兼容旧结构（迁移期保留，迁移完成删除）：format:"local" + afn/fn/buff
         afn = _to_int(send.get("afn", 0x00))
         fn = _to_int(send.get("fn", 1), 10)
         bf = send.get("buff", b"")
@@ -84,56 +86,14 @@ def build_send_frame(send: Optional[dict] = None) -> bytes:
             buff = bytes(bf)
         else:
             buff = bytes(bf or b"")
-        # 下行查询：模拟集中器作为启动站下发，prm=1，ctrl=0x43
-        # （对齐 GW-CASS Creat_3762_Frame('43',...)；默认不再是 0x03 从动站）
         ctrl = _to_int(send.get("ctrl", 0x43))
         seq = _to_int(send.get("seq", 1), 10)
         info = bytes(send.get("info", [0] * 6))
         return build_local_13762_frame(afn=afn, fn=fn, buff=buff,
                                        ctrl=ctrl, info=info, seq=seq)
 
-    # 标准 1376.2（单 68 标准帧，Q/GDW 10376.2 信封）：
-    #   afn / fn（信息类标识，默认 F1）
-    #   appdata 或 userdata：应用数据单元（可含内嵌 645/698 帧）
-    #   info：信息域 R dict（含 seq 报文序列号）
-    #   address：地址域 A dict {src, relay[], dst}
-    #   direction："down" / "up"（默认 down）
-    #   comm_mode：通信方式（默认 3 HPLC）
-    afn = _to_int(send.get("afn", 0x00))
-    fn = _to_int(send.get("fn", 1), 10)
-
-    info = dict(send.get("info") or {})
-    # 兼容：旧任务的 seq 字段映射为信息域报文序列号
-    if "seq" in send and "seq" not in info:
-        info["seq"] = _to_int(send.get("seq"), 10)
-
-    address = send.get("address")
-    # 兼容：旧任务的 rtsa（人读顺序 hex）映射为地址域 src+dst
-    # （单 68 地址域 = 源A1 + 中继A2 + 目的A3；下行场景 A1=主节点、A3=从节点。
-    #   rtsa 是集中器抄表链路地址，映射为 A1 与 A3 同址，保证地址域长度自洽。）
-    if address is None and send.get("rtsa"):
-        rtsa_raw = send["rtsa"]
-        if isinstance(rtsa_raw, str):
-            rtsa_str = rtsa_raw.replace(" ", "")
-            address = {"src": rtsa_str, "dst": rtsa_str}
-        else:
-            addr_str = "".join(f"{b:02X}" for b in bytes(rtsa_raw)[::-1])
-            address = {"src": addr_str, "dst": addr_str}
-
-    ud = send.get("appdata", send.get("userdata", b""))
-    if isinstance(ud, str):
-        userdata = hex_to_bytes(ud)
-    elif isinstance(ud, list):
-        userdata = bytes(ud)
-    else:
-        userdata = bytes(ud)
-
-    return build_13762_frame(
-        afn=afn, fn=fn, appdata=userdata,
-        direction=send.get("direction", "down"),
-        comm_mode=_to_int(send.get("comm_mode", 3)),
-        info=info, address=address,
-    )
+    # 语义化主路径：profile + params → 完整帧
+    return build_send(send, profile or {}, seq=seq)
 
 
 def _rtsa_to_show(rtsa: bytes) -> str:
@@ -144,8 +104,11 @@ def _rtsa_to_show(rtsa: bytes) -> str:
 # 单步执行
 # ---------------------------------------------------------------------------
 def run_step(io: SerialIO, responder: Optional[Responder],
-             step: dict, idx: int) -> dict:
-    """执行一步，返回判定结果 dict。"""
+             step: dict, idx: int, profile: Optional[dict] = None) -> dict:
+    """执行一步，返回判定结果 dict。
+
+    profile：task.profile 加载的全局信息（传给 build_send_frame 构帧）。
+    """
     name = step.get("name", f"步骤{idx + 1}")
     result = {
         "index": idx,
@@ -163,10 +126,10 @@ def run_step(io: SerialIO, responder: Optional[Responder],
     expect = step.get("expect")
     is_query = (expect is not None) and not expect_history
 
-    # 1) 构造并下发（recv_only 跳过）
-    if not recv_only:
+    # 1) 构造并下发（recv_only 跳过；expect_history 且无 send 时不构帧，纯历史扫描）
+    if not recv_only and not (expect_history and not step.get("send")):
         try:
-            raw = build_send_frame(step.get("send", {}))
+            raw = build_send_frame(step.get("send", {}), profile=profile, seq=idx + 1)
         except Exception as e:
             result["reason"] = f"构帧失败: {e!r}"
             return result
@@ -331,6 +294,11 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
     responder = Responder(override_rules=task.get("responders", [])) \
         if task.get("enable_responder", True) else None
 
+    # 语义化构帧：加载 task.profile 指向的全局信息（ADR-5）
+    profile = load_profile(task.get("profile"))
+    if profile and task.get("profile_overrides"):
+        profile = {**profile, **task["profile_overrides"]}
+
     opened = False
     try:
         if own_io:
@@ -344,7 +312,8 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
             step_r = responder
             if step.get("responders"):
                 step_r = Responder(override_rules=step["responders"])
-            # 本地协议下行帧自动分配递增帧序号（对齐 GW-CASS，CCO 响应回显 serial_num）
+            # 兼容旧结构：本地协议下行帧自动分配递增帧序号
+            # （对齐 GW-CASS，CCO 响应回显 serial_num）
             step = dict(step)
             if step.get("send") and step["send"].get("format") == "local":
                 send = dict(step["send"])
@@ -352,7 +321,7 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
                     seq_counter += 1
                     send["seq"] = seq_counter
                 step["send"] = send
-            r = run_step(io, step_r, step, idx)
+            r = run_step(io, step_r, step, idx, profile=profile)
             step_results.append(r)
             # 任一步失败即中止（默认），除非 task.fail_fast=false
             if r["result"] == "fail" and task.get("fail_fast", True):

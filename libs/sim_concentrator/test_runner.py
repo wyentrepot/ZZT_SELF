@@ -49,18 +49,30 @@ def _confirm_reply(seq=1):
     return build_13762_frame(afn=0x00, fn=1, direction="up", info={"seq": seq})
 
 
+_PROFILE = {
+    "id": "test",
+    "cco_addr": "070919051620",
+    "comm_mode": 3,
+    "seq_auto": True,
+}
+
+
 class TestBuildSendFrame:
-    def test_rtsa_str_reversed(self):
-        raw = build_send_frame({"afn": 0x01, "rtsa": "070919051620",
-                                "userdata": "00"})
+    def test_address_field_from_profile(self):
+        """下行带 profile：地址域含 cco_addr（src）。"""
+        raw = build_send_frame(
+            {"afn": 0x01, "fn": 1}, profile=_PROFILE, seq=1)
         d = decode_frame(raw)
-        # rtsa → 地址域 src+dst
+        # 地址域 src = cco_addr；无显式目标时 A3 同址
         assert "070919051620" in d["fields"]["地址域A"]["value"]
 
-    def test_userdata_hex_str(self):
-        raw = build_send_frame({"afn": 0x02, "rtsa": "070919051620",
-                                "userdata": "00 01"})
-        assert b"\x00\x01" in raw
+    def test_userdata_via_params(self):
+        """params 应用数据经 13762 库编码进帧（10H-F2 查询从节点）。"""
+        raw = build_send_frame(
+            {"afn": 0x10, "fn": 2,
+             "params": {"start": 0, "count": 16}},
+            profile=_PROFILE, seq=1)
+        assert b"\x00\x00\x10" in raw  # start=0(2B) + count=16(1B)
 
 
 class TestExecuteTask:
@@ -68,9 +80,10 @@ class TestExecuteTask:
         task = {
             "id": "t1",
             "port": "COM_TEST",
+            "profile": "test",
             "enable_responder": False,
             "steps": [
-                {"name": "下发01H", "send": {"afn": 0x01, "rtsa": "070919051620"},
+                {"name": "下发01H", "send": {"afn": 0x01, "fn": 1},
                  "expect": {"afn": 0x00}},
             ],
         }
@@ -84,10 +97,11 @@ class TestExecuteTask:
         task = {
             "id": "t2",
             "port": "COM_TEST",
+            "profile": "test",
             "enable_responder": False,
             "fail_fast": True,
             "steps": [
-                {"name": "期望确认却收到03", "send": {"afn": 0x01, "rtsa": "070919051620"},
+                {"name": "期望确认却收到03", "send": {"afn": 0x01, "fn": 1},
                  "expect": {"afn": 0x00}, "expect_timeout": 0.3},
             ],
         }
@@ -100,9 +114,9 @@ class TestExecuteTask:
 
     def test_expect_timeout_fail(self):
         task = {
-            "id": "t3", "port": "COM_TEST", "enable_responder": False,
+            "id": "t3", "port": "COM_TEST", "profile": "test", "enable_responder": False,
             "steps": [
-                {"name": "无响应", "send": {"afn": 0x01, "rtsa": "070919051620"},
+                {"name": "无响应", "send": {"afn": 0x01, "fn": 1},
                  "expect": {"afn": 0x00}, "expect_timeout": 0.2},
             ],
         }
@@ -113,9 +127,9 @@ class TestExecuteTask:
 
     def test_expect_no_reply(self):
         task = {
-            "id": "t4", "port": "COM_TEST", "enable_responder": False,
+            "id": "t4", "port": "COM_TEST", "profile": "test", "enable_responder": False,
             "steps": [
-                {"name": "期望无响应", "send": {"afn": 0x01, "rtsa": "070919051620"},
+                {"name": "期望无响应", "send": {"afn": 0x01, "fn": 1},
                  "expect_no_reply": True, "expect_timeout": 0.2},
             ],
         }
@@ -126,11 +140,12 @@ class TestExecuteTask:
     def test_step_responder_override(self):
         task = {
             "id": "t5", "port": "COM_TEST",
+            "profile": "test",
             "enable_responder": False,
             "steps": [
                 {
                     "name": "应答引擎联动",
-                    "send": {"afn": 0x01, "rtsa": "070919051620"},
+                    "send": {"afn": 0x01, "fn": 1},
                     "expect": {"afn": 0x00},
                     "responders": [{"match": {"afn": 0x01},
                                     "reply": {"afn": 0x00, "userdata_builder": "confirm"}}],

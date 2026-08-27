@@ -1,0 +1,13 @@
+{
+  "id": "anhui",
+  "name": "安徽 CCO/STA 全局信息",
+  "cco_addr": "020103040506",
+  "comm_mode": 3,
+  "seq_auto": true,
+  "task_range": { "min": 1, "max": 15 },
+  "sta_archives": [
+    { "id": "sta1", "addr": "013300000001", "protocol": 645, "phase": 0 },
+    { "id": "sta2", "addr": "013300000002", "protocol": 645, "phase": 1 },
+    { "id": "sta698", "addr": "080000000000", "protocol": 698, "phase": 0 }
+  ]
+}

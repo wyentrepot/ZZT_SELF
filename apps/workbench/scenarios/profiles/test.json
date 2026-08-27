@@ -1,0 +1,9 @@
+{
+  "id": "test",
+  "name": "单元测试专用 profile",
+  "cco_addr": "070919051620",
+  "comm_mode": 3,
+  "seq_auto": true,
+  "task_range": { "min": 1, "max": 15 },
+  "sta_archives": []
+}
