@@ -9,7 +9,7 @@
    构帧并下发（steps.sent_hex 非空、summary 有结果），证明 profile 被正确
    加载并用于构帧（构帧必需 cco_addr/comm_mode 等 profile 全局信息）。
 2. profile 文件缺失 → execute_task 抛错（链路断），显式验证依赖真实存在。
-3. 编排层 _run_stimulus 透传 task dict → execute_task 的 profile 加载路径。
+3. 编排层 StimulusPort 透传 task dict → execute_task 的 profile 加载路径。
 
 测试用 FakeIO 桩（参照 libs/sim_concentrator/test_runner.py），绝不触碰真串口。
 """
@@ -22,7 +22,8 @@ import pytest
 from sim_concentrator.frame_codec import build_13762_frame
 from sim_concentrator.runner import execute_task
 
-from workbench.orchestration.runner import _run_stimulus
+from test_automation.ports import StimulusRequest
+from workbench.orchestration.adapters.stimulus import SimconStimulusAdapter
 
 SCENARIOS = Path(__file__).resolve().parent.parent / "scenarios"
 PROFILE_JSON = SCENARIOS / "profiles" / "anhui.json"
@@ -150,7 +151,7 @@ class TestProfileLoadedByExecuteTask:
 
 class TestRunStimulusPassesProfileThrough:
     def test_task_dict_reaches_execute_task_with_profile(self, monkeypatch):
-        """编排层 _run_stimulus 把 task dict 原样交给 execute_task。
+        """编排层 StimulusPort 把 task dict 原样交给 execute_task。
 
         显式验证 profile 字段随 task dict 透传（不丢失），execute_task 内部
         load_profile 会用到它。
@@ -160,7 +161,7 @@ class TestRunStimulusPassesProfileThrough:
 
         def _fake_execute_task(task, io=None):
             captured["task"] = task
-            # _run_stimulus 不传 io → execute_task 会自建真串口；
+            # adapter 不传 io → execute_task 会自建真串口；
             # 这里把 None 换成 FakeIO 桩，避免触碰真串口
             if io is None:
                 io = FakeIO(responses=[_confirm_reply()])
@@ -168,7 +169,7 @@ class TestRunStimulusPassesProfileThrough:
             return real_execute_task(task, io=io)
 
         monkeypatch.setattr("sim_concentrator.runner.execute_task", _fake_execute_task)
-        out = _run_stimulus(None, _MIN_TASK)
+        out = SimconStimulusAdapter().execute(StimulusRequest(task=_MIN_TASK)).payload
         assert out is not None
         assert captured["task"]["profile"] == "anhui"
         assert out["steps"][0]["sent_hex"]
@@ -179,7 +180,7 @@ class TestRunStimulusPassesProfileThrough:
         端到端验证：编排层以 task_file 加载含 profile 的真实任务并执行到构帧
         （FakeIO 注入由真实 execute_task 内部串口创建前被替换）。
         """
-        # 直接调 execute_task 加载真实任务文件 + FakeIO（等价于 _run_stimulus
+        # 直接调 execute_task 加载真实任务文件 + FakeIO（等价于 StimulusPort
         # 在 task_file 分支做 load_task 后交给 execute_task 的最终形态）
         import json
 

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from test_automation.resource_lease import ResourceConflictError, ResourceLeaseManager
+from test_automation.ports import StimulusResult
 
 from workbench.orchestration.evidence import (
     acquire_serial_lease,
@@ -28,6 +29,7 @@ from workbench.orchestration.evidence import (
 )
 from workbench.orchestration.models import RunInput
 from workbench.orchestration.runner import RunExecutor
+from workbench.orchestration.composition import build_default_executor
 from workbench.orchestration.store import RunStore
 
 
@@ -171,7 +173,7 @@ class TestEvidenceDetail:
         """RunExecutor 端到端：Report 含 evidence_detail（前端下钻数据源）。"""
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -246,7 +248,7 @@ class TestRunExecutorThreeSource:
         """
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -274,10 +276,10 @@ class TestRunExecutorThreeSource:
         store.close()
 
     def test_stimulus_steps_become_evidence(self, tmp_path, monkeypatch):
-        """stimulus 步骤结果 → sim_concentrator Evidence（monkeypatch 掉真实串口执行）。"""
+        """stimulus 步骤结果 → sim_concentrator Evidence（注入 StimulusPort fake，不触碰真实串口）。"""
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
 
         def _fake_stimulus(*args, **kwargs):
             return {
@@ -292,7 +294,7 @@ class TestRunExecutorThreeSource:
             }
 
         monkeypatch.setattr(
-            "workbench.orchestration.runner._run_stimulus", _fake_stimulus
+            ex.stimulus_port, "execute", lambda request: StimulusResult(payload=_fake_stimulus())
         )
         ri = RunInput(
             scenario_id="join_anhui",
@@ -391,7 +393,7 @@ class TestLoadListenerFrames:
         )
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -411,7 +413,7 @@ class TestLoadListenerFrames:
         """RunExecutor：索引库不存在 → listener source 为空，Run 不失败。"""
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -523,7 +525,7 @@ class TestLoghooksEngineEvidence:
         """RunExecutor 端到端：monitor 事件经引擎本体 Evidence 化，payload 含完整字段。"""
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -560,7 +562,7 @@ class TestRunRecoveryAndSmoke:
 
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
 
         def _boom(self, run, run_input, scenario):
             raise RuntimeError("模拟执行中断（串口异常）")
@@ -592,7 +594,7 @@ class TestRunRecoveryAndSmoke:
         """
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -624,7 +626,7 @@ class TestRunCancel:
 
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(log_dir),
@@ -658,7 +660,7 @@ class TestRunCancel:
 
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         started = threading.Event()
 
         def _blocking_steps(self, run, run_input, scenario, cancel_event=None):
@@ -707,7 +709,7 @@ class TestRunCancel:
         from workbench.orchestration.store import RunStore
 
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         assert ex.cancel("run-nonexistent") is False
         store.close()
 
@@ -722,7 +724,7 @@ class TestRunRestore:
 
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui", log_dir=str(log_dir),
             skip_flash=True, skip_stimulus=True,

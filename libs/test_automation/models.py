@@ -385,6 +385,7 @@ class Artifact:
     sha256: str
     id: str = ""
     path: str | None = None
+    size: int = 0
     created_at: datetime = field(default_factory=utcnow)
 
     def to_dict(self) -> dict[str, Any]:
@@ -394,6 +395,7 @@ class Artifact:
             "type": self.type,
             "name": self.name,
             "path": self.path,
+            "size": self.size,
             "sha256": self.sha256,
             "created_at": _iso(self.created_at),
         }
@@ -407,6 +409,7 @@ class Artifact:
             sha256=data["sha256"],
             id=data.get("id", ""),
             path=data.get("path"),
+            size=int(data.get("size", 0)),
             created_at=_from_iso(data.get("created_at")),
         )
 

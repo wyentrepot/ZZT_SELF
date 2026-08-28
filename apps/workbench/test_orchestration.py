@@ -13,6 +13,7 @@ import pytest
 
 from workbench.orchestration.compare import compare_flow
 from workbench.orchestration.feedback import build_feedback
+from workbench.orchestration.composition import build_default_executor
 from workbench.orchestration.models import FlowCompare, Run, RunInput, RunStep
 from workbench.orchestration.scenarios import load_scenario, load_scenarios
 from workbench.orchestration.store import RunStore
@@ -176,7 +177,7 @@ def test_execute_run_join_anhui(tmp_path):
     """join_anhui 场景：日志含 onnet（common.join_onnet 命中），scan/assoc 缺失。"""
     log_dir = _make_fake_log(tmp_path)
     store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-    ex = RunExecutor(store)
+    ex = build_default_executor(store)
     ri = RunInput(
         scenario_id="join_anhui",
         firmware={"version": "v2.3.2", "commit": "9f2e1a"},

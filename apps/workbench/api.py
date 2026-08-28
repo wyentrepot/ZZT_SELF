@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from .orchestration.models import Report, RunInput
-from .orchestration.runner import RunExecutor
+from .orchestration.composition import build_default_executor
 from .orchestration.scenarios import load_scenario, load_scenarios, validate_scenario
 from .orchestration.store import RunStore
 
@@ -23,7 +23,7 @@ def _executor() -> RunExecutor:
     if not hasattr(_executor, "_store"):
         _executor._store = RunStore()
     if not hasattr(_executor, "_exec"):
-        _executor._exec = RunExecutor(_executor._store)
+        _executor._exec = build_default_executor(_executor._store)
     return _executor._exec
 
 

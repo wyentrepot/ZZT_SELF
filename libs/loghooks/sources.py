@@ -158,10 +158,10 @@ def parse_concentrator_10376(
     """解析集中器模拟脚本下发的 13762 帧行，返回 ParsedLine（fields 模式）。
 
     输入行形如：`[ts] TX 68...16` 或纯 hex 帧文本；提取 1376.2 帧后用
-    sim_concentrator.frame_codec.decode_frame 解出信封字段 + 嵌套 645/698。
+    parser facade 解出信封字段 + 嵌套 645/698。
 
     兼容 adapter_callback：若传入，优先用它（帧 hex → dict），否则走内置
-    decode_frame。
+    parser facade。
     """
     m = _CONCENTRATOR_LINE.match(line.strip())
     frame_text = line.strip()
@@ -186,10 +186,11 @@ def parse_concentrator_10376(
             res = adapter_callback(frame_hex)
             fields = res if isinstance(res, dict) else None
         else:
-            from sim_concentrator.frame_codec import hex_to_bytes, decode_frame
+            from parser_lib.protocol_13762 import decode
 
-            raw = hex_to_bytes(frame_hex)
-            fields = decode_frame(raw)
+            result = decode({"frame": frame_hex})
+            if isinstance(result, dict) and result.get("ok") is True:
+                fields = result
     except Exception:
         fields = None
 

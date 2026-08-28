@@ -21,6 +21,8 @@ from workbench.orchestration.artifacts import (
     find_artifact,
     resolve_artifact_path,
 )
+from workbench.orchestration.composition import build_default_executor
+from test_automation.ports import StimulusResult
 from workbench.orchestration.models import ArtifactInfo, Report, Run, RunInput, RunStatus
 from workbench.orchestration.runner import RunExecutor, _build_artifacts
 from workbench.orchestration.store import RunStore
@@ -96,7 +98,7 @@ class TestInconclusive:
     def test_monitor_missing_yields_inconclusive(self, tmp_path):
         """monitor 未跳过但无事件（核心证据缺失）→ verdict=inconclusive + Run=inconclusive。"""
         store = RunStore(db_path=tmp_path / "r.sqlite", reports_dir=tmp_path / "rpt")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(_empty_log_dir(tmp_path)),
@@ -117,12 +119,10 @@ class TestInconclusive:
 
     def test_stimulus_missing_yields_inconclusive(self, tmp_path, monkeypatch):
         """stimulus 未跳过但无执行结果 → inconclusive。"""
-        # _run_stimulus 返回 None（模拟无任务/无串口）
-        monkeypatch.setattr(
-            "workbench.orchestration.runner._run_stimulus", lambda *a, **k: None
-        )
+        # 通过 StimulusPort 注入 None（模拟无任务/无串口）
         store = RunStore(db_path=tmp_path / "r.sqlite", reports_dir=tmp_path / "rpt")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
+        monkeypatch.setattr(ex.stimulus_port, "execute", lambda request: StimulusResult(payload=None))
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(_fake_log(tmp_path)),
@@ -140,7 +140,7 @@ class TestInconclusive:
     def test_listener_index_without_frames_yields_inconclusive(self, tmp_path):
         """显式期望 listener（listener_index）但无帧 → inconclusive。"""
         store = RunStore(db_path=tmp_path / "r.sqlite", reports_dir=tmp_path / "rpt")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(_fake_log(tmp_path)),
@@ -155,16 +155,13 @@ class TestInconclusive:
 
     def test_simcon_fail_priority_over_inconclusive(self, tmp_path, monkeypatch):
         """simcon 明确失败 → 仍判 fail（真实失败优先于证据缺失）。"""
-        monkeypatch.setattr(
-            "workbench.orchestration.runner._run_stimulus",
-            lambda *a, **k: {
-                "task_id": "t", "port": "COM24", "baudrate": 9600,
-                "steps": [{"index": 0, "name": "s", "result": "fail", "reason": "否认"}],
-                "summary": {"total": 1, "pass": 0, "fail": 1, "verdict": "fail"},
-            },
-        )
         store = RunStore(db_path=tmp_path / "r.sqlite", reports_dir=tmp_path / "rpt")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
+        monkeypatch.setattr(ex.stimulus_port, "execute", lambda request: StimulusResult(payload={
+            "task_id": "t", "port": "COM24", "baudrate": 9600,
+            "steps": [{"index": 0, "name": "s", "result": "fail", "reason": "否认"}],
+            "summary": {"total": 1, "pass": 0, "fail": 1, "verdict": "fail"},
+        }))
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(_empty_log_dir(tmp_path)),
@@ -271,7 +268,7 @@ class TestArtifactDownloadApi:
             encoding="utf-8",
         )
         store = RunStore(db_path=tmp_path / "r.sqlite", reports_dir=tmp_path / "rpt")
-        ex = RunExecutor(store)
+        ex = build_default_executor(store)
         ri = RunInput(
             scenario_id="join_anhui",
             log_dir=str(d),

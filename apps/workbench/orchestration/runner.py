@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .compare import compare_flow
+from test_automation.ports import MonitorRequest, PortError, StimulusRequest
+from test_automation.models import (CasePackage, Run as CanonicalRun, Report as CanonicalReport,
+                                   StepResult, AssertionResult, Artifact as CanonicalArtifact)
 from .evidence import (
     ResourceConflictError,
     ResourceLeaseManager,
@@ -48,6 +51,25 @@ from .store import RunStore
 
 def new_run_id() -> str:
     return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
+
+
+def _canonical_run(run: Run, run_input: RunInput, scenario: dict) -> CanonicalRun:
+    """Freeze request/scenario identity for the execution/audit Store source."""
+    version = str(scenario.get("version") or "1.0.0")
+    firmware = run_input.firmware.model_dump() if hasattr(run_input.firmware, "model_dump") else dict(run_input.firmware or {})
+    parameters = {
+        "firmware": firmware,
+        "skip_flash": run_input.skip_flash, "skip_monitor": run_input.skip_monitor,
+        "skip_stimulus": run_input.skip_stimulus, "skip_compare": run_input.skip_compare,
+        "skip_feedback": run_input.skip_feedback, "log_dir": run_input.log_dir,
+        "task_file": run_input.task_file, "rules": list(run_input.rules or []),
+        "extras": dict(run_input.extras),
+        "scenario": {k: v for k, v in scenario.items() if not k.endswith("_file")},
+    }
+    case = CasePackage(case_id=str(scenario.get("id") or run_input.scenario_id), version=version,
+                       parameters=parameters)
+    return CanonicalRun(id=run.run_id, case_id=case.case_id, case_version=case.version,
+                        case_fingerprint=case.fingerprint(), parameters=parameters)
 
 
 def _sha256_of_file(path: Path) -> str:
@@ -123,114 +145,27 @@ class RunCancelled(Exception):
 
 
 # ---------------------------------------------------------------------------
-# 子能力适配：复用现有模块（延迟 import，保持解耦）
-# ---------------------------------------------------------------------------
-
-
-def _scan_logs(log_dir: Path, rules: List[str], run_id: str = "") -> Dict[str, Any]:
-    """调用 loghooks 引擎离线扫描，返回 {files, events, evidence, summary, drift}。
-
-    - events: dict 事件列表（供 compare_flow 比对，保持既有契约）
-    - evidence: loghooks Event 直接 Evidence 化的完整对象列表（任务3收口：
-      引擎本体 on_event 发射器 → Event.to_evidence()，字段无损，不再走有损 dict 路径）
-    """
-    from loghooks.engine import Engine, Event
-    from loghooks.output import build_drift_list, build_summary
-    from loghooks.rules import RuleLoader
-    from loghooks.sources import iter_lines  # 复用行解析
-
-    loader = RuleLoader()
-    try:
-        loader.load_all()
-    except Exception:
-        pass
-    rule_objs: List[Any] = loader.rules
-    # 场景规则的规则集引用（如 ["common","provinces/anhui"]）→ 按 scope / province 过滤
-    if rules:
-        wanted_scope = {r for r in rules if "/" not in r}
-        wanted_prov = {r.split("/")[-1] for r in rules if "/" in r}
-        rule_objs = [
-            r for r in rule_objs
-            if r.scope in wanted_scope or r.province in wanted_prov
-        ]
-
-    parsed_all: List[Any] = []
-    files: List[str] = []
-    for f in sorted(log_dir.glob("*")):
-        if f.is_file() and f.suffix.lower() in (".txt", ".log", ".jsonl", ".dat"):
-            try:
-                text = f.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                text = f.read_text(encoding="gbk", errors="ignore")
-            for line in text.splitlines():
-                parsed_all.extend(iter_lines("module_log", [line]))
-            files.append(str(f))
-
-    # 引擎本体直接 Evidence 化：on_event 发射器把每条 Event 转 Evidence（run_id 注入）
-    evidence_list: List[Any] = []
-
-    def _on_event(ev: Event) -> None:
-        evidence_list.append(ev.to_evidence(run_id=run_id))
-
-    engine = Engine(rule_objs, source="module_log", on_event=_on_event)
-    for line in parsed_all:
-        engine.feed(line)
-    result = engine.finalize()
-
-    events = [
-        {
-            "type": e.type,
-            "label": e.label,
-            "message": e.message,
-            "time": e.time,
-            "rule_id": e.rule_id,
-            "category": e.category,
-            "source": e.source,
-        }
-        for e in result.events
-    ]
-    return {
-        "files": files,
-        "events": events,
-        "evidence": evidence_list,
-        "summary": build_summary(result),
-        "drift": bool(result.drifts),
-        "drift_list": build_drift_list(result),
-        "total_lines": result.total_lines,
-        "unmatched": result.unmatched,
-    }
-
-
-def _run_stimulus(task_file: Optional[Path], task: Optional[dict]) -> Optional[dict]:
-    """调用 sim_concentrator runner 执行验证任务（无串口时返回 None）。
-
-    task_file 相对路径优先相对当前工作目录解析；若不存在，则相对
-    scenarios 目录（SCENARIOS_DIR/tasks/）解析，支持随场景模板分发。
-    """
-    from sim_concentrator.runner import execute_task
-
-    if task is not None:
-        return execute_task(task)
-    if task_file:
-        # 1) 相对 CWD
-        if Path(task_file).exists():
-            from sim_concentrator.runner import load_task
-
-            return execute_task(load_task(str(task_file)))
-        # 2) 相对 scenarios 目录（SCENARIOS_DIR = <repo>/apps/workbench/scenarios）
-        from .scenarios import SCENARIOS_DIR
-
-        cand = SCENARIOS_DIR / task_file
-        if cand.exists():
-            from sim_concentrator.runner import load_task
-
-            return execute_task(load_task(str(cand)))
-    return None
-
-
-# ---------------------------------------------------------------------------
 # RunExecutor
 # ---------------------------------------------------------------------------
+
+
+def _to_canonical_report(report: Report, run: Run) -> CanonicalReport:
+    summary = {
+        "firmware": run.firmware.model_dump(), "scenario": report.scenario,
+        "sources": report.sources.model_dump(), "flow_compare": report.flow_compare.model_dump(),
+        "feedback": report.feedback, "verdict": report.verdict, "ts": report.ts,
+        "evidence_detail": report.evidence_detail, "evidence_frozen": report.evidence_frozen,
+    }
+    return CanonicalReport(
+        run_id=run.run_id, summary=summary,
+        steps=[StepResult(stage=step.kind, adapter="workbench", status=step.result, error=step.detail) for step in run.steps],
+        assertions=[AssertionResult(run_id=run.run_id, assertion_id=item.id, outcome=item.result,
+                                    expected=item.expected, actual=item.actual) for item in report.assertions],
+        evidence_index=dict(report.evidence_index),
+        artifacts=[CanonicalArtifact(run_id=item.run_id, type=item.type, name=item.name,
+                                     sha256=item.sha256, path=item.path, size=item.size, id=item.id)
+                   for item in report.artifacts],
+    )
 
 
 class RunExecutor:
@@ -241,8 +176,12 @@ class RunExecutor:
     - cancel() 协作式取消：置取消标志，执行线程在步骤间检查，落 CANCELLED 终态。
     """
 
-    def __init__(self, store: Optional[RunStore] = None):
+    def __init__(self, store: Optional[RunStore] = None, *, monitor_port=None, stimulus_port=None):
+        if monitor_port is None or stimulus_port is None:
+            raise ValueError("monitor_port and stimulus_port are required")
         self.store = store or RunStore()
+        self.monitor_port = monitor_port
+        self.stimulus_port = stimulus_port
         self._cancel_events: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
@@ -259,7 +198,10 @@ class RunExecutor:
             scenario_id=run_input.scenario_id,
             firmware=run_input.firmware,
         )
-        self.store.create_run(run)
+        canonical_run = _canonical_run(run, run_input, scenario)
+        canonical_run.started_at = canonical_run.created_at
+        canonical_run.status = RunStatus.RUNNING
+        self.store.create_run(canonical_run)
         self.store.update_status(run.run_id, "running")
 
         try:
@@ -276,14 +218,24 @@ class RunExecutor:
             report.assertions.append(
                 Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
             )
+        except PortError as exc:
+            run.status = RunStatus.FAILED
+            report = Report(run_id=run.run_id, verdict="fail")
+            report.assertions.append(
+                Assertion(id="run.execute", actual=exc.message, result="fail")
+            )
         except Exception as exc:
             run.status = RunStatus.FAILED
             report = Report(run_id=run.run_id, verdict="fail")
             report.assertions.append(
                 Assertion(id="run.execute", actual=str(exc), result="fail")
             )
+        canonical_run.status = run.status
+        canonical_run.finished_at = canonical_run.created_at
+        if run.status == RunStatus.FAILED and report.assertions:
+            canonical_run.error = report.assertions[-1].actual
         self.store.update_status(run.run_id, run.status)
-        run.report_path = str(self.store.save_report(run.run_id, report.model_dump()))
+        run.report_path = str(self.store.save_report(run.run_id, _to_canonical_report(report, run)))
         return run
 
     # ---------------- 异步执行 + 取消（REST / UI） ----------------
@@ -302,7 +254,10 @@ class RunExecutor:
             scenario_id=run_input.scenario_id,
             firmware=run_input.firmware,
         )
-        self.store.create_run(run)
+        canonical_run = _canonical_run(run, run_input, scenario)
+        canonical_run.started_at = canonical_run.created_at
+        canonical_run.status = RunStatus.RUNNING
+        self.store.create_run(canonical_run)
         self.store.update_status(run.run_id, "running")
         run.status = RunStatus.RUNNING
 
@@ -327,14 +282,24 @@ class RunExecutor:
                 report.assertions.append(
                     Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
                 )
+            except PortError as exc:
+                status = "failed"
+                report = Report(run_id=run.run_id, verdict="fail")
+                report.assertions.append(
+                    Assertion(id="run.execute", actual=exc.message, result="fail")
+                )
             except Exception as exc:
                 status = "failed"
                 report = Report(run_id=run.run_id, verdict="fail")
                 report.assertions.append(
                     Assertion(id="run.execute", actual=str(exc), result="fail")
                 )
+            canonical_run.status = RunStatus(status)
+            canonical_run.finished_at = canonical_run.created_at
+            if canonical_run.status == RunStatus.FAILED and report.assertions:
+                canonical_run.error = report.assertions[-1].actual
             self.store.update_status(run.run_id, status)
-            run.report_path = str(self.store.save_report(run.run_id, report.model_dump()))
+            run.report_path = str(self.store.save_report(run.run_id, _to_canonical_report(report, run)))
             with self._lock:
                 self._cancel_events.pop(run.run_id, None)
 
@@ -417,7 +382,11 @@ class RunExecutor:
                                     "drift": False, "drift_list": []}
             step = RunStep(seq=seq, kind="monitor", detail="skipped", result="skipped")
         else:
-            scan = _scan_logs(log_dir, rules, run_id=run.run_id)
+            scan_result = self.monitor_port.scan(MonitorRequest(log_dir=log_dir, rules=rules, run_id=run.run_id))
+            scan = {"files": scan_result.files, "events": scan_result.events,
+                    "evidence": scan_result.evidence, "summary": scan_result.summary,
+                    "drift": scan_result.drift, "drift_list": scan_result.drift_list,
+                    "total_lines": scan_result.total_lines, "unmatched": scan_result.unmatched}
             step = RunStep(
                 seq=seq,
                 kind="monitor",
@@ -455,7 +424,10 @@ class RunExecutor:
                 run.steps.append(step)
                 steps_result["stimulus"] = None
                 raise
-            simcon = _run_stimulus(Path(task_file) if task_file else None, None)
+            simcon_result = self.stimulus_port.execute(StimulusRequest(
+                task=None, task_file=Path(task_file) if task_file else None, resource_id=resource_id
+            ))
+            simcon = simcon_result.payload
             if lease is not None:
                 lease_manager.release("serial_port", resource_id, run.run_id)
             if simcon is None:

@@ -13,6 +13,8 @@
 | 3 | 13762 协议库重构：彻底重构为 Q/GDW 10376.2 单 68 标准帧（推翻双 68 信封，同步改 sim_concentrator/loghooks/测试） | ✅ 生效（原 ADR-44） |
 | 4 | DECISIONS.md 启用 10 条归档重启（首次归档 44→3 缓存，生命周期=3 缓存+最多7 新增） | ✅ 生效（2026-08-28） |
 | 5 | 模拟集中器用例语义化 + Profile：send 只写 afn/fn+params，全局信息进 profile 共享，构帧交 13762 库 | ✅ 生效（2026-08-28） |
+| 6 | 首期架构规范解耦重构（parser facade、编排 ports、canonical/DTO） | ✅ 生效 |
+| 7 | canonical 审计模型以兼容投影接入 Workbench | ✅ 生效 |
 
 ---
 
@@ -145,3 +147,31 @@
   - 既有 ADR-3（单 68 标准帧）不受影响；本决策在其框架内做应用层语义化。
 - **被取代**：无（新增决策；取代的是"用例手写 hex/raw 直发"的隐含口径，
   原口径无独立 ADR，历史帧仍可在归档/文档回查）。
+
+## ADR-6 首期架构规范解耦重构：parser facade、编排 ports 与 canonical/DTO 边界
+
+- **日期**：2026-08-28
+- **状态**：✅ 生效
+- **决定**：批准需求 0007 的首期范围与 `reqs/0007-architecture-decoupling/DESIGN.md`：
+  1. `parser_lib` 为 1376.2 解析唯一公开入口；`loghooks` 不得依赖 `sim_concentrator.frame_codec`。
+  2. Workbench `RunExecutor` 只依赖 `MonitorPort` 与 `StimulusPort`；具体 `loghooks`/`sim_concentrator` 调用隔离至组合层适配器。
+  3. `test_automation.models` 持有执行/审计 canonical model；Workbench 用语义明确的 DTO/view 与显式 mapper，不直接合并字段不同的同名模型。
+  4. 解耦优先于既有 REST/JSON 兼容；若需改变外部契约，必须提供显式版本或迁移器、fixture/快照和重新落地测试。
+  5. 首期仅允许离线单元/集成回归；真实串口联调在离线门通过后单列执行并先核实侦听台 `CON4`/ `COM4`。
+- **理由**：当前跨库内部导入与 Runner 直接依赖具体实现违反骨架设计的分层要求；直接替换 Workbench 模型会丢失 REST/报告语义，显式边界可在保持可验证性的前提下完成收敛。
+- **影响**：新增公开 parser facade、ports、适配器、DTO/mapper 和架构测试；首期不涉及 `shared`、大文件拆分或包管理。
+- **被取代**：无。
+
+## ADR-7 canonical 审计模型以兼容投影接入 Workbench（不破坏现有 REST/SQLite）
+
+- **日期**：2026-08-28
+- **状态**：✅ 生效
+- **决定**：需求 0007 的 G3 采用 `reqs/0007-architecture-decoupling/G3-MIGRATION.md` 所定义的兼容投影切片：
+  1. `test_automation.models` 为执行/审计的 canonical source；Workbench DTO/view 仅为边界投影。
+  2. 保留既有 `/api/run`、run/report JSON 字段和 SQLite 旧列；新增审计列与 schema migration 必须 additive、幂等、事务化。
+  3. Scenario 缺失 version 时固定采用 `1.0.0`；旧数据库行使用明确 legacy 标记，绝不伪造历史 fingerprint。
+  4. canonical Report.summary 以具名键保存 Workbench 旧报告信息，mapper 恢复等价 ReportView；Artifact 增加 additive size 字段。
+  5. migration 与回归只使用临时 SQLite/Fake ports/FakeIO，不访问 runtime 数据或硬件。
+- **理由**：字段矩阵证明当前 DTO/mapper 未接入生产，直接替换会丢失报告字段和审计信息；兼容投影可先完成单一事实源，再在后续需求单独评估 API 版本演进。
+- **影响**：runner/store/api 与 mapper 接入 canonical 模型；新增 runs 审计列和旧 schema 回读测试；本 ADR 不删除对外字段。
+- **被取代**：无。
