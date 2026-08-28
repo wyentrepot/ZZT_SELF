@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>国网 HPLC 日志解析台</title>
-  <link rel="stylesheet" href="/static/pages/listener/styles.css?v=serial-v2">
+  <link rel="stylesheet" href="/static/pages/listener/styles.css?v=loader-collapse">
 </head>
 <body>
   <main class="app-shell">
@@ -22,6 +22,15 @@
       </div>
     </header>
 
+    <section class="active-filter-bar" aria-label="全局分析筛选条件">
+      <label><span>全局 NID</span><input id="nid-filter" type="search" placeholder="全部网络（如 00000123）"></label>
+      <label><span>起始时间</span><input id="start-time-filter" type="time" step="1"></label>
+      <label><span>结束时间</span><input id="end-time-filter" type="time" step="1"></label>
+      <button id="filter-button" class="secondary-button" type="button">应用筛选</button>
+      <output id="active-filter-summary">当前条件：全部 NID · 全时段</output>
+      <div id="active-filter-chips" class="active-filter-chips" aria-live="polite"></div>
+    </section>
+
     <nav class="view-tabs" role="tablist" aria-label="视图切换">
       <button class="view-tab active" type="button" role="tab"
         data-view="frames" aria-selected="true">帧浏览</button>
@@ -33,21 +42,21 @@
         data-view="network-assessment" aria-selected="false">网络承载评估</button>
     </nav>
 
-    <section class="active-filter-bar" aria-label="全局分析筛选条件">
-      <label><span>全局 NID</span><input id="nid-filter" type="search" placeholder="全部网络（如 00000123）"></label>
-      <label><span>起始时间</span><input id="start-time-filter" type="time" step="1"></label>
-      <label><span>结束时间</span><input id="end-time-filter" type="time" step="1"></label>
-      <button id="filter-button" class="secondary-button" type="button">应用筛选</button>
-      <output id="active-filter-summary">当前条件：全部 NID · 全时段</output>
-      <div id="active-filter-chips" class="active-filter-chips" aria-live="polite"></div>
-    </section>
-
-    <section id="frames-view" class="operation-panel" aria-label="日志操作区">
-      <div class="panel-title-row">
-        <div>
+    <section id="frames-view" class="operation-panel loader-panel" aria-label="日志操作区">
+      <button id="loader-toggle" class="loader-toggle" type="button"
+        aria-expanded="false" aria-controls="loader-body"
+        title="展开 / 收起日志加载面板">
+        <span class="loader-caret" aria-hidden="true"></span>
+        <span class="loader-title">
           <span class="section-kicker">01 / 数据源</span>
-          <h2>加载本地日志</h2>
-        </div>
+          <strong>加载本地日志</strong>
+        </span>
+        <span id="loader-summary" class="loader-summary">未加载日志</span>
+        <span class="loader-mini-track" aria-hidden="true"><span id="loader-mini-bar"></span></span>
+      </button>
+
+      <div id="loader-body" class="loader-body" hidden>
+      <div class="loader-body-actions">
         <button id="single-toggle" class="text-button" type="button">单帧调试</button>
       </div>
 
@@ -155,6 +164,7 @@
         </div>
         <button id="parse-button" class="primary-button" type="button">解析这一帧</button>
         <pre id="single-output">输入完整帧后点击解析</pre>
+      </div>
       </div>
     </section>
 
@@ -487,6 +497,6 @@
     </div>
   </div>
 
-  <script src="/static/pages/listener/app.js?v=serial-v2"></script>
+  <script src="/static/pages/listener/app.js?v=loader-collapse"></script>
 </body>
 </html>

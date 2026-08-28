@@ -15,6 +15,7 @@ const state = {
   loadToken: 0,
   detail: null,
   pageCache: new Map(),
+  loaderSourceName: "",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -98,6 +99,10 @@ async function openLog() {
   state.offset = 0;
   state.lastFrameCount = -1;
   state.selectedId = null;
+  // 新索引建立后旧页缓存全部失效，否则轮询会一直命中加载前的空页
+  state.pageCache.clear();
+  state.loaderSourceName = path.split(/[\\/]/).pop();
+  renderLoaderSummary({ progress: 0, frameCount: 0 });
   resetDetail();
 
   try {
@@ -307,18 +312,33 @@ function updateStatus(status) {
   elements.bytes.textContent = `${formatBytes(status.bytes_read)} / ${formatBytes(status.file_size)}`;
   elements.count.textContent = Number(status.frame_count || 0).toLocaleString();
   elements.errors.textContent = Number(status.error_count || 0).toLocaleString();
+  if (status.source_path) {
+    state.loaderSourceName = status.source_path.split(/[\\/]/).pop();
+  }
+  renderLoaderSummary({ progress, frameCount: status.frame_count });
 
+  let needsReload = false;
   if (status.frame_count !== state.lastFrameCount) {
     state.lastFrameCount = status.frame_count;
-    loadFrames();
+    // 建索引期间数据持续变化，旧页缓存一律作废（与串口轮询同款策略），
+    // 避免过渡态页（如 total 已更新、items 尚空）滞留缓存
+    state.pageCache.clear();
+    needsReload = true;
   }
 
   if (status.state === "completed" || status.state === "failed") {
     clearInterval(state.pollTimer);
     state.pollTimer = null;
     elements.load.disabled = false;
-    if (status.state === "failed") showError(status.message);
+    if (status.state === "failed") {
+      showError(status.message);
+    } else {
+      // 完成后稍候再强刷一次：避开索引落库的过渡窗口，保证末尾新增帧进入列表
+      state.pageCache.clear();
+      setTimeout(loadFrames, 500);
+    }
   }
+  if (needsReload) loadFrames();
 }
 
 function startPolling() {
@@ -778,6 +798,50 @@ $("#single-toggle").addEventListener("click", () => {
   panel.hidden = !panel.hidden;
   $("#single-toggle").textContent = panel.hidden ? "单帧调试" : "收起单帧调试";
 });
+
+// ---------- 加载面板收拢：折叠条 + 状态摘要 ----------
+
+const loaderElements = {
+  toggle: $("#loader-toggle"),
+  body: $("#loader-body"),
+  summary: $("#loader-summary"),
+  miniBar: $("#loader-mini-bar"),
+};
+
+function setLoaderExpanded(expanded) {
+  if (!loaderElements.toggle || !loaderElements.body) return;
+  loaderElements.body.hidden = !expanded;
+  loaderElements.toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  localStorage.setItem("hplc-loader-expanded", expanded ? "1" : "0");
+}
+
+loaderElements.toggle?.addEventListener("click", () => {
+  setLoaderExpanded(loaderElements.body.hidden);
+});
+// 默认收拢，给下方解析区让出空间；记住用户上次的展开选择
+setLoaderExpanded(localStorage.getItem("hplc-loader-expanded") === "1");
+
+// 折叠条摘要：收拢时也能看到当前数据源、进度与帧数
+function renderLoaderSummary({ progress = 0, frameCount = 0, text } = {}) {
+  if (!loaderElements.summary) return;
+  if (loaderElements.miniBar) {
+    loaderElements.miniBar.style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  }
+  if (text !== undefined) {
+    loaderElements.summary.textContent = text;
+    return;
+  }
+  const frames = `${Number(frameCount || 0).toLocaleString()} 帧`;
+  if (state.loaderSourceName) {
+    loaderElements.summary.textContent =
+      `${state.loaderSourceName} · ${Math.round(Math.max(0, Math.min(1, progress)) * 100)}% · ${frames}`;
+  } else if (frameCount) {
+    loaderElements.summary.textContent = `串口实时采集 · ${frames}`;
+  } else {
+    loaderElements.summary.textContent = "未加载日志";
+  }
+}
+
 $("#parse-button").addEventListener("click", parseSingleFrame);
 $("#filter-button").addEventListener("click", () => {
   state.query = elements.filter.value.trim();
@@ -1291,14 +1355,19 @@ async function refreshSerialStatus() {
       elements.serialState.textContent = "采集中 · " + (status.frame_count || 0) + " 帧";
       elements.serialState.className = "serial-state running";
       state.lastFrameCount = status.frame_count || 0;
+      renderLoaderSummary({ progress: 1, frameCount: status.frame_count });
     } else if (status.state === "error") {
       elements.serialState.className = "serial-state error";
       elements.serialState.textContent = "错误";
       elements.serialMessage.textContent = status.message || "串口采集出错";
+      renderLoaderSummary({ text: "串口采集出错" });
       stopSerialPolling();
     } else if (status.state === "stopped") {
       elements.serialMessage.textContent =
         "已停止，本次共采集 " + (status.frame_count || 0) + " 帧";
+      renderLoaderSummary({
+        text: "串口已停止 · " + (status.frame_count || 0).toLocaleString() + " 帧",
+      });
       stopSerialPolling();
     } else {
       elements.serialMessage.textContent = status.message || "串口未启动";
@@ -1411,6 +1480,13 @@ function clearFrameListForSwitch() {
   }
   if (elements.pageSummary) elements.pageSummary.textContent = "0 帧";
   if (elements.pageNumber) elements.pageNumber.textContent = "第 1 页";
+  // 同步折叠条摘要：切到串口显示待启动，切回日志显示未加载
+  state.loaderSourceName = "";
+  renderLoaderSummary({
+    text: document.body.getAttribute("data-source") === "serial"
+      ? "串口实时监听 · 未启动"
+      : "未加载日志",
+  });
 }
 
 sourceRadios.forEach((radio) => {

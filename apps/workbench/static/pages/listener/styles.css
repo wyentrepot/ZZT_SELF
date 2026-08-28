@@ -69,6 +69,7 @@ input::placeholder, textarea::placeholder { color: #4d6173; }
   width: 100%;
   height: 100vh;
   padding: 14px 18px 16px;
+  overflow-y: auto;
 }
 
 .app-header {
@@ -148,6 +149,71 @@ h1 { font-size: 18px; line-height: 1.2; letter-spacing: -.01em; }
   background:
     linear-gradient(120deg, rgba(69, 224, 194, .025), transparent 32%),
     rgba(13, 23, 34, .97);
+}
+
+/* ---------- 日志加载面板折叠条（收拢后的下拉条） ---------- */
+.loader-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 4px 2px;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+.loader-toggle:hover .loader-title strong,
+.loader-toggle:hover .loader-caret { color: var(--cyan); border-left-color: var(--cyan); }
+.loader-caret {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid #a4b5c6;
+  transition: transform .18s ease;
+}
+.loader-toggle[aria-expanded="true"] .loader-caret { transform: rotate(90deg); }
+.loader-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+}
+.loader-title strong { font-size: 14px; line-height: 1.2; }
+.loader-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #7fd4ff;
+  font: 11px/1.4 Consolas, "Microsoft YaHei", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.loader-mini-track {
+  flex: 0 0 150px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #172634;
+}
+.loader-mini-bar {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan-strong), var(--cyan), #79f1da);
+  box-shadow: 0 0 10px rgba(69, 224, 194, .4);
+  transition: width .25s ease;
+}
+.loader-body-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
 }
 
 .panel-title-row, .panel-toolbar, .detail-header {
@@ -340,7 +406,7 @@ input:focus, textarea:focus {
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: minmax(650px, 1.55fr) minmax(390px, .85fr);
-  height: calc(100vh - 252px);
+  height: auto;
   min-height: 430px;
   gap: 10px;
   margin-top: 10px;
