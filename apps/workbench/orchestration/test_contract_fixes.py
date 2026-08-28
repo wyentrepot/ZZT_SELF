@@ -23,7 +23,8 @@ from workbench.orchestration.artifacts import (
 )
 from workbench.orchestration.composition import build_default_executor
 from test_automation.ports import StimulusResult
-from workbench.orchestration.models import ArtifactInfo, Report, Run, RunInput, RunStatus
+from test_automation.models import Artifact, Report, Run, RunStatus
+from workbench.orchestration.dto import RunRequest as RunInput
 from workbench.orchestration.runner import RunExecutor, _build_artifacts
 from workbench.orchestration.store import RunStore
 
@@ -40,21 +41,21 @@ class TestRunStatusUnified:
 
     def test_created_default(self):
         """Run 初态为 created（规范枚举，无 pending）。"""
-        run = Run(run_id="r", scenario_id="s")
+        run = Run(id="r", case_id="s", case_version="1", case_fingerprint="a" * 64)
         assert run.status == CanonicalRunStatus.CREATED
         assert run.model_dump()["status"] == "created"
 
     def test_cancelling_cancelled_valid(self):
         """cancelling/cancelled 是合法终态（runner 实际写入，前端已消费）。"""
-        r1 = Run(run_id="r", scenario_id="s", status=CanonicalRunStatus.CANCELLING)
+        r1 = Run(id="r", case_id="s", case_version="1", case_fingerprint="a" * 64, status=CanonicalRunStatus.CANCELLING)
         assert r1.model_dump()["status"] == "cancelling"
-        r2 = Run(run_id="r", scenario_id="s", status=CanonicalRunStatus.CANCELLED)
+        r2 = Run(id="r", case_id="s", case_version="1", case_fingerprint="a" * 64, status=CanonicalRunStatus.CANCELLED)
         assert r2.model_dump()["status"] == "cancelled"
 
     def test_aborted_rejected(self):
         """aborted 不是规范枚举成员，构造被拒（消除死枚举值）。"""
         with pytest.raises(Exception):
-            Run(run_id="r", scenario_id="s", status="aborted")
+            Run(id="r", case_id="s", case_version="1", case_fingerprint="a" * 64, status="aborted")
 
     def test_inconclusive_is_terminal(self):
         """inconclusive 是规范终态（D-02 依赖状态机支持）。"""
@@ -158,7 +159,7 @@ class TestInconclusive:
         store = RunStore(db_path=tmp_path / "r.sqlite", reports_dir=tmp_path / "rpt")
         ex = build_default_executor(store)
         monkeypatch.setattr(ex.stimulus_port, "execute", lambda request: StimulusResult(payload={
-            "task_id": "t", "port": "COM24", "baudrate": 9600,
+            "task_id": "t", "port": "COM19", "baudrate": 9600,
             "steps": [{"index": 0, "name": "s", "result": "fail", "reason": "否认"}],
             "summary": {"total": 1, "pass": 0, "fail": 1, "verdict": "fail"},
         }))
@@ -204,7 +205,7 @@ class TestArtifactManifest:
 
     def test_report_artifacts_structured(self):
         """Report.artifacts 是 ArtifactInfo 列表（非字符串列表，D-03 结构化）。"""
-        rep = Report(run_id="r", artifacts=[ArtifactInfo(
+        rep = Report(run_id="r", artifacts=[Artifact(
             id="r-art-1", run_id="r", type="log", name="a.log",
             sha256="abc", path="/tmp/a.log",
         )])

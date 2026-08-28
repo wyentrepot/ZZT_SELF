@@ -173,3 +173,33 @@ class StimulusPort(Protocol):
 | 2026-08-28 | G3 B/D Terra 复核退回：canonical lifecycle/error/resource lease 未持久化，Store 仍有旧模型/dict 写入旁路，generic error 可能泄露内部路径，StepResult 映射及 REST DTO/API/旧模型收敛未完成。G3 保持未验收，仅作为本地检查点提交。 |
 
 | 2026-08-28 | 检查点全相关离线集实际为 156 passed、2 failed、1 warning：legacy Report step kind 投影缺失，旧 Workbench Run 调用点被 canonical-only Store 拒绝。两项均归入 G3 未验收迁移，不得进入 G4/G5。 |
+
+
+## 10. 当前硬件边界与验收证据（2026-08-28）
+
+- 受控配置：CCO=COM9、STA=COM8、侦听台=COM4（115200/E）、模拟集中器=COM19（9600/E）。config/serial_ports.json 与 Workbench 任务/离线夹具已按此更新；历史归档中的 COM24/N 不作为当前配置依据。
+- CCO IAP 最小实机闭环已由技术总管完成：iap_cco_AN_HUI_hv0201_sv002601_date260509_9600_E_FC_F8_isv090013_idate260513.bin，sha256=5daa35a95ee392e88bd79b22b34ad5c8a131b93a2c5d495be818e78620b8b9bb，应用验证 sversion=002601 / AN_HUI_MODE，证据 /d/cco/001-cco/20260828-201717/。
+- G3/G4 不因 CCO 单设备证据而提前通过；STA、侦听台、模拟集中器仍需架构变更后的受控硬件验收。
+
+
+## 11. G4 收束证据（2026-08-28）
+
+- 原始两项 RED 已通过：legacy Report 步骤兼容投影和 canonical-only Store 调用点迁移。
+- G4 离线集命令覆盖 parser/loghooks/simcon、ports、模型映射、Store/Runner/API、serial profile 与任务配置：167 passed，1 warning。
+- 边界测试确认 runner 无具体 adapters/loghooks/sim_concentrator 导入，loghooks 无 sim_concentrator 生产导入；git diff --check 与 UTF-8 校验通过。
+- 本记录仅为实现代理收束证据，不替代 Terra 独审；G3/G4 仍保持待验收状态。
+
+| 2026-08-28 | Terra G3/G4 终审退回：177 项离线绿测不足以验收；指出 Runner/Store 双事实与旧写入口、REST 敏感字段/路径、generic 异常回显、skipped detail 五类问题。 |
+
+| 2026-08-28 | Luna 修正切片：新增 G3 黑盒/AST 门禁 6 passed；models.py 收敛为报告值对象入口，Store 的旧写口私有化，REST 序列化排除 parameters/resource_leases/error/report_path 与 Artifact.path，skipped detail 保留，Run 启动未知错误使用 run_start_failed 且不回显异常。完整 G4 离线集 167 passed、1 warning。仅记录阻断已修复，Terra 尚未二次验收，G3/G4 不得标记完成。 |
+
+| 2026-08-28 | Luna 完成 Terra 本轮阻断修正：runner/store 仅使用 test_automation.models，删除 legacy_models.py；models.py 仅保留 reporting 值对象；REST/API/StepResult 门禁与 6 项黑盒 AST 测试通过；完整 G4 为 167 passed、1 warning。仅记录修复完成，未宣称 G3/G4 验收，等待 Terra 二次复核。 |
+
+
+### Artifact REST 脱敏修正记录（2026-08-28）
+Terra 二审指出 API Artifact 列表仍显式返回 `path: null`，下载失败会把 `ArtifactPathUnsafe` 的内部文件路径带入响应。Luna 已按最小边界修正：列表只序列化 `ArtifactView`（无 `path` 字段），下载将 `ArtifactPathUnsafe` 与 `OSError` 统一转换为固定受控 404 消息 `Artifact 不可访问`。黑盒测试登记不可访问 `/private/secret/x.log` 并验证列表/下载响应均无 `path` 字段及路径文本，7 项黑盒测试通过；该修正待 Terra 二次复核，不能据此宣称 G3/G4 完成。
+
+
+| 2026-08-28 | 模拟集中器回归修正：测试断言从历史 COM24 收敛到受控默认 COM19/9600/E；新增显式 COM24 未映射端口覆盖测试，确认显式 port 不被默认 profile 覆盖。三项失败集 19 passed；PLAN G4 文件集 180 passed。全量 pytest libs apps/workbench -q 约 30% 处进程 Aborted/core dumped，保持待定位，不作为 G4 通过证据。 |
+
+| 2026-08-28 | Terra 最终发布门批准 G3/G4：黑盒 10 passed；pytest libs apps/workbench -q 为 629 passed、77 skipped、1 个既有弃用警告。此前全量 core dump 已由 CLR 运行时安全预检消除；skip 分类为既有不支持协议样例、可选 CLR 环境和未配置真实串口，不构成业务回归。G5 全设备联调另行排期。 |

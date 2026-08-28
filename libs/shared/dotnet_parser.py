@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from shared.dotnet_runtime import require_dotnet_runtime
+
 
 class DotNetHplcParser:
     def __init__(self, dll_path: Path):
@@ -7,6 +9,9 @@ class DotNetHplcParser:
         if not resolved.exists():
             raise FileNotFoundError(f"找不到协议解析库：{resolved}")
 
+        # Never import pythonnet before checking the native runtime.  An
+        # unsupported Mono can abort the whole Python process during import.
+        require_dotnet_runtime()
         import clr
 
         clr.AddReference(str(resolved))

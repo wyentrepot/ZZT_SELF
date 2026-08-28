@@ -9,7 +9,7 @@
       "usage": "listener",
       "module": "",
       "baudrate": 115200,
-      "parity": "N",
+      "parity": "E",
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true
@@ -43,7 +43,7 @@
     {
       "id": "simcon",
       "linux_device": "/dev/ttyUSB1",
-      "windows_com": "COM24",
+      "windows_com": "COM19",
       "label": "模拟集中器",
       "usage": "simcon",
       "module": "",

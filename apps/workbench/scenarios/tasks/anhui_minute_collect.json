@@ -3,10 +3,10 @@
   "name": "安徽分钟采集闭环（集中器 ↔ CCO 交互）",
   "profile": "anhui",
   "module": "cco",
-  "port": "COM24",
+  "port": "COM19",
   "baudrate": 9600,
   "enable_responder": true,
-  "description": "模拟集中器(集中器角色)经 COM24 与安徽 CCO 交互：主动下发查询/配置并匹配回复(第一部分)，等待 CCO 主动上报(第二部分，recv_only/历史查询，超时判 fail)。CCO 主动上报由 responder 统一回 00H-F1 确认。用例语义化（ADR-5）：send 仅写 afn/fn + 业务参数，构帧由 scenario_codec 完成。依据《安徽集中器交互报文.md》与 CCO 固件 gw13762.c。",
+  "description": "模拟集中器(集中器角色)经 COM19 与安徽 CCO 交互：主动下发查询/配置并匹配回复(第一部分)，等待 CCO 主动上报(第二部分，recv_only/历史查询，超时判 fail)。CCO 主动上报由 responder 统一回 00H-F1 确认。用例语义化（ADR-5）：send 仅写 afn/fn + 业务参数，构帧由 scenario_codec 完成。依据《安徽集中器交互报文.md》与 CCO 固件 gw13762.c。",
   "responders": [
     {
       "id": "anhui.ack",

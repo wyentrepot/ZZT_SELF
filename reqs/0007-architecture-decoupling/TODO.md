@@ -32,14 +32,14 @@
 - [x] 运行 orchestration、Workbench API、profile loading、simcon FakeIO 回归：59 passed，1 个既有弃用警告。
 - [x] G2 验收：AST 确认 runner 无具体 adapters/loghooks/sim_concentrator import；8+59 项离线回归通过。
 
-## 3. G3 — canonical model 与 REST DTO 映射（🟡 Luna 兼容迁移中）
+## 3. G3 — canonical model 与 REST DTO 映射（🟡 实现收束，待 Terra 验收）
 
 - [x] 新增 mapper round-trip、旧 JSON fixture、状态机、Report/Artifact 快照测试：mapper focused 27 passed。
 - [x] Luna：完成 execution/audit canonical 对应 DTO/view 与显式 mapper。
 - [~] Luna：完成 Artifact/Report/旧 schema 兼容层与 canonical Run→Store 接线；Report/Assertion/Artifact execution 接线待审。
-- [~] Terra：正在审查 canonical Run→Store 接线与 scenario fingerprint；随后定义剩余 execution/audit 接线。
+- [~] Terra：待独立复核本轮 lifecycle/REST/兼容投影实现；在复核通过前不视为 G3 完成。
 - [ ] 运行 test_automation serialization/state machine、orchestration contract、Workbench API 回归。
-- [ ] G3 验收：同名模型不再表达不同语义，所有转换由测试锁定。
+- [~] G3 验收：实现已收束，待 Terra/技术总管确认 runner 内部兼容状态与模型清理边界。
 
 ## 4. G4 — 离线集成验收（技术总管审核）
 
@@ -68,7 +68,58 @@
 
 ### 本次完整离线回归证据（2026-08-28）
 
-- [~] 执行 15 个首期相关测试文件：156 passed, 2 failed, 1 warning；G4 不通过，不能转入硬件阶段。
-  - apps/workbench/orchestration/test_ports_integration.py::test_runner_injects_fake_ports_and_preserves_results：Report steps 不再提供旧断言所需的 kind 字段。
-  - apps/workbench/test_orchestration.py::test_store_roundtrip：旧 Workbench Run 被 Store 的 canonical-only 写入门禁拒绝。
-- [ ] 下一切片必须先以这两项为 RED 基线：明确 REST/legacy Report projection 的兼容字段策略，并把旧 Run 调用点完成 canonical mapper 迁移；修复后重跑完整离线集。
+- [x] 初始检查点曾为 156 passed、2 failed、1 warning；本轮已完成最小修复并重跑。
+- [x] G4 收束集实际为 167 passed、1 warning；但最终阶段门仍待 Terra/技术总管验收。
+
+
+## 当前受控设备配置（用户确认，2026-08-28）
+
+- CCO：COM9；本条仅记录串口角色与已完成 CCO IAP 验收，不覆盖 CCO 日志口既有波特率/校验位配置语义。
+- STA：COM8。
+- 侦听台：COM4，115200/E。
+- 模拟集中器：COM19，9600/E。
+- CCO 实机最小闭环已由技术总管完成：固件 iap_cco_AN_HUI_hv0201_sv002601_date260509_9600_E_FC_F8_isv090013_idate260513.bin，sha256 5daa35a95ee392e88bd79b22b34ad5c8a131b93a2c5d495be818e78620b8b9bb；应用验证 sversion=002601、AN_HUI_MODE；证据目录 /d/cco/001-cco/20260828-201717/。
+- 本代理未打开串口、未发送数据、未执行烧录；STA/侦听台/模拟集中器仍待受控硬件验收。
+
+
+## G4 收束回归（本轮，2026-08-28）
+
+- [x] 两个原始 RED 已修复：legacy Report steps 兼容投影恢复 kind/result/detail；旧 Workbench Store round-trip 调用点迁移到 canonical Run/Report。
+- [~] canonical Run 全链路尚未完成：本轮只验证现有 lifecycle/Store 兼容路径，runner 仍需迁移为 canonical Run/Report/StepResult 单一执行事实。
+- [x] Store 旧公开写口已私有化，canonical Report/dict 门禁与 legacy projection 回归通过；旧报告提供单向兼容读取。
+- [x] StepResult 兼容投影保留 skipped detail；未知异常对外使用受控摘要，不回显路径。
+- [x] REST：RunRequest 入参、RunView/ReportView 出参；parameters/resource_leases/error/report_path 与 Artifact.path 不进入 REST 序列化。
+- [x] 当前设备配置：CCO COM9、STA COM8、侦听台 COM4 115200/E、模拟集中器 COM19 9600/E；任务 JSON/离线夹具已同步。
+- [x] G4 离线集：167 passed, 1 warning；新增黑盒/AST 6 passed；git diff --check、UTF-8 校验通过。
+- [~] G3/G4 最终验收仍待 Terra/技术总管审核；本轮未提交、未推送、未打开真实串口。
+
+### Terra 终审退回与本轮修正（2026-08-28）
+
+- [x] Terra 指出的执行双事实、Store 旧写入口、REST 敏感字段/Artifact.path、generic 异常回显、skipped detail 五类可观察阻断已修复。
+- [x] runner/store 现仅导入 libs/test_automation.models；legacy_models.py 已删除；models.py 仅保留 reporting 值对象。
+- [x] 新增黑盒/AST 门禁 6 passed；完整 G4 离线集 167 passed、1 warning；diff check 与 UTF-8 校验通过。
+- [~] 本轮只证明阻断修复和离线回归通过，不代表 G3/G4 最终验收；需 Terra 独立二次复核后方可进入真实硬件联调。
+
+
+### 最新修正（2026-08-28，待 Terra 二次复核）
+- [x] REST Artifact 列表改为只返回 ArtifactView 脱敏字段，彻底移除 `path` 键。
+- [x] REST Artifact 下载对 ArtifactPathUnsafe/OSError 统一返回固定 `Artifact 不可访问`，不回显内部路径。
+- [x] 黑盒回归覆盖不可访问 `/private/secret/x.log` 的列表与下载：7 passed；UTF-8 与 `git diff --check` 通过。
+- [~] 上述修正仅完成 Luna 实施与本地验证，仍待 Terra 独立复核；G3/G4 未验收，未执行真实串口/烧录。
+
+
+### 模拟集中器端口回归修正（2026-08-28）
+
+- [x] 修正 libs/sim_concentrator 过时 COM24 断言：当前受控默认映射保持 COM19 / 9600 / E，POSIX 设备仍为 /dev/ttyUSB1。
+- [x] 新增显式未映射端口覆盖回归：resolve_serial_config(port="COM24") 保留 COM24，不套用 simcon 默认映射。
+- [x] 三个原始失败集已复跑：19 passed, 1 warning。
+- [x] 按 PLAN.md G4 文件集复跑：180 passed, 1 warning；该文件集当前实际收集 180 项，不宣称为 184 项。
+- [~] 可行全量 pytest libs apps/workbench -q 在约 30% 处 Python 进程 Aborted (core dumped)；已保留原始输出于 /tmp/zzt-full-regression.log，需总管/ Terra 继续定位，不能据此通过全量验收。
+
+### G3/G4 最终验收（2026-08-28）
+
+- [x] Terra 发布门批准：Runner/Store/API 仅使用 canonical execution/audit 模型；REST 不暴露 execution parameters、error、report_path 或 Artifact 真实路径。
+- [x] 黑盒门禁：10 passed（包括 canonical 缺失回退和不可访问 Artifact 的脱敏路径）。
+- [x] 全量离线：pytest libs apps/workbench -q 为 629 passed、77 skipped、1 个既有 Starlette/httpx 弃用警告。
+  - 77 个 skip 是既有不支持协议样例、Mono/Python.NET 不满足安全前置条件和未配置 SIMCON_TEST_COM1/2 的真实串口测试；不是业务断言回归。
+- [x] G4 通过；G5 保持另行排期。CCO 指定 IAP 已在 COM9 传输并验证 sversion 002601 / AN_HUI_MODE，证据 /d/cco/001-cco/20260828-201717/。

@@ -27,7 +27,7 @@ from workbench.orchestration.evidence import (
     evidence_index,
     load_listener_frames_from_index,
 )
-from workbench.orchestration.models import RunInput
+from workbench.orchestration.dto import RunRequest as RunInput
 from workbench.orchestration.runner import RunExecutor
 from workbench.orchestration.composition import build_default_executor
 from workbench.orchestration.store import RunStore
@@ -199,11 +199,11 @@ class TestEvidenceDetail:
 class TestAcquireSerialLease:
     def test_exclusive_conflict_raises(self):
         mgr = ResourceLeaseManager()
-        lease1 = acquire_serial_lease(mgr, holder="run-A", resource_id="serial/COM24")
+        lease1 = acquire_serial_lease(mgr, holder="run-A", resource_id="serial/COM19")
         assert lease1.holder == "run-A"
         # 同串口第二次独占 → 冲突
         with pytest.raises(ResourceConflictError):
-            acquire_serial_lease(mgr, holder="run-B", resource_id="serial/COM24")
+            acquire_serial_lease(mgr, holder="run-B", resource_id="serial/COM19")
 
     def test_release_then_reacquire_ok(self):
         mgr = ResourceLeaseManager()
@@ -284,7 +284,7 @@ class TestRunExecutorThreeSource:
         def _fake_stimulus(*args, **kwargs):
             return {
                 "task_id": "verify.task",
-                "port": "COM24",
+                "port": "COM19",
                 "baudrate": 9600,
                 "steps": [
                     {"index": 0, "name": "查询路由", "sent_hex": "68 01",
@@ -301,7 +301,7 @@ class TestRunExecutorThreeSource:
             log_dir=str(log_dir),
             skip_flash=True,
             skip_stimulus=False,
-            extras={"resource_id": "serial/COM24"},
+            extras={"resource_id": "serial/COM19"},
         )
         run = ex.execute(ri, scenarios_dir=Path(__file__).parent.parent / "scenarios")
         report = store.get_report(run.run_id)
@@ -558,7 +558,7 @@ class TestRunRecoveryAndSmoke:
         """
         from workbench.orchestration.runner import RunExecutor
         from workbench.orchestration.store import RunStore
-        from workbench.orchestration.models import RunInput
+        from workbench.orchestration.dto import RunRequest as RunInput
 
         log_dir = _make_fake_log(tmp_path)
         store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")

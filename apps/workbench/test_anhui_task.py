@@ -54,7 +54,7 @@ def test_task_json_valid_and_loadable():
     task = load_task(str(TASK_PATH))
     assert task["id"] == "anhui_minute_collect"
     assert task["profile"] == "anhui"
-    assert task["port"] == "COM24"
+    assert task["port"] == "COM19"
     assert len(task["steps"]) == 9
 
 

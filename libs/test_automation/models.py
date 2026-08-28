@@ -223,6 +223,28 @@ class Run:
     created_at: datetime = field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    steps: list["StepResult"] = field(default_factory=list)
+    report_path: str | None = None
+
+    def __post_init__(self) -> None:
+        self.status = RunStatus(self.status)
+
+    def model_dump(self) -> dict[str, Any]:
+        return self.to_dict()
+
+    @property
+    def run_id(self) -> str:
+        """Compatibility read alias; canonical identity is id."""
+        return self.id
+
+    @property
+    def scenario_id(self) -> str:
+        """Compatibility read alias; canonical identity is case_id."""
+        return self.case_id
+
+    @property
+    def firmware(self) -> dict[str, Any]:
+        return dict(self.parameters.get("firmware") or {})
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -237,6 +259,8 @@ class Run:
             "created_at": _iso(self.created_at),
             "started_at": _iso(self.started_at),
             "finished_at": _iso(self.finished_at),
+            "steps": [step.to_dict() for step in self.steps],
+            "report_path": self.report_path,
         }
 
     @classmethod
@@ -253,6 +277,19 @@ class Run:
             created_at=_from_iso(data.get("created_at")),
             started_at=_from_iso(data.get("started_at")),
             finished_at=_from_iso(data.get("finished_at")),
+            steps=[
+                StepResult(
+                    stage=item.get("stage", ""),
+                    adapter=item.get("adapter", "legacy"),
+                    status=item.get("status", "error"),
+                    evidence_count=int(item.get("evidence_count", 0)),
+                    error=item.get("error"),
+                    started_at=_from_iso(item.get("started_at")) or utcnow(),
+                    finished_at=_from_iso(item.get("finished_at")),
+                )
+                for item in data.get("steps") or []
+            ],
+            report_path=data.get("report_path"),
         )
 
 
@@ -363,6 +400,19 @@ class StepResult:
     started_at: datetime = field(default_factory=utcnow)
     finished_at: datetime | None = None
 
+    @property
+    def kind(self) -> str:
+        return self.stage
+
+    @property
+    def result(self) -> str:
+        return {"ok": "pass", "error": "fail", "skipped": "skipped",
+                "cancelled": "fail"}.get(self.status, self.status)
+
+    @property
+    def detail(self) -> str | None:
+        return self.error or ("skipped" if self.status == "skipped" else None)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "stage": self.stage,
@@ -419,11 +469,14 @@ class Report:
     """Report（docs/03 §3）：派生结果，Evidence 与 Artifact 清单是审计基础。"""
 
     run_id: str
-    summary: dict[str, Any]
-    steps: list[StepResult]
-    assertions: list[AssertionResult]
-    evidence_index: dict[str, Any]
-    artifacts: list[Artifact]
+    summary: dict[str, Any] = field(default_factory=dict)
+    steps: list[StepResult] = field(default_factory=list)
+    assertions: list[AssertionResult] = field(default_factory=list)
+    evidence_index: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[Artifact] = field(default_factory=list)
+
+    def model_dump(self) -> dict[str, Any]:
+        return self.to_dict()
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -32,7 +32,7 @@ class TestAPI:
         assert body["mapping_error"] == ""
         simcon = next(detail for detail in body["port_details"]
                       if detail["mapping_id"] == "simcon")
-        assert simcon["windows_com"] == "COM24"
+        assert simcon["windows_com"] == "COM19"
         assert simcon["baudrate"] == 9600
         assert simcon["parity"] == "E"
         assert all(detail["usage"] in ("", "simcon")
@@ -67,7 +67,7 @@ class TestAPI:
 
         assert r.status_code == 200
         import os
-        expected_port = "COM24" if os.name == "nt" else "/dev/ttyUSB1"
+        expected_port = "COM19" if os.name == "nt" else "/dev/ttyUSB1"
         assert captured["port"] == expected_port
         assert captured["baudrate"] == 9600
         assert captured["parity"] == "E"
@@ -88,11 +88,11 @@ class TestAPI:
         assert r.status_code == 200
         body = r.json()
         import os
-        expected_port = "COM24" if os.name == "nt" else "/dev/ttyUSB1"
+        expected_port = "COM19" if os.name == "nt" else "/dev/ttyUSB1"
         assert body["port"] == expected_port
         assert body["baudrate"] == 9600
         assert body["mapping_id"] == "simcon"
-        assert body["port_identity"]["windows_com"] == "COM24"
+        assert body["port_identity"]["windows_com"] == "COM19"
 
     def test_verify_empty_steps(self, client):
         # 空步骤：verdict 应为 fail（无步骤）

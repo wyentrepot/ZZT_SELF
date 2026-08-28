@@ -1,16 +1,4 @@
-"""workbench.orchestration.runner —— RunExecutor：全链路编排（FR-5.1 落地）。
-
-串行编排：flash → monitor → stimulus → compare → feedback → report。
-每步独立可跳过（skip_*），支持"仅监控"/"仅激励"等局部闭环（AI 可按需组合）。
-所有子能力调用现有模块 API，不重实现（FR-6.4 第三条）。
-
-- flash    → module_log 烧录能力（XMODEM）或标记"已烧录"
-- monitor  → loghooks 离线扫描（engine + rules），产出事件流
-- stimulus → sim_concentrator runner.execute_task（场景绑定 task）
-- compare  → 期望流程 vs 实际事件流
-- feedback → 按归因规则生成反馈
-- report   → 聚合 Report 落盘 + 更新 runs 表
-"""
+"""Workbench orchestration runner backed by the canonical test_automation domain models."""
 from __future__ import annotations
 
 import hashlib
@@ -18,12 +6,22 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from test_automation.models import (
+    Artifact,
+    AssertionResult,
+    CasePackage,
+    Report,
+    Run,
+    RunStatus,
+    StepResult,
+    utcnow,
+)
+from test_automation.ports import MonitorRequest, PortError, StimulusRequest
 
 from .compare import compare_flow
-from test_automation.ports import MonitorRequest, PortError, StimulusRequest
-from test_automation.models import (CasePackage, Run as CanonicalRun, Report as CanonicalReport,
-                                   StepResult, AssertionResult, Artifact as CanonicalArtifact)
+from .dto import RunRequest
 from .evidence import (
     ResourceConflictError,
     ResourceLeaseManager,
@@ -34,17 +32,7 @@ from .evidence import (
     load_listener_frames_from_index,
 )
 from .feedback import build_feedback
-from .models import (
-    ArtifactInfo,
-    Assertion,
-    FlowCompare,
-    Report,
-    Run,
-    RunInput,
-    RunStatus,
-    RunStep,
-    SourcesSummary,
-)
+from .reporting import SourcesSummary
 from .scenarios import load_scenario
 from .store import RunStore
 
@@ -53,527 +41,406 @@ def new_run_id() -> str:
     return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
 
 
-def _canonical_run(run: Run, run_input: RunInput, scenario: dict) -> CanonicalRun:
-    """Freeze request/scenario identity for the execution/audit Store source."""
-    version = str(scenario.get("version") or "1.0.0")
-    firmware = run_input.firmware.model_dump() if hasattr(run_input.firmware, "model_dump") else dict(run_input.firmware or {})
+def _canonical_run(request: RunRequest, scenario: dict[str, Any], run_id: str | None = None) -> Run:
+    """Freeze request and effective scenario identity in the canonical Run."""
+    firmware = dict(request.firmware or {})
     parameters = {
         "firmware": firmware,
-        "skip_flash": run_input.skip_flash, "skip_monitor": run_input.skip_monitor,
-        "skip_stimulus": run_input.skip_stimulus, "skip_compare": run_input.skip_compare,
-        "skip_feedback": run_input.skip_feedback, "log_dir": run_input.log_dir,
-        "task_file": run_input.task_file, "rules": list(run_input.rules or []),
-        "extras": dict(run_input.extras),
-        "scenario": {k: v for k, v in scenario.items() if not k.endswith("_file")},
+        "skip_flash": request.skip_flash,
+        "skip_monitor": request.skip_monitor,
+        "skip_stimulus": request.skip_stimulus,
+        "skip_compare": request.skip_compare,
+        "skip_feedback": request.skip_feedback,
+        "log_dir": request.log_dir,
+        "task_file": request.task_file,
+        "rules": list(request.rules or []),
+        "extras": dict(request.extras),
+        "request_parameters": dict(request.parameters),
+        "scenario": {key: value for key, value in scenario.items() if not key.endswith("_file")},
     }
-    case = CasePackage(case_id=str(scenario.get("id") or run_input.scenario_id), version=version,
-                       parameters=parameters)
-    return CanonicalRun(id=run.run_id, case_id=case.case_id, case_version=case.version,
-                        case_fingerprint=case.fingerprint(), parameters=parameters)
+    case = CasePackage(
+        case_id=str(scenario.get("id") or request.scenario_id),
+        version=str(scenario.get("version") or "1.0.0"),
+        parameters=parameters,
+    )
+    return Run(
+        id=run_id or new_run_id(),
+        case_id=case.case_id,
+        case_version=case.version,
+        case_fingerprint=case.fingerprint(),
+        parameters=parameters,
+    )
 
 
 def _sha256_of_file(path: Path) -> str:
-    """计算文件 SHA-256（D-03 Artifact 审计链：内容摘要）。"""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def _build_artifacts(run_id: str, files: List[str], report_path: Optional[Path] = None) -> List[ArtifactInfo]:
-    """为 Run 的产物生成结构化 Artifact 清单（D-03 审计链）。
-
-    每个产物：计算 SHA-256、逻辑 Artifact ID（<run_id>-art-<N>）、类型与真实路径。
-    文件缺失/不可读时仍登记（sha256 为空串），保持 manifest 完整可审计。
-    """
-    artifacts: List[ArtifactInfo] = []
-    seen: set = set()
-
-    def _add(path: Path, type_: str) -> None:
+def _build_artifacts(run_id: str, files: list[str]) -> list[Artifact]:
+    artifacts: list[Artifact] = []
+    seen: set[str] = set()
+    for raw in files:
+        path = Path(raw)
         real = path.resolve()
-        key = str(real)
-        if key in seen or not path.exists():
-            return
-        seen.add(key)
+        if str(real) in seen or not path.exists():
+            continue
+        seen.add(str(real))
         try:
-            sha = _sha256_of_file(path)
+            sha256 = _sha256_of_file(path)
             size = path.stat().st_size
         except OSError:
-            sha, size = "", 0
+            sha256, size = "", 0
         artifacts.append(
-            ArtifactInfo(
+            Artifact(
                 id=f"{run_id}-art-{len(artifacts) + 1}",
                 run_id=run_id,
-                type=type_,
+                type="log",
                 name=path.name,
-                sha256=sha,
+                sha256=sha256,
                 path=str(real),
                 size=size,
             )
         )
-
-    for f in files:
-        _add(Path(f), "log")
-    if report_path is not None:
-        _add(Path(report_path), "report")
     return artifacts
 
 
-def _verdict_inconclusive_reasons(run_input: RunInput, scan: Dict[str, Any], simcon: Optional[dict],
-                                  listener_frames: List[Any]) -> List[str]:
-    """D-02 必要来源缺失判定：执行后证据缺失（非用户主动跳过）→ inconclusive。
-
-    返回缺失原因列表；空列表表示无缺失（可正常 pass/fail）。
-    - monitor：未跳过但扫描无事件（核心日志证据缺失）
-    - stimulus：未跳过但无执行结果（无任务/无串口导致，必要刺激证据缺失）
-    - listener：显式期望 listener（传了 listener_index）但无帧（侦听台未采集到）
-    用户主动 skip_* 的源不算缺失（降级运行模式，现有兼容行为保持不变）。
-    """
-    reasons: List[str] = []
-    if not run_input.skip_monitor and not scan.get("events"):
+def _verdict_inconclusive_reasons(
+    request: RunRequest,
+    scan: dict[str, Any],
+    simcon: dict[str, Any] | None,
+    listener_frames: list[Any],
+) -> list[str]:
+    reasons: list[str] = []
+    if not request.skip_monitor and not scan.get("events"):
         reasons.append("monitor 事件缺失")
-    if not run_input.skip_stimulus and not (simcon and simcon.get("summary")):
+    if not request.skip_stimulus and not (simcon and simcon.get("summary")):
         reasons.append("stimulus 执行结果缺失")
-    if run_input.extras.get("listener_index") and not listener_frames:
+    if request.extras.get("listener_index") and not listener_frames:
         reasons.append("listener 帧缺失")
     return reasons
 
 
 class RunCancelled(Exception):
-    """Run 被用户取消（协作式取消：步骤间检查取消标志后抛出）。"""
+    """Run 被用户协作式取消。"""
 
 
-# ---------------------------------------------------------------------------
-# RunExecutor
-# ---------------------------------------------------------------------------
+def _safe_error(exc: BaseException) -> str:
+    if isinstance(exc, PortError):
+        return exc.code if exc.code.isidentifier() else "port_error"
+    return "execution_error"
 
 
-def _to_canonical_report(report: Report, run: Run) -> CanonicalReport:
-    summary = {
-        "firmware": run.firmware.model_dump(), "scenario": report.scenario,
-        "sources": report.sources.model_dump(), "flow_compare": report.flow_compare.model_dump(),
-        "feedback": report.feedback, "verdict": report.verdict, "ts": report.ts,
-        "evidence_detail": report.evidence_detail, "evidence_frozen": report.evidence_frozen,
-    }
-    return CanonicalReport(
-        run_id=run.run_id, summary=summary,
-        steps=[StepResult(stage=step.kind, adapter="workbench", status=step.result, error=step.detail) for step in run.steps],
-        assertions=[AssertionResult(run_id=run.run_id, assertion_id=item.id, outcome=item.result,
-                                    expected=item.expected, actual=item.actual) for item in report.assertions],
-        evidence_index=dict(report.evidence_index),
-        artifacts=[CanonicalArtifact(run_id=item.run_id, type=item.type, name=item.name,
-                                     sha256=item.sha256, path=item.path, size=item.size, id=item.id)
-                   for item in report.artifacts],
-    )
+def _step_status(result: str) -> str:
+    return {"pass": "ok", "fail": "error", "skipped": "skipped",
+            "running": "ok", "pending": "ok"}.get(result, "error")
+
+
+def _step_evidence_count(detail: str | None) -> int:
+    import re
+    match = re.search(r"events=(\d+)", detail or "")
+    return int(match.group(1)) if match else 0
 
 
 class RunExecutor:
-    """串行执行一个 Run 的全链路编排器。
+    """串行执行器。所有运行态写入均经 canonical Run/Report Store 接口。"""
 
-    支持同步（execute，CLI/测试）与异步（submit + cancel，REST/UI）两种执行：
-    - submit() 在后台线程执行，前端轮询状态；
-    - cancel() 协作式取消：置取消标志，执行线程在步骤间检查，落 CANCELLED 终态。
-    """
-
-    def __init__(self, store: Optional[RunStore] = None, *, monitor_port=None, stimulus_port=None):
+    def __init__(self, store: RunStore | None = None, *, monitor_port=None, stimulus_port=None):
         if monitor_port is None or stimulus_port is None:
             raise ValueError("monitor_port and stimulus_port are required")
         self.store = store or RunStore()
         self.monitor_port = monitor_port
         self.stimulus_port = stimulus_port
-        self._cancel_events: Dict[str, threading.Event] = {}
+        self._cancel_events: dict[str, threading.Event] = {}
+        self._active_runs: dict[str, Run] = {}
         self._lock = threading.Lock()
 
-    # ---------------- 同步执行（CLI / 测试复用） ----------------
-
-    def execute(self, run_input: RunInput, scenarios_dir: Optional[Path] = None) -> Run:
-        """同步执行一个 Run（阻塞到结束）。取消标志可经 cancel() 注入。"""
-        scenario = load_scenario(run_input.scenario_id, scenarios_dir)
-        if scenario is None:
-            raise ValueError(f"场景模板不存在：{run_input.scenario_id}")
-
-        run = Run(
-            run_id=new_run_id(),
-            scenario_id=run_input.scenario_id,
-            firmware=run_input.firmware,
+    def _record_step(
+        self,
+        run: Run,
+        stage: str,
+        status: str,
+        detail: str | None = None,
+        evidence_count: int = 0,
+    ) -> StepResult:
+        step = StepResult(
+            stage=stage,
+            adapter="workbench",
+            status=status,
+            evidence_count=evidence_count,
+            error=detail if status == "error" else None,
         )
-        canonical_run = _canonical_run(run, run_input, scenario)
-        canonical_run.started_at = canonical_run.created_at
-        canonical_run.status = RunStatus.RUNNING
-        self.store.create_run(canonical_run)
-        self.store.update_status(run.run_id, "running")
+        run.steps.append(step)
+        self.store.update_canonical_run(run)
+        return step
 
+    def execute(self, request: RunRequest, scenarios_dir: Path | None = None) -> Run:
+        scenario = load_scenario(request.scenario_id, scenarios_dir)
+        if scenario is None:
+            raise ValueError(f"场景模板不存在：{request.scenario_id}")
+        run = _canonical_run(request, scenario)
+        run.started_at = utcnow()
+        run.status = RunStatus.RUNNING
+        self.store.create_run(run)
+        with self._lock:
+            self._active_runs[run.id] = run
         try:
-            report = self._run_steps(run, run_input, scenario)
-            if report.verdict == "pass":
-                run.status = RunStatus.PASSED
-            elif report.verdict == "inconclusive":
-                run.status = RunStatus.INCONCLUSIVE
-            else:
-                run.status = RunStatus.FAILED
+            report = self._run_steps(run, request, scenario)
+            run.status = {
+                "pass": RunStatus.PASSED,
+                "inconclusive": RunStatus.INCONCLUSIVE,
+            }.get(str(report.summary.get("verdict")), RunStatus.FAILED)
         except RunCancelled:
             run.status = RunStatus.CANCELLED
-            report = Report(run_id=run.run_id, verdict="fail")
-            report.assertions.append(
-                Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
-            )
+            report = self._error_report(run, "run_cancelled", "用户取消")
         except PortError as exc:
             run.status = RunStatus.FAILED
-            report = Report(run_id=run.run_id, verdict="fail")
-            report.assertions.append(
-                Assertion(id="run.execute", actual=exc.message, result="fail")
-            )
+            run.error = _safe_error(exc)
+            report = self._error_report(run, run.error, run.error)
         except Exception as exc:
             run.status = RunStatus.FAILED
-            report = Report(run_id=run.run_id, verdict="fail")
-            report.assertions.append(
-                Assertion(id="run.execute", actual=str(exc), result="fail")
-            )
-        canonical_run.status = run.status
-        canonical_run.finished_at = canonical_run.created_at
-        if run.status == RunStatus.FAILED and report.assertions:
-            canonical_run.error = report.assertions[-1].actual
-        self.store.update_status(run.run_id, run.status)
-        run.report_path = str(self.store.save_report(run.run_id, _to_canonical_report(report, run)))
+            run.error = _safe_error(exc)
+            report = self._error_report(run, run.error, run.error)
+        finally:
+            run.finished_at = utcnow()
+            self.store.update_canonical_run(run)
+        path = self.store.save_report(run.id, report)
+        run.report_path = str(path)
+        with self._lock:
+            self._active_runs.pop(run.id, None)
         return run
 
-    # ---------------- 异步执行 + 取消（REST / UI） ----------------
-
-    def submit(self, run_input: RunInput, scenarios_dir: Optional[Path] = None) -> Run:
-        """异步启动一个 Run：创建后立刻返回（状态 running），后台线程执行。
-
-        调用方轮询 GET /api/run/{run_id} 获取进度；可经 cancel(run_id) 取消。
-        """
-        scenario = load_scenario(run_input.scenario_id, scenarios_dir)
+    def submit(self, request: RunRequest, scenarios_dir: Path | None = None) -> Run:
+        scenario = load_scenario(request.scenario_id, scenarios_dir)
         if scenario is None:
-            raise ValueError(f"场景模板不存在：{run_input.scenario_id}")
-
-        run = Run(
-            run_id=new_run_id(),
-            scenario_id=run_input.scenario_id,
-            firmware=run_input.firmware,
-        )
-        canonical_run = _canonical_run(run, run_input, scenario)
-        canonical_run.started_at = canonical_run.created_at
-        canonical_run.status = RunStatus.RUNNING
-        self.store.create_run(canonical_run)
-        self.store.update_status(run.run_id, "running")
+            raise ValueError(f"场景模板不存在：{request.scenario_id}")
+        run = _canonical_run(request, scenario)
+        run.started_at = utcnow()
         run.status = RunStatus.RUNNING
-
+        self.store.create_run(run)
         cancel_event = threading.Event()
         with self._lock:
-            self._cancel_events[run.run_id] = cancel_event
+            self._cancel_events[run.id] = cancel_event
+            self._active_runs[run.id] = run
 
-        def _target() -> None:
+        def target() -> None:
             try:
-                report = self._run_steps(run, run_input, scenario, cancel_event=cancel_event)
-                if report.verdict == "pass":
-                    status = "passed"
-                elif report.verdict == "inconclusive":
-                    status = "inconclusive"
-                else:
-                    status = "failed"
+                report = self._run_steps(run, request, scenario, cancel_event)
+                run.status = {
+                    "pass": RunStatus.PASSED,
+                    "inconclusive": RunStatus.INCONCLUSIVE,
+                }.get(str(report.summary.get("verdict")), RunStatus.FAILED)
                 if cancel_event.is_set():
-                    status = "cancelled"
+                    run.status = RunStatus.CANCELLED
             except RunCancelled:
-                status = "cancelled"
-                report = Report(run_id=run.run_id, verdict="fail")
-                report.assertions.append(
-                    Assertion(id="run.cancelled", expected="", actual="用户取消", result="fail")
-                )
+                run.status = RunStatus.CANCELLED
+                report = self._error_report(run, "run_cancelled", "用户取消")
             except PortError as exc:
-                status = "failed"
-                report = Report(run_id=run.run_id, verdict="fail")
-                report.assertions.append(
-                    Assertion(id="run.execute", actual=exc.message, result="fail")
-                )
+                run.status = RunStatus.FAILED
+                run.error = _safe_error(exc)
+                report = self._error_report(run, run.error, run.error)
             except Exception as exc:
-                status = "failed"
-                report = Report(run_id=run.run_id, verdict="fail")
-                report.assertions.append(
-                    Assertion(id="run.execute", actual=str(exc), result="fail")
-                )
-            canonical_run.status = RunStatus(status)
-            canonical_run.finished_at = canonical_run.created_at
-            if canonical_run.status == RunStatus.FAILED and report.assertions:
-                canonical_run.error = report.assertions[-1].actual
-            self.store.update_status(run.run_id, status)
-            run.report_path = str(self.store.save_report(run.run_id, _to_canonical_report(report, run)))
-            with self._lock:
-                self._cancel_events.pop(run.run_id, None)
+                run.status = RunStatus.ERROR
+                run.error = _safe_error(exc)
+                report = self._error_report(run, run.error, run.error)
+            finally:
+                run.finished_at = utcnow()
+                self.store.update_canonical_run(run)
+                self.store.save_report(run.id, report)
+                with self._lock:
+                    self._cancel_events.pop(run.id, None)
+                    self._active_runs.pop(run.id, None)
 
-        t = threading.Thread(target=_target, name=f"run-{run.run_id}", daemon=True)
-        t.start()
+        threading.Thread(target=target, name=f"run-{run.id}", daemon=True).start()
         return run
 
     def cancel(self, run_id: str) -> bool:
-        """请求取消一个正在执行的 Run：置取消标志 + 状态转 CANCELLING。
-
-        返回 True 表示已发起取消（该 run 正在执行）；已终态/不存在返回 False。
-        执行线程会在步骤间检查标志，最终落 CANCELLED 终态。
-        """
         with self._lock:
-            ev = self._cancel_events.get(run_id)
-        if ev is None:
+            event = self._cancel_events.get(run_id)
+            run = self._active_runs.get(run_id)
+        if event is None or run is None:
             return False
-        ev.set()
-        self.store.update_status(run_id, "cancelling")
+        event.set()
+        run.status = RunStatus.CANCELLING
+        self.store.update_canonical_run(run)
         return True
 
     def is_cancelled(self, run_id: str) -> bool:
         with self._lock:
-            ev = self._cancel_events.get(run_id)
-        return ev is not None and ev.is_set()
+            event = self._cancel_events.get(run_id)
+        return event is not None and event.is_set()
+
+    def _error_report(self, run: Run, code: str, message: str) -> Report:
+        assertion_id = "run.cancelled" if code == "run_cancelled" else "run.execute"
+        return Report(
+            run_id=run.id,
+            summary={"verdict": "fail", "error_code": code},
+            steps=list(run.steps),
+            assertions=[
+                AssertionResult(
+                    run_id=run.id,
+                    assertion_id=assertion_id,
+                    outcome="fail",
+                    actual=message,
+                    message=message,
+                )
+            ],
+            evidence_index={},
+            artifacts=[],
+        )
 
     def _run_steps(
         self,
         run: Run,
-        run_input: RunInput,
-        scenario: dict,
-        cancel_event: Optional[threading.Event] = None,
+        request: RunRequest,
+        scenario: dict[str, Any],
+        cancel_event: threading.Event | None = None,
     ) -> Report:
-        steps_result: Dict[str, Any] = {}
-        seq = 0
-
-        # 任务3：Run 级三源 Evidence 收集 + 串口资源租约
-        lease_manager = ResourceLeaseManager()
-        collected: Dict[str, List[Any]] = {
-            "events": [],
-            "steps": [],
-            "frames": [],
-        }
-
-        # 任务4：协作式取消检查点——每个步骤前检查取消标志，已取消则抛
-        # RunCancelled（外层捕获后落 CANCELLED 终态，跳过剩余步骤）。
-        def _check_cancel() -> None:
+        def check_cancel() -> None:
             if cancel_event is not None and cancel_event.is_set():
-                raise RunCancelled(run.run_id)
+                raise RunCancelled(run.id)
 
-        _check_cancel()
-        # 任务4：listener 帧来源——优先显式注入（extras.listener_frames），
-        # 否则从 listener 索引库（COM4 侦听台采集落库）按需读取；库不存在/无帧
-        # 时优雅降级为空（listener source 为空，不阻断 Run）。
-        listener_frames = run_input.extras.get("listener_frames") or []
+        collected: dict[str, list[Any]] = {"events": [], "steps": [], "frames": []}
+        listener_frames = list(request.extras.get("listener_frames") or [])
         if not listener_frames:
-            listener_frames = load_listener_frames_from_index(
-                index_path=run_input.extras.get("listener_index")
-            )
-            if listener_frames:
-                run_input.extras["listener_frames"] = listener_frames
+            listener_frames = load_listener_frames_from_index(request.extras.get("listener_index"))
+        lease_manager = ResourceLeaseManager()
 
-        # 1. flash
-        seq += 1
-        _check_cancel()
-        if run_input.skip_flash:
-            step = RunStep(seq=seq, kind="flash", detail="skipped", result="skipped")
+        check_cancel()
+        self._record_step(run, "flash", "skipped" if request.skip_flash else "ok",
+                          "skipped" if request.skip_flash else None)
+        check_cancel()
+        log_dir = Path(request.log_dir) if request.log_dir else _default_log_dir()
+        rules = request.rules or scenario.get("monitor", {}).get("rules", [])
+        if request.skip_monitor:
+            scan = {"files": [], "events": [], "evidence": [], "summary": {},
+                    "drift": False, "drift_list": []}
+            self._record_step(run, "monitor", "skipped", "skipped")
         else:
-            step = RunStep(seq=seq, kind="flash", detail="XMODEM 烧录（或标记已烧录）", result="pass")
-        self.store.add_step(run.run_id, step)
-        run.steps.append(step)
-
-        # 2. monitor
-        seq += 1
-        _check_cancel()
-        log_dir = Path(run_input.log_dir) if run_input.log_dir else _default_log_dir()
-        rules = run_input.rules or scenario.get("monitor", {}).get("rules", [])
-        if run_input.skip_monitor:
-            scan: Dict[str, Any] = {"files": [], "events": [], "evidence": [], "summary": {},
-                                    "drift": False, "drift_list": []}
-            step = RunStep(seq=seq, kind="monitor", detail="skipped", result="skipped")
-        else:
-            scan_result = self.monitor_port.scan(MonitorRequest(log_dir=log_dir, rules=rules, run_id=run.run_id))
-            scan = {"files": scan_result.files, "events": scan_result.events,
-                    "evidence": scan_result.evidence, "summary": scan_result.summary,
-                    "drift": scan_result.drift, "drift_list": scan_result.drift_list,
-                    "total_lines": scan_result.total_lines, "unmatched": scan_result.unmatched}
-            step = RunStep(
-                seq=seq,
-                kind="monitor",
-                detail=f"events={len(scan['events'])} files={len(scan['files'])}",
-                result="pass",
-            )
-        self.store.add_step(run.run_id, step)
-        run.steps.append(step)
-        steps_result["monitor"] = scan
-        # 任务3收口：monitor 事件用引擎本体直接 Evidence 化的完整对象（字段无损）
+            result = self.monitor_port.scan(MonitorRequest(log_dir=log_dir, rules=rules, run_id=run.id))
+            scan = {
+                "files": result.files, "events": result.events, "evidence": result.evidence,
+                "summary": result.summary, "drift": result.drift, "drift_list": result.drift_list,
+                "total_lines": result.total_lines, "unmatched": result.unmatched,
+            }
+            self._record_step(run, "monitor", "ok",
+                              f"events={len(result.events)} files={len(result.files)}",
+                              len(result.events))
         collected["events"].extend(scan.get("evidence") or scan["events"])
 
-        # 3. stimulus
-        seq += 1
-        _check_cancel()
-        task_file = run_input.task_file or scenario.get("stimulus", {}).get("task_file")
-        if run_input.skip_stimulus:
-            simcon: Optional[dict] = None
-            step = RunStep(seq=seq, kind="stimulus", detail="skipped", result="skipped")
+        check_cancel()
+        simcon = None
+        if request.skip_stimulus:
+            self._record_step(run, "stimulus", "skipped", "skipped")
         else:
-            # 任务3：串口资源独占租约（冲突可预测）
-            resource_id = run_input.extras.get("resource_id") or "serial/COM24"
-            lease = None
+            resource_id = request.extras.get("resource_id") or "serial/COM19"
+            lease = acquire_serial_lease(lease_manager, holder=run.id, resource_id=resource_id)
+            run.resource_leases.append(lease)
+            self.store.update_canonical_run(run)
             try:
-                lease = acquire_serial_lease(
-                    lease_manager, holder=run.run_id, resource_id=resource_id
-                )
-            except ResourceConflictError as exc:
-                simcon = None
-                step = RunStep(
-                    seq=seq, kind="stimulus",
-                    detail=f"资源冲突：{exc}", result="fail",
-                )
-                self.store.add_step(run.run_id, step)
-                run.steps.append(step)
-                steps_result["stimulus"] = None
-                raise
-            simcon_result = self.stimulus_port.execute(StimulusRequest(
-                task=None, task_file=Path(task_file) if task_file else None, resource_id=resource_id
-            ))
-            simcon = simcon_result.payload
-            if lease is not None:
-                lease_manager.release("serial_port", resource_id, run.run_id)
+                simcon = self.stimulus_port.execute(
+                    StimulusRequest(task=None, task_file=Path(request.task_file) if request.task_file else None,
+                                    resource_id=resource_id)
+                ).payload
+            finally:
+                lease_manager.release("serial_port", resource_id, run.id)
             if simcon is None:
-                step = RunStep(seq=seq, kind="stimulus", detail="无任务/无串口，跳过", result="skipped")
+                self._record_step(run, "stimulus", "skipped", "skipped")
             else:
-                step = RunStep(
-                    seq=seq,
-                    kind="stimulus",
-                    detail=f"total={simcon['summary']['total']} pass={simcon['summary']['pass']}",
-                    result="pass" if simcon["summary"]["verdict"] == "pass" else "fail",
-                )
-        self.store.add_step(run.run_id, step)
-        run.steps.append(step)
-        steps_result["stimulus"] = simcon
-        if simcon and simcon.get("steps"):
-            collected["steps"].extend(simcon["steps"])
+                summary = simcon.get("summary") or {}
+                detail = f"total={summary.get('total', 0)} pass={summary.get('pass', 0)}"
+                self._record_step(run, "stimulus",
+                                  "ok" if summary.get("verdict") == "pass" else "error",
+                                  detail if summary.get("verdict") != "pass" else None)
+                collected["steps"].extend(simcon.get("steps") or [])
         if listener_frames:
             collected["frames"].extend(listener_frames)
 
-        # 4. compare
-        seq += 1
-        _check_cancel()
-        if run_input.skip_compare:
-            compare: FlowCompare = FlowCompare()
-            step = RunStep(seq=seq, kind="compare", detail="skipped", result="skipped")
+        check_cancel()
+        if request.skip_compare:
+            compare = None
+            self._record_step(run, "compare", "skipped", "skipped")
         else:
-            expected = scenario.get("expected_flow", [])
-            compare = compare_flow(expected, scan["events"])
-            step = RunStep(
-                seq=seq,
-                kind="compare",
-                detail=f"hit={len(compare.steps)} missing={len(compare.missing)}",
-                result="pass" if compare.verdict == "pass" else "fail",
-            )
-        self.store.add_step(run.run_id, step)
-        run.steps.append(step)
-        steps_result["compare"] = compare
-
-        # 5. feedback
-        seq += 1
-        _check_cancel()
-        if run_input.skip_feedback:
-            feedback: List[dict] = []
-            step = RunStep(seq=seq, kind="feedback", detail="skipped", result="skipped")
-        else:
-            feedback = build_feedback(compare, simcon and simcon.get("summary"), scan.get("drift", False))
-            step = RunStep(
-                seq=seq,
-                kind="feedback",
-                detail=f"issues={len(feedback)}",
-                result="pass" if not feedback else "fail",
-            )
-        self.store.add_step(run.run_id, step)
-        run.steps.append(step)
-
-        # 6. report 聚合
-        # D-02 verdict 三态判定：
-        #   明确失败证据（simcon 失败）→ fail（真实失败，优先于证据缺失）
-        #   否则必要来源证据缺失（monitor 无事件等）→ inconclusive
-        #   否则期望流程未满足（compare missing，有证据但缺期望）→ fail
-        #   否则 → pass
-        verdict = "pass"
-        inconclusive_reasons = _verdict_inconclusive_reasons(
-            run_input, scan, simcon, listener_frames
+            compare = compare_flow(scenario.get("expected_flow", []), scan["events"])
+            detail = f"hit={len(compare.steps)} missing={len(compare.missing)}"
+            self._record_step(run, "compare", "ok" if compare.verdict == "pass" else "error",
+                              detail if compare.verdict != "pass" else None)
+        check_cancel()
+        feedback = [] if compare is None else build_feedback(
+            compare, simcon and simcon.get("summary"), bool(scan.get("drift"))
         )
-        simcon_fail = bool(simcon and simcon["summary"]["verdict"] != "pass")
-        if simcon_fail:
+        self._record_step(run, "feedback", "ok" if not feedback else "error",
+                          f"issues={len(feedback)}" if feedback else None)
+
+        compare_data = compare.model_dump() if compare is not None else {}
+        verdict = "pass"
+        reasons = _verdict_inconclusive_reasons(request, scan, simcon, listener_frames)
+        if simcon and (simcon.get("summary") or {}).get("verdict") != "pass":
             verdict = "fail"
-        elif inconclusive_reasons:
+        elif reasons:
             verdict = "inconclusive"
-        elif compare.missing or compare.timeouts or compare.negated or compare.out_of_order:
+        elif any(compare_data.get(key) for key in ("missing", "timeouts", "negated", "out_of_order")):
             verdict = "fail"
 
-        assertions: List[Assertion] = []
-
-        # D-02：必要来源缺失登记为 inconclusive 断言（证据链可追溯）
+        assertions: list[AssertionResult] = []
+        for expected in scenario.get("expected_flow", []):
+            name = expected.get("step") or expected.get("event_type", "")
+            hit = next((item for item in compare_data.get("steps", []) if item.get("step") == name), None)
+            assertions.append(
+                AssertionResult(
+                    run_id=run.id,
+                    assertion_id=name,
+                    outcome="pass" if hit and hit.get("status") == "hit" else "fail",
+                    expected=name,
+                    actual=str((hit or {}).get("actual_time", "")),
+                )
+            )
+        if simcon and (simcon.get("summary") or {}).get("verdict") == "pass":
+            assertions.append(AssertionResult(run_id=run.id, assertion_id="simcon.verdict",
+                                               outcome="pass", actual="pass"))
         if verdict == "inconclusive":
-            for reason in _verdict_inconclusive_reasons(run_input, scan, simcon, listener_frames):
-                assertions.append(
-                    Assertion(
-                        id="source.missing",
-                        expected="必要来源证据齐全",
-                        actual=reason,
-                        result="inconclusive",
-                    )
-                )
+            assertions.extend(
+                AssertionResult(run_id=run.id, assertion_id="source.missing",
+                                 outcome="inconclusive", expected="必要来源证据齐全", actual=reason)
+                for reason in reasons
+            )
 
-        # 断言列表：比对差异映射为断言
-        for step_cfg in scenario.get("expected_flow", []):
-            name = step_cfg.get("step") or step_cfg.get("event_type", "")
-            st = next((s for s in compare.steps if s["step"] == name), None)
-            if st is None:
-                assertions.append(Assertion(id=name, expected=name, result="fail"))
-            else:
-                assertions.append(
-                    Assertion(
-                        id=name,
-                        expected=name,
-                        actual=str(st.get("actual_time", "")),
-                        result="pass" if st["status"] == "hit" else "fail",
-                    )
-                )
-        if simcon and simcon["summary"]["verdict"] == "pass":
-            assertions.append(Assertion(id="simcon.verdict", actual="pass", result="pass"))
-
-        # 任务3：三源 Evidence 汇总进同一 run 级 EvidenceStore 并冻结证据窗口
         evidence_store = collect_three_source_evidence(
-            run_id=run.run_id,
-            events=collected["events"],
-            step_results=collected["steps"],
-            frame_records=collected["frames"],
-            case_id=scenario.get("id", ""),
+            run_id=run.id, events=collected["events"], step_results=collected["steps"],
+            frame_records=collected["frames"], case_id=run.case_id
         )
         evidence_store.freeze()
-
-        report = Report(
-            run_id=run.run_id,
-            firmware=run.firmware,
-            scenario=run.scenario_id,
-            sources=SourcesSummary(
-                module_log={
-                    "files": scan["files"],
-                    "events": len(scan["events"]),
-                    "summary": scan["summary"],
-                },
-                listener={
-                    "frames": len(collected["frames"]),
-                } if collected["frames"] else {},
+        summary = {
+            "firmware": run.firmware,
+            "scenario": run.case_id,
+            "sources": SourcesSummary(
+                module_log={"files": scan["files"], "events": len(scan["events"]),
+                            "summary": scan["summary"]},
+                listener={"frames": len(collected["frames"])} if collected["frames"] else {},
                 sim_concentrator=(simcon or {}).get("summary", {}),
-            ),
+            ).model_dump(),
+            "flow_compare": compare_data,
+            "feedback": feedback,
+            "verdict": verdict,
+            "evidence_detail": evidence_detail(evidence_store),
+            "evidence_frozen": evidence_store.frozen,
+            "ts": datetime.now().isoformat(timespec="seconds"),
+        }
+        return Report(
+            run_id=run.id,
+            summary=summary,
+            steps=list(run.steps),
             assertions=assertions,
-            flow_compare=compare,
-            feedback=feedback,
-            verdict=verdict,
-            artifacts=_build_artifacts(run.run_id, scan["files"]),
             evidence_index=evidence_index(evidence_store),
-            evidence_detail=evidence_detail(evidence_store),
-            evidence_frozen=evidence_store.frozen,
+            artifacts=_build_artifacts(run.id, scan["files"]),
         )
-        return report
 
 
 def _default_log_dir() -> Path:
-    """默认日志目录：仓库根 LOG/模块/cco（frozen 时 exe 同目录）。"""
     import sys
-
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent / "LOG" / "模块" / "cco"
     return Path(__file__).resolve().parent.parent.parent.parent / "LOG" / "模块" / "cco"

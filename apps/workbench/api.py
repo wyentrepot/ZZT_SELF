@@ -9,7 +9,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from .orchestration.models import Report, RunInput
+from .orchestration.dto import RunRequest
+from .orchestration.mappers import canonical_report_to_view, canonical_run_to_view
 from .orchestration.composition import build_default_executor
 from .orchestration.scenarios import load_scenario, load_scenarios, validate_scenario
 from .orchestration.store import RunStore
@@ -49,7 +50,7 @@ async def get_scenario(scenario_id: str):
 
 
 @router.post("/run")
-async def create_run(run_input: RunInput):
+async def create_run(run_input: RunRequest):
     """创建并异步执行一个验证批次（全链路：烧录→监控→激励→比对→反馈→报告）。
 
     异步执行：立刻返回（状态 running），调用方轮询 GET /api/run/{run_id}
@@ -60,8 +61,17 @@ async def create_run(run_input: RunInput):
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Run 启动失败：{exc}") from exc
-    return run.model_dump()
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "run_start_failed", "message": "Run 启动失败", "details": None},
+        ) from exc
+    canonical = _store().get_canonical_run(run.run_id)
+    if canonical is None:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "canonical_run_unavailable", "message": "Run 审计记录不可用", "details": None},
+        )
+    return canonical_run_to_view(canonical).model_dump()
 
 
 @router.post("/run/{run_id}/cancel")
@@ -78,18 +88,18 @@ async def cancel_run(run_id: str):
 
 @router.get("/run/{run_id}")
 async def get_run(run_id: str):
-    run = _store().get_run(run_id)
-    if run is None:
+    canonical = _store().get_canonical_run(run_id)
+    if canonical is None:
         raise HTTPException(status_code=404, detail=f"Run 不存在：{run_id}")
-    return run
+    return canonical_run_to_view(canonical).model_dump()
 
 
 @router.get("/run/{run_id}/report")
 async def get_report(run_id: str):
-    report = _store().get_report(run_id)
+    report = _store().get_canonical_report(run_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"报告不存在：{run_id}")
-    return report
+    return canonical_report_to_view(report).model_dump()
 
 
 @router.get("/run/{run_id}/artifacts")
@@ -98,7 +108,10 @@ async def list_artifacts(run_id: str):
     report = _store().get_report(run_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"报告不存在：{run_id}")
-    return report.get("artifacts") or []
+    canonical = _store().get_canonical_report(run_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail=f"报告不存在：{run_id}")
+    return [item.model_dump() for item in canonical_report_to_view(canonical).artifacts]
 
 
 @router.get("/run/{run_id}/artifacts/{artifact_id}")
@@ -124,14 +137,19 @@ async def download_artifact(run_id: str, artifact_id: str):
         raise HTTPException(status_code=404, detail=f"Artifact 不存在：{artifact_id}")
     try:
         path = resolve_artifact_path(item)
-    except ArtifactPathUnsafe as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ArtifactPathUnsafe, OSError) as exc:
+        raise HTTPException(status_code=404, detail="Artifact 不可访问") from exc
     return FileResponse(str(path), filename=item.get("name") or path.name)
 
 
 @router.get("/runs")
 async def list_runs(limit: int = Query(50, ge=1, le=200)):
-    return _store().list_runs(limit)
+    views = []
+    for item in _store().list_runs(limit):
+        canonical = _store().get_canonical_run(item["run_id"])
+        if canonical is not None:
+            views.append(canonical_run_to_view(canonical).model_dump())
+    return views
 
 
 @router.post("/compare")
@@ -148,7 +166,7 @@ async def compare(body: dict):
 async def feedback(body: dict):
     """直接归因：根据比对结论 + 激励结论生成反馈（不落 Run）。"""
     from .orchestration.feedback import build_feedback
-    from .orchestration.models import FlowCompare
+    from .orchestration.reporting import FlowCompare
 
     fc = FlowCompare(**body.get("flow_compare", {}))
     return build_feedback(fc, body.get("simcon_summary"), body.get("loghooks_drift", False))

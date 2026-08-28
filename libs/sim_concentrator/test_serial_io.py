@@ -100,17 +100,27 @@ def test_list_ports_returns_list():
 
 def test_resolve_simcon_mapping_alias_uses_platform_device_and_defaults():
     import os
-    resolved = resolve_serial_config(port="COM24")
+    resolved = resolve_serial_config(port="COM19")
 
     assert resolved["mapping_id"] == "simcon"
-    # 平台自适应：Windows→COM24，POSIX→/dev/ttyUSB1
-    expected = "COM24" if os.name == "nt" else "/dev/ttyUSB1"
+    # 平台自适应：Windows→COM19，POSIX→/dev/ttyUSB1
+    expected = "COM19" if os.name == "nt" else "/dev/ttyUSB1"
     assert resolved["port"] == expected
     assert resolved["baudrate"] == 9600
     assert resolved["parity"] == "E"
     assert resolved["bytesize"] == 8
     assert resolved["stopbits"] == 1
-    assert resolved["port_identity"]["windows_com"] == "COM24"
+    assert resolved["port_identity"]["windows_com"] == "COM19"
+
+
+def test_resolve_serial_config_preserves_explicit_unmapped_port_override():
+    resolved = resolve_serial_config(port="COM24")
+
+    assert resolved["mapping_id"] == ""
+    assert resolved["port"] == "COM24"
+    assert resolved["port_identity"]["device"] == "COM24"
+    assert resolved["baudrate"] == 115200
+    assert resolved["parity"] == "N"
 
 
 def test_serial_io_respects_shared_backend_serial_registry():

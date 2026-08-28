@@ -26,8 +26,8 @@ def profile_store(tmp_path: Path) -> SerialProfileStore:
         "ports": [
             {"id": "listener", "linux_device": "/dev/ttyUSB0", "windows_com": "COM4",
              "label": "侦听台", "usage": "listener", "module": "",
-             "baudrate": 115200, "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True},
-            {"id": "cco-main", "linux_device": "/dev/ttyACM0", "windows_com": "COM8",
+             "baudrate": 115200, "parity": "E", "bytesize": 8, "stopbits": 1, "enabled": True},
+            {"id": "cco-main", "linux_device": "/dev/ttyACM1", "windows_com": "COM9",
              "label": "CCO 日志口", "usage": "module_log", "module": "cco",
              "baudrate": 115200, "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True},
         ],

@@ -36,16 +36,18 @@ class RunView(BaseModel):
     status: str
     case_version: str | None = None
     case_fingerprint: str | None = None
-    parameters: dict[str, Any] = Field(default_factory=dict)
-    resource_leases: list[dict[str, Any]] = Field(default_factory=list)
-    error: str | None = None
+    # Compatibility attributes remain readable to old in-process callers, but
+    # are excluded from every REST serialization.
+    parameters: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    resource_leases: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
+    error: str | None = Field(default=None, exclude=True)
     firmware: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | str | None = None
     updated_at: datetime | str | None = None
     started_at: datetime | str | None = None
     finished_at: datetime | str | None = None
     steps: list[RunStepView] = Field(default_factory=list)
-    report_path: str | None = None
+    report_path: str | None = Field(default=None, exclude=True)
 
 
 class AssertionView(BaseModel):
@@ -65,7 +67,8 @@ class ArtifactView(BaseModel):
     type: str
     name: str
     sha256: str
-    path: str | None = None
+    # Real filesystem path is an internal download capability, never a REST field.
+    path: str | None = Field(default=None, exclude=True)
     size: int = 0
     created_at: datetime | str | None = None
 

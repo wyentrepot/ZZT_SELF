@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from workbench.orchestration.models import RunInput
+from workbench.orchestration.dto import RunRequest as RunInput
 from workbench.orchestration.runner import RunExecutor
 from workbench.orchestration.store import RunStore
 from test_automation.ports import MonitorResult, PortError, StimulusResult
@@ -55,7 +55,7 @@ def test_runner_injects_fake_ports_and_preserves_results(tmp_path):
     stimulus = FakeStimulus()
     run, report = _run(tmp_path, monitor, stimulus)
     assert monitor.requests and monitor.requests[0].run_id == run.run_id
-    assert stimulus.requests and stimulus.requests[0].resource_id == "serial/COM24"
+    assert stimulus.requests and stimulus.requests[0].resource_id == "serial/COM19"
     assert report["sources"]["module_log"]["events"] == 1
     assert report["sources"]["sim_concentrator"]["total"] == 1
     assert [step["kind"] for step in report["steps"]] if "steps" in report else True

@@ -31,7 +31,8 @@ def canonical_run_to_view(run: Run) -> RunView:
         id=run.id, run_id=run.id, case_id=run.case_id, scenario_id=run.case_id,
         status=status, case_version=run.case_version, case_fingerprint=run.case_fingerprint,
         parameters=dict(run.parameters), resource_leases=[lease.to_dict() for lease in run.resource_leases],
-        error=run.error, created_at=run.created_at, started_at=run.started_at, finished_at=run.finished_at,
+        firmware=dict(run.parameters.get("firmware") or {}), error=run.error,
+        created_at=run.created_at, started_at=run.started_at, finished_at=run.finished_at,
     )
 
 
@@ -57,7 +58,11 @@ def canonical_report_to_view(report: Report) -> ReportView:
         feedback=list(summary.get("feedback") or []), ts=summary.get("ts"),
         evidence_detail=dict(summary.get("evidence_detail") or {}), evidence_frozen=bool(summary.get("evidence_frozen", False)),
         summary=summary,
-        steps=[step.to_dict() for step in report.steps],
+        steps=[{**step.to_dict(), "kind": step.stage,
+                 "result": {"ok": "pass", "error": "fail", "skipped": "skipped",
+                            "cancelled": "fail"}.get(step.status, step.status),
+                 "detail": step.error or ("skipped" if step.status == "skipped" else None)}
+                for step in report.steps],
         assertions=[assertion_result_to_view(item) for item in report.assertions],
         evidence_index=dict(report.evidence_index),
         artifacts=[artifact_to_view(item) for item in report.artifacts],

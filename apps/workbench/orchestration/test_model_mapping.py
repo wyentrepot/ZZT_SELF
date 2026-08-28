@@ -19,7 +19,7 @@ from workbench.orchestration.dto import RunRequest
 
 
 def test_run_mapping_preserves_identity_and_audit_fields():
-    lease = ResourceLease("serial_port", "COM24", "run-1", False)
+    lease = ResourceLease("serial_port", "COM19", "run-1", False)
     run = Run(id="run-1", case_id="case-a", case_version="1.2.3", case_fingerprint="f" * 64,
               status=RunStatus.RUNNING, parameters={"x": 1}, resource_leases=[lease], error="warning")
     view = canonical_run_to_view(run)
@@ -28,7 +28,7 @@ def test_run_mapping_preserves_identity_and_audit_fields():
     assert view.case_version == "1.2.3"
     assert view.case_fingerprint == "f" * 64
     assert view.parameters == {"x": 1}
-    assert view.resource_leases[0]["resource_id"] == "COM24"
+    assert view.resource_leases[0]["resource_id"] == "COM19"
     assert view.error == "warning"
 
 
@@ -100,7 +100,7 @@ def test_legacy_report_view_reconstructs_old_summary_fields():
 
 
 def test_store_roundtrips_canonical_run_audit_fields(tmp_path):
-    lease = ResourceLease("serial_port", "COM24", "run-c", False)
+    lease = ResourceLease("serial_port", "COM19", "run-c", False)
     run = Run(id="run-c", case_id="case-c", case_version="1.0.0", case_fingerprint="c" * 64,
               status=RunStatus.RUNNING, parameters={"firmware": {"version": "v"}},
               resource_leases=[lease], error="e")
@@ -111,7 +111,7 @@ def test_store_roundtrips_canonical_run_audit_fields(tmp_path):
     assert loaded.case_version == "1.0.0"
     assert loaded.case_fingerprint == "c" * 64
     assert loaded.parameters["firmware"]["version"] == "v"
-    assert loaded.resource_leases[0].resource_id == "COM24"
+    assert loaded.resource_leases[0].resource_id == "COM19"
     assert loaded.error == "e"
     store.close()
 
@@ -140,21 +140,18 @@ def test_runner_store_receives_canonical_run(tmp_path):
 
 def test_scenario_fingerprint_changes_with_effective_scenario_content(tmp_path):
     from workbench.orchestration.runner import _canonical_run
-    from workbench.orchestration.models import FirmwareInfo, Run as LegacyRun
     base = {"id": "case", "version": "1.0.0", "expected_flow": [], "monitor": {}, "stimulus": {}}
     request = RunRequest(scenario_id="case", log_dir=str(tmp_path))
-    legacy = LegacyRun(run_id="r", scenario_id="case", firmware=FirmwareInfo())
-    first = _canonical_run(legacy, request, base)
+    first = _canonical_run(request, base, run_id="r")
     changed = {**base, "expected_flow": [{"step": "x"}]}
-    second = _canonical_run(legacy, request, changed)
+    second = _canonical_run(request, changed, run_id="r")
     assert first.case_fingerprint != second.case_fingerprint
 
 
-def test_store_rejects_legacy_write_model(tmp_path):
-    from workbench.orchestration.models import Run as LegacyRun
+def test_store_rejects_noncanonical_write_model(tmp_path):
     store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
     with pytest.raises(TypeError, match="canonical"):
-        store.create_run(LegacyRun(run_id="r", scenario_id="s"))
+        store.create_run(object())
     store.close()
 
 
@@ -211,3 +208,51 @@ def test_fake_execution_store_receives_canonical_run_and_report(tmp_path):
     assert reports[0].artifacts[0].size == 1
     assert {"firmware", "scenario", "sources", "flow_compare", "feedback", "verdict", "ts", "evidence_detail", "evidence_frozen"} <= reports[0].summary.keys()
     store.close()
+
+
+def test_store_rejects_legacy_report_dict(tmp_path):
+    store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+    run = Run(id="r", case_id="c", case_version="1", case_fingerprint="a" * 64)
+    store.create_run(run)
+    with pytest.raises(TypeError, match="canonical Report"):
+        store.save_report("r", {"run_id": "r", "verdict": "pass"})
+    store.close()
+
+
+def test_store_update_canonical_run_persists_audit_state(tmp_path):
+    from datetime import timedelta
+    run = Run(id="r", case_id="c", case_version="1", case_fingerprint="a" * 64)
+    store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
+    store.create_run(run)
+    run.status = RunStatus.RUNNING
+    run.started_at = datetime.now(timezone.utc)
+    run.resource_leases.append(ResourceLease("serial_port", "COM19", "r", False))
+    store.update_canonical_run(run)
+    run.status = RunStatus.FAILED
+    run.error = "port_failed"
+    run.finished_at = run.started_at + timedelta(seconds=1)
+    store.update_canonical_run(run)
+    loaded = store.get_canonical_run("r")
+    assert loaded.status == RunStatus.FAILED
+    assert loaded.started_at and loaded.finished_at
+    assert loaded.resource_leases[0].resource_id == "COM19"
+    assert loaded.error == "port_failed"
+    store.close()
+
+
+def test_step_projection_uses_canonical_status_and_evidence_count():
+    report = Report(
+        run_id="r",
+        summary={"verdict": "pass"},
+        steps=[
+            StepResult(stage="monitor", adapter="fake", status="ok", evidence_count=2),
+            StepResult(stage="flash", adapter="fake", status="skipped"),
+        ],
+        assertions=[],
+        evidence_index={},
+        artifacts=[],
+    )
+    view = canonical_report_to_view(report)
+    assert [step["result"] for step in view.steps] == ["pass", "skipped"]
+    assert view.steps[0]["evidence_count"] == 2
+    assert view.steps[1]["detail"] == "skipped"

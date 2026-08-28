@@ -3,10 +3,20 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from listener.app import DEFAULT_DLL
 from shared.dotnet_parser import DotNetHplcParser
+from shared.dotnet_runtime import probe_dotnet_runtime
 from shared.test_fixtures import GW_FRAME_HEX
 from conftest import hplc_test_data_root
+
+
+_RUNTIME = probe_dotnet_runtime()
+pytestmark = pytest.mark.skipif(
+    not _RUNTIME.supported,
+    reason="optional CLR integration unavailable: " + _RUNTIME.reason,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DLL_REL = "libs/shared/dll/bin/Debug/GwHPLCAnalysis.dll"

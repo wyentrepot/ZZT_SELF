@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .models import FlowCompare
+from .reporting import FlowCompare
 
 
 def _ev_time(ev: Dict[str, Any]) -> float:

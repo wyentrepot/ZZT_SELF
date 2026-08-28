@@ -14,7 +14,10 @@ import pytest
 from workbench.orchestration.compare import compare_flow
 from workbench.orchestration.feedback import build_feedback
 from workbench.orchestration.composition import build_default_executor
-from workbench.orchestration.models import FlowCompare, Run, RunInput, RunStep
+from workbench.orchestration.models import FlowCompare
+from workbench.orchestration.dto import RunRequest as RunInput
+from test_automation.models import StepResult
+from test_automation.models import Run as CanonicalRun, Report as CanonicalReport
 from workbench.orchestration.scenarios import load_scenario, load_scenarios
 from workbench.orchestration.store import RunStore
 from workbench.orchestration.runner import RunExecutor, new_run_id
@@ -141,16 +144,21 @@ def test_scenario_validate():
 
 def test_store_roundtrip(tmp_path):
     store = RunStore(db_path=tmp_path / "runs.sqlite", reports_dir=tmp_path / "reports")
-    run = Run(run_id=new_run_id(), scenario_id="minute_collect")
+    run = CanonicalRun(id=new_run_id(), case_id="minute_collect", case_version="1",
+                       case_fingerprint="a" * 64)
     store.create_run(run)
-    store.update_status(run.run_id, "running")
-    store.add_step(run.run_id, RunStep(seq=1, kind="monitor", result="pass"))
-    path = store.save_report(run.run_id, {"run_id": run.run_id, "verdict": "pass"})
+    run.status = "running"
+    store.update_canonical_run(run)
+    run.steps.append(StepResult(stage="monitor", adapter="test", status="ok"))
+    store.update_canonical_run(run)
+    path = store.save_report(run.id, CanonicalReport(
+        run_id=run.id, summary={"verdict": "pass"}, steps=[], assertions=[],
+        evidence_index={}, artifacts=[]))
 
-    got = store.get_run(run.run_id)
+    got = store.get_run(run.id)
     assert got["status"] == "running"
     assert len(got["steps"]) == 1
-    rep = store.get_report(run.run_id)
+    rep = store.get_report(run.id)
     assert rep["verdict"] == "pass"
     assert path.exists()
     store.close()

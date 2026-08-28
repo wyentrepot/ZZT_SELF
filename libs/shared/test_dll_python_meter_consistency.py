@@ -8,9 +8,19 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from shared.dotnet_parser import DotNetHplcParser
+from shared.dotnet_runtime import probe_dotnet_runtime
 from shared.parser_service import ParserService
 from conftest import hplc_test_data_root
+
+
+_RUNTIME = probe_dotnet_runtime()
+pytestmark = pytest.mark.skipif(
+    not _RUNTIME.supported,
+    reason="optional CLR integration unavailable: " + _RUNTIME.reason,
+)
 
 SAMPLE = hplc_test_data_root() / "并发抄表-样本.txt"
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
