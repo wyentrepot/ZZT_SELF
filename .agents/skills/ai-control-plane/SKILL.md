@@ -4,19 +4,20 @@ description: Control real hardware (HPLC meter-reading workbench) over HTTP as a
 argument-hint: "[what to do, e.g. 向 cco 发送一串字符]"
 metadata:
   author: reasonix
-  version: "1.0.0"
+  version: "1.2.0"
   applies-to: D:/2-侦听台改造
 ---
 
 # AI 控制面使用 Skill（ai-control-plane）
 
 让 AI 通过 HTTP 操作真机（HPLC 侦听台改造工作台）的完整 playbook。
-底层事实以 `docs/16-AI操作指南.md` 与代码为准；本文是**执行步骤**，实测于 2026-08-20。
+底层事实以 `docs/16-AI操作指南.md` 与代码为准；本文是**执行步骤**，实测于 2026-08-20，2026-08-29 对齐当前实现（cursor_range 观察、regex/sequence 匹配器、帧过滤参数、串口映射 JSON）。
 
 ## 适用场景
 
-- 向 cco / sta 模块串口（COM1 / COM2）发送字符串或十六进制
+- 向 cco / sta 模块串口发送字符串或十六进制
 - 烧录固件并等待结果
+- 驱动模拟集中器：跑验证用例、单步下发指定 afn、感知 CCO 主动上报、查本次运行的帧
 - 建观察任务：盯 module_log 实时日志或侦听台帧，命中后取证
 - 查询侦听台已解析帧、整体状态、审计流水
 
@@ -33,11 +34,13 @@ metadata:
 curl -X POST http://127.0.0.1:8790/api/ai/v1/admin/grants \
   -H "X-Workbench-Admin-Key: <WORKBENCH_AI_ADMIN_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"scopes":["status:read","module_session:ensure","module_session:stop","module_send:execute","module_flash:execute","listener:ensure","listener:stop","observation:create","evidence:read"],"resources":["*"],"ttl_seconds":3600,"reason":"<用途>"}'
+  -d '{"scopes":["status:read","module_session:ensure","module_session:stop","module_send:execute","module_flash:execute","listener:ensure","listener:stop","observation:create","evidence:read","simcon:verify","simcon:send","simcon:read"],"resources":["*"],"ttl_seconds":3600,"firmware_roots":["D:/firmware"],"reason":"<用途>"}'
 ```
 
 - 响应里 `token` 只返回一次，之后只存 SHA-256 摘要。**务必保存 token。**
 - `ttl_seconds`：1–86400；`resources:["*"]`=全部；只给本次要用的 scope 即可（最小权限）。
+- `firmware_roots`：允许烧录的目录白名单，**要烧录就必须给**，否则 flash 返回 403「当前授权未配置允许烧录目录」。`max_operation_seconds` 可选（默认 1800）。
+- 授权管理辅助：`GET /admin/grants` 列出授权、`POST /admin/grants/{grant_id}/revoke` 撤销（均 admin key）；`GET /audit` 审计流水（token，需 `status:read`）。
 - 若返回 `503 未配置人工授权管理密钥`：密钥没配/没重启，先让人类跑一键脚本并重启 8790。
 - 若返回 `403`：密钥错，或不是从 127.0.0.1 发起。
 
@@ -63,10 +66,10 @@ curl http://127.0.0.1:8790/api/ai/v1/status -H "Authorization: Bearer <token>"
 ```bash
 curl -X POST http://127.0.0.1:8790/api/ai/v1/module-sessions/ensure \
   -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"module":"cco","port":"COM1","serial":{"baudrate":115200,"bytesize":8,"parity":"N","stopbits":1},"title":"<可选>"}'
+  -d '{"module":"cco","mapping_id":"cco-main"}'
 ```
 
-- 也可用 `mapping_id`（`cco-main`/`sta-main`）代替 `port`，但**本机真实串口是 COM1/COM2**，直接 `port` 最稳。
+- **优先用 `mapping_id`**（`cco-main`/`sta-main`，见 `config/serial_ports.json`），波特率等串口参数自动按映射配置走。也可直接 `port`，但本机实际接线会变（当前配置：cco-main=COM9、sta-main=COM8、listener=COM4、simcon=COM19），**别硬编码 COM 号**。
 - 返回 `session_id`（形如 `ms-xxxx`），state=running 表示串口已开。
 - 409 = 串口被占用（前端或另一会话占着），等释放或改口。
 
@@ -122,13 +125,28 @@ curl -X POST http://127.0.0.1:8790/api/ai/v1/observations \
   }'
 ```
 
+- 幂等 ID 也可用请求头 `Idempotency-Key` 传，`client_request_id` 缺省时取它。
+- `match`（module_log）三种叶子：`literal`（非空 ≤512 字符）、`regex`（≤256 字符）、`loghook_rule`（`{"kind":"loghook_rule","rule_id":"..."}`，须为该模块的 module_log 规则）；两种复合：`{"kind":"sequence","steps":[<叶子>…1–16 个],"max_interval_ms":<1–3600000>}`（按顺序出现）、`{"kind":"not_seen","matcher":<叶子>}`（窗口内**未**出现即成功）。
+- `window.mode`：`live`（只盯创建之后的新日志，`timeout_seconds` 1–3600）/ `time_range`（ISO 8601 `start`/`end`，须落在当前内存日志边界内）/ `cursor_range`（`start_seq`/`end_seq` 回放既有区间，跨度 ≤10000 行且区间须已闭合）。
+
 ### 建侦听台帧观察
+
+`match` **必填**（缺省直接 422），kind 仅 `parsed_frame` / `frame_query`：
 
 ```bash
 curl -X POST http://127.0.0.1:8790/api/ai/v1/observations \
   -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
-  -d '{"source":"listener","target":{"mapping_id":"listener-main","capture":"current"}}'
+  -d '{
+    "source":"listener",
+    "target":{"mapping_id":"listener","capture":"current"},
+    "window":{"mode":"live","timeout_seconds":180},
+    "match":{"kind":"parsed_frame","frame_kind":"central_beacon","selector":"first"}
+  }'
 ```
+
+- 过滤三件套：`frame_kind`（当前仅 `central_beacon`，留空=任意）、`where`（数组，每项 `{"path":"analysis.full.<字段>","op":"eq","value":...}`，op 目前仅 eq）、`selector`（`first`/`last`/`all`/`first_per_minute`/`nth`）。
+- `mapping_id` 用 `listener`（不是 listener-main）；字段路径先 `GET /listener/schema` 确认。
+- `window.mode` 同样支持 `live` / `time_range`（`start`/`end`）/ `cursor_range`（须给 `index_id` + `start_frame_id`/`end_frame_id`，跨度 ≤500 帧）。
 
 ### 轮询 + 取证
 
@@ -141,6 +159,7 @@ curl "http://127.0.0.1:8790/api/ai/v1/artifacts/<artifact_id>/content" \
 ```
 
 - `matched` 的 `result.snippet` 含命中上下文行，`result.log` 含行号区间与日志路径——这就是给 AI 的证据。
+- Artifact 元数据：`GET /artifacts/<artifact_id>`；正文：`GET /artifacts/<artifact_id>/content`。
 - 取消：`POST /operations/<id>/cancel`（烧录不可取消）。
 
 ## 第六步：侦听台控制与帧查询
@@ -155,9 +174,58 @@ curl -X POST http://127.0.0.1:8790/api/ai/v1/listener/stop \
 # 查询
 curl http://127.0.0.1:8790/api/ai/v1/listener/schema -H "Authorization: Bearer <token>"
 curl http://127.0.0.1:8790/api/ai/v1/listener/indexes -H "Authorization: Bearer <token>"
-curl "http://127.0.0.1:8790/api/ai/v1/listener/indexes/<index_id>/frames?limit=100" -H "Authorization: Bearer <token>"
+curl "http://127.0.0.1:8790/api/ai/v1/listener/indexes/<index_id>/frames?offset=0&limit=100" -H "Authorization: Bearer <token>"
 curl "http://127.0.0.1:8790/api/ai/v1/listener/indexes/<index_id>/frames/<frame_id>" -H "Authorization: Bearer <token>"
 ```
+
+- 帧分页参数：`offset`、`limit`（1–500）、`query`（关键字）、`nid`、`start_time`/`end_time`（HH:MM:SS 或 HH:MM:SS.mmm）、`after_id`（游标翻页，取上一页最后一条 frame_id）。
+- `listener:stop` 校验的 resource：侦听台在线时为其当前 mapping_id（`listener`），离线时回退 `listener-main`；窄授权（`resources` 非 `*`）需两者都包含。
+
+## 第七步：模拟集中器——验证任务 / 单步下发 / 帧日志
+
+模拟集中器（simcon，串口映射 `simcon`=COM19/9600/E）的 AI 接口在
+`/api/ai/v1/simcon/*`，resource 固定 `simcon`；每次收发的 1376.2 帧都会进
+**会话帧日志**并持久化到 `data/logs/simcon/sc-*.jsonl`。
+
+### 运行验证任务（异步）
+
+```bash
+curl -X POST http://127.0.0.1:8790/api/ai/v1/simcon/verify \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"id":"t1","profile":"anhui","steps":[{"send":{"afn":"00","fn":1,"params":{}}}],"client_request_id":"v-001"}'
+# 202 + operation_id → GET /operations/<id>/wait 到 succeeded
+# result 含 steps/summary/run_id/frames_seq（本次运行的帧 seq 区间）
+```
+
+- `send` 只写 `afn/fn + params`（ADR-5，`raw` 报错）；profile 在 `apps/workbench/scenarios/profiles/`。
+- 并发 verify 返回 409；不可取消。
+
+### 单步下发 / 感知主动上报（同步）
+
+```bash
+# 下发指定 afn/fn（串口未开时自动按 simcon 映射打开）
+curl -X POST http://127.0.0.1:8790/api/ai/v1/simcon/step \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"send":{"afn":"06","fn":"F230","params":{}},"client_request_id":"s-001"}'
+
+# 只等一帧：感知 CCO 主动上报
+curl -X POST http://127.0.0.1:8790/api/ai/v1/simcon/step \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"recv_only":true,"expect":{"afn":6,"fn":230},"expect_timeout":30}'
+```
+
+### 查询本次运行的帧
+
+```bash
+# 本次下发过什么帧
+curl "http://127.0.0.1:8790/api/ai/v1/simcon/frames?run_id=<run_id>&direction=tx" -H "Authorization: Bearer <token>"
+# CCO 主动上报过什么帧 / 有无某类 afn 上行帧
+curl "http://127.0.0.1:8790/api/ai/v1/simcon/frames?updown=up&afn=06" -H "Authorization: Bearer <token>"
+```
+
+- 过滤：`direction`(tx/rx)、`updown`(up/down)、`afn`、`fn`、`kind`(step_send/manual_send/auto_reply)、
+  `run_id`、`session_id`、`after_seq`+`limit`(≤500) 游标翻页；每帧含 `frame_hex`/`parsed` 解析结果。
+- `GET /simcon/session` 查会话信息；`POST /simcon/open`、`POST /simcon/close` 显式管理（close 释放串口，日志保留）。
 
 ## 推荐调用顺序（AI 侧 checklist）
 
@@ -167,12 +235,13 @@ curl "http://127.0.0.1:8790/api/ai/v1/listener/indexes/<index_id>/frames/<frame_
 4. （可选）`POST /flash-operations` 烧录 → `wait` 到 succeeded。
 5. `POST /observations` 建观察 → **再制造目标事件** → `wait` 到 matched。
 6. `GET /artifacts/<id>/content` 取证据正文，用于验证结论。
-7. 收尾：`stop` 会话、`listener/stop`，释放串口。
+7. 模拟集中器侧：`POST /simcon/verify` 跑用例 / `POST /simcon/step` 单步 → `GET /simcon/frames` 查帧。
+8. 收尾：`stop` 会话、`listener/stop`、`POST /simcon/close`，释放串口。
 
 ## 与前端的关系（重要）
 
 - AI 与前端**不互斥**，共享同一套后端服务与串口资源。
-- **同一物理串口同一时刻只能一个持有者**：AI 开着 cco(COM1)，前端想用同一 COM1 会失败；但前端可继续用其他口、看页面、操作未被占用的串口。AI 用完 stop 即释放。
+- **同一物理串口同一时刻只能一个持有者**：AI 开着 cco 所在串口，前端想用同一串口会失败；但前端可继续用其他口、看页面、操作未被占用的串口。AI 用完 stop 即释放。
 - 别把「串口被占用」当成 bug——这是物理独占规则。
 
 ## 错误码速查

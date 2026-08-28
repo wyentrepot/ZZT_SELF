@@ -88,6 +88,10 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
     # SerialProfileApplier 经适配器注入（不经 HTTP 回调）。
     app.state.simcon_open_io = getattr(_simcon_sub.state, "simcon_open_io", None)
     app.state.simcon_close_io = getattr(_simcon_sub.state, "simcon_close_io", None)
+    # 帧日志/AI 单步执行核心：同模式提升，供 workbench AI 控制面进程内注入。
+    for _name in ("simcon_run_verify", "simcon_run_step", "simcon_frames",
+                  "simcon_session", "simcon_open"):
+        setattr(app.state, _name, getattr(_simcon_sub.state, _name, None))
 
     @app.get("/module-serial")
     def module_serial_page():

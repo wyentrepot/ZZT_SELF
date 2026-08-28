@@ -143,7 +143,8 @@ class SerialIO:
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.2,
                  bytesize: int = 8, parity: str = "N", stopbits: int = 1,
                  port_identity: dict[str, Any] | None = None,
-                 resource_registry: SerialResourceRegistry | None = None):
+                 resource_registry: SerialResourceRegistry | None = None,
+                 journal=None):
         if not _SERIAL_AVAILABLE:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
         self.port = port
@@ -155,6 +156,8 @@ class SerialIO:
         self.port_identity = dict(port_identity or {
             "mapping_id": "", "device": port, "label": "", "usage": "", "module": "",
         })
+        # 会话帧日志（FrameJournal，可选）：tx 在 send_frame 记录，rx 在读线程记录
+        self.journal = journal
         self._resource_registry = resource_registry or SerialResourceRegistry()
         self._resource_owner_id = "simcon:" + str(id(self))
         self._ser = None
@@ -263,6 +266,11 @@ class SerialIO:
                 frame, consumed = scan_any_frame(buf)
                 if frame is not None:
                     self._rx_history.append(frame)
+                    if self.journal is not None:
+                        try:
+                            self.journal.append("rx", frame)
+                        except Exception:
+                            pass
                     # 历史只保留最近 1000 帧，防止长时间运行内存增长
                     if len(self._rx_history) > 1000:
                         del self._rx_history[: len(self._rx_history) - 1000]
@@ -282,6 +290,11 @@ class SerialIO:
             if not self._open or self._ser is None:
                 raise RuntimeError("串口未打开")
             n = self._ser.write(raw)
+        if self.journal is not None:
+            try:
+                self.journal.append("tx", raw)
+            except Exception:
+                pass
         return n
 
     def send_hex(self, hex_str: str) -> int:

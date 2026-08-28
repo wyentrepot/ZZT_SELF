@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -44,12 +45,15 @@ class AIControlService:
     """Uses in-process backend services; it never opens a second serial handle."""
 
     def __init__(self, *, module_service=None, listener_service=None, log_service=None,
-                 store=None, resource_registry=None):
+                 store=None, resource_registry=None, simcon_service=None):
         self.module_service = module_service
         self.listener_service = listener_service
         self.log_service = log_service
         self.resource_registry = resource_registry
+        self.simcon_service = simcon_service
         self.store = store or OperationStore()
+        self._simcon_verify_gate = threading.Lock()
+        self._simcon_verify_running = False
 
     def status(self, *, include_paths: bool = False) -> dict:
         sessions = []
@@ -701,6 +705,103 @@ class AIControlService:
     @classmethod
     def _observation_replay_fingerprint(cls, request: dict) -> str:
         return cls._observation_idempotency_fingerprint(cls._observation_request_identity(request))
+
+    # -- 模拟集中器（simcon）：验证任务 / 单步下发 / 会话帧日志 -----------------
+    _SIMCON_RESOURCE = "simcon"
+
+    def _require_simcon(self):
+        if self.simcon_service is None:
+            raise SourceUnavailable("模拟集中器服务不可用")
+        return self.simcon_service
+
+    def simcon_verify(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
+        """异步执行模拟集中器验证任务：202 + operation_id，wait 轮询到终态。
+
+        同一会话同一时刻只允许一个验证任务（并发返回 409）；任务不可取消。
+        """
+        service = self._require_simcon()
+        request = dict(request or {})
+        with self._simcon_verify_gate:
+            if self._simcon_verify_running:
+                raise SessionBusy("已有模拟集中器验证任务在运行")
+            operation = self.store.create(
+                "simcon_verify", actor,
+                {"target": {"mapping_id": self._SIMCON_RESOURCE}, "task": request},
+                client_request_id=client_request_id,
+            )
+            if operation["state"] != "created":
+                return operation
+            self._simcon_verify_running = True
+            started = self.store.set_state(operation["operation_id"], "waiting")
+        thread = threading.Thread(
+            target=self._run_simcon_verify, name="ai-simcon-verify",
+            args=(operation["operation_id"], request, actor), daemon=True,
+        )
+        thread.start()
+        self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
+                         result="waiting", operation_id=operation["operation_id"])
+        return started
+
+    def _run_simcon_verify(self, operation_id: str, request: dict, actor: str) -> None:
+        try:
+            result = self.simcon_service.verify(request)
+            self.store.set_state(operation_id, "succeeded", result=result)
+            self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
+                             result="succeeded", operation_id=operation_id)
+        except Exception as exc:
+            self.store.set_state(operation_id, "error", error=str(exc))
+            self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
+                             result="error", operation_id=operation_id)
+        finally:
+            self._simcon_verify_running = False
+
+    def simcon_step(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
+        """同步单步语义执行（下发指定 afn/fn 或等待一帧）。"""
+        service = self._require_simcon()
+        request = dict(request or {})
+        action = self.store.create(
+            "simcon_step", actor,
+            {"target": {"mapping_id": self._SIMCON_RESOURCE}, "step": request},
+            client_request_id=client_request_id,
+        )
+        if action["state"] != "created":
+            return action
+        try:
+            result = service.step(request)
+            completed = self.store.set_state(action["operation_id"], "succeeded", result=result)
+            self.store.audit(actor=actor, action="simcon.step", resource=self._SIMCON_RESOURCE,
+                             result="succeeded", operation_id=action["operation_id"])
+            return completed
+        except (SessionBusy, ValueError) as exc:
+            self.store.set_state(action["operation_id"], "error", error=str(exc))
+            self.store.audit(actor=actor, action="simcon.step", resource=self._SIMCON_RESOURCE,
+                             result="error", operation_id=action["operation_id"])
+            raise
+        except Exception as exc:
+            failed = self.store.set_state(action["operation_id"], "error", error=str(exc))
+            self.store.audit(actor=actor, action="simcon.step", resource=self._SIMCON_RESOURCE,
+                             result="error", operation_id=action["operation_id"])
+            raise SourceUnavailable(f"模拟集中器单步执行失败：{exc}") from exc
+
+    def simcon_frames(self, filters: dict | None = None) -> dict:
+        """会话帧日志查询（本次下发过什么帧 / CCO 主动上报过什么帧 / 按 afn 过滤上行帧）。"""
+        service = self._require_simcon()
+        return service.frames(**dict(filters or {}))
+
+    def simcon_session(self) -> dict:
+        return self._require_simcon().session()
+
+    def simcon_open(self, spec: dict | None, *, actor: str) -> dict:
+        result = self._require_simcon().open(dict(spec or {}))
+        self.store.audit(actor=actor, action="simcon.open", resource=self._SIMCON_RESOURCE,
+                         result="succeeded")
+        return result
+
+    def simcon_close(self, *, actor: str) -> dict:
+        result = self._require_simcon().close()
+        self.store.audit(actor=actor, action="simcon.close", resource=self._SIMCON_RESOURCE,
+                         result="succeeded")
+        return result
 
     def idempotent_operation(self, client_request_id: str) -> dict | None:
         return self.store.by_client_request_id(client_request_id)

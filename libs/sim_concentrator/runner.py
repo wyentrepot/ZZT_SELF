@@ -17,6 +17,9 @@ import json
 import logging
 import threading
 import time
+import uuid
+from contextlib import nullcontext
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from sim_concentrator.frame_codec import (
@@ -104,10 +107,12 @@ def _rtsa_to_show(rtsa: bytes) -> str:
 # 单步执行
 # ---------------------------------------------------------------------------
 def run_step(io: SerialIO, responder: Optional[Responder],
-             step: dict, idx: int, profile: Optional[dict] = None) -> dict:
+             step: dict, idx: int, profile: Optional[dict] = None,
+             seq: Optional[int] = None) -> dict:
     """执行一步，返回判定结果 dict。
 
     profile：task.profile 加载的全局信息（传给 build_send_frame 构帧）。
+    seq：构帧时 info.seq 覆盖值（缺省用 idx+1；单步下发由调用方传会话内递增序号）。
     """
     name = step.get("name", f"步骤{idx + 1}")
     result = {
@@ -129,7 +134,8 @@ def run_step(io: SerialIO, responder: Optional[Responder],
     # 1) 构造并下发（recv_only 跳过；expect_history 且无 send 时不构帧，纯历史扫描）
     if not recv_only and not (expect_history and not step.get("send")):
         try:
-            raw = build_send_frame(step.get("send", {}), profile=profile, seq=idx + 1)
+            raw = build_send_frame(step.get("send", {}), profile=profile,
+                                   seq=seq if seq is not None else idx + 1)
         except Exception as e:
             result["reason"] = f"构帧失败: {e!r}"
             return result
@@ -246,8 +252,13 @@ def _auto_reply(io: Optional[SerialIO], responder: Optional[Responder], raw: byt
                          raw.hex()[:64])
         return
     if reply is not None:
+        journal = getattr(io, "journal", None)
         try:
-            io.send_frame(reply)
+            if journal is not None:
+                with journal.scope(None, "auto_reply"):
+                    io.send_frame(reply)
+            else:
+                io.send_frame(reply)
         except Exception:
             logger.exception("自动应答发送失败；帧=%s 应答=%s",
                              raw.hex()[:64], reply.hex()[:64])
@@ -256,10 +267,13 @@ def _auto_reply(io: Optional[SerialIO], responder: Optional[Responder], raw: byt
 # ---------------------------------------------------------------------------
 # 任务级执行
 # ---------------------------------------------------------------------------
-def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
+def execute_task(task: dict, io: Optional[SerialIO] = None, *,
+                 journal=None) -> dict:
     """执行整个验证任务，返回完整结论 JSON。
 
     若 io 未提供，则按 task 的 port/baudrate 自建串口并独占打开。
+    journal：会话帧日志（FrameJournal，可选）；io 自带 journal 时优先用 io 的。
+    任务期间产生的所有 tx/rx 帧以 run_id 打标，响应附带 frames_seq 区间。
     """
     steps = task.get("steps", [])
     own_io = io is None
@@ -285,11 +299,15 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
             parity=resolved["parity"],
             stopbits=resolved["stopbits"],
             port_identity=port_identity,
+            journal=journal,
         )
     else:
         port = task.get("port") or getattr(io, "port", "COM3")
         baudrate = task.get("baudrate") or getattr(io, "baudrate", 115200)
         mapping_id = str((port_identity or {}).get("mapping_id", ""))
+    journal = journal or getattr(io, "journal", None)
+    run_id = f"run-{task.get('id', 'verify.task')}-{uuid.uuid4().hex[:8]}"
+    start_seq = journal.last_seq if journal is not None else 0
 
     responder = Responder(override_rules=task.get("responders", [])) \
         if task.get("enable_responder", True) else None
@@ -305,33 +323,35 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
             io.open()
             opened = True
 
-        step_results = []
-        seq_counter = 0
-        for idx, step in enumerate(steps):
-            # 若本步声明了自有 responder，则临时挂载；否则用任务级 responder
-            step_r = responder
-            if step.get("responders"):
-                step_r = Responder(override_rules=step["responders"])
-            # 兼容旧结构：本地协议下行帧自动分配递增帧序号
-            # （对齐 GW-CASS，CCO 响应回显 serial_num）
-            step = dict(step)
-            if step.get("send") and step["send"].get("format") == "local":
-                send = dict(step["send"])
-                if "seq" not in send:
-                    seq_counter += 1
-                    send["seq"] = seq_counter
-                step["send"] = send
-            r = run_step(io, step_r, step, idx, profile=profile)
-            step_results.append(r)
-            # 任一步失败即中止（默认），除非 task.fail_fast=false
-            if r["result"] == "fail" and task.get("fail_fast", True):
-                break
+        scope_ctx = journal.scope(run_id, "step_send") if journal is not None else nullcontext()
+        with scope_ctx:
+            step_results = []
+            seq_counter = 0
+            for idx, step in enumerate(steps):
+                # 若本步声明了自有 responder，则临时挂载；否则用任务级 responder
+                step_r = responder
+                if step.get("responders"):
+                    step_r = Responder(override_rules=step["responders"])
+                # 兼容旧结构：本地协议下行帧自动分配递增帧序号
+                # （对齐 GW-CASS，CCO 响应回显 serial_num）
+                step = dict(step)
+                if step.get("send") and step["send"].get("format") == "local":
+                    send = dict(step["send"])
+                    if "seq" not in send:
+                        seq_counter += 1
+                        send["seq"] = seq_counter
+                    step["send"] = send
+                r = run_step(io, step_r, step, idx, profile=profile)
+                step_results.append(r)
+                # 任一步失败即中止（默认），除非 task.fail_fast=false
+                if r["result"] == "fail" and task.get("fail_fast", True):
+                    break
 
         pass_count = sum(1 for s in step_results if s["result"] == "pass")
         fail_count = sum(1 for s in step_results if s["result"] == "fail")
         verdict = "pass" if fail_count == 0 and step_results else "fail"
 
-        return {
+        result = {
             "task_id": task.get("id", "verify.task"),
             "port": port,
             "baudrate": baudrate,
@@ -345,9 +365,66 @@ def execute_task(task: dict, io: Optional[SerialIO] = None) -> dict:
                 "verdict": verdict,
             },
         }
+        if journal is not None:
+            result["session_id"] = journal.session_id
+            result["run_id"] = run_id
+            result["frames_seq"] = (
+                [start_seq + 1, journal.last_seq] if journal.last_seq > start_seq else []
+            )
+        return result
     finally:
         if own_io and opened:
             io.close()
+
+
+def run_single_step(io: SerialIO, *, send: Optional[dict] = None,
+                    profile: Optional[dict] = None,
+                    expect: Optional[dict] = None,
+                    expect_timeout: float = 5.0,
+                    expect_no_reply: bool = False,
+                    recv_only: bool = False,
+                    enable_responder: bool = True,
+                    name: str = "单步",
+                    seq: Optional[int] = None,
+                    run_id: Optional[str] = None) -> dict:
+    """单步语义执行（AI 单步下发 / 感知主动上报，ADR-5 语义）。
+
+    - send：afn/fn + params（raw 整帧已移除，传入即报错）；
+    - recv_only=True：不下发，只等待并匹配一帧（等 CCO 主动上报）；
+    - send 与 recv_only 二选一；expect / expect_no_reply 同 run_step 语义。
+    帧以 kind=manual_send、run_id 打入会话帧日志。
+    """
+    if not send and not recv_only:
+        raise ScenarioCodecError("单步必须提供 send 或 recv_only=true（等待一帧）")
+    if send and recv_only:
+        raise ScenarioCodecError("send 与 recv_only 只能二选一")
+    if send and send.get("raw"):
+        raise ScenarioCodecError("send.raw 已移除（ADR-5 用例语义化），请改用 afn/fn + params")
+
+    step = {
+        "name": name,
+        "send": send,
+        "expect": expect,
+        "expect_timeout": expect_timeout,
+        "expect_no_reply": expect_no_reply,
+        "recv_only": recv_only,
+    }
+    responder = Responder() if enable_responder else None
+    journal = getattr(io, "journal", None)
+    resolved_run_id = run_id or (
+        f"manual-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    )
+    start_seq = journal.last_seq if journal is not None else 0
+    scope_ctx = journal.scope(resolved_run_id, "manual_send") if journal is not None else nullcontext()
+    with scope_ctx:
+        result = run_step(io, responder, step, 0, profile=profile, seq=seq)
+    out = {"run_id": resolved_run_id, "step": result}
+    if journal is not None:
+        out["session_id"] = journal.session_id
+        out["frames_seq"] = (
+            [start_seq + 1, journal.last_seq] if journal.last_seq > start_seq else []
+        )
+    return out
 
 
 def load_task(path) -> dict:

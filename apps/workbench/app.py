@@ -64,6 +64,49 @@ def _prepare_subapp_static(subapp_module) -> None:
     subapp_module.STATIC_DIR = _subapp_static_dir(pkg)
 
 
+class SimconAIService:
+    """AI 控制面 ↔ 模拟集中器执行核心的进程内桥（层间不走 HTTP 回调）。
+
+    包装 module_log 子应用提升上来的 simcon 访问器；串口占用等 RuntimeError
+    统一译成 SessionBusy（AI 路由映射 409），其余异常原样上抛。
+    """
+
+    def __init__(self, *, run_verify, run_step, frames, session, open_session, close_io):
+        self._run_verify = run_verify
+        self._run_step = run_step
+        self._frames = frames
+        self._session = session
+        self._open_session = open_session
+        self._close_io = close_io
+
+    def verify(self, task: dict) -> dict:
+        return self._run_verify(task)
+
+    def step(self, payload: dict) -> dict:
+        from .ai_operations import SessionBusy
+        try:
+            return self._run_step(payload)
+        except RuntimeError as exc:
+            raise SessionBusy(str(exc)) from exc
+
+    def open(self, spec: dict | None = None) -> dict:
+        from .ai_operations import SessionBusy
+        try:
+            return self._open_session(spec)
+        except RuntimeError as exc:
+            raise SessionBusy(str(exc)) from exc
+
+    def close(self) -> dict:
+        self._close_io()
+        return {"open": False}
+
+    def frames(self, **filters) -> dict:
+        return self._frames(**filters)
+
+    def session(self) -> dict:
+        return self._session()
+
+
 class _PrefixProxy:
     """ASGI 前缀代理：把 {api_prefix}{sub_path} 转发给子应用。
 
@@ -221,11 +264,26 @@ def create_workbench_app(
     app.state.ai_auth_store = ai_auth_store or AuthorizationStore(
         storage_path=storage_dir / "grants.json",
     )
+    # 模拟集中器 AI 桥：进程内包装 simcon 执行核心（缺失则 AI simcon 接口 503）
+    _simcon_accessors = {
+        name: getattr(_ml_sub.state, name, None)
+        for name in ("simcon_run_verify", "simcon_run_step", "simcon_frames",
+                     "simcon_session", "simcon_open", "simcon_close_io")
+    }
+    simcon_service = SimconAIService(
+        run_verify=_simcon_accessors["simcon_run_verify"],
+        run_step=_simcon_accessors["simcon_run_step"],
+        frames=_simcon_accessors["simcon_frames"],
+        session=_simcon_accessors["simcon_session"],
+        open_session=_simcon_accessors["simcon_open"],
+        close_io=_simcon_accessors["simcon_close_io"],
+    ) if all(_simcon_accessors.values()) else None
     app.state.ai_control_service = ai_control_service or AIControlService(
         module_service=getattr(app.state, "module_serial_service", None),
         listener_service=getattr(app.state, "listener_service", None),
         log_service=getattr(app.state, "listener_log_service", None),
         resource_registry=app.state.serial_resource_registry,
+        simcon_service=simcon_service,
         store=OperationStore(storage_path=storage_dir / "operations.json"),
     )
     app.state.ai_admin_key_configured = bool(ai_admin_key or os.environ.get("WORKBENCH_AI_ADMIN_KEY"))

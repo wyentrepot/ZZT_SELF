@@ -4,12 +4,18 @@
 sim_concentrator.api --port 8781）或挂载到侦听台 create_app。
 
 接口：
-- GET  /api/simcon/status           串口/模块状态
+- GET  /api/simcon/status           串口/模块状态（含帧日志会话摘要）
 - GET  /api/simcon/responders       列出当前生效应答规则（内置+覆盖）
 - GET  /api/simcon/ports            列出可用串口
 - POST /api/simcon/verify           执行一个验证任务，返回结论 JSON
+- POST /api/simcon/step             单步语义执行：下发指定 afn/fn 或等待一帧（感知主动上报）
+- GET  /api/simcon/frames           会话帧日志查询（本次下发过什么帧 / CCO 主动上报过什么帧 / 有无某类 afn 上行帧）
+- GET  /api/simcon/session          当前会话与最近会话信息
 - POST /api/simcon/open             打开串口
 - POST /api/simcon/close            关闭串口
+
+会话帧日志：每次 open（或 verify 自建临时串口）生成一个 FrameJournal 会话
+（session_id = sc-*），tx/rx 帧逐条记录并入 data/logs/simcon/sc-*.jsonl 持久化。
 """
 from __future__ import annotations
 
@@ -19,8 +25,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from sim_concentrator.runner import execute_task
+from sim_concentrator.journal import SessionManager
+from sim_concentrator.runner import execute_task, run_single_step
 from sim_concentrator.responder import Responder
+from sim_concentrator.scenario_codec import load_profile
 from shared.serial_mapping import SerialPortCatalog
 from shared.serial_resources import SerialResourceRegistry
 from sim_concentrator.serial_io import (
@@ -84,22 +92,40 @@ class VerifyTask(BaseModel):
     steps: List[Dict[str, Any]] = []
 
 
+class StepRequest(BaseModel):
+    """单步语义执行请求（ADR-5：send 只写 afn/fn+params，raw 报错）。"""
+    send: Optional[Dict[str, Any]] = None
+    profile: Optional[str] = None
+    expect: Optional[Dict[str, Any]] = None
+    expect_timeout: float = 5.0
+    expect_no_reply: bool = False
+    recv_only: bool = False
+    enable_responder: bool = True
+    name: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # 应用工厂
 # ---------------------------------------------------------------------------
-def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialResourceRegistry | None = None) -> FastAPI:
+def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialResourceRegistry | None = None,
+                      journal_dir=None) -> FastAPI:
     """创建模拟集中器子应用。
 
     prefix 控制路由前缀：
     - 默认 "/api/simcon"：独立运行（端口 8781）或直接作为根挂载时使用，路由为 /api/simcon/*。
     - 传入 "" 时路由为相对路径（/status、/ports...），供 module_log 挂载到 /api/simcon 使用
       （app.mount("/api/simcon", create_simcon_app(prefix=""))，避免双前缀）。
+    journal_dir：会话帧日志目录（缺省 data/logs/simcon；测试注入 tmp_path）。
     """
-    app = FastAPI(title="模拟集中器验证工具", version="0.1.0")
+    app = FastAPI(title="模拟集中器验证工具", version="0.2.0")
     catalog = SerialPortCatalog.load()
     app.state.serial_port_catalog = catalog
     app.state.serial_resource_registry = resource_registry or SerialResourceRegistry()
     _holder = {"io": None, "lock": threading.Lock()}
+    # 会话帧日志：open/verify 产生的会话都登记在此，供 /frames /session 查询
+    _sessions = SessionManager(log_dir=journal_dir)
+    app.state.simcon_sessions = _sessions
+    app.state.simcon_step_state = {"profile": None, "seq": 0, "lock": threading.Lock()}
 
     def _resolve(
         port: Optional[str] = None,
@@ -139,6 +165,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         with _holder["lock"]:
             io = _holder["io"]
             if io is None or not io.is_open():
+                journal = _sessions.open_session(str(resolved["port"]))
                 io = SerialIO(
                     port=resolved["port"],
                     baudrate=resolved["baudrate"],
@@ -147,6 +174,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
                     stopbits=resolved["stopbits"],
                     port_identity=resolved["port_identity"],
                     resource_registry=app.state.serial_resource_registry,
+                    journal=journal,
                 )
                 io.open()
                 _holder["io"] = io
@@ -156,7 +184,10 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         with _holder["lock"]:
             io, _holder["io"] = _holder["io"], None
         if io is not None:
+            journal = getattr(io, "journal", None)
             io.close()
+            if journal is not None:
+                _sessions.finalize(journal)
 
     # P4：把 open/close 服务函数暴露到 state，供统一工作台 SerialProfileApplier
     # 以适配器方式注入（不经 HTTP 回调，避免服务层自调网络）。
@@ -170,15 +201,134 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     app.state.simcon_close_io = simcon_close_io
     app.state.simcon_catalog = catalog
 
+    # -- 任务/单步执行核心：HTTP 路由与 AI 控制面（进程内注入）共用 -------------
+    def _run_verify_task(task_payload: dict) -> dict:
+        """执行一个验证任务；会话帧日志随任务写入并登记（临时串口用后保留日志）。"""
+        resolved = _resolve(
+            task_payload.get("port"), task_payload.get("mapping_id"),
+            task_payload.get("baudrate"), task_payload.get("bytesize"),
+            task_payload.get("parity"), task_payload.get("stopbits"),
+        )
+        if not task_payload.get("steps"):
+            # 空任务/无步骤：不碰串口，但仍返回可审计的映射解析结果。
+            return {
+                "task_id": task_payload.get("id", "verify.task"),
+                "port": resolved["port"],
+                "baudrate": resolved["baudrate"],
+                "mapping_id": resolved["mapping_id"],
+                "port_identity": resolved["port_identity"],
+                "steps": [],
+                "summary": {"total": 0, "pass": 0, "fail": 0, "verdict": "fail"},
+            }
+        task_payload = dict(task_payload)
+        task_payload.update(resolved)
+        io = _io()
+        if io is None or not io.is_open():
+            # 任务自带串口参数：自建并独占，执行后关闭（帧日志会话保留可查）。
+            journal = _sessions.open_session(str(resolved["port"]))
+            io = SerialIO(
+                port=resolved["port"],
+                baudrate=resolved["baudrate"],
+                bytesize=resolved["bytesize"],
+                parity=resolved["parity"],
+                stopbits=resolved["stopbits"],
+                port_identity=resolved["port_identity"],
+                resource_registry=app.state.serial_resource_registry,
+                journal=journal,
+            )
+            io.open()
+            try:
+                return execute_task(task_payload, io=io, journal=journal)
+            finally:
+                io.close()
+                _sessions.finalize(journal)
+        return execute_task(task_payload, io=io)
+
+    def _run_step_task(payload: dict) -> dict:
+        """单步语义执行；串口未开时按 simcon 映射自动打开。"""
+        io = _io()
+        if io is None or not io.is_open():
+            resolved = _resolve(
+                payload.get("port"), payload.get("mapping_id"),
+                payload.get("baudrate"), payload.get("bytesize"),
+                payload.get("parity"), payload.get("stopbits"),
+            )
+            io = _open_io(resolved)
+        step_state = app.state.simcon_step_state
+        with step_state["lock"]:
+            profile_id = payload.get("profile") or step_state["profile"] or "anhui"
+            step_state["profile"] = str(profile_id)
+            step_state["seq"] += 1
+            seq = int(step_state["seq"])
+        profile = load_profile(str(profile_id))
+        return run_single_step(
+            io,
+            send=payload.get("send"),
+            profile=profile,
+            expect=payload.get("expect"),
+            expect_timeout=float(payload.get("expect_timeout") or 5.0),
+            expect_no_reply=bool(payload.get("expect_no_reply")),
+            recv_only=bool(payload.get("recv_only")),
+            enable_responder=bool(payload.get("enable_responder", True)),
+            name=str(payload.get("name") or "单步"),
+            seq=seq,
+        )
+
+    def simcon_frames(*, session_id: str | None = None, direction: str | None = None,
+                      updown: str | None = None, afn: str | None = None,
+                      fn: str | None = None, kind: str | None = None,
+                      run_id: str | None = None, after_seq: int = 0,
+                      limit: int = 100) -> dict:
+        journal = _sessions.resolve(session_id)
+        if journal is None:
+            raise LookupError("当前没有帧日志会话（先 open 串口或执行 verify/step）")
+        return journal.query(
+            direction=direction, updown=updown, afn=afn, fn=fn,
+            kind=kind, run_id=run_id, after_seq=after_seq, limit=limit,
+        )
+
+    def simcon_session() -> dict:
+        current = _sessions.current_or_latest()
+        return {
+            "current": current.info() if current is not None else None,
+            "sessions": _sessions.list_info(),
+        }
+
+    def simcon_open(spec: dict | None = None) -> dict:
+        spec = dict(spec or {})
+        resolved = _resolve(
+            spec.get("port"), spec.get("mapping_id"),
+            spec.get("baudrate"), spec.get("bytesize"),
+            spec.get("parity"), spec.get("stopbits"),
+        )
+        io = _open_io(resolved)
+        journal = getattr(io, "journal", None)
+        return {
+            "open": True,
+            "port": io.port,
+            "mapping_id": resolved["mapping_id"],
+            "port_identity": io.port_identity,
+            "session_id": journal.session_id if journal is not None else None,
+        }
+
+    # P4+：把执行核心提升到 state，供统一工作台/AI 控制面进程内注入（不经 HTTP 回调）。
+    app.state.simcon_run_verify = _run_verify_task
+    app.state.simcon_run_step = _run_step_task
+    app.state.simcon_frames = simcon_frames
+    app.state.simcon_session = simcon_session
+    app.state.simcon_open = simcon_open
+
     @app.get(f"{prefix}/status")
     async def status():
         io = _io()
+        journal = getattr(io, "journal", None) if io is not None else None
         return {
             "open": io is not None and io.is_open(),
             "port": io.port if io is not None else None,
             "port_identity": io.port_identity if io is not None else None,
             "mapping_error": catalog.mapping_error,
             "pending_frames": io.pending_frames() if io is not None else 0,
+            "session": journal.info() if journal is not None else None,
         }
 
     @app.get(f"{prefix}/ports")
@@ -205,11 +355,13 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             io = _open_io(resolved)
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"串口打开失败：{exc}") from exc
+        journal = getattr(io, "journal", None)
         return {
             "open": True,
             "port": io.port,
             "mapping_id": resolved["mapping_id"],
             "port_identity": io.port_identity,
+            "session_id": journal.session_id if journal is not None else None,
             "baudrate": getattr(io, "baudrate", resolved["baudrate"]),
             "bytesize": getattr(io, "bytesize", resolved["bytesize"]),
             "parity": getattr(io, "parity", resolved["parity"]),
@@ -225,43 +377,53 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     async def verify(task: VerifyTask):
         """执行验证任务并返回逐步判定 + 汇总结论 JSON。"""
         try:
-            resolved = _resolve(
-                task.port, task.mapping_id, task.baudrate,
-                task.bytesize, task.parity, task.stopbits,
-            )
-            # 空任务/无步骤：不碰串口，但仍返回可审计的映射解析结果。
-            if not task.steps:
-                return {
-                    "task_id": task.id,
-                    "port": resolved["port"],
-                    "baudrate": resolved["baudrate"],
-                    "mapping_id": resolved["mapping_id"],
-                    "port_identity": resolved["port_identity"],
-                    "steps": [],
-                    "summary": {"total": 0, "pass": 0, "fail": 0, "verdict": "fail"},
-                }
-            task_payload = task.model_dump()
-            task_payload.update(resolved)
-            io = _io()
-            if io is None or not io.is_open():
-                # 任务自带串口参数：自建并独占，执行后关闭。
-                io = SerialIO(
-                    port=resolved["port"],
-                    baudrate=resolved["baudrate"],
-                    bytesize=resolved["bytesize"],
-                    parity=resolved["parity"],
-                    stopbits=resolved["stopbits"],
-                    port_identity=resolved["port_identity"],
-                    resource_registry=app.state.serial_resource_registry,
-                )
-                io.open()
-                try:
-                    return execute_task(task_payload, io=io)
-                finally:
-                    io.close()
-            return execute_task(task_payload, io=io)
+            return _run_verify_task(task.model_dump())
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"验证任务执行失败：{exc}") from exc
+
+    @app.post(f"{prefix}/step")
+    async def step(request: StepRequest):
+        """单步语义执行：下发指定 afn/fn 或等待一帧（感知 CCO 主动上报）。"""
+        try:
+            return _run_step_task(request.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"单步执行失败：{exc}") from exc
+
+    @app.get(f"{prefix}/frames")
+    async def frames(
+        session_id: str = "",
+        direction: str = "",
+        updown: str = "",
+        afn: str = "",
+        fn: str = "",
+        kind: str = "",
+        run_id: str = "",
+        after_seq: int = 0,
+        limit: int = 100,
+    ):
+        """会话帧日志查询：默认当前会话；direction=tx|rx、updown=up 即 CCO 主动上报。"""
+        journal = _sessions.resolve(session_id or None)
+        if journal is None:
+            raise HTTPException(
+                status_code=404,
+                detail="当前没有帧日志会话（先 open 串口或执行 verify/step）")
+        return journal.query(
+            direction=direction or None, updown=updown or None,
+            afn=afn or None, fn=fn or None, kind=kind or None,
+            run_id=run_id or None, after_seq=after_seq, limit=limit,
+        )
+
+    @app.get(f"{prefix}/session")
+    async def session():
+        current = _sessions.current_or_latest()
+        return {
+            "current": current.info() if current is not None else None,
+            "sessions": _sessions.list_info(),
+        }
 
     return app
 

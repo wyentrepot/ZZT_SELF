@@ -15,6 +15,7 @@
 | 5 | 模拟集中器用例语义化 + Profile：send 只写 afn/fn+params，全局信息进 profile 共享，构帧交 13762 库 | ✅ 生效（2026-08-28） |
 | 6 | 首期架构规范解耦重构（parser facade、编排 ports、canonical/DTO） | ✅ 生效 |
 | 7 | canonical 审计模型以兼容投影接入 Workbench | ✅ 生效 |
+| 8 | 模拟集中器会话帧日志持久化 + AI 控制面 simcon 接口（verify/step/frames） | ✅ 生效 |
 
 ---
 
@@ -174,4 +175,17 @@
   5. migration 与回归只使用临时 SQLite/Fake ports/FakeIO，不访问 runtime 数据或硬件。
 - **理由**：字段矩阵证明当前 DTO/mapper 未接入生产，直接替换会丢失报告字段和审计信息；兼容投影可先完成单一事实源，再在后续需求单独评估 API 版本演进。
 - **影响**：runner/store/api 与 mapper 接入 canonical 模型；新增 runs 审计列和旧 schema 回读测试；本 ADR 不删除对外字段。
+- **被取代**：无。
+
+## ADR-8 模拟集中器会话帧日志持久化 + AI 控制面 simcon 接口
+
+- **日期**：2026-08-29
+- **状态**：✅ 生效
+- **决定**：补齐模拟集中器（sim_concentrator）面向 AI 的闭环能力：
+  1. **会话帧日志（FrameJournal）**：串口每收发一帧记录 `{seq, ts, dir: tx|rx, kind, run_id, frame_hex, afn, fn, updown, parsed}`，逐行持久化到 `data/logs/simcon/sc-<时间戳>-<端口>.jsonl`；一个会话 = 一次 open→close（或一次 verify 自建临时串口的生命周期），最近 10 个会话保留可查；TX 在 `SerialIO.send_frame`、RX 在读线程记录，`journal.scope(run_id, kind)` 给帧打 run 归属（step_send/manual_send/auto_reply）。
+  2. **simcon 层新端点**（`/api/simcon/*`，页面兼容、同步、只做增量字段）：`POST /step`（单步语义下发或 `recv_only` 等一帧感知 CCO 主动上报，串口未开自动打开）、`GET /frames`（按 direction/updown/afn/fn/kind/run_id/after_seq 过滤）、`GET /session`；`/status`、`/verify`、`/open` 增补 `session`/`session_id`/`run_id`/`frames_seq` 字段。
+  3. **AI 控制面门面**（`/api/ai/v1/simcon/*`，token+scope+audit，层间进程内注入不走 HTTP）：`POST /simcon/verify`（异步 operation，202+wait，并发 409、不可取消）、`POST /simcon/step`（同步+幂等）、`GET /simcon/frames`、`GET /simcon/session`、`POST /simcon/open`、`POST /simcon/close`；新增 scope `simcon:verify` / `simcon:send` / `simcon:read`，resource 固定 `simcon`；执行核心经 module_log→workbench 状态提升链注入 `AIControlService(simcon_service=...)`。
+  4. 单步/任务下发一律遵守 ADR-5 语义化（`send.raw` 报错）；串口独占沿用 `SerialResourceRegistry`（冲突 409）。
+- **理由**：此前 simcon TX 帧完全不记录、RX 仅内存环形缓冲（关串口即丢）、CCO 主动上报无消费记录、无 run/会话概念，AI 只能拿到每次 verify 的结果 JSON；「本次下发过什么帧 / CCO 主动上报过什么帧 / 有无某类 afn 上行帧」三类问题无法回答。JSONL 追加写与 loghooks 事件日志、module_log 串口日志同构，内存镜像支撑过滤查询，比 SQLite 更贴合"会话级、追加型、低频"的帧日志形态。
+- **影响**：新增 `libs/sim_concentrator/journal.py` 与三个测试文件；`serial_io.py`/`runner.py`/`api.py` 增量改造（`send_frame` 签名不变）；`module_log/app.py` 提升访问器；`workbench/app.py` 新增 `SimconAIService` 桥并注入 AI 控制面；`ai_api.py` 新增 6 条路由；docs/16 新增第 9 节（原 9-12 顺延）、ai-control-plane skill 升级 1.2.0；REQS-INDEX 登记需求 0008。全部测试用 FakeIO/FakeSerial（0007 红线），487 通过。
 - **被取代**：无。

@@ -335,4 +335,96 @@ def create_ai_router(
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    # -- 模拟集中器（simcon）：验证任务 / 单步下发 / 会话帧日志 -----------------
+    @router.post("/simcon/verify", status_code=202)
+    def simcon_verify(request: dict[str, Any], authorization: str | None = Header(None)):
+        grant = grant_from_header(authorization, "simcon:verify", "simcon")
+        existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
+        if existing is not None:
+            grant_from_header(authorization, "simcon:verify", "simcon")
+        try:
+            return control.simcon_verify(
+                request, actor=actor(grant),
+                client_request_id=str(request.get("client_request_id") or ""),
+            )
+        except SessionBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.post("/simcon/step")
+    def simcon_step(request: dict[str, Any], authorization: str | None = Header(None)):
+        grant = grant_from_header(authorization, "simcon:send", "simcon")
+        existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
+        if existing is not None:
+            grant_from_header(authorization, "simcon:send", "simcon")
+        try:
+            return control.simcon_step(
+                request, actor=actor(grant),
+                client_request_id=str(request.get("client_request_id") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except SessionBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/simcon/frames")
+    def simcon_frames(
+        session_id: str = Query("", max_length=64),
+        direction: str = Query("", max_length=4),
+        updown: str = Query("", max_length=4),
+        afn: str = Query("", max_length=8),
+        fn: str = Query("", max_length=8),
+        kind: str = Query("", max_length=24),
+        run_id: str = Query("", max_length=80),
+        after_seq: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=500),
+        authorization: str | None = Header(None),
+    ):
+        grant_from_header(authorization, "simcon:read", "simcon")
+        try:
+            return control.simcon_frames({
+                "session_id": session_id or None, "direction": direction or None,
+                "updown": updown or None, "afn": afn or None, "fn": fn or None,
+                "kind": kind or None, "run_id": run_id or None,
+                "after_seq": after_seq, "limit": limit,
+            })
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/simcon/session")
+    def simcon_session(authorization: str | None = Header(None)):
+        grant_from_header(authorization, "simcon:read", "simcon")
+        try:
+            return control.simcon_session()
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.post("/simcon/open")
+    def simcon_open(request: dict[str, Any] | None = None,
+                    authorization: str | None = Header(None)):
+        grant = grant_from_header(authorization, "simcon:send", "simcon")
+        try:
+            return control.simcon_open(request or {}, actor=actor(grant))
+        except SessionBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.post("/simcon/close")
+    def simcon_close(authorization: str | None = Header(None)):
+        grant = grant_from_header(authorization, "simcon:send", "simcon")
+        try:
+            return control.simcon_close(actor=actor(grant))
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     return router

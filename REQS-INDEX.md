@@ -14,6 +14,7 @@
 | 0005 | P1-P6 AI 观察与串口 Profile（有界 observation、observe-workbench-logs 技能、四槽 Profile 一键应用、分组导航） | 大需求 | ✅ 已完成（P7 跳过、P8 交付门已执行待真机） | codex/p1-ai-observation（已合 master） | 2026-08-24 |
 | 0006 | 高频采集失败分析扩展（tools/taiti/高频采集 工具集 + hf-collect-analysis 技能 + 精简样例） | 小需求 | ✅ 已完成 | master | 2026-08-26 |
 | 0007 | 架构规范解耦重构（parser facade、编排 ports、模型 canonical/DTO） | 大需求 | ✅ G1-G4 已验收（CCO 烧录验证完成） | master | 2026-08-28 |
+| 0008 | 模拟集中器帧日志持久化 + AI 控制面 simcon 接口（verify/step/frames，ADR-8） | 小需求 | ✅ 已完成 | master | 2026-08-29 |
 
 ## 使用说明
 
