@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 import statistics
+from collections import Counter
 from typing import Iterable, Optional
 
 # 到达间隔推算的合法范围：交错网络里相邻中央信标到达间隔应在 1~10 秒，
@@ -534,15 +535,6 @@ def count_frame_types(frames: list[dict]) -> dict[str, int]:
         frm_type = _extract_frm_type(item.get("summary_json") if isinstance(item, dict) else None)
         counter[frm_type] = counter.get(frm_type, 0) + 1
     return counter
-
-
-def _frames_duration_s(frames: list[dict]) -> float:
-    """帧列表日志时间跨度（秒），无有效时间返回 0。"""
-    absolute = _absolute_ms(
-        [item.get("log_time") if isinstance(item, dict) else None for item in frames]
-    )
-    valid = [ms for ms in absolute if ms is not None]
-    return (max(valid) - min(valid)) / 1000.0 if valid else 0.0
 
 
 def assess_frames_periods(
@@ -1090,143 +1082,596 @@ def _network_summary(cycles: list[dict], stability: Optional[dict] = None,
 
 
 # ---------------------------------------------------------------------------
-# 按网络隔离的分组评估
+# NID 解析与 summary 一次性字段提取
 # ---------------------------------------------------------------------------
 
-def _frame_network_key(frame: dict) -> tuple:
-    """帧所属网络键：中央信标帧取 (NID, CCO MAC) 联合键，否则仅 NID。"""
-    nid = frame.get("nid")
-    if nid is None:
-        return None
-    mac = None
-    if frame.get("frm_type") == FRM_TYPE_BEACON:
-        mac = extract_cco_mac(frame.get("raw_hex", ""))
-    return (nid, mac) if mac else (nid, None)
+def snid_to_int(snid) -> Optional[int]:
+    """summary 的 SNID（24 位网络标识十六进制串，如 00947F69）→ int。
 
-
-def assess_by_network(frames, records) -> dict:
-    """按网络隔离评估：帧按 NID（信标帧加 CCO MAC 联合键）分组，互不混算。
-
-    frames: 帧列表，每条含 log_time / raw_hex（可含已算好的 nid）。
-    records: 分钟上报记录列表，每条含 time_seconds / station_key /
-             response_result / report_count / application_error / nid。
-
-    返回：
-      {networks: [{nid, cco_mac, beacon_period_ms, confidence, scan_method,
-                   cycles, summary}],
-       beacon_period_ms, overall_health}
-    每个网络的 summary 含 stability 字段（assess_stability 整体结果，含
-    enabled/level/占比）、slot 字段（B 档 assess_slot 结果）、route_channel
-    字段（C 档 assess_route_channel 结果），cycles 每桶带 stability_level /
-    slot_level / route_channel_level 汇总。
+    协议定义 NID 有效取值 1~16777215（Q/GDW 10376.2）；空串/非法十六进制/
+    越界返回 None。
     """
-    frame_groups: dict[tuple, list] = {}
-    for item in frames:
+    if not isinstance(snid, str):
+        return None
+    text = snid.strip()
+    if not text:
+        return None
+    try:
+        value = int(text, 16)
+    except ValueError:
+        return None
+    if not 0 < value <= 0xFFFFFF:
+        return None
+    return value
+
+
+def _parse_summary_fields(summary_json) -> dict:
+    """一次 json.loads 提取评估所需字段 {frm_type, detail, snid_int}。
+
+    兼容 {"simple": {...}} 与直接 {FrmType/...} 两种结构；无 summary 或解析
+    失败时 frm_type="UNKNOWN"、detail=""、snid_int=None。
+    """
+    frm_type, detail, snid_int = "UNKNOWN", "", None
+    if summary_json:
+        try:
+            data = json.loads(summary_json)
+        except (TypeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            simple = data.get("simple")
+            source = simple if isinstance(simple, dict) else data
+            if source.get("FrmType") is not None:
+                frm_type = str(source["FrmType"])
+            if source.get("Detail") is not None:
+                detail = str(source["Detail"])
+            snid_int = snid_to_int(source.get("SNID"))
+    return {"frm_type": frm_type, "detail": detail, "snid_int": snid_int}
+
+
+# 评估可用的 Detail 标记：B/C 档与信标参数的全部正则都要求以下字面量之一，
+# 不含任何标记的 Detail（普通帧的 Debug/组网信息等）不参与评估。
+DETAIL_ASSESS_MARKERS = (
+    "时隙分配", "时隙配置", "路由评估剩余", "信道变更", "无线信道变更", "信道切换",
+)
+
+
+def detail_is_assessable(detail) -> bool:
+    """Detail 文本是否含评估可用标记（物化列 assess_detail 的取值依据）。"""
+    if not detail:
+        return False
+    return any(marker in detail for marker in DETAIL_ASSESS_MARKERS)
+
+
+# ---------------------------------------------------------------------------
+# 按网络隔离的分组评估（单趟流式，全量帧参与）
+# ---------------------------------------------------------------------------
+
+class _NetworkAccumulator:
+    """单个网络（NID）的流式累加器。
+
+    三类入口由评估驱动器按帧调用：
+      count_frame —— 每帧一次：帧型计数 + 时间线（周期分桶/帧密度数据源）；
+      add_detail —— 携带 Detail 文本的帧：B 档时隙 / C 档路由信道字段；
+      add_beacon —— 信标候选帧：Detail 信标周期参数、周期计数样本、CCO MAC。
+    """
+
+    __slots__ = (
+        "nid", "frm_counts", "timeline", "beacon_params", "slot_fields",
+        "route_fields", "channel_fields", "beacon_samples", "sof_times",
+        "cco_mac",
+    )
+
+    def __init__(self, nid: int):
+        self.nid = nid
+        self.frm_counts: dict[str, int] = {}
+        self.timeline: list[tuple[int, str]] = []        # (绝对毫秒, FrmType)
+        self.beacon_params: list[int] = []               # Detail「信标周期Xms」
+        self.slot_fields: list[dict] = []
+        self.route_fields: list[dict] = []
+        self.channel_fields: list[dict] = []
+        self.beacon_samples: list[tuple[int, int]] = []  # (绝对毫秒, 周期计数)
+        self.sof_times: list[int] = []                   # 信标类帧到达时刻
+        self.cco_mac: Optional[str] = None
+
+    def count_frame(self, abs_ms: Optional[int], frm: str) -> None:
+        self.frm_counts[frm] = self.frm_counts.get(frm, 0) + 1
+        if abs_ms is not None:
+            self.timeline.append((abs_ms, frm))
+            if frm in FRMTYPE_CENTRAL_BEACON_ALIASES:
+                self.sof_times.append(abs_ms)
+
+    def add_detail(self, detail: str) -> None:
+        if not detail:
+            return
+        slot_field = extract_slot_fields(detail)
+        if slot_field is not None:
+            self.slot_fields.append(slot_field)
+        route_field = extract_route_fields(detail)
+        if route_field is not None:
+            self.route_fields.append(route_field)
+        channel_field = extract_channel_fields(detail)
+        if channel_field is not None:
+            self.channel_fields.append(channel_field)
+
+    def add_beacon(self, abs_ms: Optional[int], frame: Optional[dict],
+                   detail: str) -> None:
+        slot_field = extract_slot_fields(detail) if detail else None
+        if slot_field and slot_field.get("beacon_period_ms"):
+            self.beacon_params.append(slot_field["beacon_period_ms"])
+        if frame is None or abs_ms is None:
+            return
+        fields = _extract_beacon_fields(frame)
+        if fields is None:
+            return
+        if fields.get("mac"):
+            self.cco_mac = fields["mac"]
+        if fields.get("cnt") is not None:
+            self.beacon_samples.append((abs_ms, fields["cnt"]))
+
+    def duration_s(self) -> float:
+        """时间线跨度（秒）；无有效时间返回 0（旧 _frames_duration_s 语义）。"""
+        if not self.timeline:
+            return 0.0
+        values = [ms for ms, _ in self.timeline]
+        return (max(values) - min(values)) / 1000.0
+
+    def scan(self) -> dict:
+        """信标周期扫描：Detail 参数众数 → 周期计数间隔 → 信标帧簇间隔。"""
+        if self.beacon_params:
+            param_mode = statistics.mode(self.beacon_params)
+            if BEACON_PARAM_MIN_MS <= param_mode <= BEACON_PARAM_MAX_MS:
+                return {
+                    "beacon_period_ms": param_mode,
+                    "confidence": round(min(1.0, len(self.beacon_params) / 8.0), 3),
+                    "method": "beacon_param",
+                    "sample_count": len(self.beacon_params),
+                    "interval_count": 0,
+                }
+        deduped: list[tuple[int, int]] = []
+        seen_cnt = set()
+        for abs_ms, cnt in sorted(self.beacon_samples, key=lambda x: x[0]):
+            if cnt in seen_cnt:
+                continue
+            seen_cnt.add(cnt)
+            deduped.append((abs_ms, cnt))
+        gaps = _inter_arrival_gaps(deduped)
+        result = _estimate_period(gaps)
+        if result["beacon_period_ms"] is not None:
+            return {
+                "beacon_period_ms": result["beacon_period_ms"],
+                "confidence": result["confidence"],
+                "method": "central_beacon",
+                "sample_count": len(deduped),
+                "interval_count": len(gaps),
+            }
+        sof = sorted(self.sof_times)
+        cluster_gaps = _inter_arrival_gaps([(t, None) for t in sof])
+        result = _estimate_period(cluster_gaps)
+        if result["beacon_period_ms"] is not None:
+            return {
+                "beacon_period_ms": result["beacon_period_ms"],
+                "confidence": result["confidence"],
+                "method": "sof_cluster",
+                "sample_count": len(sof),
+                "interval_count": len(cluster_gaps),
+            }
+        return {
+            "beacon_period_ms": None, "confidence": 0.0,
+            "method": "undetected", "sample_count": 0, "interval_count": 0,
+        }
+
+    def bucket_counters(self, period_ms: int) -> dict[int, Counter]:
+        """时间线按信标周期分桶（绝对毫秒，跨天自然分桶）。"""
+        buckets: dict[int, Counter] = {}
+        for abs_ms, frm in self.timeline:
+            start = abs_ms - (abs_ms % period_ms)
+            bucket = buckets.get(start)
+            if bucket is None:
+                bucket = buckets[start] = Counter()
+            bucket[frm] += 1
+        return buckets
+
+    def build_cycles(self, buckets: dict[int, Counter], period_ms: int,
+                     stability_level: Optional[str], csma_level: Optional[str],
+                     route_channel_level: Optional[str]) -> list[dict]:
+        """由分桶计数构建周期评估（与 assess_frames_periods 字段契约一致）。"""
+        order = {HEALTHY: 0, DEGRADED: 1, FAULT: 2}
+        levels = [lv for lv in (stability_level, csma_level, route_channel_level) if lv]
+        bucket_s = period_ms / 1000.0
+        cycles = []
+        for start in sorted(buckets):
+            counter = buckets[start]
+            frame_count = sum(counter.values())
+            assoc_count = counter.get(FRMTYPE_ASSOC, 0)
+            proxy_change_count = counter.get(FRMTYPE_PROXY_CHANGE, 0)
+            beacon_count = sum(
+                counter.get(key, 0) for key in FRMTYPE_CENTRAL_BEACON_ALIASES
+            )
+            assoc_ratio = assoc_count * 100.0 / frame_count if frame_count else None
+            proxy_ratio = (
+                proxy_change_count * 100.0 / frame_count if frame_count else None
+            )
+            frame_rate = frame_count / bucket_s if bucket_s else None
+
+            level, reason = HEALTHY, None
+            if levels:
+                worst = max(levels, key=lambda lv: order.get(lv, 0))
+                if worst != HEALTHY:
+                    level = worst
+                    reason = f"综合维度降级（{worst}）"
+            cycles.append({
+                "period_start": start,
+                "period_end": start + period_ms,
+                "start_time": _clock_text(start),
+                "end_time": _clock_text(start + period_ms),
+                "beacon_period_ms": period_ms,
+                "frame_count": frame_count,
+                "beacon_frame_count": beacon_count,
+                "assoc_count": assoc_count,
+                "assoc_ratio": round(assoc_ratio, 2) if assoc_ratio is not None else None,
+                "proxy_change_count": proxy_change_count,
+                "proxy_change_ratio": round(proxy_ratio, 2) if proxy_ratio is not None else None,
+                "frame_rate": round(frame_rate, 2) if frame_rate is not None else None,
+                "stability_level": stability_level,
+                "slot_level": csma_level,
+                "route_channel_level": route_channel_level,
+                "level": level,
+                "rating": level,
+                "level_reason": reason,
+            })
+        return cycles
+
+    def build_csma(self, buckets: dict[int, Counter], period_ms: int,
+                   config_ratio: Optional[float]) -> dict:
+        """由分桶计数构建 CSMA 帧密度拥塞（与 assess_csma_congestion 一致）。"""
+        period = int(period_ms or 0)
+        if period <= 0:
+            return {
+                "enabled": False, "csma_density_mean": None,
+                "csma_density_peak": None, "csma_config_ratio": None,
+                "level": HEALTHY, "reason": "invalid_period",
+            }
+        if not buckets:
+            return {
+                "enabled": False, "csma_density_mean": None,
+                "csma_density_peak": None, "csma_config_ratio": None,
+                "level": HEALTHY, "reason": "no_frames",
+            }
+        bucket_s = period / 1000.0
+        densities = []
+        for counter in buckets.values():
+            beacon_count = sum(
+                counter.get(key, 0) for key in FRMTYPE_CENTRAL_BEACON_ALIASES
+            )
+            non_beacon = sum(counter.values()) - beacon_count
+            if non_beacon > 0 and bucket_s:
+                densities.append(non_beacon / bucket_s)
+        peak = max(densities) if densities else None
+        mean = sum(densities) / len(densities) if densities else None
+        level, reason = HEALTHY, None
+        if peak is not None and peak > CSMA_DENSITY_FAULT:
+            level = FAULT
+            reason = f"CSMA 时段帧密度峰值 {peak:.1f} 帧/秒 超故障阈值 {CSMA_DENSITY_FAULT:.0f}"
+        elif peak is not None and peak > CSMA_DENSITY_DEGRADED:
+            level = DEGRADED
+            reason = f"CSMA 时段帧密度峰值 {peak:.1f} 帧/秒 超降级阈值 {CSMA_DENSITY_DEGRADED:.0f}"
+        return {
+            "enabled": True,
+            "csma_density_mean": round(mean, 2) if mean is not None else None,
+            "csma_density_peak": round(peak, 2) if peak is not None else None,
+            "csma_config_ratio": config_ratio,
+            "level": level,
+            "reason": reason,
+        }
+
+
+def _is_beacon_candidate(frm: str) -> bool:
+    """信标候选：FrmType 为中央信标别名，或 summary 缺失/无 FrmType（UNKNOWN，
+    需解码定界符位确认）。非别名已知帧型不再解码，消除全量评估的解码瓶颈。"""
+    return frm in FRMTYPE_CENTRAL_BEACON_ALIASES or frm == "UNKNOWN"
+
+
+def assess_by_network_stream(
+    rows, records=(), session_duration_s: Optional[float] = None,
+    nid_filter: Optional[int] = None, engine: str = "python",
+    frame_total: Optional[int] = None, unassigned_total: Optional[int] = None,
+) -> dict:
+    """网络承载评估主入口：单趟流式消费全量帧，按 NID 严格分网，互不混算。
+
+    rows: 可迭代的帧 dict，字段（全部可选除 log_time）：
+      log_time     HH:MM:SS.mmm（必需）
+      nid          已解析/物化的 NID int；缺失时按 summary SNID → FCH 解码兜底
+      frm_type     已物化的 FrmType 文本；缺失时从 summary_json 提取
+      summary_json 原始摘要 JSON（仅在 nid/frm_type 缺失或需 Detail 时解析一次）
+      raw_hex      帧_hex（summary 缺失需解码取 NID / 信标候选需解码字段时用）
+      _detail_only SQL 物化源的 Detail 行标记：不重复计数/时间线，只补字段
+    records: 分钟上报记录（00E4），nid 归网；nid 缺失计入 unassigned_record_count。
+
+    网络键 = NID（组网序列号，Q/GDW 10376.2 网络识别码）。NID 无法识别的帧
+    不归属任何网络（计入 unassigned_frame_count 单独透出），绝不混入他网。
+    nid_filter 给定时只累计该 NID 的网络。
+
+    session_duration_s: 日志会话权威时长（DB 首尾帧跨度，调用方计算）；
+    缺省回退为各网络时间线跨度（兼容旧抽样语义）。稳定性 ≥2h 门禁以此为准。
+
+    frame_total/unassigned_total: SQL 物化源传入的精确总数（时间窗内），
+    覆盖驱动器计数；Python 源省略。
+    """
+    accs: dict[int, _NetworkAccumulator] = {}
+    counted = 0
+    unassigned = 0
+    filtered = 0
+    unassigned_records = 0
+    day_offset = 0
+    prev_clock_ms = None
+
+    for item in rows:
+        if not isinstance(item, dict) or not item.get("log_time"):
+            continue
+        detail_only = bool(item.get("_detail_only"))
+        nid = item.get("nid")
+        frm = item.get("frm_type")
+        summary_json = item.get("summary_json")
         raw_hex = item.get("raw_hex")
-        frame = _decode_frame(raw_hex)
-        if frame is None:
-            continue
-        frame["raw_hex"] = raw_hex
-        key = _frame_network_key(frame)
-        if key is None:
-            continue
-        frame_groups.setdefault(key, []).append(item)
 
-    # 合并 (nid, None) 到已知 MAC 的网络：同一 NID 下信标帧能取到 MAC 时，
-    # 无 MAC 帧（普通数据帧）归属该网络，避免同网被拆成两个键。
-    mac_keys = {k for k in frame_groups if k[1] is not None}
-    nid_to_mac = {k[0]: k[1] for k in mac_keys}
-    for key in list(frame_groups):
-        nid, mac = key
-        if mac is None and nid in nid_to_mac:
-            merged = (nid, nid_to_mac[nid])
-            frame_groups.setdefault(merged, [])
-            frame_groups[merged].extend(frame_groups[key])
-            del frame_groups[key]
+        parsed = None
+        frame = None
+        if nid is None or frm is None:
+            parsed = _parse_summary_fields(summary_json)
+            if nid is None:
+                nid = parsed["snid_int"]
+            if frm is None:
+                frm = parsed["frm_type"]
+        if nid is None and raw_hex:
+            frame = _decode_frame(raw_hex)
+            if frame is not None:
+                nid = frame["nid"]
+        if not frm:
+            frm = "UNKNOWN"
 
-    record_groups: dict[int, list[dict]] = {}
-    for row in records:
-        nid = row.get("nid")
+        if not detail_only:
+            counted += 1
+            if nid is None:
+                unassigned += 1
+                continue
+            if nid_filter is not None and nid != nid_filter:
+                filtered += 1
+                continue
+
+        # 跨天翻转（与前一日时间差 >12h 视为进入新一天），全流单一日偏移
+        clock = _clock_ms(item.get("log_time"))
+        abs_ms = None
+        if clock is not None:
+            if prev_clock_ms is not None and clock < prev_clock_ms - 12 * 3_600_000:
+                day_offset += 1
+            abs_ms = day_offset * 86_400_000 + clock
+            prev_clock_ms = clock
+
+        acc = accs.get(nid)
+        if acc is None:
+            acc = accs[nid] = _NetworkAccumulator(nid)
+
+        if detail_only:
+            detail = parsed["detail"] if parsed is not None else ""
+            if not detail and summary_json:
+                detail = _parse_summary_fields(summary_json)["detail"]
+            acc.add_detail(detail)
+            if _is_beacon_candidate(frm):
+                if frame is None and raw_hex:
+                    frame = _decode_frame(raw_hex)
+                acc.add_beacon(abs_ms, frame, detail)
+            continue
+
+        acc.count_frame(abs_ms, frm)
+        detail = parsed["detail"] if parsed is not None else ""
+        if detail:
+            acc.add_detail(detail)
+        if _is_beacon_candidate(frm):
+            if frame is None and raw_hex:
+                frame = _decode_frame(raw_hex)
+            acc.add_beacon(abs_ms, frame, detail)
+
+    record_groups: dict[int, list] = {}
+    for row in records or ():
+        nid = row.get("nid") if isinstance(row, dict) else None
         if nid is None:
+            unassigned_records += 1
             continue
         record_groups.setdefault(nid, []).append(row)
 
+    return _finalize_networks(
+        accs, record_groups, session_duration_s=session_duration_s, engine=engine,
+        frame_total=frame_total, unassigned_total=unassigned_total, counted=counted,
+        unassigned=unassigned, filtered=filtered,
+        unassigned_records=unassigned_records,
+        bucket_resolver=lambda acc, period: acc.bucket_counters(period),
+    )
+
+
+class _AbsTimeTracker:
+    """行流的绝对毫秒换算（跨天翻转），与流式驱动器同一套规则。"""
+
+    __slots__ = ("day_offset", "prev_clock_ms")
+
+    def __init__(self):
+        self.day_offset = 0
+        self.prev_clock_ms = None
+
+    def abs_ms(self, log_time) -> Optional[int]:
+        clock = _clock_ms(log_time)
+        if clock is None:
+            return None
+        if (
+            self.prev_clock_ms is not None
+            and clock < self.prev_clock_ms - 12 * 3_600_000
+        ):
+            self.day_offset += 1
+        self.prev_clock_ms = clock
+        return self.day_offset * 86_400_000 + clock
+
+
+def assess_by_network_aggregate(
+    counts_rows, detail_rows, central_rows=(), bucket_rows_fn=None,
+    records=(), session_duration_s: Optional[float] = None,
+    nid_filter: Optional[int] = None, engine: str = "sql",
+    frame_total: Optional[int] = None, unassigned_total: Optional[int] = None,
+) -> dict:
+    """SQL 物化聚合入口：预聚合行直接构建累加器，避免全量行传输到 Python。
+
+    counts_rows:  (nid, frm_type, cnt) —— GROUP BY 聚合计数（nid 为 NULL 的
+                  分组跳过，未识别总数由 unassigned_total 提供）。
+    detail_rows:  dict(log_time, nid, frm_type, raw_hex, summary_json) ——
+                  携带 Detail 文本的行（B/C 档字段与信标参数来源）。
+    central_rows: dict(log_time, raw_hex) —— 中央信标别名行；Detail 缺失时
+                  补周期计数样本/CCO MAC（量小，仅信标帧）。
+    bucket_rows_fn: callable(period_ms) -> (nid, frm_type, bucket, cnt) 行_iterable，
+                  库内窗口函数按信标周期预分桶的聚合结果；周期确定后调用。
+    其余参数与 assess_by_network_stream 一致。
+    """
+    accs: dict[int, _NetworkAccumulator] = {}
+    for nid, frm, cnt in counts_rows:
+        if nid is None:
+            continue
+        if nid_filter is not None and nid != nid_filter:
+            continue
+        acc = accs.get(nid)
+        if acc is None:
+            acc = accs[nid] = _NetworkAccumulator(nid)
+        key = frm or "UNKNOWN"
+        acc.frm_counts[key] = acc.frm_counts.get(key, 0) + (cnt or 0)
+
+    tracker = _AbsTimeTracker()
+    for row in detail_rows:
+        nid = row.get("nid")
+        if nid is None or (nid_filter is not None and nid != nid_filter):
+            continue
+        acc = accs.get(nid)
+        if acc is None:
+            acc = accs[nid] = _NetworkAccumulator(nid)
+        detail = _parse_summary_fields(row.get("summary_json"))["detail"]
+        acc.add_detail(detail)
+        frm = row.get("frm_type") or "UNKNOWN"
+        if _is_beacon_candidate(frm) and row.get("raw_hex"):
+            frame = _decode_frame(row["raw_hex"])
+            acc.add_beacon(tracker.abs_ms(row.get("log_time")), frame, detail)
+
+    for row in central_rows:
+        raw_hex = row.get("raw_hex")
+        if not raw_hex:
+            continue
+        frame = _decode_frame(raw_hex)
+        if frame is None:
+            continue
+        nid = frame["nid"]
+        if nid is None or (nid_filter is not None and nid != nid_filter):
+            continue
+        acc = accs.get(nid)
+        if acc is None:
+            acc = accs[nid] = _NetworkAccumulator(nid)
+        acc.add_beacon(tracker.abs_ms(row.get("log_time")), frame, "")
+
+    # 周期由参数/样本扫描确定后，分桶聚合按（去重的周期值）查询并按网拆分
+    periods = {acc.scan()["beacon_period_ms"] for acc in accs.values()}
+    periods.discard(None)
+    sql_buckets: dict[tuple, dict] = {}
+    for period in periods:
+        if bucket_rows_fn is None:
+            break
+        for nid, frm, bucket, cnt in bucket_rows_fn(period):
+            if nid is None or (nid_filter is not None and nid != nid_filter):
+                continue
+            acc = accs.get(nid)
+            if acc is None:
+                continue
+            per_bucket = sql_buckets.setdefault((nid, period), {})
+            counter = per_bucket.setdefault(bucket, Counter())
+            counter[frm or "UNKNOWN"] += cnt or 0
+
+    def _resolve(acc, period):
+        return sql_buckets.get((acc.nid, period)) or {}
+
+    record_groups: dict[int, list] = {}
+    unassigned_records = 0
+    for row in records or ():
+        nid = row.get("nid") if isinstance(row, dict) else None
+        if nid is None:
+            unassigned_records += 1
+            continue
+        record_groups.setdefault(nid, []).append(row)
+
+    return _finalize_networks(
+        accs, record_groups, session_duration_s=session_duration_s, engine=engine,
+        frame_total=frame_total, unassigned_total=unassigned_total,
+        counted=frame_total or 0, unassigned=unassigned_total or 0, filtered=0,
+        unassigned_records=unassigned_records, bucket_resolver=_resolve,
+    )
+
+
+def _finalize_networks(
+    accs, record_groups, *, session_duration_s, engine, frame_total, unassigned_total,
+    counted, unassigned, filtered, unassigned_records, bucket_resolver,
+) -> dict:
+    """网络装配共用尾段：扫描周期 → 分桶 → 四维判级 → 汇总结构。"""
     networks = []
-    for (nid, cco_mac), group_frames in frame_groups.items():
+    for nid, acc in accs.items():
         group_records = record_groups.get(nid, [])
         active_sta = {
             row.get("station_key") for row in group_records if row.get("station_key")
         }
-        scan = scan_beacon_periods(group_frames)
-
-        # 稳定性维度：按网络级整帧统计（代理变更/关联请求占比，分母为该网络总帧数）
-        frame_type_stats = count_frame_types(group_frames)
-        total_duration_s = _frames_duration_s(group_frames)
-        stability = assess_stability(
-            frame_type_stats, total_duration_s, scan["beacon_period_ms"] or 0
+        scan = acc.scan()
+        period = scan["beacon_period_ms"]
+        duration = (
+            session_duration_s if session_duration_s is not None else acc.duration_s()
         )
-
-        # B 档/C 档：从各帧 summary_json 的 Detail 文本收集时隙/路由/信道字段
-        # （网络级统计，中央信标周期性广播时隙配置、发现列表/信标携带路由/信道信息）
-        slot_fields, route_fields, channel_fields = [], [], []
-        for item in group_frames:
-            detail = _extract_detail(item.get("summary_json"))
-            slot_field = extract_slot_fields(detail)
-            if slot_field is not None:
-                slot_fields.append(slot_field)
-            route_field = extract_route_fields(detail)
-            if route_field is not None:
-                route_fields.append(route_field)
-            channel_field = extract_channel_fields(detail)
-            if channel_field is not None:
-                channel_fields.append(channel_field)
-        slot = assess_slot(frame_type_stats, slot_fields)
+        stability = assess_stability(acc.frm_counts, duration, period or 0)
+        slot = assess_slot(acc.frm_counts, acc.slot_fields)
         route_channel = assess_route_channel(
-            frame_type_stats, route_fields, channel_fields
+            acc.frm_counts, acc.route_fields, acc.channel_fields
         )
-        # B 档新定义：CSMA 时段实际帧密度/拥塞（国网通用无 00E4 上报帧，
-        # 也保证 cycles 基于所有帧而非仅分钟上报记录）
-        csma = assess_csma_congestion(group_frames, scan["beacon_period_ms"] or 0)
-
-        cycles = []
-        if scan["beacon_period_ms"] is not None:
+        config_ratio = next(
+            (
+                f["csma_slot_ms"] * 100.0 / f["beacon_period_ms"]
+                for f in acc.slot_fields
+                if f.get("beacon_period_ms") and f.get("csma_slot_ms")
+            ),
+            None,
+        )
+        if period:
+            buckets = bucket_resolver(acc, period)
+            csma = acc.build_csma(buckets, period, config_ratio)
+            cycles = acc.build_cycles(
+                buckets, period, stability["level"], csma["level"],
+                route_channel["level"],
+            )
+        else:
+            csma = acc.build_csma({}, 0, config_ratio)
+            cycles = []
+        # 补充：存在 00E4 分钟上报记录时，成功率/离线率覆盖同周期字段（向前兼容）
+        if group_records and cycles:
             try:
-                # 主路径：按所有帧分桶（不依赖 00E4 分钟上报）
-                cycles = assess_frames_periods(
-                    group_frames, scan["beacon_period_ms"],
+                extra = assess_periods(
+                    group_records, period, active_sta,
                     stability_level=stability["level"],
-                    csma_level=csma["level"],
+                    slot_level=slot["level"],
                     route_channel_level=route_channel["level"],
                 )
+                extra_by_start = {c["period_start"]: c for c in extra}
+                for c in cycles:
+                    extra_c = extra_by_start.get(c["period_start"])
+                    if extra_c:
+                        c["success_rate"] = extra_c.get("success_rate")
+                        c["offline_rate"] = extra_c.get("offline_rate")
+                        c["success_count"] = extra_c.get("success_count")
+                        c["offline_sta_count"] = extra_c.get("offline_sta_count")
             except ValueError:
-                cycles = []
-            # 补充：若存在 00E4 分钟上报记录，另行算成功率/离线率并入（可选）
-            if group_records and cycles:
-                try:
-                    extra = assess_periods(
-                        group_records, scan["beacon_period_ms"], active_sta,
-                        stability_level=stability["level"],
-                        slot_level=slot["level"],
-                        route_channel_level=route_channel["level"],
-                    )
-                    # 用上报记录的成功率/离线率覆盖同周期字段（保持向前兼容）
-                    extra_by_start = {c["period_start"]: c for c in extra}
-                    for c in cycles:
-                        extra_c = extra_by_start.get(c["period_start"])
-                        if extra_c:
-                            c["success_rate"] = extra_c.get("success_rate")
-                            c["offline_rate"] = extra_c.get("offline_rate")
-                            c["success_count"] = extra_c.get("success_count")
-                            c["offline_sta_count"] = extra_c.get("offline_sta_count")
-                except ValueError:
-                    pass
+                pass
         networks.append({
             "nid": nid,
-            "cco_mac": cco_mac,
-            "beacon_period_ms": scan["beacon_period_ms"],
+            "cco_mac": acc.cco_mac,
+            "beacon_period_ms": period,
             "confidence": scan["confidence"],
             "scan_method": scan["method"],
-            "frame_count": len(group_frames),
+            "frame_count": sum(acc.frm_counts.values()),
             "record_count": len(group_records),
             "active_sta_count": len(active_sta),
             "cycles": cycles,
@@ -1236,9 +1681,7 @@ def assess_by_network(frames, records) -> dict:
             ),
         })
 
-    # 按 NID 排序，稳定输出
     networks.sort(key=lambda n: n["nid"])
-
     periods = [n["beacon_period_ms"] for n in networks if n["beacon_period_ms"]]
     beacon_period_ms = statistics.mode(periods) if periods else None
     levels = [n["summary"]["overall_health"] for n in networks]
@@ -1246,4 +1689,33 @@ def assess_by_network(frames, records) -> dict:
         "networks": networks,
         "beacon_period_ms": beacon_period_ms,
         "overall_health": _aggregate_level(levels) if levels else HEALTHY,
+        "engine": engine,
+        "session_duration_s": (
+            round(session_duration_s, 3) if session_duration_s is not None else None
+        ),
+        "frame_total": frame_total if frame_total is not None else counted,
+        "unassigned_frame_count": (
+            unassigned_total if unassigned_total is not None else unassigned
+        ),
+        "filtered_frame_count": filtered,
+        "unassigned_record_count": unassigned_records,
     }
+
+
+def assess_by_network(frames, records, session_duration_s: Optional[float] = None) -> dict:
+    """兼容入口：frames 为帧 dict 列表（或 (log_time, raw_hex) 二元组列表）。
+
+    内部转单趟流式评估；session_duration_s 缺省时稳定性门禁回退为各网络
+    帧时间跨度（与旧实现一致）。
+    """
+
+    def _rows():
+        for item in frames:
+            if isinstance(item, (tuple, list)):
+                yield {"log_time": item[0], "raw_hex": item[1]}
+            else:
+                yield item
+
+    return assess_by_network_stream(
+        _rows(), records, session_duration_s=session_duration_s
+    )

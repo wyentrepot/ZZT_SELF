@@ -364,7 +364,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
 
     # ---------- 网络承载能力评估（按中央信标周期 + 网络隔离）----------
 
-    def _run_network_assessment(index_id="", start_time="", end_time=""):
+    def _run_network_assessment(index_id="", start_time="", end_time="", nid=""):
         """统一入口：调用 log_service 扫描网络并评估；无信标时走 fallback。"""
         kwargs = {}
         if index_id.strip():
@@ -372,6 +372,8 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         if start_time or end_time:
             kwargs["start_time"] = start_time
             kwargs["end_time"] = end_time
+        if nid.strip():
+            kwargs["nid"] = nid
         return log_service.list_beacon_periods(**kwargs)
 
     @app.get("/api/network/assessment")
@@ -379,11 +381,14 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         index_id: str = Query("", max_length=64),
         start_time: str = Query("", max_length=12),
         end_time: str = Query("", max_length=12),
+        nid: str = Query("", max_length=16),
     ):
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
-            data = _run_network_assessment(index_id, start_time, end_time)
+            data = _run_network_assessment(index_id, start_time, end_time, nid)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"网络评估失败：{exc}") from exc
         networks = data.get("networks") or []
@@ -406,12 +411,15 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         index_id: str = Query("", max_length=64),
         start_time: str = Query("", max_length=12),
         end_time: str = Query("", max_length=12),
+        nid: str = Query("", max_length=16),
     ):
         """轻量快照（AI 查询用，≤1KB）：机器可读，评级枚举 healthy/degraded/fault。"""
         if log_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
         try:
-            data = _run_network_assessment(index_id, start_time, end_time)
+            data = _run_network_assessment(index_id, start_time, end_time, nid)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"网络评估失败：{exc}") from exc
         networks = data.get("networks") or []

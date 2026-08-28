@@ -16,6 +16,16 @@ HEADER_PATTERN = re.compile(
 )
 HEX_BYTE_PATTERN = re.compile(r"(?i)\b[0-9a-f]{2}\b")
 
+# 分析物化列（nid/frm_type）回填状态：db 路径 → {"running", "done", "error"}。
+# 存量库在首次评估时后台补齐；完成后的库走 SQL 聚合快路径。
+_BACKFILL_STATE: dict[str, dict] = {}
+_BACKFILL_LOCK = threading.Lock()
+
+# 评估结果缓存：(db 路径, 时间窗, nid, 窗口内最大帧 id) → 结果。
+# 最大帧 id 参与键：串口实时模式追加新帧后自然失效，无需 TTL。
+_ASSESSMENT_CACHE: dict[tuple, dict] = {}
+_ASSESSMENT_CACHE_MAX = 32
+
 
 class FrameParserService(Protocol):
     def parse_summary(self, value: str) -> dict: ...
@@ -153,7 +163,10 @@ class LogFileService:
                     byte_length INTEGER NOT NULL,
                     raw_hex TEXT NOT NULL,
                     summary_json TEXT,
-                    parse_error TEXT
+                    parse_error TEXT,
+                    nid INTEGER,
+                    frm_type TEXT,
+                    assess_detail INTEGER
                 )
                 """
             )
@@ -196,6 +209,41 @@ class LogFileService:
                 "CREATE INDEX IF NOT EXISTS idx_minute_reports_time "
                 "ON minute_reports(time_seconds)"
             )
+            self._ensure_analysis_columns(connection)
+
+    @staticmethod
+    def _ensure_analysis_columns(connection) -> None:
+        """评估分析物化列（nid/frm_type/assess_detail）的幂等迁移。
+
+        新建库由 CREATE TABLE 直接带列；此处兼容更早版本创建的库。nid 列上的
+        覆盖索引服务 SQL 聚合快路径；两个 partial 索引分别只含待回填行与
+        携带 Detail 的行，回填扫描与 Detail 行源均零成本。
+        """
+        existing = {
+            row["name"] for row in connection.execute("PRAGMA table_info(frames)")
+        }
+        if "nid" not in existing:
+            connection.execute("ALTER TABLE frames ADD COLUMN nid INTEGER")
+        if "frm_type" not in existing:
+            connection.execute("ALTER TABLE frames ADD COLUMN frm_type TEXT")
+        if "assess_detail" not in existing:
+            connection.execute("ALTER TABLE frames ADD COLUMN assess_detail INTEGER")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_nid_time_ftype "
+            "ON frames(nid, log_time, frm_type)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_nid_pending "
+            "ON frames(id) WHERE nid IS NULL"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_assess_detail "
+            "ON frames(id) WHERE assess_detail = 1"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_hs_pending "
+            "ON frames(id) WHERE assess_detail IS NULL"
+        )
 
     def _replace_status(self, **values) -> dict:
         with self._status_lock:
@@ -294,8 +342,9 @@ class LogFileService:
         with source.open("rb") as stream, self._connect() as connection:
             insert_sql = """
                 INSERT INTO frames (
-                    sequence, log_time, byte_length, raw_hex, summary_json, parse_error
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    sequence, log_time, byte_length, raw_hex, summary_json,
+                    parse_error, nid, frm_type, assess_detail
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             insert_minute_sql = """
                 INSERT INTO minute_reports (
@@ -324,6 +373,17 @@ class LogFileService:
                         error_count += 1
                         parse_error = str(exc)
 
+                # 分析物化列：NID 以 summary 的 SNID（DLL 权威）优先，缺失时
+                # FCH 解码兜底；FrmType/Detail 直接取 summary 值。
+                nid = network_assessment.snid_to_int(simple.get("SNID"))
+                if nid is None:
+                    nid = network_assessment.extract_nid(record.hex_frame)
+                raw_frm = simple.get("FrmType")
+                frm_type = str(raw_frm) if raw_frm is not None else None
+                assess_detail = (
+                    1 if network_assessment.detail_is_assessable(simple.get("Detail")) else 0
+                )
+
                 cursor = connection.execute(
                     insert_sql,
                     (
@@ -333,6 +393,9 @@ class LogFileService:
                         record.hex_frame,
                         summary_json,
                         parse_error,
+                        nid,
+                        frm_type,
+                        assess_detail,
                     ),
                 )
                 frame_count += 1
@@ -1217,148 +1280,506 @@ class LogFileService:
 
     # ---------- 网络承载能力评估（按中央信标周期 + 网络隔离）----------
 
-    ASSESS_FRAME_SAMPLE = 2000
-    ASSESS_RECORD_SAMPLE = 3000
-    ASSESS_PAGE_SIZE = 500
+    # ---------- 网络承载能力评估（全量单趟 + NID 严格分网 + 物化列快路径）----------
+
+    SQL_PATH_MIN_COVERAGE = 0.5   # 窗口内 frm_type 物化覆盖率低于该值时退回 Python 解码路径
+    _BACKFILL_BATCH = 5000
 
     @staticmethod
     def _nid_from_summary(summary_json) -> Optional[int]:
         """从 summary_json 的 SNID 键（24 位网络标识，8 位十六进制）解析 NID。"""
         try:
             simple = json.loads(summary_json or "{}")
-            snid = simple.get("SNID") or ""
-            return int(snid, 16) if snid else None
+            return network_assessment.snid_to_int(simple.get("SNID"))
         except (TypeError, ValueError):
             return None
 
-    def sample_frames_for_assessment(
-        self, start_time="", end_time="", max_frames=None, page_size=None,
-    ) -> list:
-        """按时间窗口抽样 frames（raw_hex + log_time + summary_json），附加纯 Python 提取的 NID。
+    def _frames_where(self, start_time="", end_time="", column="log_time"):
+        """frames 表时间窗 WHERE 片段与参数。"""
+        conditions, parameters = [], []
+        self._append_time_range(conditions, parameters, start_time, end_time, column)
+        return conditions, parameters
 
-        按 id 等距取多个窗口（keyset 分页，避免全表加载/深 OFFSET），
-        覆盖整个日志时间跨度；适合信标周期扫描与稳定性（FrmType）统计的输入。
-        """
-        max_frames = max_frames or self.ASSESS_FRAME_SAMPLE
-        page_size = page_size or self.ASSESS_PAGE_SIZE
-        conditions = []
-        parameters = []
-        self._append_time_range(conditions, parameters, start_time, end_time)
-        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    @staticmethod
+    def _where_sql(conditions, extra=None):
+        parts = list(conditions)
+        if extra:
+            parts.append(extra)
+        return f"WHERE {' AND '.join(parts)}" if parts else ""
 
+    def _frames_max_id(self, start_time="", end_time="") -> int:
+        conditions, parameters = self._frames_where(start_time, end_time)
         with self._connect() as connection:
             row = connection.execute(
-                f"SELECT MIN(id), MAX(id) FROM frames {where_sql}", parameters
+                f"SELECT MAX(id) FROM frames {self._where_sql(conditions)}", parameters
             ).fetchone()
-            if row[0] is None:
-                return []
-            min_id, max_id = row[0], row[1]
-            span = max_id - min_id
-            window_count = max(1, min(page_size, span // page_size))
-            starts = [min_id + int(span * index / window_count) for index in range(window_count)]
+            return row[0] or 0
 
-            frames = []
-            for start_id in starts:
-                if len(frames) >= max_frames:
-                    break
-                id_condition = [*conditions, "id >= ?"]
-                id_sql = f"WHERE {' AND '.join(id_condition)}"
-                rows = connection.execute(
-                    f"""
-                    SELECT id, log_time, raw_hex, summary_json FROM frames
-                    {id_sql}
-                    ORDER BY id LIMIT ?
-                    """,
-                    [*parameters, start_id, page_size],
-                ).fetchall()
-                for r in rows:
-                    if len(frames) >= max_frames:
-                        break
-                    frames.append({
-                        "id": r["id"],
-                        "log_time": r["log_time"],
-                        "raw_hex": r["raw_hex"],
-                        "summary_json": r["summary_json"],
-                        "nid": network_assessment.extract_nid(r["raw_hex"]),
-                    })
-        return frames
+    def _session_duration_s(self, start_time="", end_time="") -> Optional[float]:
+        """日志会话权威时长：时间窗内按 id 序首尾帧的 log_time 跨度（秒）。
 
-    def sample_reports_for_assessment(
-        self, start_time="", end_time="", max_records=None, page_size=None,
-    ) -> list:
-        """按时间窗口抽样 minute_reports，附加上报帧所属 NID（来自 SNID 键）。"""
-        max_records = max_records or self.ASSESS_RECORD_SAMPLE
-        page_size = page_size or self.ASSESS_PAGE_SIZE
-        conditions = []
-        parameters = []
+        log_time 只有时分秒没有日期，跨天日志的字符串 MIN/MAX 会算错；
+        帧按 id 插入即时序即时间序，首尾两端经 _absolute_ms 处理跨天翻转。
+        """
+        conditions, parameters = self._frames_where(start_time, end_time)
+        where_sql = self._where_sql(conditions)
+        with self._connect() as connection:
+            first = connection.execute(
+                f"SELECT log_time FROM frames {where_sql} ORDER BY id LIMIT 1",
+                parameters,
+            ).fetchone()
+            last = connection.execute(
+                f"SELECT log_time FROM frames {where_sql} ORDER BY id DESC LIMIT 1",
+                parameters,
+            ).fetchone()
+        if not first or not last:
+            return None
+        absolute = network_assessment._absolute_ms([first[0], last[0]])
+        if absolute[0] is None or absolute[1] is None:
+            return None
+        return max(0.0, (absolute[1] - absolute[0]) / 1000.0)
+
+    def resolve_assessment_nid(self, nid_text: str, start_time="", end_time="") -> Optional[int]:
+        """评估的 NID 过滤参数解析：兼容十进制（网络卡片显示）与十六进制
+        （SNID/帧列表过滤习惯）两种写法；有歧义时查库消歧，都在/都不在偏向
+        十六进制解读（与既有全局 NID 过滤一致）。无效输入抛 ValueError。"""
+        text = (nid_text or "").strip()
+        if not text:
+            return None
+        candidates = []
+        if text.isdigit():
+            value = int(text)
+            if 0 < value <= 0xFFFFFF:
+                candidates.append(value)
+        try:
+            hex_value = int(text, 16)
+        except ValueError:
+            if not candidates:
+                raise ValueError(f"NID 格式无效：{nid_text}") from None
+        else:
+            if 0 < hex_value <= 0xFFFFFF and hex_value not in candidates:
+                candidates.append(hex_value)
+        if not candidates:
+            raise ValueError(f"NID 超出协议范围（1~16777215）：{nid_text}")
+        if len(candidates) == 1:
+            return candidates[0]
+        conditions, parameters = self._frames_where(start_time, end_time)
+        counts = {}
+        with self._connect() as connection:
+            for value in candidates:
+                row = connection.execute(
+                    f"SELECT COUNT(*) FROM frames {self._where_sql(conditions, 'nid = ?')}",
+                    [*parameters, value],
+                ).fetchone()
+                counts[value] = row[0]
+        present = [v for v in candidates if counts[v] > 0]
+        if len(present) == 1:
+            return present[0]
+        return candidates[-1]  # 十六进制解读优先（与帧列表过滤语义一致）
+
+    # -- 物化列回填 ---------------------------------------------------------
+
+    def request_backfill(self):
+        """存量库补齐 nid/frm_type 物化列（幂等，后台一次）。返回线程或 None。"""
+        state = _BACKFILL_STATE.setdefault(
+            str(self.database_path), {"running": False, "done": False, "error": None}
+        )
+        with _BACKFILL_LOCK:
+            if state["running"] or state["done"]:
+                return None
+            state["running"] = True
+        worker = threading.Thread(
+            target=self._backfill_worker, name="hplc-analysis-backfill", daemon=True
+        )
+        worker.start()
+        return worker
+
+    def _backfill_worker(self) -> None:
+        path = str(self.database_path)
+        state = _BACKFILL_STATE[path]
+        try:
+            # 回填需要写连接；WAL 模式下与读连接共存，不阻塞评估查询。
+            connection = sqlite3.connect(self.database_path, timeout=30)
+            connection.row_factory = sqlite3.Row
+            try:
+                self._ensure_analysis_columns(connection)
+                self._backfill_nid_batches(connection)
+                self._backfill_frm_type_passes(connection)
+                self._backfill_assess_detail_pass(connection)
+                connection.commit()
+            finally:
+                connection.close()
+            state["done"] = True
+            state["error"] = None
+        except Exception as exc:  # 失败不阻断评估，下次评估重新触发
+            state["error"] = str(exc)
+        finally:
+            state["running"] = False
+
+    def _backfill_nid_batches(self, connection) -> None:
+        """批次回填 nid（summary SNID 优先，FCH 解码兜底），顺带补 frm_type/assess_detail。"""
+        last_id = 0
+        while True:
+            rows = connection.execute(
+                """
+                SELECT id, summary_json, raw_hex FROM frames
+                WHERE id > ? AND nid IS NULL ORDER BY id LIMIT ?
+                """,
+                (last_id, self._BACKFILL_BATCH),
+            ).fetchall()
+            if not rows:
+                return
+            updates = []
+            for row in rows:
+                frm_type = None
+                nid = None
+                assess_detail = 0
+                if row["summary_json"]:
+                    parsed = network_assessment._parse_summary_fields(row["summary_json"])
+                    nid = parsed["snid_int"]
+                    if parsed["frm_type"] != "UNKNOWN":
+                        frm_type = parsed["frm_type"]
+                    assess_detail = (
+                        1 if network_assessment.detail_is_assessable(parsed["detail"]) else 0
+                    )
+                if nid is None and row["raw_hex"]:
+                    frame = network_assessment._decode_frame(row["raw_hex"])
+                    nid = frame["nid"] if frame else None
+                updates.append((nid, frm_type, assess_detail, row["id"]))
+            connection.executemany(
+                "UPDATE frames SET nid = ?, frm_type = ?, assess_detail = ? WHERE id = ?",
+                updates,
+            )
+            connection.commit()
+            last_id = rows[-1]["id"]
+
+    def _backfill_frm_type_passes(self, connection) -> None:
+        """补仅有 summary 而缺 FrmType 的行（有 nid 无 frm_type 的残留）。"""
+        for _ in range(5):
+            rows = connection.execute(
+                """
+                SELECT id, summary_json FROM frames
+                WHERE frm_type IS NULL AND summary_json IS NOT NULL LIMIT ?
+                """,
+                (self._BACKFILL_BATCH,),
+            ).fetchall()
+            if not rows:
+                return
+            updates = []
+            for row in rows:
+                parsed = network_assessment._parse_summary_fields(row["summary_json"])
+                if parsed["frm_type"] == "UNKNOWN":
+                    continue
+                updates.append((parsed["frm_type"], row["id"]))
+            if not updates:
+                return
+            connection.executemany(
+                "UPDATE frames SET frm_type = ? WHERE id = ?", updates
+            )
+            connection.commit()
+
+    def _backfill_assess_detail_pass(self, connection) -> None:
+        """补 assess_detail 残留（此前只回填过 nid/frm_type 的库）。"""
+        for _ in range(5):
+            rows = connection.execute(
+                """
+                SELECT id, summary_json FROM frames
+                WHERE assess_detail IS NULL AND summary_json IS NOT NULL LIMIT ?
+                """,
+                (self._BACKFILL_BATCH,),
+            ).fetchall()
+            if not rows:
+                return
+            updates = []
+            for row in rows:
+                parsed = network_assessment._parse_summary_fields(row["summary_json"])
+                updates.append(
+                    (1 if network_assessment.detail_is_assessable(parsed["detail"]) else 0,
+                     row["id"])
+                )
+            if not updates:
+                return
+            connection.executemany(
+                "UPDATE frames SET assess_detail = ? WHERE id = ?", updates
+            )
+            connection.commit()
+
+    def _count_pending_analysis(self) -> int:
+        """待回填行数：nid 未解析，或有 summary 但 assess_detail 未标注。"""
+        with self._connect() as connection:
+            a = connection.execute(
+                "SELECT COUNT(*) FROM frames WHERE nid IS NULL"
+            ).fetchone()[0]
+            b = connection.execute(
+                "SELECT COUNT(*) FROM frames "
+                "WHERE assess_detail IS NULL AND summary_json IS NOT NULL"
+            ).fetchone()[0]
+            return (a or 0) + (b or 0)
+
+    def _sql_path_ready(self, start_time="", end_time="") -> bool:
+        """SQL 聚合快路径可用性：物化列就绪（回填完成或无待回填行）且窗口内
+        frm_type 覆盖率达标（summary 缺失为主的库退回 Python 解码路径）。"""
+        state = _BACKFILL_STATE.get(str(self.database_path), {})
+        if state.get("running"):
+            return False
+        if self._count_pending_analysis() and not state.get("done"):
+            return False
+        conditions, parameters = self._frames_where(start_time, end_time)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT COUNT(*), COUNT(frm_type) FROM frames {self._where_sql(conditions)}",
+                parameters,
+            ).fetchone()
+        total = row[0] or 0
+        if not total:
+            return False
+        return (row[1] or 0) / total >= self.SQL_PATH_MIN_COVERAGE
+
+    # -- 评估行源（全量，无抽样上限）---------------------------------------
+
+    def _iter_full_frame_rows(self, start_time="", end_time=""):
+        """Python 解码路径行源：全量流式输出帧（含 raw_hex/summary_json）。"""
+        conditions, parameters = self._frames_where(start_time, end_time)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                SELECT id, log_time, raw_hex, summary_json FROM frames
+                {self._where_sql(conditions)}
+                ORDER BY id
+                """,
+                parameters,
+            )
+            for row in cursor:
+                yield {
+                    "_id": row["id"],
+                    "log_time": row["log_time"],
+                    "raw_hex": row["raw_hex"],
+                    "summary_json": row["summary_json"],
+                }
+
+    def _agg_frm_counts(self, start_time="", end_time="", nid=None):
+        """库内预聚合：按（NID, 帧型）计数的行迭代 (nid, frm_type, cnt)。"""
+        conditions, parameters = self._frames_where(start_time, end_time)
+        extra = "nid = ?" if nid is not None else "nid IS NOT NULL"
+        params = [*parameters, nid] if nid is not None else list(parameters)
+        with self._connect() as connection:
+            for row in connection.execute(
+                f"""
+                SELECT nid, frm_type, COUNT(*) AS cnt FROM frames
+                {self._where_sql(conditions, extra)}
+                GROUP BY nid, frm_type
+                """,
+                params,
+            ):
+                yield row["nid"], row["frm_type"], row["cnt"]
+
+    def _agg_detail_rows(self, start_time="", end_time="", nid=None):
+        """携带非空 Detail 的行（partial 索引直取，量小）：B/C 档与信标参数来源。"""
+        conditions, parameters = self._frames_where(start_time, end_time)
+        extra = "assess_detail = 1"
+        if nid is not None:
+            extra = f"({extra} AND nid = ?)"
+            parameters = [*parameters, nid]
+        with self._connect() as connection:
+            for row in connection.execute(
+                f"""
+                SELECT log_time, nid, frm_type, raw_hex, summary_json FROM frames
+                {self._where_sql(conditions, extra)} ORDER BY id
+                """,
+                parameters,
+            ):
+                yield {
+                    "log_time": row["log_time"],
+                    "nid": row["nid"],
+                    "frm_type": row["frm_type"],
+                    "raw_hex": row["raw_hex"],
+                    "summary_json": row["summary_json"],
+                }
+
+    def _agg_central_rows(self, start_time="", end_time="", nid=None):
+        """中央信标别名行（量小）：Detail 缺失时的周期计数样本/CCO MAC 兜底。
+
+        只取无 Detail 的别名行——带 Detail 的已由 _agg_detail_rows 覆盖，
+        避免重复解码。"""
+        aliases = list(network_assessment.FRMTYPE_CENTRAL_BEACON_ALIASES)
+        placeholders = ", ".join("?" for _ in aliases)
+        conditions, parameters = self._frames_where(start_time, end_time)
+        extra = f"(frm_type IN ({placeholders}) AND (assess_detail IS NULL OR assess_detail = 0))"
+        if nid is not None:
+            extra = f"({extra} AND nid = ?)"
+            parameters = [*parameters, nid]
+        with self._connect() as connection:
+            for row in connection.execute(
+                f"""
+                SELECT log_time, raw_hex FROM frames
+                {self._where_sql(conditions, extra)} ORDER BY id
+                """,
+                [*parameters, *aliases],
+            ):
+                yield {"log_time": row["log_time"], "raw_hex": row["raw_hex"]}
+
+    def _agg_bucket_rows(self, start_time="", end_time="", nid=None, period_ms=0):
+        """库内按信标周期预分桶（SQLite ≥3.25 窗口函数处理跨天）：
+        迭代 (nid, frm_type, bucket, cnt) 聚合行，行数 = 桶数×帧型数。"""
+        if not period_ms or period_ms <= 0:
+            return
+        conditions, parameters = self._frames_where(start_time, end_time)
+        extra = "nid IS NOT NULL"
+        params = list(parameters)
+        if nid is not None:
+            extra = "nid = ?"
+            params = [*parameters, nid]
+        where_sql = self._where_sql(conditions, extra)
+        # period_ms 经 int() 消毒后内联：SELECT 表达式中的占位符按文本序先于
+        # FROM 中的 ?，混用命名/位置参数易错，内联最稳妥。
+        sql = f"""
+            WITH tl AS (
+                SELECT id, nid, frm_type,
+                    (CAST(substr(log_time, 1, 2) AS INTEGER) * 3600
+                     + CAST(substr(log_time, 4, 2) AS INTEGER) * 60
+                     + CAST(substr(log_time, 7, 2) AS INTEGER)) * 1000
+                     + CAST(substr(log_time, 9, 3) AS INTEGER) AS clock_ms
+                FROM frames {where_sql}
+            ),
+            marked AS (
+                SELECT id, nid, frm_type, clock_ms,
+                    CASE WHEN clock_ms < LAG(clock_ms) OVER (ORDER BY id) - 43200000
+                         THEN 1 ELSE 0 END AS rollover
+                FROM tl
+            ),
+            days AS (
+                SELECT nid, frm_type, clock_ms,
+                    COALESCE(SUM(rollover) OVER (ORDER BY id
+                                 ROWS UNBOUNDED PRECEDING), 0) AS day_offset
+                FROM marked
+            )
+            SELECT nid, frm_type,
+                day_offset * 86400000 + clock_ms
+                    - ((day_offset * 86400000 + clock_ms) % {int(period_ms)}) AS bucket,
+                COUNT(*) AS cnt
+            FROM days GROUP BY nid, frm_type, bucket
+        """
+        with self._connect() as connection:
+            connection.execute("PRAGMA temp_store = MEMORY")
+            for row in connection.execute(sql, params):
+                yield row["nid"], row["frm_type"], row["bucket"], row["cnt"]
+
+    def _sql_row_totals(self, start_time="", end_time="", nid=None) -> tuple:
+        """SQL 路径的精确总数：（窗口总帧数, NID 无法识别帧数）。"""
+        conditions, parameters = self._frames_where(start_time, end_time)
+        with self._connect() as connection:
+            row = connection.execute(
+                f"SELECT COUNT(*) FROM frames {self._where_sql(conditions)}", parameters
+            ).fetchone()
+            if nid is not None:
+                extra, params2 = "nid = ?", [*parameters, nid]
+            else:
+                extra, params2 = "nid IS NULL", list(parameters)
+            row2 = connection.execute(
+                f"SELECT COUNT(*) FROM frames {self._where_sql(conditions, extra)}",
+                params2,
+            ).fetchone()
+        return row[0] or 0, row2[0] or 0
+
+    def _iter_assessment_records(self, start_time="", end_time=""):
+        """分钟上报记录行源（全量流式）：nid 取物化列，缺失回退 SNID 解析。"""
+        conditions, parameters = [], []
         self._append_time_range(
             conditions, parameters, start_time, end_time, "minute_reports.log_time"
         )
-        base_where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-
+        where_sql = self._where_sql(conditions)
         with self._connect() as connection:
-            row = connection.execute(
-                f"SELECT MIN(id), MAX(id) FROM minute_reports {base_where}", parameters
-            ).fetchone()
-            if row[0] is None:
-                return []
-            min_id, max_id = row[0], row[1]
-            span = max_id - min_id
-            window_count = max(1, min(page_size, span // page_size))
-            starts = [min_id + int(span * index / window_count) for index in range(window_count)]
-
-            records = []
-            for start_id in starts:
-                if len(records) >= max_records:
-                    break
-                id_condition = [*conditions, "minute_reports.id >= ?"]
-                where_sql = f"WHERE {' AND '.join(id_condition)}"
-                rows = connection.execute(
-                    f"""
-                    SELECT minute_reports.id, minute_reports.time_seconds,
-                           minute_reports.station_key, minute_reports.response_result,
-                           minute_reports.report_count, minute_reports.application_error,
-                           frames.summary_json
-                    FROM minute_reports
-                    LEFT JOIN frames ON frames.id = minute_reports.frame_id
-                    {where_sql}
-                    ORDER BY minute_reports.id LIMIT ?
-                    """,
-                    [*parameters, start_id, page_size],
-                ).fetchall()
-                for r in rows:
-                    if len(records) >= max_records:
-                        break
-                    records.append({
-                        "frame_id": r["id"],
-                        "time_seconds": r["time_seconds"],
-                        "station_key": r["station_key"],
-                        "response_result": r["response_result"],
-                        "report_count": r["report_count"],
-                        "application_error": r["application_error"],
-                        "nid": self._nid_from_summary(r["summary_json"]),
-                    })
-        return records
+            cursor = connection.execute(
+                f"""
+                SELECT minute_reports.time_seconds AS time_seconds,
+                       minute_reports.station_key AS station_key,
+                       minute_reports.response_result AS response_result,
+                       minute_reports.report_count AS report_count,
+                       minute_reports.application_error AS application_error,
+                       frames.nid AS nid, frames.summary_json AS summary_json
+                FROM minute_reports
+                LEFT JOIN frames ON frames.id = minute_reports.frame_id
+                {where_sql}
+                ORDER BY minute_reports.id
+                """,
+                parameters,
+            )
+            for row in cursor:
+                nid = row["nid"]
+                if nid is None:
+                    nid = self._nid_from_summary(row["summary_json"])
+                yield {
+                    "time_seconds": row["time_seconds"],
+                    "station_key": row["station_key"],
+                    "response_result": row["response_result"],
+                    "report_count": row["report_count"],
+                    "application_error": row["application_error"],
+                    "nid": nid,
+                }
 
     def list_beacon_periods(
-        self, index_id=None, start_time="", end_time="",
-        max_frames=None, max_records=None,
+        self, index_id=None, start_time="", end_time="", nid="",
     ) -> dict:
-        """按网络隔离扫描中央信标周期并分桶评估网络承载能力。
+        """按网络隔离扫描中央信标周期并分桶评估网络承载能力（全量分析）。
 
-        返回 assess_by_network 的结构：
-          {networks: [{nid, cco_mac, beacon_period_ms, confidence, cycles,
-                       summary}], beacon_period_ms, overall_health}
-        识别不出信标时 networks 为空、beacon_period_ms=None，不抛异常。
+        全部帧参与统计（无抽样上限），网络按 NID（组网序列号）严格隔离，
+        NID 无法识别的帧不混入任何网络。稳定性 ≥2h 门禁使用日志会话权威
+        时长（首尾帧跨度），与统计覆盖面解耦。
+
+        数据路径：
+          - sql     物化列（nid/frm_type）就绪时：时间线走 SQL 轻量列 +
+                    Detail 行归并流，评估全程零解码/零 json 解析；
+          - python  物化列未就绪时：全量流式解码，同时触发后台回填，
+                    回填完成后下次评估自动切换 sql 路径。
+
+        返回 assess_by_network_stream 结构；结果按（库, 时间窗, NID, 窗口内
+        最大帧 id）缓存，串口实时追加新帧后自然失效。
         """
         service = self.open_index(index_id) if index_id else self
-        frames = service.sample_frames_for_assessment(
-            start_time, end_time, max_frames=max_frames
+        nid_value = service.resolve_assessment_nid(nid, start_time, end_time)
+        max_id = service._frames_max_id(start_time, end_time)
+        cache_key = (
+            str(service.database_path), str(start_time), str(end_time),
+            nid_value, max_id,
         )
-        records = service.sample_reports_for_assessment(
-            start_time, end_time, max_records=max_records
-        )
-        return network_assessment.assess_by_network(frames, records)
+        cached = _ASSESSMENT_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        session_duration_s = service._session_duration_s(start_time, end_time)
+        records = list(service._iter_assessment_records(start_time, end_time))
+        if service._sql_path_ready(start_time, end_time):
+            frame_total, unassigned_total = service._sql_row_totals(
+                start_time, end_time, nid_value
+            )
+            result = network_assessment.assess_by_network_aggregate(
+                service._agg_frm_counts(start_time, end_time, nid_value),
+                service._agg_detail_rows(start_time, end_time, nid_value),
+                central_rows=service._agg_central_rows(start_time, end_time, nid_value),
+                bucket_rows_fn=lambda period: service._agg_bucket_rows(
+                    start_time, end_time, nid_value, period
+                ),
+                records=records,
+                session_duration_s=session_duration_s,
+                nid_filter=nid_value,
+                engine="sql",
+                frame_total=frame_total,
+                unassigned_total=unassigned_total,
+            )
+        else:
+            result = network_assessment.assess_by_network_stream(
+                service._iter_full_frame_rows(start_time, end_time),
+                records,
+                session_duration_s=session_duration_s,
+                nid_filter=nid_value,
+                engine="python",
+            )
+            service.request_backfill()
+
+        if len(_ASSESSMENT_CACHE) >= _ASSESSMENT_CACHE_MAX:
+            _ASSESSMENT_CACHE.pop(next(iter(_ASSESSMENT_CACHE)))
+        _ASSESSMENT_CACHE[cache_key] = result
+        return result
 
     def list_indexes(self) -> dict:
         if self._index_registry is None:

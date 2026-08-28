@@ -1,8 +1,14 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from listener.log_service import LogFileService, extract_log_record
+from listener import network_assessment
+from listener.log_service import (
+    LogFileService,
+    _BACKFILL_STATE,
+    extract_log_record,
+)
 
 
 SAMPLE_FILE = Path(__file__).parent / "test_data" / "gw_log_sample.txt"
@@ -775,6 +781,187 @@ class MinuteReportTests(unittest.TestCase):
         reports = periods[0]["reports"]
         self.assertEqual(len(reports), 2)
         self.assertEqual([report["frame_id"] for report in reports], [1, 2])
+
+
+class _AssessStubParser:
+    """评估服务级测试的桩 parser（直接入库，不走 index_file）。"""
+
+    def parse_summary(self, value: str) -> dict:
+        return {"simple": {}}
+
+    def parse(self, value: str) -> dict:
+        return {"simple": {}}
+
+
+def _beacon_hex(nid=0x947F69, cnt=0):
+    """构造中央信标帧 hex（与 test_network_assessment 同构的最小构造器）。"""
+    fch = bytearray(16)
+    fch[0] = 0  # 定界符 0 = 信标
+    fch[1] = nid & 0xFF
+    fch[2] = (nid >> 8) & 0xFF
+    fch[3] = (nid >> 16) & 0xFF
+    fch[8] = 1
+    mpdu = bytearray()
+    mpdu.append(0x02 | 0x08)
+    mpdu.append(1)
+    mpdu.extend(b"\x26\x09\x13\x46\x60\x00")
+    mpdu.extend(cnt.to_bytes(4, "little"))
+    body = bytes(20) + bytes(fch) + bytes(mpdu) + bytes(16)
+    return (b"\x7E\xFF\x02" + body + b"\x7E").hex(" ").upper()
+
+
+def _summary(nid_hex="00947F69", frm_type="ACK", detail=""):
+    simple = {"FrmType": frm_type, "SNID": nid_hex}
+    if detail:
+        simple["Detail"] = detail
+    return json.dumps(simple, ensure_ascii=False)
+
+
+def _clock(seconds):
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}.000"
+
+
+SLOT_DETAIL = (
+    "时隙分配[信标周期3000ms 信标时隙长度16ms RF信标时隙长度16ms CSMA时隙大小500ms]"
+)
+
+
+class AssessmentServiceTests(unittest.TestCase):
+    """网络承载评估服务层：物化列、回填、双路径一致性、NID 隔离与会话时长门禁。"""
+
+    def _service(self, rows):
+        """rows: (log_time, raw_hex, summary_json) 元组列表，直接入库。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service = LogFileService(_AssessStubParser(), Path(tmp.name) / "a.sqlite3")
+        materialized = []
+        for i, (log_time, raw_hex, summary) in enumerate(rows, start=1):
+            if summary:
+                data = json.loads(summary)
+                nid = network_assessment.snid_to_int(data.get("SNID"))
+                frm = data.get("FrmType")
+                detail_flag = 1 if network_assessment.detail_is_assessable(
+                    data.get("Detail")) else 0
+            else:
+                nid, frm, detail_flag = None, None, 0
+            materialized.append((f"{i:06d}", log_time, raw_hex, summary,
+                                 nid, frm, detail_flag))
+        with service._connect() as connection:
+            connection.executemany(
+                "INSERT INTO frames (sequence, log_time, byte_length, raw_hex, "
+                "summary_json, nid, frm_type, assess_detail) "
+                "VALUES (?, ?, 64, ?, ?, ?, ?, ?)",
+                materialized,
+            )
+        return service
+
+    def _two_network_rows(self):
+        """双网络（NID 0x947F69 周期 3s / NID 0x000456 周期 5s）+ 尾帧拉出 3h 会话。"""
+        rows = []
+        for i in range(12):
+            rows.append((_clock(8 * 3600 + i * 3),
+                         _beacon_hex(nid=0x947F69, cnt=i),
+                         _summary(frm_type="中央信标", detail=SLOT_DETAIL)))
+        for i in range(12):
+            rows.append((_clock(8 * 3600 + 1 + i * 5),
+                         _beacon_hex(nid=0x000456, cnt=i),
+                         _summary(nid_hex="000456", frm_type="中央信标",
+                                  detail=SLOT_DETAIL)))
+        # 中间填充普通帧（占帧型统计分母）
+        for i in range(60):
+            rows.append((_clock(8 * 3600 + 2 + i),
+                         _beacon_hex(nid=0x947F69, cnt=100 + i),
+                         _summary(frm_type="ACK")))
+        # 会话尾部帧：把权威时长拉到 >2h（帧本身稀疏）
+        rows.append((_clock(11 * 3600), _beacon_hex(nid=0x947F69, cnt=500),
+                     _summary(frm_type="ACK")))
+        return rows
+
+    def test_session_duration_gate_uses_authoritative_span(self):
+        """2h 门禁用首尾帧权威时长：帧统计仅覆盖开头几分钟也应启用稳定性。"""
+        service = self._service(self._two_network_rows())
+        result = service.list_beacon_periods()
+        self.assertGreater(result["session_duration_s"], 7200)
+        stability = result["networks"][0]["summary"]["stability"]
+        self.assertTrue(stability["enabled"])
+        self.assertIsNone(stability["reason"])
+
+    def test_sql_and_python_paths_agree(self):
+        """SQL 物化聚合路径与 Python 全量解码路径结果一致。"""
+        rows = self._two_network_rows()
+        service = self._service(rows)
+        sql_result = service.list_beacon_periods()
+        self.assertEqual(sql_result["engine"], "sql")
+
+        from listener import network_assessment
+        py_rows = list(service._iter_full_frame_rows())
+        py_result = network_assessment.assess_by_network_stream(
+            py_rows, session_duration_s=service._session_duration_s(),
+            engine="python",
+        )
+
+        def snapshot(data):
+            return {
+                n["nid"]: {
+                    "period": n["beacon_period_ms"],
+                    "method": n["scan_method"],
+                    "mac": n["cco_mac"],
+                    "frames": n["frame_count"],
+                    "cycles": len(n["cycles"]),
+                    "overall": n["summary"]["overall_health"],
+                    "stability_enabled": n["summary"]["stability"]["enabled"],
+                }
+                for n in data["networks"]
+            }
+
+        self.assertEqual(snapshot(sql_result), snapshot(py_result))
+
+    def test_nid_filter_hex_and_decimal(self):
+        """NID 过滤兼容十进制（卡片显示）与十六进制（SNID 习惯）写法。"""
+        service = self._service(self._two_network_rows())
+        by_dec = service.list_beacon_periods(nid=str(0x947F69))
+        self.assertEqual([n["nid"] for n in by_dec["networks"]], [0x947F69])
+        by_hex = service.list_beacon_periods(nid="947F69")
+        self.assertEqual([n["nid"] for n in by_hex["networks"]], [0x947F69])
+        self.assertEqual(service.resolve_assessment_nid(str(0x947F69)), 0x947F69)
+        self.assertEqual(service.resolve_assessment_nid("947F69"), 0x947F69)
+
+    def test_nid_filter_excludes_other_networks(self):
+        """NID 过滤后其他网络的帧不进入统计（严格分网）。"""
+        service = self._service(self._two_network_rows())
+        result = service.list_beacon_periods(nid="000456")
+        self.assertEqual(len(result["networks"]), 1)
+        self.assertEqual(result["networks"][0]["nid"], 0x000456)
+
+    def test_backfill_materializes_legacy_rows(self):
+        """存量库回填：nid 取 SNID hex、frm_type/assess_detail 取 summary 标记。"""
+        rows = [
+            ("08:00:00.000", _beacon_hex(nid=0x947F69, cnt=0), _summary(detail=SLOT_DETAIL)),
+            ("08:00:03.000", _beacon_hex(nid=0x947F69, cnt=1), None),
+            ("08:00:06.000", _beacon_hex(nid=0x947F69, cnt=2), _summary(frm_type="ACK")),
+        ]
+        service = self._service(rows)
+        with service._connect() as connection:
+            connection.execute(
+                "UPDATE frames SET nid = NULL, frm_type = NULL, assess_detail = NULL"
+            )
+        worker = service.request_backfill()
+        if worker is not None:
+            worker.join(timeout=30)
+        state = _BACKFILL_STATE[str(service.database_path)]
+        self.assertTrue(state["done"], state["error"])
+        with service._connect() as connection:
+            rows_db = connection.execute(
+                "SELECT nid, frm_type, assess_detail FROM frames ORDER BY id"
+            ).fetchall()
+        self.assertEqual(rows_db[0]["nid"], 0x947F69)
+        self.assertEqual(rows_db[0]["frm_type"], "ACK")
+        self.assertEqual(rows_db[0]["assess_detail"], 1)
+        # 无 summary 的行：nid 走 FCH 解码兜底，frm/assess_detail 保持空/0
+        self.assertEqual(rows_db[1]["nid"], 0x947F69)
+        self.assertIsNone(rows_db[1]["frm_type"])
+        self.assertEqual(rows_db[1]["assess_detail"], 0)
+        self.assertEqual(rows_db[2]["assess_detail"], 0)
 
 
 if __name__ == "__main__":

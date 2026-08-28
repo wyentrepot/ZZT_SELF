@@ -21,7 +21,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from listener.log_service import LogFileService
+from listener.log_service import LogFileService, _BACKFILL_STATE
 
 
 def _make_service(tmp_path: Path, n: int = 50_000) -> LogFileService:
@@ -121,4 +121,39 @@ class TestQueryPerfBaseline:
         svc = _make_service(tmp_path)
         ms = _ms(lambda: svc.list_frames(limit=500, offset=0, nid="0001"))
         assert ms < 300, f"nid 筛选过慢：{ms:.1f}ms"
+        svc.close()
+class TestAssessmentPerfBaseline:
+    """网络承载评估（全量分析）性能基线：防止管线退化为多趟重复处理。
+
+    参考：真实 53.6 万帧 / 9h50m 库实测 Python 全量解码路径 14s、SQL 物化
+    聚合路径 6s。这里用 5 万行合成数据按比例给宽松上界（CI 降速余量 10x）。
+    """
+
+    def test_sql_path_full_assessment(self, tmp_path):
+        """SQL 物化聚合路径全量评估：应 < 8s @ 5万行（实测比例 0.6s）。"""
+        svc = _make_service(tmp_path, 50_000)
+        with svc._connect() as conn:
+            conn.execute(
+                "UPDATE frames SET nid = 0x947F69, "
+                "frm_type = CASE id % 7 WHEN 0 THEN '中央信标' ELSE 'ACK' END, "
+                "assess_detail = CASE id % 7 WHEN 0 THEN 1 ELSE 0 END"
+            )
+            conn.commit()
+        _BACKFILL_STATE[str(svc.database_path)] = {
+            "running": False, "done": True, "error": None,
+        }
+        seconds = _ms(lambda: svc.list_beacon_periods()) / 1000
+        assert seconds < 8, f"SQL 全量评估过慢：{seconds:.1f}s"
+        svc.close()
+
+    def test_python_path_full_assessment(self, tmp_path):
+        """Python 全量解码路径评估：应 < 20s @ 5万行（实测比例 1.3s）。"""
+        from listener import network_assessment
+
+        svc = _make_service(tmp_path, 50_000)
+        rows = list(svc._iter_full_frame_rows())
+        seconds = _ms(
+            lambda: network_assessment.assess_by_network_stream(iter(rows))
+        ) / 1000
+        assert seconds < 20, f"Python 全量评估过慢：{seconds:.1f}s"
         svc.close()

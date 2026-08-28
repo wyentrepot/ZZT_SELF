@@ -653,5 +653,150 @@ class SlotAndRouteChannelDimensionTests(unittest.TestCase):
         self.assertFalse(network["summary"]["route_channel"]["enabled"])
 
 
+class StreamPipelineTests(unittest.TestCase):
+    """单趟流式管线：unassigned 透出、权威时长门禁、summary SNID 优先。"""
+
+    def test_unresolvable_frames_not_mixed_into_networks(self):
+        """NID 无法识别的帧不归属任何网络，单独计入 unassigned。"""
+        frames = [
+            {"log_time": "08:00:00.000", "raw_hex": build_central_beacon(nid=0x947F69, cnt=0)},
+            {"log_time": "08:00:03.000", "raw_hex": "7E 00 7E"},  # 解析失败的帧
+            {"log_time": "08:00:04.000", "raw_hex": build_gw_frame(nid=0x947F69)},
+        ]
+        result = na.assess_by_network_stream(frames)
+        self.assertEqual(len(result["networks"]), 1)
+        self.assertEqual(result["networks"][0]["frame_count"], 2)
+        self.assertEqual(result["unassigned_frame_count"], 1)
+        self.assertEqual(result["frame_total"], 3)
+
+    def test_session_duration_enables_stability_gate(self):
+        """session_duration_s 权威时长优先于帧跨度：短帧流 + 长会话 → 启用。"""
+        frames = []
+        for i in range(8):
+            frames.append({
+                "log_time": f"08:0{i}:00.000",
+                "raw_hex": build_gw_frame(nid=0x947F69),
+                "summary_json": json.dumps({"FrmType": "代理变更请求", "SNID": "00947F69"}),
+            })
+        fallback = na.assess_by_network_stream(iter(frames))
+        self.assertEqual(fallback["networks"][0]["summary"]["stability"]["enabled"], False)
+        self.assertEqual(fallback["networks"][0]["summary"]["stability"]["reason"],
+                         "log_too_short")
+
+        forced = na.assess_by_network_stream(
+            iter(frames), session_duration_s=3 * 3600
+        )
+        stability = forced["networks"][0]["summary"]["stability"]
+        self.assertEqual(stability["enabled"], True)
+        self.assertEqual(forced["session_duration_s"], 3 * 3600)
+        # 启用后按占比判级：全部为代理变更请求帧应降级
+        self.assertEqual(stability["level"], na.DEGRADED)
+
+    def test_summary_snid_takes_priority_over_fch(self):
+        """NID 解析以 summary 的 SNID（DLL 权威）优先，缺失时 FCH 兜底。"""
+        # SNID 与 FCH 不一致时按 SNID 归网
+        frames = [{
+            "log_time": "08:00:00.000",
+            "raw_hex": build_gw_frame(nid=0x111111),
+            "summary_json": json.dumps({"FrmType": "ACK", "SNID": "00947F69"}),
+        }]
+        result = na.assess_by_network_stream(frames)
+        self.assertEqual([n["nid"] for n in result["networks"]], [0x947F69])
+        # 无 summary 时 FCH 兜底
+        frames = [{"log_time": "08:00:00.000", "raw_hex": build_gw_frame(nid=0x222222)}]
+        result = na.assess_by_network_stream(frames)
+        self.assertEqual([n["nid"] for n in result["networks"]], [0x222222])
+
+    def test_nid_filter_excludes_frames_of_other_networks(self):
+        """nid_filter 只统计指定网络，被排除帧计入 filtered_frame_count。"""
+        frames = [
+            {"log_time": "08:00:00.000", "raw_hex": build_gw_frame(nid=0x000456),
+             "summary_json": json.dumps({"FrmType": "ACK", "SNID": "000456"})},
+            {"log_time": "08:00:01.000", "raw_hex": build_gw_frame(nid=0x947F69),
+             "summary_json": json.dumps({"FrmType": "ACK", "SNID": "00947F69"})},
+        ]
+        result = na.assess_by_network_stream(iter(frames), nid_filter=0x947F69)
+        self.assertEqual([n["nid"] for n in result["networks"]], [0x947F69])
+        self.assertEqual(result["filtered_frame_count"], 1)
+
+    def test_aggregate_entry_matches_stream_entry(self):
+        """SQL 物化聚合入口与流式入口在同源数据上产出一致。"""
+        import itertools
+        stream_frames = []
+        for i in range(12):
+            seconds = 8 * 3600 + i * 3
+            t = f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}.000"
+            stream_frames.append({
+                "log_time": t,
+                "raw_hex": build_central_beacon(nid=0x947F69, cnt=i),
+                "summary_json": json.dumps({
+                    "FrmType": "中央信标", "SNID": "00947F69",
+                    "Detail": "时隙分配[信标周期3000ms 信标时隙长度16ms "
+                              "RF信标时隙长度16ms CSMA时隙大小500ms]",
+                }),
+            })
+        for i in range(30):
+            seconds = 8 * 3600 + 2 + i
+            t = f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}.000"
+            stream_frames.append({
+                "log_time": t,
+                "raw_hex": build_gw_frame(nid=0x947F69),
+                "summary_json": json.dumps({"FrmType": "ACK", "SNID": "00947F69"}),
+            })
+
+        stream_result = na.assess_by_network_stream(
+            iter(stream_frames), session_duration_s=7200.0
+        )
+
+        counts = {}
+        for f in stream_frames:
+            data = json.loads(f["summary_json"])
+            counts[data["FrmType"]] = counts.get(data["FrmType"], 0) + 1
+        counts_rows = [(0x947F69, frm, cnt) for frm, cnt in counts.items()]
+        # 按 SQL loader 行形状：物化列 nid/frm_type 随行提供
+        detail_rows = [
+            {"log_time": f["log_time"], "nid": 0x947F69, "frm_type": "中央信标",
+             "raw_hex": f["raw_hex"], "summary_json": f["summary_json"]}
+            for f in stream_frames
+            if "Detail" in json.loads(f["summary_json"])
+        ]
+        central_rows = [
+            {"log_time": f["log_time"], "raw_hex": f["raw_hex"]}
+            for f in stream_frames
+            if "Detail" in json.loads(f["summary_json"])
+        ]
+
+        def bucket_rows(period):
+            # 与流式分桶同规则：绝对毫秒取模分桶（数据在同一天内）
+            agg = {}
+            for f in stream_frames:
+                clock = na._clock_ms(f["log_time"])
+                bucket = clock - (clock % period)
+                frm = json.loads(f["summary_json"])["FrmType"]
+                key = (frm, bucket)
+                agg[key] = agg.get(key, 0) + 1
+            return [(0x947F69, frm, bucket, cnt) for (frm, bucket), cnt in agg.items()]
+
+        agg_result = na.assess_by_network_aggregate(
+            counts_rows, detail_rows, central_rows=central_rows,
+            bucket_rows_fn=bucket_rows, session_duration_s=7200.0,
+            frame_total=len(stream_frames), unassigned_total=0,
+        )
+
+        def snapshot(data):
+            net = data["networks"][0]
+            return {
+                "period": net["beacon_period_ms"],
+                "method": net["scan_method"],
+                "mac": net["cco_mac"],
+                "frames": net["frame_count"],
+                "cycles": len(net["cycles"]),
+                "overall": net["summary"]["overall_health"],
+                "cycle_frames": sum(c["frame_count"] for c in net["cycles"]),
+            }
+
+        self.assertEqual(snapshot(stream_result), snapshot(agg_result))
+
+
 if __name__ == "__main__":
     unittest.main()

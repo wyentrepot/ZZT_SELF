@@ -1582,6 +1582,25 @@ async function fetchNetwork(url) {
 
 function setNetworkLoading(loading) {
   networkElements.view.querySelector(".list-panel")?.classList.toggle("is-loading", loading);
+  if (networkElements.refresh) networkElements.refresh.disabled = loading;
+  if (networkElements.assessment) {
+    networkElements.assessment.disabled = loading;
+    if (loading) {
+      networkElements.assessment.dataset.label = networkElements.assessment.textContent;
+      networkElements.assessment.textContent = "全量分析中…";
+    } else if (networkElements.assessment.dataset.label) {
+      networkElements.assessment.textContent = networkElements.assessment.dataset.label;
+      delete networkElements.assessment.dataset.label;
+    }
+  }
+}
+
+// 评估提示（非错误）：全量分析进度 / 未识别网络帧等中性信息
+function showNetworkNote(message) {
+  const note = document.getElementById("network-note");
+  if (!note) return;
+  note.textContent = message || "";
+  note.hidden = !message;
 }
 
 function showNetworkError(message) {
@@ -1671,12 +1690,9 @@ function formatPercent(value) {
   return `${n.toFixed(1)}%`;
 }
 
-// 比例（0~1）→ 百分数：assoc_ratio / proxy_change_ratio 后端以小数返回
+// 比例显示：assoc_ratio / proxy_change_ratio 后端返回的就是百分数（如 6.75 表示 6.75%）
 function formatRatio(value) {
-  if (value === null || value === undefined || value === "") return "—";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
-  return `${(n * 100).toFixed(1)}%`;
+  return formatPercent(value);
 }
 
 function formatFrameRate(value) {
@@ -1992,12 +2008,21 @@ function drawSuccessRateChart(cycles) {
   ctx.fillText(lastCycle.end_time || lastCycle.start_time || "", pad.left + plotW, pad.top + plotH + 7);
 }
 
+// 网络承载评估请求参数：与全局 NID/时间过滤联动（适用于所有分析）
+function networkRequestParams() {
+  return new URLSearchParams({
+    nid: state.nid || "",
+    start_time: state.startTime || "",
+    end_time: state.endTime || "",
+  });
+}
+
 async function loadNetworkStatus() {
   if (!networkElements.view) return;
   networkElements.error.hidden = true;
   setNetworkLoading(true);
   try {
-    renderNetworkSnapshot(await fetchNetwork("/api/network/status"));
+    renderNetworkSnapshot(await fetchNetwork(`/api/network/status?${networkRequestParams()}`));
   } catch (error) {
     if (error.status === 503) showNetworkNotReady();
     else showNetworkError(`快照加载失败：${error.message}`);
@@ -2008,10 +2033,19 @@ async function loadNetworkStatus() {
 
 async function loadNetworkAssessment() {
   networkElements.error.hidden = true;
+  showNetworkNote("全量分析中：所有帧参与统计，大日志首次分析需要数十秒（后台会同时建立分析索引，之后提速）…");
   setNetworkLoading(true);
   try {
-    renderNetworkAssessment(await fetchNetwork("/api/network/assessment"));
+    const data = await fetchNetwork(`/api/network/assessment?${networkRequestParams()}`);
+    renderNetworkAssessment(data);
+    const extras = [];
+    if (data.engine === "python") extras.push("本轮为 Python 全量解码路径，分析索引建立完成后将自动提速");
+    if (data.unassigned_frame_count > 0) {
+      extras.push(`${data.unassigned_frame_count.toLocaleString()} 帧 NID 无法识别，未计入任何网络`);
+    }
+    showNetworkNote(extras.join("；"));
   } catch (error) {
+    showNetworkNote("");
     if (error.status === 503) showNetworkNotReady();
     else showNetworkError(`详细评估加载失败：${error.message}`);
   } finally {
