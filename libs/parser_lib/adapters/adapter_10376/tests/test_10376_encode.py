@@ -138,8 +138,7 @@ def test_11f231_invalid_meter_type_rejected():
                                     "items": [{"meter_type": 9, "item": "04000201",
                                                "reply_len": 4}]})  # meter_type 越界
 
-
-
+def test_11f231_build_decode_roundtrip():
     """编码 → 完整帧 → decode 回读 AFN/FN/应用数据一致。"""
     params = {
         "task_no": 3, "action": "enable", "protocol": 3, "cycle_min": 1,
@@ -160,9 +159,15 @@ def test_11f231_invalid_meter_type_rejected():
 
 def test_unsupported_fn_raises():
     with pytest.raises(UnsupportedFn):
-        encode_app_data(0x05, 10, {})  # 设置双模串口速率：本轮不建模板
+        encode_app_data(0x05, 10, {})  # 05H 无 F10（非标准数据单元标识）
     with pytest.raises(UnsupportedFn):
-        encode_app_data(0x02, 1, {})
+        encode_app_data(0x07, 1, {})  # 备用 AFN
+
+
+def test_standard_fn_now_supported_requires_params():
+    """全覆盖后 (0x02,1) 已支持：缺必填参数报 ValueError 而非 UnsupportedFn。"""
+    with pytest.raises(ValueError):
+        encode_app_data(0x02, 1, {})  # 缺 payload
 
 
 def test_invalid_params_rejected():

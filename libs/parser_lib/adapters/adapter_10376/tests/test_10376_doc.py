@@ -97,15 +97,25 @@ def test_doc_10376_pause_route(adapter):
 
 
 def test_doc_10376_concurrent_meter_reading(adapter):
-    """§并发抄表（AFN=F1H）— 含 2 个嵌套 645 帧。"""
+    """§并发抄表（AFN=F1H）— 含 2 个嵌套 645 帧。
+
+    文档 §4.15 下行格式：规约类型(1B) + 保留(1B) + 报文长度L(2B 小端) + DATA。
+    """
+    payload = _f645() + _f645()
     frame = build_frame(afn=0xF1, fn=1, direction="down",
-                        appdata=bytes([0x02, 0x0A]) + _f645() + _f645())
+                        appdata=bytes([0x02, 0x00]) + len(payload).to_bytes(2, "little")
+                        + payload)
     fr = adapter.decode(frame)
     assert fr.structure == "1376.2"
     afn = _item(fr, "AFN")
     assert afn is not None and "并发抄表" in str(afn.value)
     assert len(fr.nested) == 2
     assert all(n.structure == "645" for n in fr.nested)
+    # 字段级解析（§4.15 下行）
+    assert _item(fr, "规约类型") is not None
+    assert _item(fr, "保留") is not None
+    ln = _item(fr, "报文长度")
+    assert ln is not None and ln.value == f"{len(payload)}B"
 
 
 def test_doc_10376_route_query(adapter):

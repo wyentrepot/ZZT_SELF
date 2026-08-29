@@ -60,6 +60,32 @@ _DEVICE_TYPE_NAMES = {
     0x05: "微功率+HPLC通信单元", 0x06: "微功率+窄带通信单元",
 }
 
+# 05H-F3 广播控制字（03H=相位识别功能，与通用协议类型表不同）
+_BROADCAST_CTRL_NAMES = {0x00: "透明传输", 0x01: "DL/T 645—1997",
+                         0x02: "DL/T 645—2007", 0x03: "相位识别功能"}
+# 宽带载波频段（03H-F16 上行 / 05H-F16 下行）
+_BAND_NAMES = {0: "1.953~11.96MHz", 1: "2.441~5.615MHz",
+               2: "0.781~2.930MHz", 3: "1.758~2.930MHz"}
+# 无线主节点发射功率（03H-F8 上行 / 05H-F5 下行，255=保持不变）
+_POWER_NAMES = {0: "最高", 1: "次高", 2: "次低", 3: "最低"}
+# 10H-F4 路由工作步骤
+_WORK_STEP_NAMES = {1: "初始", 2: "直抄", 3: "中继", 4: "监控",
+                    5: "广播", 6: "广播召读", 7: "读侦听", 8: "空闲"}
+# 10H-F21 HPLC 节点角色（拓扑信息高4位）
+_NODE_ROLE_NAMES = {0x0: "无效", 0x1: "末梢节点STA", 0x2: "代理节点PCO", 0x4: "主节点CCO"}
+# 10H-F40 流水线查询设备类型
+_PIPELINE_DEV_NAMES = {1: "抄控器", 2: "CCO", 3: "电表通信单元", 4: "中继器",
+                       5: "II型采集器", 6: "I型采集器", 7: "三相表通信单元"}
+# 15H-F1 文件标识
+_FILE_ID_NAMES = {0x00: "清除下装文件", 0x03: "本地通信模块升级文件",
+                  0x07: "主节点和子节点模块升级", 0x08: "子节点模块升级"}
+# 模块ID号格式（03H-F12 / 10H-F7）
+_ID_FORMAT_NAMES = {0: "组合格式", 1: "BCD", 2: "BIN", 3: "ASCII"}
+# 06H-F3 路由工作任务变动类型
+_ROUTE_TASK_CHANGE = {1: "抄表任务结束", 2: "搜表任务结束", 3: "台区识别任务结束"}
+# 06H-F5 停复电事件类型（通信协议类型=04H）
+_POWER_EVENT_NAMES = {1: "停电事件", 2: "复电事件"}
+
 # 嵌套适配器懒加载缓存
 _nested = None
 
@@ -280,37 +306,64 @@ def _parse_address(data: bytes) -> dict:
 # 应用数据解析（按 AFN/Fn 解析数据单元，填入 items）
 # ---------------------------------------------------------------------------
 
-def _app_items(afn: int, fn: int, data: bytes) -> list:
-    """按 AFN/Fn 解析应用数据单元为 DataField 列表（可空）。"""
+def _proto_name(proto: int) -> str:
+    return f"0x{proto:02X} ({_PROTOCOL_TYPE_NAMES.get(proto, '保留')})"
+
+
+def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
+    """按 AFN/Fn 解析应用数据单元为 DataField 列表（可空）。
+
+    全量覆盖 Q/GDW 10376.2—2019 §4/§5 定义的 73 个 Fn（AFN=F0H 厂家自定义
+    及 10H-F104 上行格式文档未给出，以原始 hex 展示）。双向格式不同的 Fn
+    按 direction 分别解析。多字节 BIN 一律小端（标准备注1：低字节在前）。
+    """
+    up = direction == "up"
     items = []
 
     def add(name, value, hex_str="", desc=""):
         items.append(DataField(name=name, value=value, hex=hex_str,
                                raw=value, desc=desc))
 
-    # AFN=00H 确认/否认
+    def le16(b):
+        return b[0] | (b[1] << 8)
+
+    def rate_text(b) -> str:
+        w = b[0] | (b[1] << 8)
+        return f"{w & 0x7FFF} ({'kbps' if w >> 15 else 'bps'})"
+
+    def decode_id(b: bytes, fmt: int) -> str:
+        if fmt == 1:
+            return _bcd_to_str(b)
+        if fmt == 3:
+            return b.decode("ascii", "replace")
+        return b.hex()  # 0=组合 / 2=BIN
+
+    # AFN=00H 确认/否认（上行应答）
     if afn == 0x00:
         if fn == 1 and len(data) >= 6:
             ch_status = data[0:4]
-            wait = (data[4] << 8) | data[5]
+            wait = le16(data[4:6])
             cmd_state = "已处理" if (ch_status[0] >> 7) & 1 else "未处理"
-            add("命令状态", cmd_state, ch_status.hex(), "确认/否认帧")
-            add("信道状态", ch_status.hex(), ch_status.hex(), "1~31信道忙闲")
+            add("命令状态", cmd_state, ch_status.hex(), "确认帧 D7=命令状态")
+            add("信道状态", ch_status.hex(), ch_status.hex(), "1~31信道忙闲位图")
             add("等待时间", f"{wait}s", f"{wait:04X}", "等待时间(秒)")
         elif fn == 2 and len(data) >= 1:
             err = data[0]
             add("错误状态字", f"{err} ({_DENY_ERROR_NAMES.get(err, '保留')})",
                 f"{err:02X}", "否认原因")
-    # AFN=01H 初始化：无数据单元
+    # AFN=01H 初始化：F1/F2/F3 均无数据单元
+    elif afn == 0x01:
+        add("初始化命令",
+            {1: "硬件初始化(复位)", 2: "参数区初始化(清除从节点档案)",
+             3: "数据区初始化(清除从节点通信信息)"}.get(fn, f"F{fn}"),
+            "", "无数据单元")
+    # AFN=02H 数据转发 F1：通信协议类型(1B) + 报文长度L(1B) + 报文内容(L)，上下行同构
     elif afn == 0x02:
-        # 数据转发 F1：通信协议类型(1B) + 报文长度L(1B) + 报文内容(L)
         if fn == 1 and len(data) >= 2:
-            proto = data[0]
-            plen = data[1]
+            proto, plen = data[0], data[1]
             payload = data[2:2 + plen]
-            add("通信协议类型",
-                f"0x{proto:02X} ({_PROTOCOL_TYPE_NAMES.get(proto, '保留')})",
-                f"{proto:02X}", "转发帧承载的协议类型")
+            add("通信协议类型", _proto_name(proto), f"{proto:02X}",
+                "转发帧承载的协议类型")
             add("报文长度", f"{plen}B", f"{plen:02X}", "转发报文长度")
             add("转发报文", payload.hex(), payload.hex(),
                 "转发内容（内嵌645/698，递归解析）")
@@ -326,40 +379,162 @@ def _app_items(afn: int, fn: int, data: bytes) -> list:
             add("版本", f"V{ver[0]:02X}.{ver[1]:02X}", ver.hex())
         elif fn == 2 and len(data) >= 1:
             add("噪声强度", f"{data[0] & 0x0F} (0~15)", f"{data[0]:02X}")
+        elif fn == 3 and len(data) >= 2:
+            if not up:  # 下行：开始节点指针 + 数量(N≤16)
+                add("开始节点指针", f"{data[0]}", f"{data[0]:02X}")
+                add("读取节点的数量", f"{data[1]}", f"{data[1]:02X}", "N≤16")
+            else:  # 上行：总数量 + 本帧数量 + 每节点(地址6B+品质/中继1B+侦听次数1B)
+                add("侦听到的从节点总数量", f"{data[0]}", f"{data[0]:02X}")
+                n = data[1]
+                add("本帧传输的从节点数量", f"{n}", f"{n:02X}")
+                pos = 2
+                for i in range(n):
+                    if pos + 8 > len(data):
+                        break
+                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                        data[pos:pos + 6].hex())
+                    q = data[pos + 6]
+                    add(f"从节点{i + 1}信号品质", f"{q >> 4}", f"{q:02X}", "高4位")
+                    add(f"从节点{i + 1}中继级别", f"{q & 0x0F}", "", "低4位")
+                    add(f"从节点{i + 1}侦听次数", f"{data[pos + 7]}",
+                        f"{data[pos + 7]:02X}")
+                    pos += 8
         elif fn == 4 and len(data) >= 6:
             add("主节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
-        elif fn == 5 and len(data) >= 4:
-            add("主节点状态字", data[0:2].hex(), data[0:2].hex())
-            add("通信速率", f"{data[2]:02X} {data[3]:02X}", data[2:4].hex())
+        elif fn == 5 and len(data) >= 2:
+            st = data[0]
+            n = st & 0x0F
+            add("主节点状态字", data[0:2].hex(), data[0:2].hex(),
+                f"周期抄表模式={(st >> 6) & 0x3} 主节点信道特征={(st >> 4) & 0x3}"
+                f" 速率数量={n} 信道数量={data[1] & 0x0F}")
+            pos = 2
+            for i in range(n):
+                if pos + 2 > len(data):
+                    break
+                add(f"通信速率{i + 1}", rate_text(data[pos:pos + 2]),
+                    data[pos:pos + 2].hex(), "D15=速率单位标识(kbps/bps)")
+                pos += 2
+        elif fn == 6 and len(data) >= 1:
+            if not up:
+                add("持续时间", f"{data[0]}min", f"{data[0]:02X}", "干扰持续时间")
+            else:
+                add("干扰状态", "有干扰" if data[0] else "无干扰", f"{data[0]:02X}")
+        elif fn == 7 and len(data) >= 1:
+            add("最大超时时间", f"{data[0]}s", f"{data[0]:02X}",
+                "从节点监控最大超时时间")
         elif fn == 8 and len(data) >= 2:
             add("无线信道组", f"{data[0]}", f"{data[0]:02X}")
             add("无线主节点发射功率", f"{data[1]}", f"{data[1]:02X}")
+        elif fn == 9 and len(data) >= 2:
+            if not up:
+                proto, plen = data[0], data[1]
+                add("通信协议类型", _proto_name(proto), f"{proto:02X}")
+                add("报文长度", f"{plen}B", f"{plen:02X}")
+                add("报文内容", data[2:2 + plen].hex(), data[2:2 + plen].hex(),
+                    "广播报文内容")
+            else:
+                add("广播通信延迟时间", f"{le16(data[0:2])}s",
+                    data[0:2].hex(), "BIN 2B 小端")
+                if len(data) >= 4:
+                    proto, plen = data[2], data[3]
+                    add("通信协议类型", _proto_name(proto), f"{proto:02X}")
+                    add("报文长度", f"{plen}B", f"{plen:02X}")
+                    add("报文内容", data[4:4 + plen].hex(), data[4:4 + plen].hex())
         elif fn == 10 and len(data) >= 6:
             add("本地通信模式字", data[0:6].hex(), data[0:6].hex())
-    # AFN=05H 控制命令
+            if len(data) >= 39:
+                d = data
+                add("从节点监控最大超时时间", f"{d[6]}s", f"{d[6]:02X}")
+                add("广播命令最大超时时间", f"{le16(d[7:9])}s", d[7:9].hex())
+                add("最大支持的报文长度", f"{le16(d[9:11])}B", d[9:11].hex())
+                add("文件传输最大单包长度", f"{le16(d[11:13])}B", d[11:13].hex())
+                add("升级操作等待时间", f"{d[13]}s", f"{d[13]:02X}")
+                add("主节点地址", _bcd_to_str(d[14:20]), d[14:20].hex())
+                add("支持的最大从节点数量", f"{le16(d[20:22])}", d[20:22].hex())
+                add("当前从节点数量", f"{le16(d[22:24])}", d[22:24].hex())
+                add("协议发布日期", f"20{_bcd_to_str(d[24:25])}-{_bcd_to_str(d[25:26])}"
+                    f"-{_bcd_to_str(d[26:27])}", d[24:27].hex(), "BCD YYMMDD")
+                add("协议最后备案日期", f"20{_bcd_to_str(d[27:28])}-{_bcd_to_str(d[28:29])}"
+                    f"-{_bcd_to_str(d[29:30])}", d[27:30].hex(), "BCD YYMMDD")
+                add("厂商代码及版本信息", d[30:39].hex(), d[30:39].hex(), "9B")
+                pos, i = 39, 1
+                while pos + 2 <= len(d):
+                    add(f"通信速率{i}", rate_text(d[pos:pos + 2]),
+                        d[pos:pos + 2].hex())
+                    pos += 2
+                    i += 1
+        elif fn == 11 and len(data) >= 1:
+            add("AFN功能码", f"0x{data[0]:02X}", f"{data[0]:02X}")
+            if up and len(data) >= 33:
+                bitmap = data[1:33]
+                supported = [i + 1 for i in range(255)
+                             if (bitmap[i >> 3] >> (i & 7)) & 1]
+                add("支持的数据单元",
+                    ",".join(f"F{x}" for x in supported) or "(无)",
+                    bitmap.hex(), "32B位图 D0=F1 D254=F255")
+        elif fn == 12 and len(data) >= 4:
+            add("模块厂商代码", data[0:2].decode("ascii", "replace"), data[0:2].hex())
+            idlen, idfmt = data[2], data[3]
+            add("模块ID号长度", f"{idlen}", f"{idlen:02X}")
+            add("模块ID号格式", _ID_FORMAT_NAMES.get(idfmt, f"保留({idfmt})"),
+                f"{idfmt:02X}")
+            mid = data[4:4 + idlen]
+            add("模块ID号", decode_id(mid, idfmt), mid.hex())
+        elif fn == 16 and len(data) >= 1:
+            add("宽带载波频段", f"{data[0]} ({_BAND_NAMES.get(data[0], '保留')})",
+                f"{data[0]:02X}")
+        elif fn == 100 and len(data) >= 1:
+            add("场强门限", f"{data[0]}", f"{data[0]:02X}", "取值50~120，默认96")
+    # AFN=04H 链路接口检测
+    elif afn == 0x04:
+        if fn == 1 and len(data) >= 1:
+            add("持续时间", "停止发送" if data[0] == 0 else f"{data[0]}s",
+                f"{data[0]:02X}", "0=停止发送；持续交替发送0和1")
+        elif fn == 2:
+            add("从节点点名", "(无数据单元)", "")
+        elif fn == 3 and len(data) >= 9:
+            add("测试通信速率", f"{data[0]}", f"{data[0]:02X}")
+            add("目标地址", _bcd_to_str(data[1:7]), data[1:7].hex())
+            add("通信协议类型", _proto_name(data[7]), f"{data[7]:02X}")
+            plen = data[8]
+            add("报文长度", f"{plen}B", f"{plen:02X}")
+            add("报文内容", data[9:9 + plen].hex(), data[9:9 + plen].hex())
+    # AFN=05H 控制命令（上行应答均为 00H 确认/否认）
     elif afn == 0x05:
         if fn == 1 and len(data) >= 6:
             add("主节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
         elif fn == 2 and len(data) >= 1:
             add("事件上报状态", "允许" if data[0] else "禁止", f"{data[0]:02X}")
         elif fn == 3 and len(data) >= 2:
-            ctrl = data[0]
-            plen = data[1]
-            payload = data[2:2 + plen]
-            add("控制字", f"0x{ctrl:02X} ({_PROTOCOL_TYPE_NAMES.get(ctrl, '相位识别')})",
+            ctrl, plen = data[0], data[1]
+            add("控制字", f"0x{ctrl:02X} ({_BROADCAST_CTRL_NAMES.get(ctrl, '保留')})",
                 f"{ctrl:02X}", "广播控制字")
             add("报文长度", f"{plen}B", f"{plen:02X}")
-            add("广播报文", payload.hex(), payload.hex())
+            add("广播报文", data[2:2 + plen].hex(), data[2:2 + plen].hex())
         elif fn == 4 and len(data) >= 1:
             add("最大超时时间", f"{data[0]}s", f"{data[0]:02X}")
+        elif fn == 5 and len(data) >= 2:
+            ch, pw = data[0], data[1]
+            ch_desc = "自动选择" if ch == 254 else "保持不变" if ch == 255 else f"{ch}组"
+            add("无线信道组", f"{ch} ({ch_desc})", f"{ch:02X}", "0~63组")
+            pw_desc = _POWER_NAMES.get(pw, "保持不变" if pw == 255 else "保留")
+            add("无线主节点发射功率", f"{pw} ({pw_desc})", f"{pw:02X}")
         elif fn == 6 and len(data) >= 1:
             add("台区识别使能", "允许" if data[0] else "禁止", f"{data[0]:02X}")
+        elif fn == 16 and len(data) >= 1:
+            add("宽带载波频段", f"{data[0]} ({_BAND_NAMES.get(data[0], '保留')})",
+                f"{data[0]:02X}")
+        elif fn == 100 and len(data) >= 1:
+            add("场强门限", f"{data[0]}", f"{data[0]:02X}", "取值50~120，默认96")
         elif fn == 101 and len(data) >= 6:
             sec, minute, hour, day, month, year = data[0:6]
             add("中心节点时间",
                 f"20{year:02X}-{month:02X}-{day:02X} {hour:02X}:{minute:02X}:{sec:02X}",
-                data[0:6].hex())
-    # AFN=06H 主动上报
+                data[0:6].hex(), "BCD 秒分时日月年")
+        elif fn == 200 and len(data) >= 1:
+            add("拒绝节点上报", "允许" if data[0] else "禁止", f"{data[0]:02X}",
+                "2019版扩展")
+    # AFN=06H 主动上报（上行）
     elif afn == 0x06:
         if fn == 1 and len(data) >= 1:
             n = data[0]
@@ -370,38 +545,476 @@ def _app_items(afn: int, fn: int, data: bytes) -> list:
                     break
                 add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
-                add(f"从节点{i + 1}协议类型",
-                    f"0x{data[pos + 6]:02X} ({_PROTOCOL_TYPE_NAMES.get(data[pos + 6], '保留')})",
+                add(f"从节点{i + 1}协议类型", _proto_name(data[pos + 6]),
                     f"{data[pos + 6]:02X}")
-                seq = (data[pos + 7] << 8) | data[pos + 8]
+                seq = le16(data[pos + 7:pos + 9])
                 add(f"从节点{i + 1}序号", f"{seq}", f"{seq:04X}")
                 pos += 9
         elif fn == 2 and len(data) >= 6:
-            seq = (data[0] << 8) | data[1]
+            seq = le16(data[0:2])
             proto = data[2]
-            up_len = (data[3] << 8) | data[4]
+            up_len = le16(data[3:5])
             plen = data[5]
             payload = data[6:6 + plen]
             add("从节点序号", f"{seq}", f"{seq:04X}")
-            add("通信协议类型",
-                f"0x{proto:02X} ({_PROTOCOL_TYPE_NAMES.get(proto, '保留')})", f"{proto:02X}")
+            add("通信协议类型", _proto_name(proto), f"{proto:02X}")
             add("上行时长", f"{up_len}s", f"{up_len:04X}")
             add("报文长度", f"{plen}B", f"{plen:02X}")
             add("上报报文", payload.hex(), payload.hex())
         elif fn == 3 and len(data) >= 1:
-            t = data[0]
-            names = {1: "抄表任务结束", 2: "搜表任务结束", 3: "台区识别任务结束"}
-            add("路由工作任务变动类型", names.get(t, f"保留({t})"), f"{t:02X}")
+            add("路由工作任务变动类型",
+                _ROUTE_TASK_CHANGE.get(data[0], f"保留({data[0]})"), f"{data[0]:02X}")
+        elif fn == 4 and len(data) >= 1:
+            n = data[0]
+            add("上报从节点数量", f"{n}", f"{n:02X}")
+            pos = 1
+            for i in range(n):
+                if pos + 11 > len(data):
+                    break
+                add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    data[pos:pos + 6].hex())
+                add(f"从节点{i + 1}协议类型", _proto_name(data[pos + 6]),
+                    f"{data[pos + 6]:02X}")
+                seq = le16(data[pos + 7:pos + 9])
+                add(f"从节点{i + 1}序号", f"{seq}", f"{seq:04X}")
+                add(f"从节点{i + 1}设备类型",
+                    f"0x{data[pos + 9]:02X} ({_DEVICE_TYPE_NAMES.get(data[pos + 9], '保留')})",
+                    f"{data[pos + 9]:02X}")
+                m = data[pos + 10]
+                add(f"从节点{i + 1}下接从节点数量", f"{m}", f"{m:02X}")
+                pos += 11
+                if m >= 1 and pos < len(data):
+                    mm = data[pos]
+                    add(f"从节点{i + 1}本帧传输节点数量", f"{mm}", f"{mm:02X}")
+                    pos += 1
+                    for j in range(mm):
+                        if pos + 7 > len(data):
+                            break
+                        add(f"从节点{i + 1}下接节点{j + 1}地址",
+                            _bcd_to_str(data[pos:pos + 6]), data[pos:pos + 6].hex())
+                        add(f"从节点{i + 1}下接节点{j + 1}协议类型",
+                            _proto_name(data[pos + 6]), f"{data[pos + 6]:02X}")
+                        pos += 7
+        elif fn == 5 and len(data) >= 3:
+            dt, proto, plen = data[0], data[1], data[2]
+            content = data[3:3 + plen]
+            add("从节点设备类型",
+                f"0x{dt:02X} ({_DEVICE_TYPE_NAMES.get(dt, '保留')})", f"{dt:02X}")
+            add("通信协议类型", _proto_name(proto), f"{proto:02X}")
+            add("报文长度", f"{plen}B", f"{plen:02X}")
+            if proto == 0x04 and content:  # 停复电事件
+                if dt == 0x00:  # 采集器停电：表地址6B(BIN) + 带电状态1B ×N
+                    add("事件类型", "采集器停电事件", "", "设备类型=00H")
+                    for i in range(len(content) // 7):
+                        base = i * 7
+                        add(f"电能表{i + 1}地址", content[base:base + 6].hex(),
+                            content[base:base + 6].hex())
+                        st = content[base + 6]
+                        add(f"电能表{i + 1}带电状态",
+                            "未停电" if st else "停电", f"{st:02X}")
+                else:
+                    ev = content[0]
+                    add("事件类型", _POWER_EVENT_NAMES.get(ev, f"保留({ev})"),
+                        f"{ev:02X}")
+                    addrs = content[1:]
+                    for i in range(len(addrs) // 6):
+                        add(f"通信单元{i + 1}地址",
+                            _bcd_to_str(addrs[i * 6:(i + 1) * 6]),
+                            addrs[i * 6:(i + 1) * 6].hex())
+            elif proto == 0x05 and content:  # 台区改切拒绝节点
+                n = content[0]
+                add("本次上报个数", f"{n}", f"{n:02X}", "n≤32")
+                for i in range(n):
+                    base = 1 + i * 7
+                    if base + 7 > len(content):
+                        break
+                    add(f"被拒节点{i + 1}地址", content[base:base + 6].hex(),
+                        content[base:base + 6].hex())
+                    add(f"被拒节点{i + 1}设备类型",
+                        f"0x{content[base + 6]:02X}", f"{content[base + 6]:02X}")
+            add("报文内容", content.hex(), content.hex(), "事件报文内容")
     # AFN=10H 路由查询
     elif afn == 0x10:
         if fn == 1 and len(data) >= 4:
-            add("从节点总数量", f"{(data[0] << 8) | data[1]}", data[0:2].hex())
-            add("路由支持最大从节点数量", f"{(data[2] << 8) | data[3]}", data[2:4].hex())
-        elif fn == 2 and len(data) >= 3:
-            start = (data[0] << 8) | data[1]
-            n = data[2]
-            add("从节点起始序号", f"{start}", f"{start:04X}")
+            add("从节点总数量", f"{le16(data[0:2])}", data[0:2].hex(), "BIN 2B 小端")
+            add("路由支持最大从节点数量", f"{le16(data[2:4])}", data[2:4].hex())
+        elif fn in (2, 5, 6) and len(data) >= 3:
+            name = {2: "从节点", 5: "未抄读成功从节点", 6: "主动注册从节点"}[fn]
+            if not up:
+                add(f"{name}起始序号", f"{le16(data[0:2])}", data[0:2].hex())
+                add(f"{name}数量", f"{data[2]}", f"{data[2]:02X}")
+            else:
+                add(f"{name}总数量", f"{le16(data[0:2])}", data[0:2].hex())
+                n = data[2]
+                add(f"本次应答的{name}数量", f"{n}", f"{n:02X}")
+                pos = 3
+                for i in range(n):
+                    if pos + 8 > len(data):
+                        break
+                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                        data[pos:pos + 6].hex())
+                    w = le16(data[pos + 6:pos + 8])
+                    add(f"从节点{i + 1}信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
+                        f"信号品质={(w >> 4) & 0xF} 中继级别={w & 0xF}"
+                        f" 相线={(w >> 8) & 0xF} 协议类型={(w >> 12) & 0x7}")
+                    pos += 8
+        elif fn == 3:
+            if not up and len(data) >= 6:
+                add("从节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+            elif up and len(data) >= 1:
+                n = data[0]
+                add("提供路由的从节点总数量", f"{n}", f"{n:02X}")
+                pos = 1
+                for i in range(n):
+                    if pos + 8 > len(data):
+                        break
+                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                        data[pos:pos + 6].hex())
+                    w = le16(data[pos + 6:pos + 8])
+                    add(f"从节点{i + 1}信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
+                        f"信号品质={(w >> 4) & 0xF} 中继级别={w & 0xF}")
+                    pos += 8
+        elif fn == 4 and len(data) >= 17:
+            st = data[0]
+            add("运行状态字", f"0x{st:02X}", f"{st:02X}",
+                f"纠错编码={(st >> 4) & 0xF} 上报事件={(st >> 3) & 1}"
+                f" 工作={(st >> 2) & 1} 路由完成={(st >> 1) & 1}")
+            add("从节点总数量", f"{le16(data[1:3])}", data[1:3].hex())
+            add("已抄从节点数量", f"{le16(data[3:5])}", data[3:5].hex())
+            add("中继抄到从节点数量", f"{le16(data[5:7])}", data[5:7].hex())
+            wk = data[7]
+            add("工作开关", f"0x{wk:02X}", f"{wk:02X}",
+                f"当前状态={ {0: '抄表', 1: '搜表', 2: '升级', 3: '其他'}[wk >> 6] }"
+                f" 台区识别={(wk >> 4) & 0x3} 上报事件={(wk >> 3) & 1}"
+                f" 注册允许={(wk >> 2) & 1} 工作状态={'学习' if (wk >> 1) & 1 else '抄表'}")
+            add("通信速率", rate_text(data[8:10]), data[8:10].hex())
+            for p in range(3):
+                add(f"第{p + 1}相中继级别", f"{data[10 + p]}", f"{data[10 + p]:02X}")
+            for p in range(3):
+                v = data[13 + p]
+                add(f"第{p + 1}相工作步骤",
+                    f"{v} ({_WORK_STEP_NAMES.get(v, '保留')})", f"{v:02X}")
+        elif fn == 7 and len(data) >= 3:
+            if not up:
+                add("从节点起始序号", f"{le16(data[0:2])}", data[0:2].hex())
+                add("从节点数量", f"{data[2]}", f"{data[2]:02X}")
+            else:
+                add("从节点总数量", f"{le16(data[0:2])}", data[0:2].hex())
+                n = data[2]
+                add("本次应答的从节点数量", f"{n}", f"{n:02X}")
+                pos = 3
+                for i in range(n):
+                    if pos + 11 > len(data):
+                        break
+                    add(f"从节点{i + 1}地址", data[pos:pos + 6].hex(),
+                        data[pos:pos + 6].hex(), "BIN 6B")
+                    nt = data[pos + 6]
+                    add(f"从节点{i + 1}节点类型", f"0x{nt:02X}", f"{nt:02X}",
+                        f"更新标识={(nt >> 7) & 1}"
+                        f" 模块类型={ {0: '电表模块', 1: '采集器模块', 15: '未知'}.get(nt & 0xF, nt & 0xF)}")
+                    add(f"从节点{i + 1}模块厂商代码",
+                        data[pos + 7:pos + 9].decode("ascii", "replace"),
+                        data[pos + 7:pos + 9].hex())
+                    idlen, idfmt = data[pos + 9], data[pos + 10]
+                    add(f"从节点{i + 1}模块ID号长度", f"{idlen}", f"{idlen:02X}")
+                    add(f"从节点{i + 1}模块ID号格式",
+                        _ID_FORMAT_NAMES.get(idfmt, f"保留({idfmt})"), f"{idfmt:02X}")
+                    mid = data[pos + 11:pos + 11 + idlen]
+                    add(f"从节点{i + 1}模块ID号", decode_id(mid, idfmt), mid.hex())
+                    pos += 11 + idlen
+        elif fn == 9 and len(data) >= 2:
+            add("网络规模", f"{le16(data[0:2])}", data[0:2].hex(), "HPLC")
+        elif fn == 21 and len(data) >= 3:
+            if not up:
+                add("节点起始序号", f"{le16(data[0:2])}", data[0:2].hex())
+                add("节点数量", f"{data[2]}", f"{data[2]:02X}")
+            else:
+                add("节点总数量", f"{le16(data[0:2])}", data[0:2].hex())
+                add("节点起始序号", f"{le16(data[2:4])}", data[2:4].hex())
+                n = data[4]
+                add("本次应答的节点数量", f"{n}", f"{n:02X}")
+                pos = 5
+                for i in range(n):
+                    if pos + 11 > len(data):
+                        break
+                    add(f"节点{i + 1}地址", data[pos:pos + 6].hex(),
+                        data[pos:pos + 6].hex(), "BIN 6B")
+                    tei = le16(data[pos + 6:pos + 8])
+                    proxy = le16(data[pos + 8:pos + 10])
+                    info = data[pos + 10]
+                    role = info >> 4
+                    add(f"节点{i + 1}TEI", f"{tei}", f"{tei:04X}", "节点标识")
+                    add(f"节点{i + 1}代理节点标识", f"{proxy}", f"{proxy:04X}")
+                    add(f"节点{i + 1}网络拓扑",
+                        f"层级={info & 0xF} 角色={_NODE_ROLE_NAMES.get(role, f'0x{role:X}')}",
+                        f"{info:02X}")
+                    pos += 11
+        elif fn == 31 and len(data) >= 3:
+            if not up:
+                add("节点起始序号", f"{le16(data[0:2])}", data[0:2].hex())
+                add("节点数量", f"{data[2]}", f"{data[2]:02X}")
+            else:
+                add("节点总数量", f"{le16(data[0:2])}", data[0:2].hex())
+                add("节点起始序号", f"{le16(data[2:4])}", data[2:4].hex())
+                n = data[4]
+                add("本次应答的节点数量", f"{n}", f"{n:02X}")
+                pos = 5
+                for i in range(n):
+                    if pos + 8 > len(data):
+                        break
+                    add(f"节点{i + 1}地址", data[pos:pos + 6].hex(),
+                        data[pos:pos + 6].hex(), "BIN 6B")
+                    w = le16(data[pos + 6:pos + 8])
+                    phases = "+".join(str(p + 1) for p in range(3) if (w >> p) & 1) or "无"
+                    add(f"节点{i + 1}相线信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
+                        f"相位={phases} 电表类型={'三相表' if (w >> 4) & 1 else '单相表'}"
+                        f" 线路异常={'有' if (w >> 5) & 1 else '无'}"
+                        f" 相序类型={(w >> 5) & 0x7}")
+                    pos += 8
+        elif fn == 40 and len(data) >= 8:
+            add("设备类型",
+                f"{data[0]} ({_PIPELINE_DEV_NAMES.get(data[0], '保留')})", f"{data[0]:02X}")
+            add("节点地址", data[1:7].hex(), data[1:7].hex(), "BIN 6B")
+            add("ID类型", f"{data[7]} ({ {1: '芯片ID(长度24)', 2: '模块ID(长度11)'}.get(data[7], '保留') })",
+                f"{data[7]:02X}")
+            if up and len(data) >= 9:
+                idlen = data[8]
+                add("ID长度", f"{idlen}", f"{idlen:02X}")
+                add("ID信息", data[9:9 + idlen].hex(), data[9:9 + idlen].hex())
+        elif fn == 100 and len(data) >= 2:
+            add("网络规模", f"{le16(data[0:2])}", data[0:2].hex(), "无线微功率")
+        elif fn == 101 and len(data) >= 3:
+            if not up:
+                add("从节点起始序号", f"{le16(data[0:2])}", data[0:2].hex())
+                add("从节点数量", f"{data[2]}", f"{data[2]:02X}")
+            else:
+                add("从节点总数量", f"{le16(data[0:2])}", data[0:2].hex())
+                n = data[2]
+                add("本次应答的从节点数量", f"{n}", f"{n:02X}")
+                pos = 3
+                for i in range(n):
+                    if pos + 11 > len(data):
+                        break
+                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                        data[pos:pos + 6].hex())
+                    w = le16(data[pos + 6:pos + 8])
+                    add(f"从节点{i + 1}信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
+                        f"信号品质={(w >> 4) & 0xF} 中继级别={w & 0xF}")
+                    add(f"从节点{i + 1}软件版本", data[pos + 8:pos + 11].hex(),
+                        data[pos + 8:pos + 11].hex())
+                    pos += 11
+        elif fn == 104 and data:
+            add("应用数据", data.hex(), data.hex(),
+                "查询升级后模块版本信息（蒸馏文档未给出格式，原始hex展示）")
+        elif fn == 111 and len(data) >= 10:
+            n = data[0]
+            add("多网络节点总数量", f"{n}", f"{n:02X}")
+            add("本节点网络标识号", f"{int.from_bytes(data[1:4], 'little')}",
+                data[1:4].hex(), "NID 3B 小端，1~16777215")
+            add("本节点主节点地址", data[4:10].hex(), data[4:10].hex(), "BIN 6B")
+            pos = 10
+            for i in range(max(n - 1, 0)):
+                if pos + 3 > len(data):
+                    break
+                add(f"邻居节点{i + 1}网络标识号",
+                    f"{int.from_bytes(data[pos:pos + 3], 'little')}",
+                    data[pos:pos + 3].hex())
+                pos += 3
+        elif fn == 112 and len(data) >= 3:
+            if not up:
+                add("节点起始序号", f"{le16(data[0:2])}", data[0:2].hex())
+                add("节点数量", f"{data[2]}", f"{data[2]:02X}")
+            else:
+                add("节点总数量", f"{le16(data[0:2])}", data[0:2].hex())
+                add("节点起始序号", f"{le16(data[2:4])}", data[2:4].hex())
+                n = data[4]
+                add("本次应答的节点数量", f"{n}", f"{n:02X}")
+                pos = 5
+                for i in range(n):
+                    if pos + 33 > len(data):
+                        break
+                    add(f"节点{i + 1}地址", data[pos:pos + 6].hex(),
+                        data[pos:pos + 6].hex(), "BIN 6B")
+                    add(f"节点{i + 1}设备类型",
+                        f"0x{data[pos + 6]:02X}", f"{data[pos + 6]:02X}")
+                    add(f"节点{i + 1}芯片ID信息", data[pos + 7:pos + 31].hex(),
+                        data[pos + 7:pos + 31].hex(), "24B")
+                    add(f"节点{i + 1}芯片软件版本", _bcd_to_str(data[pos + 31:pos + 33]),
+                        data[pos + 31:pos + 33].hex(), "BCD 2B")
+                    pos += 33
+    # AFN=11H 路由设置（上行应答均为 00H 确认/否认）
+    elif afn == 0x11:
+        if fn == 1 and len(data) >= 1:
+            n = data[0]
+            add("从节点数量/操作标志", f"{n}", f"{n:02X}",
+                "国网=从节点数量n；安徽扩展=1添加/0删除")
+            pos, i = 1, 0
+            while pos + 7 <= len(data):
+                i += 1
+                add(f"从节点{i}地址", _bcd_to_str(data[pos:pos + 6]),
+                    data[pos:pos + 6].hex())
+                add(f"从节点{i}通信协议类型", _proto_name(data[pos + 6]),
+                    f"{data[pos + 6]:02X}")
+                pos += 7
+        elif fn == 2 and len(data) >= 1:
+            n = data[0]
             add("从节点数量", f"{n}", f"{n:02X}")
+            for i in range(n):
+                pos = 1 + i * 6
+                if pos + 6 > len(data):
+                    break
+                add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    data[pos:pos + 6].hex())
+        elif fn == 3 and len(data) >= 7:
+            add("从节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+            lv = data[6]
+            add("中继级别", f"{lv}", f"{lv:02X}")
+            for i in range(lv):
+                pos = 7 + i * 6
+                if pos + 6 > len(data):
+                    break
+                add(f"第{i + 1}级中继从节点地址", _bcd_to_str(data[pos:pos + 6]),
+                    data[pos:pos + 6].hex())
+        elif fn == 4 and len(data) >= 3:
+            mode = data[0]
+            add("工作模式", f"0x{mode:02X}", f"{mode:02X}",
+                f"纠错编码={(mode >> 4) & 0xF} 注册允许={(mode >> 1) & 1}"
+                f" 工作状态={'学习' if mode & 1 else '抄表'}")
+            add("通信速率", rate_text(data[1:3]), data[1:3].hex(),
+                "D15=速率单位标识")
+        elif fn == 5 and len(data) >= 10:
+            add("开始时间", f"20{_bcd_to_str(data[5:6])}-{_bcd_to_str(data[4:5])}"
+                f"-{_bcd_to_str(data[3:4])} {_bcd_to_str(data[2:3])}:"
+                f"{_bcd_to_str(data[1:2])}:{_bcd_to_str(data[0:1])}",
+                data[0:6].hex(), "BCD 秒分时日月年")
+            add("持续时间", f"{le16(data[6:8])}min", data[6:8].hex())
+            add("从节点重发次数", f"{data[8]}", f"{data[8]:02X}")
+            add("随机等待时间片个数", f"{data[9]}", f"{data[9]:02X}", "时间片=150ms")
+        elif fn == 100 and len(data) >= 2:
+            add("网络规模", f"{le16(data[0:2])}", data[0:2].hex())
+        elif fn in (6, 101, 102):
+            add("路由设置命令",
+                {6: "终止从节点主动注册", 101: "启动网络维护进程",
+                 102: "启动组网"}[fn], "", "无数据单元")
+    # AFN=12H 路由控制：F1/F2/F3 均无数据单元
+    elif afn == 0x12:
+        add("路由控制命令", {1: "重启", 2: "暂停", 3: "恢复"}.get(fn, f"F{fn}"),
+            "", "无数据单元")
+    # AFN=13H 路由数据转发 F1 监控从节点
+    elif afn == 0x13 and fn == 1:
+        if not up and len(data) >= 3:
+            add("通信协议类型", _proto_name(data[0]), f"{data[0]:02X}")
+            add("通信延时相关性标志", "与延时相关" if data[1] else "与延时无关",
+                f"{data[1]:02X}")
+            n = data[2]
+            add("从节点附属节点数量", f"{n}", f"{n:02X}")
+            pos = 3
+            for i in range(n):
+                if pos + 6 > len(data):
+                    break
+                add(f"附属节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    data[pos:pos + 6].hex())
+                pos += 6
+            if pos < len(data):
+                plen = data[pos]
+                pos += 1
+                add("报文长度", f"{plen}B", f"{plen:02X}")
+                add("报文内容", data[pos:pos + plen].hex(), data[pos:pos + plen].hex(),
+                    "监控报文（内嵌645/698，递归解析）")
+        elif up and len(data) >= 4:
+            add("当前报文本地通信上行时长", f"{le16(data[0:2])}s", data[0:2].hex())
+            add("通信协议类型", _proto_name(data[2]), f"{data[2]:02X}")
+            plen = data[3]
+            add("报文长度", f"{plen}B", f"{plen:02X}")
+            add("报文内容", data[4:4 + plen].hex(), data[4:4 + plen].hex(),
+                "应答报文（内嵌645/698，递归解析）")
+    # AFN=14H 路由数据抄读
+    elif afn == 0x14:
+        if fn == 1:
+            if up and len(data) >= 9:
+                add("通信相位",
+                    {0: "未知相", 1: "第1相", 2: "第2相", 3: "第3相"}.get(data[0], f"保留({data[0]})"),
+                    f"{data[0]:02X}")
+                add("从节点地址", _bcd_to_str(data[1:7]), data[1:7].hex())
+                add("从节点序号", f"{le16(data[7:9])}", data[7:9].hex())
+            elif not up and len(data) >= 3:
+                flag = data[0]
+                add("抄读标志",
+                    {0: "抄读失败", 1: "抄读成功", 2: "可以抄读"}.get(flag, f"保留({flag})"),
+                    f"{flag:02X}")
+                add("通信延时相关性标志", "相关" if data[1] else "无关", f"{data[1]:02X}")
+                ln = data[2]
+                add("路由请求数据长度", f"{ln}B", f"{ln:02X}")
+                add("路由请求数据内容", data[3:3 + ln].hex(), data[3:3 + ln].hex())
+                pos = 3 + ln
+                if pos < len(data):
+                    n = data[pos]
+                    add("从节点附属节点数量", f"{n}", f"{n:02X}")
+                    pos += 1
+                    for i in range(n):
+                        if pos + 6 > len(data):
+                            break
+                        add(f"附属节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                            data[pos:pos + 6].hex())
+                        pos += 6
+        elif fn == 2:
+            if not up and len(data) >= 6:
+                add("集中器时间", f"20{_bcd_to_str(data[5:6])}-{_bcd_to_str(data[4:5])}"
+                    f"-{_bcd_to_str(data[3:4])} {_bcd_to_str(data[2:3])}:"
+                    f"{_bcd_to_str(data[1:2])}:{_bcd_to_str(data[0:1])}",
+                    data[0:6].hex(), "BCD 秒分时日月年")
+            # 上行：无数据单元
+        elif fn == 3:
+            if up and len(data) >= 9:
+                add("从节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+                add("预计延迟时间", f"{le16(data[6:8])}s", data[6:8].hex())
+                ln = data[8]
+                add("抄读信息长度", f"{ln}B", f"{ln:02X}")
+                add("抄读数据内容", data[9:9 + ln].hex(), data[9:9 + ln].hex())
+            elif not up and len(data) >= 1:
+                ln = data[0]
+                add("数据长度", f"{ln}B", f"{ln:02X}", "L=0放弃本次通信")
+                add("修正通信数据内容", data[1:1 + ln].hex(), data[1:1 + ln].hex())
+        elif fn == 4 and len(data) >= 5:
+            add("数据项类型",
+                {1: "DL/T645-2007", 2: "DL/T698.45"}.get(data[0], f"保留({data[0]})"),
+                f"{data[0]:02X}")
+            add("交采数据项标识", data[1:5].hex(), data[1:5].hex())
+            if not up and len(data) > 5:
+                add("交采数据项内容", data[5:].hex(), data[5:].hex())
+    # AFN=15H 文件传输 F1
+    elif afn == 0x15 and fn == 1:
+        if not up and len(data) >= 11:
+            fid, attr, cmd = data[0], data[1], data[2]
+            add("文件标识", f"0x{fid:02X} ({_FILE_ID_NAMES.get(fid, '保留')})",
+                f"{fid:02X}")
+            add("文件属性", "结束帧" if attr else "起始帧/中间帧", f"{attr:02X}")
+            add("文件指令", f"0x{cmd:02X}", f"{cmd:02X}", "00H=报文方式下装")
+            add("总段数", f"{le16(data[3:5])}", data[3:5].hex())
+            add("段标识", data[5:9].hex(), data[5:9].hex())
+            lf = le16(data[9:11])
+            add("段数据长度", f"{lf}B", f"{lf:04X}")
+            add("文件数据", data[11:11 + lf].hex(), data[11:11 + lf].hex())
+        elif up and len(data) >= 4:
+            add("收到当前段标识", data[0:4].hex(), data[0:4].hex(),
+                "0xFFFF=文件错误")
+    # AFN=F0H 内部调试：厂家自定义，不拆字段
+    # AFN=F1H 并发抄表 F1
+    elif afn == 0xF1 and fn == 1:
+        if not up and len(data) >= 4:
+            add("规约类型", _proto_name(data[0]), f"{data[0]:02X}")
+            add("保留", f"0x{data[1]:02X}", f"{data[1]:02X}")
+            ln = le16(data[2:4])
+            add("报文长度", f"{ln}B", f"{ln:04X}",
+                "L=0抄表失败（链路层源地址A1=失败电表地址）")
+            add("报文内容", data[4:4 + ln].hex(), data[4:4 + ln].hex(),
+                "并发抄表报文（内嵌645/698，递归解析）")
+        elif up and len(data) >= 3:
+            add("规约类型", _proto_name(data[0]), f"{data[0]:02X}")
+            ln = le16(data[1:3])
+            add("报文长度", f"{ln}B", f"{ln:04X}",
+                "L=0抄表失败（链路层源地址A1=失败电表地址）")
+            add("报文内容", data[3:3 + ln].hex(), data[3:3 + ln].hex())
     return items
 
 
@@ -502,69 +1115,673 @@ def _encode_11f232(params: dict) -> bytes:
     return bytes(out)
 
 
-def _encode_app_data(afn: int, fn: int, params: Optional[dict]) -> bytes:
-    """按 AFN/Fn 把业务参数编码为应用数据单元字节。
+# ---------------------------------------------------------------------------
+# 编码辅助（全量模板共用）
+# ---------------------------------------------------------------------------
 
-    覆盖（聚焦现有用例）：
-        AFN  FN      说明
-        00H  F1      确认/否认（status=1 → 1B 否认；缺省空确认）
-        03H  F10     查询本地通信模块运行模式（无数据单元）
-        10H  F4      路由运行状态查询（无数据单元）
-        10H  F2      查询从节点信息（start 2B 小端 + count 1B）
-        10H  F230    采集任务数量查询（无数据单元）
-        10H  F231    采集任务配置查询（task_no + protocol）
-        11H  F1      添加从节点档案（action + addr 6B BCD + protocol）
-        11H  F231    采集任务配置（分组编码）
-        11H  F232    采集任务关联档案配置
-    未覆盖的 (afn, fn) 抛 UnsupportedFn。
+def _req(params: dict, key: str, hint: str = ""):
+    """取必填参数，缺失抛 ValueError。"""
+    v = params.get(key)
+    if v is None:
+        raise ValueError(f"缺少参数 {key}" + (f"（{hint}）" if hint else ""))
+    return v
+
+
+def _hex_bytes(v, name: str) -> bytes:
+    """hex 字符串（可含空格）→ bytes。"""
+    s = str(v).replace(" ", "")
+    try:
+        return bytes.fromhex(s)
+    except ValueError:
+        raise ValueError(f"{name} 必须为 hex 字符串: {v!r}")
+
+
+def _int_to_bcd(v, name: str, hi: int = 99) -> int:
+    """十进制两位数 → BCD（59 → 0x59）。"""
+    v = int(v)
+    if not (0 <= v <= hi):
+        raise ValueError(f"{name}={v} 越界 [0,{hi}]")
+    return ((v // 10) << 4) | (v % 10)
+
+
+def _time6_bytes(params: dict) -> bytes:
+    """BCD 时间 6B（秒分时日月年）。支持 {"sec",...,"year"} 或 {"time": "SSMMHHDDMMYY"}。"""
+    if "time" in params:
+        s = str(params["time"]).replace(" ", "").replace(":", "").replace("-", "")
+        if len(s) != 12 or not s.isdigit():
+            raise ValueError(f"time 须为 12 位数字（秒分时日月年各2位）: {params['time']!r}")
+        return _str_to_bcd(s, 6)
+    return bytes([
+        _int_to_bcd(params.get("sec", 0), "sec", 59),
+        _int_to_bcd(params.get("min", 0), "min", 59),
+        _int_to_bcd(params.get("hour", 0), "hour", 23),
+        _int_to_bcd(params.get("day", 0), "day", 31),
+        _int_to_bcd(params.get("mon", 0), "mon", 12),
+        _int_to_bcd(params.get("year", 0), "year", 99),
+    ])
+
+
+def _rate_word(unit: int, rate: int) -> int:
+    """通信速率字：D15=速率单位标识(1=kbps)，D14~D0=速率。"""
+    return ((int(unit) & 0x01) << 15) | (int(rate) & 0x7FFF)
+
+
+def _nodes_list(params: dict, key: str = "nodes") -> list:
+    v = params.get(key)
+    if not isinstance(v, (list, tuple)):
+        raise ValueError(f"缺少参数 {key}（应为列表）")
+    return list(v)
+
+
+def _nid3(v, name: str) -> bytes:
+    """3B 网络标识号 NID（int 0~16777215 或 3B hex 串）→ 小端 3B。"""
+    if isinstance(v, str):
+        b = _hex_bytes(v, name)
+        if len(b) != 3:
+            raise ValueError(f"{name} 须为 3B hex: {v!r}")
+        return b
+    iv = int(v)
+    if not (0 <= iv <= 0xFFFFFF):
+        raise ValueError(f"{name}={iv} 越界 [0,16777215]")
+    return iv.to_bytes(3, "little")
+
+
+# 下行无数据单元的查询/控制类 (afn, fn)（上行应答另按方向处理）
+_NO_UNIT_DOWN = {
+    (0x01, 1), (0x01, 2), (0x01, 3),                                  # 初始化
+    (0x03, 1), (0x03, 2), (0x03, 4), (0x03, 5), (0x03, 7), (0x03, 8),  # 查询
+    (0x03, 10), (0x03, 12), (0x03, 16), (0x03, 100),
+    (0x04, 2),                                                        # 从节点点名
+    (0x10, 1), (0x10, 4), (0x10, 9), (0x10, 100), (0x10, 104), (0x10, 111),
+    (0x11, 6), (0x11, 101), (0x11, 102),                              # 路由设置
+    (0x12, 1), (0x12, 2), (0x12, 3),                                  # 路由控制
+}
+
+
+def _encode_app_data(afn: int, fn: int, params: Optional[dict],
+                     direction: str = "down") -> bytes:
+    """按 AFN/Fn 把业务参数编码为应用数据单元字节（Q/GDW 10376.2 全量模板）。
+
+    覆盖标准 §4/§5 定义的 73 个 Fn（含安徽分钟级采集扩展 F230/F231/F232）。
+    双向格式不同的 Fn 按 direction 编码；下行查询类无数据单元返回 b""。
+    上行应答类（04H/05H/11H/12H 的应答）标准规定回 AFN=00H 确认/否认帧，
+    对其上行方向抛 UnsupportedFn 并提示改用 (0x00,1)。
+    多字节 BIN 一律小端（标准备注1）。未覆盖的 (afn, fn) 抛 UnsupportedFn。
     """
     params = params or {}
     afn = int(afn) & 0xFF
     fn = int(fn)
+    up = direction == "up"
 
-    # 查询类（无数据单元）
-    if (afn, fn) in ((0x03, 10), (0x10, 4), (0x10, 230), (0x01, 1)):
-        return b""
-    if (afn, fn) == (0x00, 1):  # 确认/否认
+    def u16le(v, name):
+        return _u16(v, name).to_bytes(2, "little")
+
+    # ---- 00H 确认/否认（上行应答；上下行同构） ----
+    if (afn, fn) == (0x00, 1):
         status = params.get("status")
         if status in (None, 0, "0", "confirm", "ok"):
+            if params.get("wait") is not None or params.get("channels") is not None:
+                b0 = (0x80 if params.get("processed") else 0) \
+                     | (_u8(params.get("channels", 0), "channels") & 0x7F)
+                out = bytearray([b0, 0, 0, 0])
+                out += u16le(params.get("wait", 0), "wait")
+                return bytes(out)
             return b""
         if status in (1, "1", "deny", "ng"):
             return b"\x01"
         raise ValueError(f"00H-F1 status 非法: {status!r}")
-    if (afn, fn) == (0x10, 2):  # 查询从节点信息
-        out = bytearray()
-        out += _u16(params.get("start", 0), "start").to_bytes(2, "little")
-        out.append(_u8(params.get("count", 0), "count"))
-        return bytes(out)
-    if (afn, fn) == (0x10, 231):  # 查询任务配置
-        return bytes([
-            _u8(params.get("task_no", 0), "task_no", 1, 15),
-            _u8(params.get("protocol", 2), "protocol", 2, 3),
-        ])
-    if (afn, fn) == (0x11, 1):  # 添加从节点档案（安徽扩展）
-        action_raw = params.get("action", "add")
-        action = {"add": 1, "delete": 0, 1: 1, 0: 0}.get(
-            action_raw if not isinstance(action_raw, int) else action_raw)
-        if action is None:
-            raise ValueError(f"action 非法: {action_raw!r}")
-        out = bytearray([action])
-        addr = params.get("addr", params.get("sta"))
-        out += _bcd_bytes(addr, "档案地址")
-        out.append(_u8(params.get("protocol", 2), "protocol", 2, 3))
-        return bytes(out)
-    if (afn, fn) == (0x11, 231):
-        return _encode_11f231(params)
-    if (afn, fn) == (0x11, 232):
-        return _encode_11f232(params)
+    if (afn, fn) == (0x00, 2):
+        return bytes([_u8(_req(params, "err"), "err")])
+
+    # ---- 02H 数据转发 F1（上下行同构） ----
+    if (afn, fn) == (0x02, 1):
+        payload = _hex_bytes(_req(params, "payload", "转发报文 hex"), "payload")
+        if len(payload) > 255:
+            raise ValueError(f"payload 长度 {len(payload)} 超过 1B 长度域上限 255")
+        return bytes([_u8(_req(params, "protocol"), "protocol", 0, 3),
+                      len(payload)]) + payload
+
+    if not up:
+        # ================= 下行 =================
+        if (afn, fn) in _NO_UNIT_DOWN:
+            return b""
+        if (afn, fn) == (0x03, 3):  # 查询从节点侦听信息
+            return bytes([_u8(_req(params, "start"), "start"),
+                          _u8(_req(params, "count"), "count", 0, 16)])
+        if (afn, fn) == (0x03, 6):  # 设置主节点干扰持续时间
+            return bytes([_u8(_req(params, "duration"), "duration")])
+        if (afn, fn) == (0x03, 9):  # 通信延时广播时长查询（带报文）
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            return bytes([_u8(_req(params, "protocol"), "protocol", 0, 3),
+                          len(payload)]) + payload
+        if (afn, fn) == (0x03, 11):  # 查询 AFN 索引
+            return bytes([_u8(_req(params, "afn"), "afn")])
+        if (afn, fn) == (0x04, 1):  # 发送测试
+            return bytes([_u8(_req(params, "duration"), "duration")])
+        if (afn, fn) == (0x04, 3):  # 报文通信测试
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            return bytes([_u8(_req(params, "rate"), "rate"),
+                          *_bcd_bytes(_req(params, "addr"), "目标地址"),
+                          _u8(_req(params, "protocol"), "protocol", 0, 3),
+                          len(payload)]) + payload
+        if (afn, fn) == (0x05, 1):
+            return _bcd_bytes(_req(params, "addr"), "主节点地址")
+        if (afn, fn) == (0x05, 2):
+            return bytes([_u8(_req(params, "enable"), "enable", 0, 1)])
+        if (afn, fn) == (0x05, 3):
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            return bytes([_u8(_req(params, "ctrl"), "ctrl", 0, 3),
+                          len(payload)]) + payload
+        if (afn, fn) == (0x05, 4):
+            return bytes([_u8(_req(params, "timeout"), "timeout")])
+        if (afn, fn) == (0x05, 5):
+            return bytes([_u8(_req(params, "channel"), "channel", 0, 255),
+                          _u8(_req(params, "power"), "power")])
+        if (afn, fn) == (0x05, 6):
+            return bytes([_u8(_req(params, "enable"), "enable", 0, 1)])
+        if (afn, fn) == (0x05, 16):
+            return bytes([_u8(_req(params, "band"), "band", 0, 3)])
+        if (afn, fn) == (0x05, 100):
+            return bytes([_u8(_req(params, "threshold"), "threshold", 0, 255)])
+        if (afn, fn) == (0x05, 101):
+            return _time6_bytes(params)
+        if (afn, fn) == (0x05, 200):
+            return bytes([_u8(_req(params, "enable"), "enable", 0, 1)])
+        if (afn, fn) == (0x10, 2):  # 查询从节点信息
+            out = bytearray()
+            out += u16le(params.get("start", 0), "start")
+            out.append(_u8(params.get("count", 0), "count"))
+            return bytes(out)
+        if (afn, fn) == (0x10, 3):  # 指定从节点的上一级中继路由信息
+            return _bcd_bytes(_req(params, "addr"), "从节点地址")
+        if (afn, fn) in ((0x10, 5), (0x10, 6), (0x10, 7),
+                         (0x10, 21), (0x10, 31), (0x10, 101), (0x10, 112)):
+            # 起始序号 2B 小端 + 数量 1B
+            out = bytearray()
+            out += u16le(params.get("start", 0), "start")
+            out.append(_u8(params.get("count", 0), "count"))
+            return bytes(out)
+        if (afn, fn) == (0x10, 40):  # 流水线查询 ID
+            return bytes([_u8(_req(params, "dev_type"), "dev_type", 1, 7),
+                          *_hex_bytes(_req(params, "addr"), "节点地址"),
+                          _u8(_req(params, "id_type"), "id_type", 1, 2)])
+        if (afn, fn) == (0x10, 230):  # 安徽扩展：采集任务数量查询
+            return b""
+        if (afn, fn) == (0x10, 231):  # 安徽扩展：查询任务配置
+            return bytes([
+                _u8(params.get("task_no", 0), "task_no", 1, 15),
+                _u8(params.get("protocol", 2), "protocol", 2, 3),
+            ])
+        if (afn, fn) == (0x11, 1):  # 添加从节点
+            if "nodes" in params:  # 国网格式：数量n + (地址+协议)×n
+                nodes = _nodes_list(params)
+                out = bytearray([_u8(len(nodes), "nodes")])
+                for nd in nodes:
+                    out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                    out.append(_u8(nd.get("protocol", 2), "protocol", 0, 3))
+                return bytes(out)
+            # 安徽扩展单节点 action 格式（与已验证帧兼容）
+            action_raw = params.get("action", "add")
+            action = {"add": 1, "delete": 0, 1: 1, 0: 0}.get(
+                action_raw if not isinstance(action_raw, int) else action_raw)
+            if action is None:
+                raise ValueError(f"action 非法: {action_raw!r}")
+            out = bytearray([action])
+            addr = params.get("addr", params.get("sta"))
+            out += _bcd_bytes(addr, "档案地址")
+            out.append(_u8(params.get("protocol", 2), "protocol", 2, 3))
+            return bytes(out)
+        if (afn, fn) == (0x11, 2):  # 删除从节点
+            meters = params.get("meters")
+            if meters is None and "addr" in params:
+                meters = [params["addr"]]
+            if meters is None:
+                raise ValueError("缺少参数 addr/meters")
+            out = bytearray([_u8(len(meters), "从节点数量")])
+            for m in meters:
+                out += _bcd_bytes(m, "从节点地址")
+            return bytes(out)
+        if (afn, fn) == (0x11, 3):  # 设置固定中继路径
+            relays = params.get("relays") or []
+            out = bytearray(_bcd_bytes(_req(params, "addr"), "从节点地址"))
+            out.append(_u8(len(relays), "中继级别", 0, 15))
+            for r in relays:
+                out += _bcd_bytes(r, "中继地址")
+            return bytes(out)
+        if (afn, fn) == (0x11, 4):  # 设置路由工作模式
+            out = bytearray([_u8(_req(params, "mode"), "mode")])
+            out += _rate_word(params.get("rate_unit", 0),
+                              _u16(_req(params, "rate"), "rate")).to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x11, 5):  # 激活从节点主动注册
+            out = bytearray(_time6_bytes(params))
+            out += u16le(_req(params, "duration"), "duration")
+            out.append(_u8(_req(params, "retry"), "retry"))
+            out.append(_u8(_req(params, "slices"), "slices"))
+            return bytes(out)
+        if (afn, fn) == (0x11, 100):  # 设置网络规模
+            return u16le(_req(params, "scale"), "scale")
+        if (afn, fn) == (0x11, 231):
+            return _encode_11f231(params)
+        if (afn, fn) == (0x11, 232):
+            return _encode_11f232(params)
+        if (afn, fn) == (0x13, 1):  # 监控从节点（下行）
+            subs = params.get("subs") or []
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            out = bytearray([_u8(_req(params, "protocol"), "protocol", 0, 3),
+                             _u8(params.get("delay_flag", 0), "delay_flag", 0, 1),
+                             _u8(len(subs), "subs")])
+            for s in subs:
+                out += _bcd_bytes(s, "附属节点地址")
+            out.append(len(payload))
+            out += payload
+            return bytes(out)
+        if (afn, fn) == (0x14, 1):  # 路由请求抄读内容（下行应答）
+            payload = _hex_bytes(params.get("payload", ""), "payload") \
+                if params.get("payload") else b""
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            subs = params.get("subs") or []
+            out = bytearray([_u8(_req(params, "flag"), "flag", 0, 2),
+                             _u8(params.get("delay_flag", 0), "delay_flag", 0, 1),
+                             len(payload)])
+            out += payload
+            out.append(_u8(len(subs), "subs"))
+            for s in subs:
+                out += _bcd_bytes(s, "附属节点地址")
+            return bytes(out)
+        if (afn, fn) == (0x14, 2):  # 路由请求集中器时钟（下行应答）
+            return _time6_bytes(params)
+        if (afn, fn) == (0x14, 3):  # 依通信延时修正通信数据（下行应答）
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            return bytes([len(payload)]) + payload
+        if (afn, fn) == (0x14, 4):  # 路由请求交采信息（下行应答）
+            content = _hex_bytes(params.get("content", ""), "content") \
+                if params.get("content") else b""
+            return bytes([_u8(_req(params, "type"), "type", 1, 2),
+                          *_hex_bytes(_req(params, "item"), "item")]) + content
+        if (afn, fn) == (0x15, 1):  # 文件传输方式1（下行）
+            fdata = _hex_bytes(_req(params, "data"), "data")
+            seg_id = _hex_bytes(_req(params, "seg_id"), "seg_id")
+            if len(seg_id) != 4:
+                raise ValueError(f"seg_id 须为 4B hex: {params.get('seg_id')!r}")
+            out = bytearray([_u8(_req(params, "file_id"), "file_id"),
+                             _u8(params.get("attr", 0), "attr", 0, 1),
+                             _u8(params.get("cmd", 0), "cmd")])
+            out += u16le(_req(params, "total_segs"), "total_segs")
+            out += seg_id
+            out += u16le(params.get("seg_len", len(fdata)), "seg_len")
+            out += fdata
+            return bytes(out)
+        if (afn, fn) == (0xF1, 1):  # 并发抄表（下行：规约+保留+L2+DATA）
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            out = bytearray([_u8(_req(params, "protocol"), "protocol", 0, 3), 0x00])
+            out += u16le(len(payload), "payload")
+            out += payload
+            return bytes(out)
+    else:
+        # ================= 上行 =================
+        if (afn, fn) in ((0x04, 1), (0x04, 2), (0x04, 3), (0x05, 1), (0x05, 2),
+                         (0x05, 3), (0x05, 4), (0x05, 5), (0x05, 6), (0x05, 16),
+                         (0x05, 100), (0x05, 101), (0x05, 200),
+                         (0x11, 1), (0x11, 2), (0x11, 3), (0x11, 4), (0x11, 5),
+                         (0x11, 100), (0x12, 1), (0x12, 2), (0x12, 3)):
+            raise UnsupportedFn(
+                f"0x{afn:02X}-F{fn} 上行应答为 AFN=00H 确认/否认帧，请构 (0x00,1)")
+        if (afn, fn) == (0x10, 104):
+            raise UnsupportedFn("10H-F104 上行格式蒸馏文档未定义，请用 data.raw 透传")
+        if (afn, fn) == (0x02, 1):  # 同下行
+            return _encode_app_data(0x02, 1, params, "down")
+        if (afn, fn) == (0x03, 1):
+            ver = _hex_bytes(_req(params, "version"), "version")
+            if len(ver) != 2:
+                raise ValueError("version 须为 2B hex")
+            return bytes([
+                *str(_req(params, "vendor"))[:2].ljust(2).encode("ascii"),
+                *str(_req(params, "chip"))[:2].ljust(2).encode("ascii"),
+                _int_to_bcd(_req(params, "day"), "day", 31),
+                _int_to_bcd(_req(params, "month"), "month", 12),
+                _int_to_bcd(_req(params, "year"), "year", 99),
+                ver[0], ver[1],
+            ])
+        if (afn, fn) == (0x03, 2):
+            return bytes([_u8(_req(params, "noise"), "noise", 0, 15)])
+        if (afn, fn) == (0x03, 3):
+            nodes = _nodes_list(params)
+            out = bytearray([_u8(_req(params, "total"), "total"), len(nodes)])
+            for nd in nodes:
+                out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                out.append((_u8(nd.get("quality", 0), "quality", 0, 15) << 4)
+                           | _u8(nd.get("relay", 0), "relay", 0, 15))
+                out.append(_u8(nd.get("listen", 0), "listen"))
+            return bytes(out)
+        if (afn, fn) == (0x03, 4):
+            return _bcd_bytes(_req(params, "addr"), "主节点地址")
+        if (afn, fn) == (0x03, 5):
+            rates = params.get("rates") or []
+            out = bytearray([
+                ((_u8(params.get("mode", 0), "mode", 0, 3)) << 6)
+                | ((_u8(params.get("channel", 0), "channel", 0, 3)) << 4)
+                | _u8(len(rates), "rates", 0, 15),
+                _u8(params.get("channel_cnt", 0), "channel_cnt", 0, 15),
+            ])
+            for r in rates:
+                out += _rate_word(r.get("unit", 0),
+                                  _u16(r.get("rate", 0), "rate")).to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x03, 6):
+            return bytes([_u8(_req(params, "status"), "status", 0, 1)])
+        if (afn, fn) == (0x03, 7):
+            return bytes([_u8(_req(params, "timeout"), "timeout")])
+        if (afn, fn) == (0x03, 8):
+            return bytes([_u8(_req(params, "channel"), "channel"),
+                          _u8(_req(params, "power"), "power")])
+        if (afn, fn) == (0x03, 9):
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            out = bytearray()
+            out += u16le(_req(params, "delay"), "delay")
+            out.append(_u8(_req(params, "protocol"), "protocol", 0, 3))
+            out.append(len(payload))
+            out += payload
+            return bytes(out)
+        if (afn, fn) == (0x03, 10):
+            if not params:
+                return b""
+            out = bytearray(_hex_bytes(_req(params, "mode", "6B 模式字 hex"), "mode"))
+            out.append(_u8(_req(params, "monitor_timeout"), "monitor_timeout"))
+            out += u16le(_req(params, "broadcast_timeout"), "broadcast_timeout")
+            out += u16le(_req(params, "max_frame"), "max_frame")
+            out += u16le(_req(params, "max_file_pkt"), "max_file_pkt")
+            out.append(_u8(_req(params, "upgrade_wait"), "upgrade_wait"))
+            out += _bcd_bytes(_req(params, "addr"), "主节点地址")
+            out += u16le(_req(params, "max_nodes"), "max_nodes")
+            out += u16le(_req(params, "cur_nodes"), "cur_nodes")
+            pub = _hex_bytes(_req(params, "pub_date"), "pub_date")
+            rec = _hex_bytes(_req(params, "rec_date"), "rec_date")
+            vv = _hex_bytes(_req(params, "vendor_ver"), "vendor_ver")
+            if len(pub) != 3 or len(rec) != 3 or len(vv) != 9:
+                raise ValueError("pub_date/rec_date 须为 3B，vendor_ver 须为 9B hex")
+            out += pub + rec + vv
+            for r in params.get("rates") or []:
+                out += _rate_word(r.get("unit", 0),
+                                  _u16(r.get("rate", 0), "rate")).to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x03, 11):
+            bitmap = bytearray(32)
+            for f in params.get("support") or []:
+                f = int(f)
+                if not (1 <= f <= 255):
+                    raise ValueError(f"支持的数据单元 F{f} 越界 [1,255]")
+                bitmap[(f - 1) >> 3] |= 1 << ((f - 1) & 7)
+            return bytes([_u8(_req(params, "afn"), "afn")]) + bytes(bitmap)
+        if (afn, fn) == (0x03, 12):
+            mid = _hex_bytes(_req(params, "id"), "id")
+            if len(mid) > 50:
+                raise ValueError("模块ID号最长 50B")
+            return bytes([
+                *str(_req(params, "vendor"))[:2].ljust(2).encode("ascii"),
+                len(mid),
+                _u8(_req(params, "id_format"), "id_format", 0, 3),
+            ]) + mid
+        if (afn, fn) == (0x03, 16):
+            return bytes([_u8(_req(params, "band"), "band", 0, 3)])
+        if (afn, fn) == (0x03, 100):
+            return bytes([_u8(_req(params, "threshold"), "threshold", 0, 255)])
+        if (afn, fn) == (0x06, 1):
+            nodes = _nodes_list(params)
+            out = bytearray([_u8(len(nodes), "nodes")])
+            for nd in nodes:
+                out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                out.append(_u8(nd.get("protocol", 2), "protocol", 0, 3))
+                out += _u16(nd.get("seq", 0), "seq").to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x06, 2):
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            out = bytearray()
+            out += _u16(_req(params, "seq"), "seq").to_bytes(2, "little")
+            out.append(_u8(_req(params, "protocol"), "protocol", 0, 3))
+            out += _u16(params.get("up_len", 0), "up_len").to_bytes(2, "little")
+            out.append(len(payload))
+            out += payload
+            return bytes(out)
+        if (afn, fn) == (0x06, 3):
+            return bytes([_u8(_req(params, "type"), "type", 1, 3)])
+        if (afn, fn) == (0x06, 4):
+            nodes = _nodes_list(params)
+            out = bytearray([_u8(len(nodes), "nodes")])
+            for nd in nodes:
+                out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                out.append(_u8(nd.get("protocol", 2), "protocol", 0, 3))
+                out += _u16(nd.get("seq", 0), "seq").to_bytes(2, "little")
+                out.append(_u8(nd.get("dev_type", 1), "dev_type"))
+                subs = nd.get("subs") or []
+                out.append(_u8(len(subs), "subs"))
+                out.append(_u8(nd.get("frame_subs", len(subs)), "frame_subs"))
+                for s in subs:
+                    out += _bcd_bytes(s.get("addr", s), "下接节点地址")
+                    out.append(_u8(s.get("protocol", 2), "protocol", 0, 3))
+            return bytes(out)
+        if (afn, fn) == (0x06, 5):
+            dt = _u8(_req(params, "dev_type"), "dev_type")
+            proto = _u8(_req(params, "protocol"), "protocol", 0, 5)
+            if "payload" in params:
+                content = _hex_bytes(params["payload"], "payload")
+            elif proto == 0x04 and dt == 0x00:  # 采集器停电：表地址(BIN 6B)+带电状态
+                content = bytearray()
+                for m in _nodes_list(params, "meters"):
+                    content += _hex_bytes(_req(m, "addr"), "meters[].addr")
+                    content.append(_u8(m.get("power", 0), "power", 0, 1))
+            elif proto == 0x04:  # 停复电事件：事件类型 + 通信单元地址序列(BCD 6B)
+                content = bytearray([_u8(_req(params, "event"), "event", 1, 2)])
+                for a in params.get("addrs") or []:
+                    content += _bcd_bytes(a, "通信单元地址")
+            elif proto == 0x05:  # 台区改切拒绝节点
+                rej = _nodes_list(params, "rejected")
+                if len(rej) > 32:
+                    raise ValueError("rejected 个数超过 32")
+                content = bytearray([len(rej)])
+                for r in rej:
+                    content += _hex_bytes(_req(r, "addr"), "rejected[].addr")
+                    content.append(_u8(r.get("dev_type", 1), "dev_type"))
+            else:
+                raise ValueError("06H-F5 需提供 payload 或 event/addrs、meters、rejected")
+            if len(content) > 255:
+                raise ValueError("报文内容超过 1B 长度域上限")
+            return bytes([dt, proto, len(content)]) + content
+        if (afn, fn) == (0x10, 1):
+            return u16le(_req(params, "total"), "total") \
+                + u16le(_req(params, "max"), "max")
+        if (afn, fn) in ((0x10, 2), (0x10, 5), (0x10, 6)):
+            nodes = _nodes_list(params)
+            out = bytearray(u16le(_req(params, "total"), "total"))
+            out.append(len(nodes))
+            for nd in nodes:
+                out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                info = nd.get("info")
+                if isinstance(info, dict):
+                    w = (_u8(info.get("quality", 0), "quality", 0, 15) << 4) \
+                        | _u8(info.get("relay", 0), "relay", 0, 15)
+                    w |= (_u8(info.get("proto", 0), "proto", 0, 7) << 12) \
+                        | (_u8(info.get("phase", 0), "phase", 0, 15) << 8)
+                else:
+                    w = _u16(info or 0, "info")
+                out += w.to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x10, 3):
+            nodes = _nodes_list(params)
+            out = bytearray([_u8(len(nodes), "nodes")])
+            for nd in nodes:
+                out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                out += _u16(nd.get("info", 0), "info").to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x10, 4):
+            out = bytearray([_u8(_req(params, "status"), "status")])
+            out += u16le(_req(params, "total"), "total")
+            out += u16le(_req(params, "read"), "read")
+            out += u16le(_req(params, "relay_read"), "relay_read")
+            out.append(_u8(_req(params, "switch"), "switch"))
+            out += _rate_word(0, _u16(_req(params, "rate"), "rate")).to_bytes(2, "little")
+            levels = params.get("relay_level") or [0, 0, 0]
+            steps = params.get("steps") or [0, 0, 0]
+            for lv in levels:
+                out.append(_u8(lv, "relay_level"))
+            for st in steps:
+                out.append(_u8(st, "steps"))
+            return bytes(out)
+        if (afn, fn) == (0x10, 7):
+            nodes = _nodes_list(params)
+            out = bytearray(u16le(_req(params, "total"), "total"))
+            out.append(len(nodes))
+            for nd in nodes:
+                addr = _hex_bytes(_req(nd, "addr"), "nodes[].addr")
+                if len(addr) != 6:
+                    raise ValueError("nodes[].addr 须为 6B hex")
+                out += addr
+                out.append(_u8(nd.get("node_type", 0), "node_type"))
+                out += str(nd.get("vendor", "  ")).encode("ascii", "replace")[:2].ljust(2)
+                mid = _hex_bytes(nd.get("id", ""), "id")
+                out.append(len(mid))
+                out.append(_u8(nd.get("id_format", 2), "id_format", 0, 3))
+                out += mid
+            return bytes(out)
+        if (afn, fn) in ((0x10, 9), (0x10, 100)):
+            return u16le(_req(params, "scale"), "scale")
+        if (afn, fn) == (0x10, 21):
+            nodes = _nodes_list(params)
+            out = bytearray(u16le(_req(params, "total"), "total"))
+            out += u16le(params.get("start", 0), "start")
+            out.append(len(nodes))
+            for nd in nodes:
+                addr = _hex_bytes(_req(nd, "addr"), "nodes[].addr")
+                if len(addr) != 6:
+                    raise ValueError("nodes[].addr 须为 6B hex")
+                out += addr
+                out += _u16(_req(nd, "tei"), "tei").to_bytes(2, "little")
+                out += _u16(nd.get("proxy", 0), "proxy").to_bytes(2, "little")
+                role = _u8(nd.get("role", 0), "role", 0, 15)
+                level = _u8(nd.get("level", 0), "level", 0, 15)
+                out.append((role << 4) | level)
+            return bytes(out)
+        if (afn, fn) == (0x10, 31):
+            nodes = _nodes_list(params)
+            out = bytearray(u16le(_req(params, "total"), "total"))
+            out += u16le(params.get("start", 0), "start")
+            out.append(len(nodes))
+            for nd in nodes:
+                addr = _hex_bytes(_req(nd, "addr"), "nodes[].addr")
+                if len(addr) != 6:
+                    raise ValueError("nodes[].addr 须为 6B hex")
+                out += addr
+                out += _u16(nd.get("info", 0), "info").to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x10, 40):
+            mid = _hex_bytes(_req(params, "id"), "id")
+            return bytes([_u8(_req(params, "dev_type"), "dev_type", 1, 7),
+                          *_hex_bytes(_req(params, "addr"), "节点地址"),
+                          _u8(_req(params, "id_type"), "id_type", 1, 2),
+                          len(mid)]) + mid
+        if (afn, fn) == (0x10, 101):
+            nodes = _nodes_list(params)
+            out = bytearray(u16le(_req(params, "total"), "total"))
+            out.append(len(nodes))
+            for nd in nodes:
+                out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
+                out += _u16(nd.get("info", 0), "info").to_bytes(2, "little")
+                ver = _hex_bytes(nd.get("ver", "000000"), "ver")
+                if len(ver) != 3:
+                    raise ValueError("ver 须为 3B hex")
+                out += ver
+            return bytes(out)
+        if (afn, fn) == (0x10, 111):
+            neighbors = params.get("neighbors") or []
+            out = bytearray([_u8(len(neighbors) + 1, "nodes")])
+            out += _nid3(_req(params, "self_nid"), "self_nid")
+            out += _hex_bytes(_req(params, "self_master"), "self_master")
+            for nb in neighbors:
+                out += _nid3(nb, "neighbors[]")
+            return bytes(out)
+        if (afn, fn) == (0x10, 112):
+            nodes = _nodes_list(params)
+            out = bytearray(u16le(_req(params, "total"), "total"))
+            out += u16le(params.get("start", 0), "start")
+            out.append(len(nodes))
+            for nd in nodes:
+                addr = _hex_bytes(_req(nd, "addr"), "nodes[].addr")
+                if len(addr) != 6:
+                    raise ValueError("nodes[].addr 须为 6B hex")
+                chip = _hex_bytes(_req(nd, "chip_id"), "chip_id")
+                if len(chip) != 24:
+                    raise ValueError("chip_id 须为 24B hex")
+                ver = _hex_bytes(nd.get("ver", "0000"), "ver")
+                if len(ver) != 2:
+                    raise ValueError("ver 须为 2B hex")
+                out += addr
+                out.append(_u8(nd.get("dev_type", 1), "dev_type"))
+                out += chip
+                out += ver
+            return bytes(out)
+        if (afn, fn) == (0x13, 1):
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            out = bytearray()
+            out += _u16(_req(params, "up_len"), "up_len").to_bytes(2, "little")
+            out.append(_u8(_req(params, "protocol"), "protocol", 0, 3))
+            out.append(len(payload))
+            out += payload
+            return bytes(out)
+        if (afn, fn) == (0x14, 1):
+            out = bytearray([_u8(_req(params, "phase"), "phase", 0, 3)])
+            out += _bcd_bytes(_req(params, "addr"), "从节点地址")
+            out += _u16(_req(params, "seq"), "seq").to_bytes(2, "little")
+            return bytes(out)
+        if (afn, fn) == (0x14, 2):  # 上行请求：无数据单元
+            return b""
+        if (afn, fn) == (0x14, 3):
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            if len(payload) > 255:
+                raise ValueError("payload 长度超过 1B 长度域上限")
+            out = bytearray(_bcd_bytes(_req(params, "addr"), "从节点地址"))
+            out += _u16(_req(params, "delay"), "delay").to_bytes(2, "little")
+            out.append(len(payload))
+            out += payload
+            return bytes(out)
+        if (afn, fn) == (0x14, 4):
+            return bytes([_u8(_req(params, "type"), "type", 1, 2),
+                          *_hex_bytes(_req(params, "item"), "item")])
+        if (afn, fn) == (0x15, 1):
+            seg_id = _hex_bytes(_req(params, "seg_id"), "seg_id")
+            if len(seg_id) != 4:
+                raise ValueError(f"seg_id 须为 4B hex: {params.get('seg_id')!r}")
+            return seg_id
+        if (afn, fn) == (0xF1, 1):  # 并发抄表应答（上行：规约+L2+DATA）
+            payload = _hex_bytes(_req(params, "payload"), "payload")
+            out = bytearray([_u8(_req(params, "protocol"), "protocol", 0, 3)])
+            out += u16le(len(payload), "payload")
+            out += payload
+            return bytes(out)
 
     raise UnsupportedFn(
-        f"未覆盖 Fn 0x{afn:02X}-F{fn}（应用数据模板未建立，契约约定明确报错）")
+        f"未覆盖 Fn 0x{afn:02X}-F{fn}（非标准数据单元标识，契约约定明确报错）")
 
 
-def encode_app_data(afn: int, fn: int, params: Optional[dict] = None) -> bytes:
-    """对外导出：参数 → 应用数据字节（纯函数）。"""
-    return _encode_app_data(afn, fn, params)
+def encode_app_data(afn: int, fn: int, params: Optional[dict] = None,
+                    direction: str = "down") -> bytes:
+    """对外导出：参数 → 应用数据字节（纯函数）。
+
+    direction: "down"（集中器→模块，默认）/ "up"（模块→集中器应答）。
+    """
+    return _encode_app_data(afn, fn, params, direction)
 
 
 # ---------------------------------------------------------------------------
@@ -756,7 +1973,7 @@ class QGDW103762Adapter(ProtocolAdapter):
 
         # 应用数据解析
         if appdata:
-            frame.items.extend(_app_items(afn, fn, appdata))
+            frame.items.extend(_app_items(afn, fn, appdata, direction))
             # 数据转发/上报类：递归解内嵌 645/698
             if afn in (0x02, 0x06, 0x13, 0xF1):
                 nested = _scan_nested(appdata)
@@ -821,7 +2038,8 @@ def build_frame_json(req: dict) -> dict:
         data = req.get("data") or {}
         appdata = b""
         if "params" in data:
-            appdata = encode_app_data(afn, fn, data["params"])
+            appdata = encode_app_data(afn, fn, data["params"],
+                                      direction=req.get("direction", "down"))
         elif "raw" in data:
             appdata = bytes.fromhex(str(data["raw"]).replace(" ", ""))
         elif "nested_645" in data:
