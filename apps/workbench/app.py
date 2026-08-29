@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
+from shared.web_static import NoCacheHTMLStaticFiles
 
 from .api import router as orchestration_router
 
@@ -331,7 +331,7 @@ def create_workbench_app(
     # ---- 4. 静态外壳（页签式 SPA）----
     _wb_static = _workbench_static_dir()
     if _wb_static.exists():
-        app.mount("/static", StaticFiles(directory=_wb_static), name="static")
+        app.mount("/static", NoCacheHTMLStaticFiles(directory=_wb_static), name="static")
 
     @app.get("/")
     async def index():

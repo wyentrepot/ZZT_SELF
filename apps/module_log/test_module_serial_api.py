@@ -57,6 +57,18 @@ class ModuleSerialApiTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("模块日志", resp.text)
 
+    def test_page_no_cache_and_current_assets(self):
+        # 页面内嵌默认任务 JSON：必须 no-cache，且引用当前版本号 JS
+        resp = self.client.get("/module-serial")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+        self.assertIn("module-serial.js?v=module-serial-v7", resp.text)
+
+    def test_static_html_no_cache(self):
+        resp = self.client.get("/static/module-serial.html")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+
     def test_ports_empty_or_list(self):
         resp = self.client.get("/api/module-serial/ports")
         self.assertEqual(resp.status_code, 200)

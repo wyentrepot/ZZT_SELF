@@ -16,10 +16,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from shared import infra
+from shared.web_static import NoCacheHTMLStaticFiles
 from shared.serial_resources import SerialResourceRegistry
 from module_log.module_serial_service import CHANNELS, ModuleSerialService
 
@@ -73,7 +73,7 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
     app = FastAPI(title="模块日志 / 烧录串口")
     app.state.module_serial_service = module_serial_service
     app.state.serial_resource_registry = resource_registry
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", NoCacheHTMLStaticFiles(directory=STATIC_DIR), name="static")
 
     # 模拟集中器验证工具（第三页签后端）：挂载独立子应用到 /api/simcon
     # 子应用路由用相对路径（prefix=""），避免 mount 前缀 + 路由前缀双前缀
@@ -95,7 +95,9 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
 
     @app.get("/module-serial")
     def module_serial_page():
-        return FileResponse(STATIC_DIR / "module-serial.html")
+        # 页面内嵌默认任务 JSON 等易变内容，禁用浏览器缓存（与 /static 挂载一致）
+        return FileResponse(STATIC_DIR / "module-serial.html",
+                            headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/version")
     def version():

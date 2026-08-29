@@ -76,6 +76,14 @@ def test_platform_version(client):
     assert body["listener_mounted"] is True
 
 
+def test_tool_page_html_no_cache(client):
+    # 工具页 HTML 内嵌易变内容（默认任务 JSON）：no-cache + 当前 JS 版本号
+    r = client.get("/static/pages/module-serial/module-serial.html")
+    assert r.status_code == 200
+    assert r.headers.get("cache-control") == "no-cache"
+    assert "module-serial.js?v=module-serial-v7" in r.text
+
+
 def test_index_served(client):
     r = client.get("/")
     assert r.status_code == 200
