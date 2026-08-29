@@ -189,3 +189,18 @@
 - **理由**：此前 simcon TX 帧完全不记录、RX 仅内存环形缓冲（关串口即丢）、CCO 主动上报无消费记录、无 run/会话概念，AI 只能拿到每次 verify 的结果 JSON；「本次下发过什么帧 / CCO 主动上报过什么帧 / 有无某类 afn 上行帧」三类问题无法回答。JSONL 追加写与 loghooks 事件日志、module_log 串口日志同构，内存镜像支撑过滤查询，比 SQLite 更贴合"会话级、追加型、低频"的帧日志形态。
 - **影响**：新增 `libs/sim_concentrator/journal.py` 与三个测试文件；`serial_io.py`/`runner.py`/`api.py` 增量改造（`send_frame` 签名不变）；`module_log/app.py` 提升访问器；`workbench/app.py` 新增 `SimconAIService` 桥并注入 AI 控制面；`ai_api.py` 新增 6 条路由；docs/16 新增第 9 节（原 9-12 顺延）、ai-control-plane skill 升级 1.2.0；REQS-INDEX 登记需求 0008。全部测试用 FakeIO/FakeSerial（0007 红线），487 通过。
 - **被取代**：无。
+
+## ADR-9 侦听台通信流追踪：表地址对账 + 回放/live 单引擎 + 序号偏移实测修订
+
+- **日期**：2026-08-29
+- **状态**：✅ 生效
+- **决定**：批准需求 0009 的实现（`reqs/0009-listener-flow-trace/DESIGN.md` §10.1 修订版）：
+  1. **判定全部来自侦听台空口自证**：S1=下行帧捕获、S2a=链路 ACK（ACK 帧 MAC 头 `[27..28]` 打包被确认帧 STA 端 TEI，DLL 的 ACK DST 字段不可靠、弃用）、S2b=同报文序号上行（协议配对义务）、S3=0x0020 显式（铁证）或簇内响应后无重传（推断，`evidence_kind` 区分）；坏帧不计入判定、单独计数。
+  2. **对账单位 = 应用层表地址**：下行载荷解析目标地址序列（645 地址域 / 698.45 OAD token，OI 语义后置），上行按应答位图与回显对账；TEI 仅作观测属性，多轮累积 (表地址→STA) 为代理图副产物。
+  3. **三层粒度单引擎**：flow=(业务ID,报文序号)、round=时间簇（空闲间隔切簇，缺省 60s 可配）、campaign=窗口聚合；live 与回放共用同一特征 JSON、状态机与输出 schema，live 快照 = cursor_range(start_id) 重算（帧入库钩子驱动）。
+  4. **物化与查询**：frames 表增列 `app_port/app_id/msg_seq/flow_dir/meter_addrs/sta_tei/ori_tei/ack_peer`（幂等迁移+批次回填+方向局部索引与 ACK 索引）；方向判定以 ORI_S 为准（代理中继帧 SRC=代理/ORI_S=001 仍为下行）；回放为 SQL 预筛选 + 进程内状态机。
+  5. **AI 控制面**：`POST /api/ai/v1/listener/traces`（202+wait，新 scope `listener:trace`，幂等 client_request_id，坏特征 HTTP 层 422）、`GET /listener/traces[/{id}]`（evidence:read 读快照）、审计落账；执行核心经 listener app.state 进程内注入（0008 模式）。
+  6. **校准修订入档**：设计定稿时"0x0003 序号恒 0x0201"实为业务头静态字段（版本+头长度 LE 打包恰为 0x0201）误读；真序号在 APP_RAW[8:10] 且全局递增、重发不增（2276 帧样本回归 100%，上行回填 142/142）。发现与校准记录矛盾→复核→修订 DESIGN→再动代码的流程按 HANDOFF 红线执行。
+- **理由**：三段判定的每一跳都有帧级锚点可人工复核（G4 真机核对：正例流三段帧逐一比对、负例流 SQL 独立验证无同序号上行）；表地址对账兼容单播/广播/混合并发轮；单引擎双模式避免 live 与回放判定漂移；53.6 万帧全量捕获实测索引 152s、campaign 回放 116s、带窗口回放秒级，性能满足 AI 使用。
+- **影响**：`libs/parser_lib/.../trace_extract.py`（结构表驱动提取件）、`apps/listener/trace_service.py`、`log_service.py` 物化列、`serial_service.py` 入库钩子、listener app 4 条路由、workbench ai_api/ai_operations 3 条门面路由与注入；docs/16 新增 8.3 节、ai-control-plane skill 1.3.0；测试 36 例（提取件 18 + 回放 19 + API/门面 15，含真机样本回归）。连续流量的全量库上 60s 切簇会合成长轮，round 视图建议配合 time_range 窗口或调大 cluster_gap_seconds 使用（docs/16 已注明）。
+- **被取代**：无。

@@ -4,7 +4,7 @@ description: Control real hardware (HPLC meter-reading workbench) over HTTP as a
 argument-hint: "[what to do, e.g. 向 cco 发送一串字符]"
 metadata:
   author: reasonix
-  version: "1.2.0"
+  version: "1.3.0"
   applies-to: D:/2-侦听台改造
 ---
 
@@ -34,7 +34,7 @@ metadata:
 curl -X POST http://127.0.0.1:8790/api/ai/v1/admin/grants \
   -H "X-Workbench-Admin-Key: <WORKBENCH_AI_ADMIN_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"scopes":["status:read","module_session:ensure","module_session:stop","module_send:execute","module_flash:execute","listener:ensure","listener:stop","observation:create","evidence:read","simcon:verify","simcon:send","simcon:read"],"resources":["*"],"ttl_seconds":3600,"firmware_roots":["D:/firmware"],"reason":"<用途>"}'
+  -d '{"scopes":["status:read","module_session:ensure","module_session:stop","module_send:execute","module_flash:execute","listener:ensure","listener:stop","listener:trace","observation:create","evidence:read","simcon:verify","simcon:send","simcon:read"],"resources":["*"],"ttl_seconds":3600,"firmware_roots":["D:/firmware"],"reason":"<用途>"}'
 ```
 
 - 响应里 `token` 只返回一次，之后只存 SHA-256 摘要。**务必保存 token。**
@@ -181,7 +181,31 @@ curl "http://127.0.0.1:8790/api/ai/v1/listener/indexes/<index_id>/frames/<frame_
 - 帧分页参数：`offset`、`limit`（1–500）、`query`（关键字）、`nid`、`start_time`/`end_time`（HH:MM:SS 或 HH:MM:SS.mmm）、`after_id`（游标翻页，取上一页最后一条 frame_id）。
 - `listener:stop` 校验的 resource：侦听台在线时为其当前 mapping_id（`listener`），离线时回退 `listener-main`；窄授权（`resources` 非 `*`）需两者都包含。
 
-## 第七步：模拟集中器——验证任务 / 单步下发 / 帧日志
+## 第七步：侦听台通信流追踪（三段证据链）
+
+以「一次发送的特征」追踪一轮业务（如并发抄表 0x0003）的三段判定：
+S1 发出（下行帧捕获）→ S2a ACK（链路确认）→ S2b 响应（同报文序号上行）→
+S3 接收（0x0020 显式或簇内无重传推断），输出「断在哪一跳」而非二值 pass/fail。
+
+```bash
+# 回放：特征+时间窗 → 202 → wait → result.report（完整报告）
+curl -X POST http://127.0.0.1:8790/api/ai/v1/listener/traces   -H "Authorization: Bearer <token>" -H "Content-Type: application/json"   -d '{"scope":"round","window":{"mode":"time_range","start_time":"10:00:00","end_time":"10:10:00"},"feature":{"app_id":"0003"}}'
+
+# live：只盯注册之后的新帧 → wait → result.trace.trace_id
+curl -X POST http://127.0.0.1:8790/api/ai/v1/listener/traces   -H "Authorization: Bearer <token>" -H "Content-Type: application/json"   -d '{"scope":"round","window":{"mode":"live"},"feature":{"app_id":"0003"}}'
+
+# live 快照读取 / 句柄列表（scope evidence:read）
+curl http://127.0.0.1:8790/api/ai/v1/listener/traces/<trace_id> -H "Authorization: Bearer <token>"
+curl http://127.0.0.1:8790/api/ai/v1/listener/traces -H "Authorization: Bearer <token>"
+```
+
+- `feature`：`app_id` 必填（0003 并发抄表 / 0001 单表 / 00A1 / 0020 / 0008）；`msg_seq` 留空=聚合；
+  `frm_type`/`dst_tei`/`nid`/`app_raw_contains` 可选。scope 粒度：flow（须给 msg_seq）/ round / campaign。
+- 报告：`summary` + `rounds[]`（`flows[]` 状态机链每阶段挂 `frame_id`，可回第六步帧详情钻取；
+  `meter_table` 表地址三分类 ok/denied/missing）+ `proxy_graph` + `bad_frames`（坏帧只计数）。
+- 单帧详情响应的 `feature_hint` 就是可反推的特征草稿，改一改即可 POST /traces。
+
+## 第八步：模拟集中器——验证任务 / 单步下发 / 帧日志
 
 模拟集中器（simcon，串口映射 `simcon`=COM19/9600/E）的 AI 接口在
 `/api/ai/v1/simcon/*`，resource 固定 `simcon`；每次收发的 1376.2 帧都会进
@@ -235,8 +259,10 @@ curl "http://127.0.0.1:8790/api/ai/v1/simcon/frames?updown=up&afn=06" -H "Author
 4. （可选）`POST /flash-operations` 烧录 → `wait` 到 succeeded。
 5. `POST /observations` 建观察 → **再制造目标事件** → `wait` 到 matched。
 6. `GET /artifacts/<id>/content` 取证据正文，用于验证结论。
-7. 模拟集中器侧：`POST /simcon/verify` 跑用例 / `POST /simcon/step` 单步 → `GET /simcon/frames` 查帧。
-8. 收尾：`stop` 会话、`listener/stop`、`POST /simcon/close`，释放串口。
+7. 侦听台侧：`POST /listener/traces` 追踪一轮业务的三段证据链（回放或 live，见第七步）；
+   帧详情 `feature_hint` 直接作特征草稿。
+8. 模拟集中器侧：`POST /simcon/verify` 跑用例 / `POST /simcon/step` 单步 → `GET /simcon/frames` 查帧。
+9. 收尾：`stop` 会话、`listener/stop`、`POST /simcon/close`，释放串口。
 
 ## 与前端的关系（重要）
 
