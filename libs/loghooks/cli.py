@@ -68,6 +68,24 @@ def scan_dir(
 # ---------------------------------------------------------------------------
 
 
+def _listener_parser_kwargs() -> dict:
+    """listener 源的帧解析参数：复用 shared.parser_service 解析 hex 帧字段。
+
+    解析 DLL/CLR 不可用时降级为无解析模式，并告警到 stderr（不得静默）。
+    """
+    try:
+        from shared import dotnet_parser
+        from shared.parser_service import ParserService
+
+        parser = ParserService(
+            dotnet_parser.DotNetHplcParser(dotnet_parser.default_dll_path())
+        )
+        return {"parser_callback": parser.parse_summary}
+    except Exception as exc:
+        print(f"警告：侦听台帧解析不可用，按无解析模式继续（{exc}）", file=sys.stderr)
+        return {"parser_callback": None}
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     loader = RuleLoader().load_all()
     if loader.errors:
@@ -91,18 +109,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"日志路径不存在: {path}", file=sys.stderr)
         return 1
 
-    # 来源解析参数
-    parser_kwargs = {}
-    if args.source == "listener":
-        # 离线解析侦听台帧：尝试复用 shared.parser_service（可用时）
-        try:
-            from shared.parser_service import ParserService
-            from shared.dotnet_parser import DotnetParser
-
-            parser = ParserService(DotnetParser())
-            parser_kwargs["parser_callback"] = parser.parse_summary
-        except Exception:
-            parser_kwargs["parser_callback"] = None
+    # 来源解析参数（listener 源需要帧解析回调，其余源无额外参数）
+    parser_kwargs = _listener_parser_kwargs() if args.source == "listener" else {}
 
     parsed, files = scan_dir(path, args.source, parser_kwargs)
     if not parsed:
@@ -125,7 +133,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.correlate:
         other = Path(args.correlate)
         other_source = "listener" if args.source == "module_log" else "module_log"
-        other_parsed, other_files = scan_dir(other, other_source, parser_kwargs)
+        other_kwargs = _listener_parser_kwargs() if other_source == "listener" else {}
+        other_parsed, other_files = scan_dir(other, other_source, other_kwargs)
         other_engine = Engine(rules, source=other_source)
         for line in other_parsed:
             other_engine.feed(line)

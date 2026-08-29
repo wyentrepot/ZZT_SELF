@@ -3,6 +3,11 @@ from pathlib import Path
 from shared.dotnet_runtime import require_dotnet_runtime
 
 
+def default_dll_path() -> Path:
+    """默认解析 DLL：随 shared 包内 dll/bin/Debug 定位（打包环境由调用方覆盖）。"""
+    return Path(__file__).resolve().parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+
+
 class DotNetHplcParser:
     def __init__(self, dll_path: Path):
         resolved = Path(dll_path).resolve()

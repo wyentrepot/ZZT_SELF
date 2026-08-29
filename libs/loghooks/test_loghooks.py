@@ -138,6 +138,80 @@ def test_parse_listener_frame():
     assert "7E" in p.text
 
 
+def test_parse_listener_frame_with_parser_callback():
+    calls = []
+
+    def fake_callback(frame_hex):
+        calls.append(frame_hex)
+        return {"simple": {"SNID": "123", "FrmType": "广播信标"}}
+
+    p = parse_listener_frame(
+        "[1][19:15:09.012]7E 01 02 7E", parser_callback=fake_callback
+    )
+    assert p is not None
+    assert p.fields == {"SNID": "123", "FrmType": "广播信标"}
+    assert calls == ["7E 01 02 7E"]
+
+
+def test_parse_listener_frame_callback_error_keeps_fields_none():
+    def bad_callback(frame_hex):
+        raise RuntimeError("解析失败")
+
+    p = parse_listener_frame(
+        "[1][19:15:09.012]7E 01 02 7E", parser_callback=bad_callback
+    )
+    assert p is not None
+    assert p.fields is None
+
+
+# ---------------------------------------------------------------------------
+# CLI listener 解析参数装配（曾因类名误写 DotnetParser 静默降级）
+# ---------------------------------------------------------------------------
+
+
+def test_listener_parser_kwargs_builds_parser_service(monkeypatch):
+    import shared.dotnet_parser as dp
+
+    from loghooks.cli import _listener_parser_kwargs
+
+    created = {}
+
+    class FakeHplcParser:
+        def __init__(self, dll_path):
+            created["dll_path"] = dll_path
+
+        def parse_simple(self, frame):
+            return "{}"
+
+        def parse_full(self, frame):
+            return "{}"
+
+        def version(self):
+            return {"name": "fake", "version": "0", "date": ""}
+
+    monkeypatch.setattr(dp, "DotNetHplcParser", FakeHplcParser)
+    kwargs = _listener_parser_kwargs()
+    assert set(kwargs) == {"parser_callback"}
+    assert created["dll_path"].name == "GwHPLCAnalysis.dll"
+    # 回调应可实际解析一帧（7E 封装 → {"frame":..., "simple":...}）
+    out = kwargs["parser_callback"]("7E 01 02 7E")
+    assert "simple" in out and "frame" in out
+
+
+def test_listener_parser_kwargs_degrades_with_warning(monkeypatch, capsys):
+    import shared.dotnet_parser as dp
+
+    from loghooks.cli import _listener_parser_kwargs
+
+    def boom(dll_path):
+        raise FileNotFoundError("no dll")
+
+    monkeypatch.setattr(dp, "DotNetHplcParser", boom)
+    kwargs = _listener_parser_kwargs()
+    assert kwargs == {"parser_callback": None}
+    assert "侦听台帧解析不可用" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # 匹配器
 # ---------------------------------------------------------------------------
