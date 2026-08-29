@@ -9,12 +9,16 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from listener import network_assessment
+from parser_lib.adapters.adapter_dualmode.trace_extract import extract_trace_fields, ack_peer_tei
 
 
 HEADER_PATTERN = re.compile(
     r"^\[(?P<sequence>[^\]]+)\]\[(?P<time>[^\]]+)\](?P<payload>.*)$"
 )
 HEX_BYTE_PATTERN = re.compile(r"(?i)\b[0-9a-f]{2}\b")
+
+# 通信流追踪（需求 0009）物化列提取所关注的报文 ID（DESIGN §7.2）。
+TRACE_APP_IDS = {"0001", "0002", "0003", "0008", "0011", "0020", "00A1"}
 
 # 分析物化列（nid/frm_type）回填状态：db 路径 → {"running", "done", "error"}。
 # 存量库在首次评估时后台补齐；完成后的库走 SQL 聚合快路径。
@@ -166,7 +170,15 @@ class LogFileService:
                     parse_error TEXT,
                     nid INTEGER,
                     frm_type TEXT,
-                    assess_detail INTEGER
+                    assess_detail INTEGER,
+                    app_port TEXT,
+                    app_id TEXT,
+                    msg_seq INTEGER,
+                    flow_dir INTEGER,
+                    meter_addrs TEXT,
+                    sta_tei TEXT,
+                    ori_tei TEXT,
+                    ack_peer TEXT
                 )
                 """
             )
@@ -243,6 +255,48 @@ class LogFileService:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_frames_hs_pending "
             "ON frames(id) WHERE assess_detail IS NULL"
+        )
+        LogFileService._ensure_trace_columns(connection)
+
+    @staticmethod
+    def _ensure_trace_columns(connection) -> None:
+        """通信流追踪（需求 0009）物化列的幂等迁移与局部索引。
+
+        app_id 语义：NULL=待回填；''=无应用层载荷（链路帧/坏帧）；'0003' 等=应用帧。
+        msg_seq/flow_dir/meter_addrs 仅追踪关注 ID（TRACE_APP_IDS）填充；
+        ack_peer 仅 ACK 帧填充（被确认帧 STA 端 TEI，DESIGN §10.1）。
+        两个方向局部索引 + ACK 索引服务回放配对 SQL；pending 索引零成本找待回填行。
+        """
+        existing = {
+            row["name"] for row in connection.execute("PRAGMA table_info(frames)")
+        }
+        for column, decl in (
+            ("app_port", "TEXT"),
+            ("app_id", "TEXT"),
+            ("msg_seq", "INTEGER"),
+            ("flow_dir", "INTEGER"),
+            ("meter_addrs", "TEXT"),
+            ("sta_tei", "TEXT"),
+            ("ori_tei", "TEXT"),
+            ("ack_peer", "TEXT"),
+        ):
+            if column not in existing:
+                connection.execute(f"ALTER TABLE frames ADD COLUMN {column} {decl}")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_trace_down "
+            "ON frames(app_id, msg_seq, id) WHERE flow_dir = 0"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_trace_up "
+            "ON frames(app_id, msg_seq, id) WHERE flow_dir = 1"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_trace_ack "
+            "ON frames(ack_peer, id) WHERE ack_peer IS NOT NULL"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_frames_trace_pending "
+            "ON frames(id) WHERE app_id IS NULL"
         )
 
     def _replace_status(self, **values) -> dict:
@@ -343,8 +397,10 @@ class LogFileService:
             insert_sql = """
                 INSERT INTO frames (
                     sequence, log_time, byte_length, raw_hex, summary_json,
-                    parse_error, nid, frm_type, assess_detail
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    parse_error, nid, frm_type, assess_detail,
+                    app_port, app_id, msg_seq, flow_dir, meter_addrs,
+                    sta_tei, ori_tei, ack_peer
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             insert_minute_sql = """
                 INSERT INTO minute_reports (
@@ -384,6 +440,7 @@ class LogFileService:
                     1 if network_assessment.detail_is_assessable(simple.get("Detail")) else 0
                 )
 
+                trace = self._trace_material(simple, record.hex_frame)
                 cursor = connection.execute(
                     insert_sql,
                     (
@@ -396,6 +453,9 @@ class LogFileService:
                         nid,
                         frm_type,
                         assess_detail,
+                        trace["app_port"], trace["app_id"], trace["msg_seq"],
+                        trace["flow_dir"], trace["meter_addrs"], trace["sta_tei"],
+                        trace["ori_tei"], trace["ack_peer"],
                     ),
                 )
                 frame_count += 1
@@ -433,7 +493,87 @@ class LogFileService:
             message=f"索引完成，共 {frame_count} 帧",
         )
 
-    # ---------- 分钟采集上报持久化与周期统计 ----------
+    # -- 通信流追踪物化列（需求 0009）---------------------------------------
+
+    @staticmethod
+    def _trace_material(simple: dict, raw_hex: str) -> dict:
+        """从 DLL 摘要 + 原始帧提取追踪物化列（log_service 追加/索引/回填共用）。
+
+        返回 dict：app_port/app_id/msg_seq/flow_dir/meter_addrs/sta_tei/ori_tei/
+        ack_peer。app_id：''=无应用层；msg_seq 仅 TRACE_APP_IDS 填充；
+        meter_addrs：下行=目标地址 JSON 数组，上行=[{"addr","denied"}]；
+        ack_peer 仅 ACK 帧填充（DESIGN §10.1 校准规则）。
+        """
+        out = {
+            "app_port": None, "app_id": "", "msg_seq": None, "flow_dir": None,
+            "meter_addrs": None, "sta_tei": None, "ori_tei": None, "ack_peer": None,
+        }
+        src = (simple.get("SRC") or "").upper() or None
+        dst = (simple.get("DST") or "").upper() or None
+        ori = (simple.get("ORI_S") or "").upper() or None
+
+        # ACK 帧：DLL 仅出不可靠 DST，源（被确认 STA 端 TEI）从 MAC 头提取
+        if src is None and (simple.get("FrmType") == "ACK") and raw_hex:
+            try:
+                peer = ack_peer_tei(bytes.fromhex(raw_hex.replace(" ", "")))
+            except (ValueError, TypeError):
+                peer = None
+            if peer is not None:
+                out["ack_peer"] = f"{peer:03X}"
+            return out
+
+        out["ori_tei"] = ori
+        # 方向以原始源为准（§10.1）：代理中继帧 SRC=代理/ORI_S=001 仍是下行；
+        # ORI_S 缺失时退回逐跳 SRC 判定
+        if ori == "001" or (ori is None and src == "001"):
+            out["flow_dir"] = 0
+            out["sta_tei"] = dst
+        elif src or ori:
+            out["flow_dir"] = 1
+            out["sta_tei"] = src or ori
+
+        app_id = (simple.get("APP_ID") or "").upper()
+        if not app_id:
+            return out
+        out["app_id"] = app_id
+        out["app_port"] = (simple.get("APP_PORT") or "").upper() or None
+
+        app_raw = None
+        if simple.get("APP_RAW"):
+            try:
+                app_raw = bytes.fromhex(simple["APP_RAW"])
+            except (ValueError, TypeError):
+                app_raw = None
+        if app_raw is None or app_id not in TRACE_APP_IDS:
+            return out
+        ext = extract_trace_fields(app_id, app_raw, src)
+        if ext is None:
+            return out
+        out["msg_seq"] = ext.msg_seq
+        if ext.direction == "down" and ext.targets:
+            out["meter_addrs"] = json.dumps(ext.targets, ensure_ascii=False)
+        elif ext.direction == "up" and ext.responses:
+            out["meter_addrs"] = json.dumps(ext.responses, ensure_ascii=False)
+        return out
+
+    @staticmethod
+    def _trace_insert_columns() -> str:
+        return "app_port, app_id, msg_seq, flow_dir, meter_addrs, sta_tei, ori_tei, ack_peer"
+
+    def _count_pending_trace(self) -> int:
+        with self._connect() as connection:
+            return connection.execute(
+                "SELECT COUNT(*) FROM frames WHERE app_id IS NULL"
+            ).fetchone()[0]
+
+    def trace_ready(self) -> bool:
+        """追踪物化列是否就绪（无待回填行且回填未在途）。"""
+        state = _BACKFILL_STATE.get(str(self.database_path), {})
+        if state.get("running"):
+            return False
+        return not self._count_pending_trace()
+
+    # -- 分钟采集上报持久化与周期统计 ----------
 
     _TIME_PATTERN = re.compile(r"^(\d{2}):(\d{2}):(\d{2})\.(\d{3})$")
 
@@ -1406,6 +1546,7 @@ class LogFileService:
                 self._backfill_nid_batches(connection)
                 self._backfill_frm_type_passes(connection)
                 self._backfill_assess_detail_pass(connection)
+                self._backfill_trace_pass(connection)
                 connection.commit()
             finally:
                 connection.close()
@@ -1503,6 +1644,48 @@ class LogFileService:
                 "UPDATE frames SET assess_detail = ? WHERE id = ?", updates
             )
             connection.commit()
+
+    def _backfill_trace_pass(self, connection) -> None:
+        """批次回填追踪物化列（app_id NULL 的行为待回填；回填后写 '' 关账）。
+
+        幂等：仅扫 app_id IS NULL 行；应用帧写入真实 app_id，链路帧/坏帧写 ''
+        使其退出 pending 集，重复触发零成本。
+        """
+        last_id = 0
+        while True:
+            rows = connection.execute(
+                """
+                SELECT id, raw_hex, summary_json FROM frames
+                WHERE id > ? AND app_id IS NULL ORDER BY id LIMIT ?
+                """,
+                (last_id, self._BACKFILL_BATCH),
+            ).fetchall()
+            if not rows:
+                return
+            updates = []
+            for row in rows:
+                simple = {}
+                if row["summary_json"]:
+                    try:
+                        simple = json.loads(row["summary_json"])
+                    except (TypeError, ValueError):
+                        simple = {}
+                m = self._trace_material(simple, row["raw_hex"])
+                updates.append((
+                    m["app_port"], m["app_id"], m["msg_seq"], m["flow_dir"],
+                    m["meter_addrs"], m["sta_tei"], m["ori_tei"], m["ack_peer"],
+                    row["id"],
+                ))
+            connection.executemany(
+                """
+                UPDATE frames SET app_port = ?, app_id = ?, msg_seq = ?,
+                    flow_dir = ?, meter_addrs = ?, sta_tei = ?, ori_tei = ?,
+                    ack_peer = ? WHERE id = ?
+                """,
+                updates,
+            )
+            connection.commit()
+            last_id = rows[-1]["id"]
 
     def _count_pending_analysis(self) -> int:
         """待回填行数：nid 未解析，或有 summary 但 assess_detail 未标注。"""
@@ -1871,8 +2054,9 @@ class LogFileService:
         results = []
         insert_sql = """
             INSERT INTO frames (
-                sequence, log_time, byte_length, raw_hex, summary_json, parse_error
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                sequence, log_time, byte_length, raw_hex, summary_json, parse_error,
+                app_port, app_id, msg_seq, flow_dir, meter_addrs, sta_tei, ori_tei, ack_peer
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         insert_minute_sql = """
             INSERT INTO minute_reports (
@@ -1895,6 +2079,7 @@ class LogFileService:
                     except Exception as exc:
                         parse_error = str(exc)
 
+                trace = self._trace_material(simple, hex_frame)
                 cursor = connection.execute(
                     insert_sql,
                     (
@@ -1904,6 +2089,9 @@ class LogFileService:
                         hex_frame,
                         summary_json,
                         parse_error,
+                        trace["app_port"], trace["app_id"], trace["msg_seq"],
+                        trace["flow_dir"], trace["meter_addrs"], trace["sta_tei"],
+                        trace["ori_tei"], trace["ack_peer"],
                     ),
                 )
                 frame_id = cursor.lastrowid
