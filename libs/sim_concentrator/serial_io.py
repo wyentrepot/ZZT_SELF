@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 from typing import Any, Optional
@@ -56,11 +57,38 @@ def _mapping_by_id(catalog: SerialPortCatalog, mapping_id: str) -> SerialPortMap
     return None
 
 
-def _default_simcon_mapping(catalog: SerialPortCatalog) -> SerialPortMapping | None:
+def _natural_device_key(device: str) -> tuple:
+    """COM10 排在 COM2 之后：按数字段数值排序。"""
+    return tuple(
+        (1, int(part)) if part.isdigit() else (0, part)
+        for part in re.split(r"(\d+)", device)
+    )
+
+
+def _auto_select_port(catalog: SerialPortCatalog) -> str | None:
+    """无显式端口时自动选择一个可用串口（默认值，可随时用 port 覆盖）。
+
+    规则：排除已被启用映射认领的端口（侦听台/模块日志等专用口），
+    蓝牙虚拟串口排到最后，余下按 COM 号自然序取第一个；无可用串口返回 None。
+    """
+    if not _SERIAL_AVAILABLE:
+        return None
+    claimed: set[str] = set()
     for mapping in catalog.mappings:
-        if mapping.enabled and (mapping.id == "simcon" or mapping.usage == "simcon"):
-            return mapping
-    return None
+        if mapping.enabled:
+            claimed |= mapping.aliases()
+    candidates: list[tuple[int, tuple, str]] = []
+    for info in list_ports.comports():
+        device = str(getattr(info, "device", "") or "").strip()
+        if not device or device.lower() in claimed:
+            continue
+        description = str(getattr(info, "description", "") or "")
+        is_bluetooth = "bluetooth" in description.lower() or "蓝牙" in description
+        candidates.append((1 if is_bluetooth else 0, _natural_device_key(device), device))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2]
 
 
 def list_serial_port_details(catalog: SerialPortCatalog | None = None) -> list[dict[str, Any]]:
@@ -87,8 +115,10 @@ def resolve_serial_config(
 ) -> dict[str, Any]:
     """将 mapping_id、COM 或 Linux 设备名收敛为当前平台可打开的串口参数。
 
-    未提供端口时优先选择 id/usage 为 simcon 的启用映射。未映射的旧端口
-    保持 115200/N/8/1 默认值，确保已有任务 JSON 与 CLI 继续可用。
+    优先级：显式 mapping_id > 显式 port > 自动选择。模拟集中器不绑定固定
+    映射：未提供端口时自动选择一个可用串口（排除侦听台/模块日志等已映射
+    端口，蓝牙虚拟串口靠后），缺省串口参数 9600/E/8/1（1376.2 本地总线）。
+    显式指定未映射端口时保持 115200/N/8/1 兼容默认值。
     """
     catalog = catalog or SerialPortCatalog.load()
     mapping: SerialPortMapping | None = None
@@ -101,7 +131,27 @@ def resolve_serial_config(
     elif port:
         mapping = catalog.find(port)
     else:
-        mapping = _default_simcon_mapping(catalog)
+        # 无显式端口：自动选择可用串口（默认值，不锁定到具体 COM 号）。
+        auto_port = _auto_select_port(catalog)
+        if not auto_port:
+            raise ValueError(
+                "未找到可用串口：请接入串口设备，或在任务/请求中显式指定 port")
+        return {
+            "port": auto_port,
+            "mapping_id": "",
+            "port_identity": {
+                "mapping_id": "",
+                "device": auto_port,
+                "label": "",
+                "usage": "",
+                "module": "",
+            },
+            # 1376.2 本地总线缺省参数（沿用原 simcon 映射约定）
+            "baudrate": 9600 if baudrate is None else int(baudrate),
+            "bytesize": 8 if bytesize is None else int(bytesize),
+            "parity": "E" if parity is None else str(parity).upper(),
+            "stopbits": 1 if stopbits is None else int(stopbits),
+        }
 
     if mapping is not None:
         resolved_port = mapping.device_for()
@@ -117,7 +167,7 @@ def resolve_serial_config(
             "stopbits": mapping.stopbits if stopbits is None else int(stopbits),
         }
 
-    resolved_port = str(port or "COM3").strip()
+    resolved_port = str(port).strip()
     if not resolved_port:
         raise ValueError("必须提供串口或 mapping_id")
     return {

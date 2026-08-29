@@ -54,7 +54,8 @@ def test_task_json_valid_and_loadable():
     task = load_task(str(TASK_PATH))
     assert task["id"] == "anhui_minute_collect"
     assert task["profile"] == "anhui"
-    assert task["port"] == "COM19"
+    # 端口不锁定：任务不携带固定 port，执行时自动选择可用串口
+    assert "port" not in task
     assert len(task["steps"]) == 9
 
 

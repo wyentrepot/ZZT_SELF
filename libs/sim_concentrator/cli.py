@@ -1,7 +1,7 @@
 """模拟集中器验证工具 CLI。
 
 用法：
-    python -m sim_concentrator verify <task.json> [--port COM24 | --mapping-id simcon] [--baud 9600]
+    python -m sim_concentrator verify <task.json> [--port COMx] [--baud 9600]  # 不传 --port 时自动选择可用串口（缺省 9600/E/8/1）
     python -m sim_concentrator responders
     python -m sim_concentrator ports
 
@@ -106,7 +106,7 @@ def main(argv=None) -> int:
     p_verify = sub.add_parser("verify", help="执行验证任务 JSON")
     p_verify.add_argument("task", help="验证任务 JSON 文件路径")
     p_verify.add_argument("--port", default=None, help="覆盖串口（支持 COM 或 Linux 设备别名）")
-    p_verify.add_argument("--mapping-id", default=None, help="使用串口映射 ID，例如 simcon")
+    p_verify.add_argument("--mapping-id", default=None, help="使用串口映射 ID（须存在于 serial_ports.json）")
     p_verify.add_argument("--baud", type=int, default=None, help="覆盖波特率")
     p_verify.add_argument("--json", action="store_true", help="输出 JSON")
     p_verify.set_defaults(func=cmd_verify)

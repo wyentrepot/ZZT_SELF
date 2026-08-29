@@ -23,12 +23,16 @@ from shared.serial_mapping import SerialPortCatalog
 PROFILE_SLOTS = ["module_log.cco", "module_log.sta", "listener.main", "simcon.main"]
 
 # 槽 -> 默认 mapping_id（serial_ports.json 中的物理映射）
+# simcon 无固定映射：空串 = 自动选择可用串口（applier 侧透传，端口不锁定）
 SLOT_DEFAULT_MAPPING = {
     "module_log.cco": "cco-main",
     "module_log.sta": "sta-main",
     "listener.main": "listener",
-    "simcon.main": "simcon",
+    "simcon.main": "",
 }
+
+# simcon 自动模式的缺省串口参数（1376.2 本地总线）
+_SIMCON_AUTO_PARAMS = {"baudrate": 9600, "parity": "E", "bytesize": 8, "stopbits": 1}
 
 _PROFILE_FILENAME = "serial_profile.json"
 
@@ -123,18 +127,32 @@ class SerialProfileStore:
                     enabled: bool = False, baudrate: int | None = None,
                     parity: str | None = None, bytesize: int | None = None,
                     stopbits: int | None = None) -> dict[str, Any]:
-        """更新单槽配置；从 serial_ports.json 回填未显式给出的默认参数。"""
+        """更新单槽配置；从 serial_ports.json 回填未显式给出的默认参数。
+
+        mapping_id 显式传空串表示"自动"（仅 simcon.main 支持：自动选择可用
+        串口，参数用 1376.2 本地总线缺省值）。
+        """
         if slot not in PROFILE_SLOTS:
             raise InvalidProfileError(f"未知槽：{slot}")
         profiles = self.load()
         current = profiles[slot]
-        chosen = mapping_id or current["mapping_id"] or SLOT_DEFAULT_MAPPING[slot]
-        mapping = self._mapping_by_id(chosen)
-
-        resolved_baudrate = mapping["baudrate"] if baudrate is None else baudrate
-        resolved_parity = mapping["parity"] if parity is None else parity
-        resolved_bytesize = mapping["bytesize"] if bytesize is None else bytesize
-        resolved_stopbits = mapping["stopbits"] if stopbits is None else stopbits
+        if mapping_id is not None:
+            chosen = str(mapping_id).strip()
+        else:
+            chosen = current["mapping_id"] or SLOT_DEFAULT_MAPPING[slot]
+        if not chosen and slot != "simcon.main":
+            raise InvalidProfileError(f"{slot} 必须选择映射")
+        if chosen:
+            mapping = self._mapping_by_id(chosen)
+            resolved_baudrate = mapping["baudrate"] if baudrate is None else baudrate
+            resolved_parity = mapping["parity"] if parity is None else parity
+            resolved_bytesize = mapping["bytesize"] if bytesize is None else bytesize
+            resolved_stopbits = mapping["stopbits"] if stopbits is None else stopbits
+        else:
+            resolved_baudrate = _SIMCON_AUTO_PARAMS["baudrate"] if baudrate is None else baudrate
+            resolved_parity = _SIMCON_AUTO_PARAMS["parity"] if parity is None else parity
+            resolved_bytesize = _SIMCON_AUTO_PARAMS["bytesize"] if bytesize is None else bytesize
+            resolved_stopbits = _SIMCON_AUTO_PARAMS["stopbits"] if stopbits is None else stopbits
         _validate_serial_params(
             baudrate=int(resolved_baudrate),
             parity=str(resolved_parity),

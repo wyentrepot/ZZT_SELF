@@ -1078,6 +1078,10 @@
     const sm = out.summary || { total: 0, pass: 0, fail: 0, verdict: "fail" };
     const verdict = sm.verdict === "pass" ? "通过" : "失败";
     const verdictCls = sm.verdict === "pass" ? "pass" : "fail";
+    const portLine = out.port
+      ? `<div class="simcon-step-detail">串口：${escapeHtml(String(out.port))}` +
+        ` @ ${escapeHtml(String(out.baudrate ?? ""))}${out.mapping_id ? "（映射 " + escapeHtml(String(out.mapping_id)) + "）" : "（自动选择）"}</div>`
+      : "";
     const stepsHtml = (out.steps || []).map((s) => {
       const ok = s.result === "pass";
       const mark = ok ? "✓" : "✗";
@@ -1091,6 +1095,7 @@
     }).join("");
     box.innerHTML =
       `<div class="simcon-verdict ${verdictCls}">结论：${verdict}（${sm.pass} 通过 / ${sm.fail} 失败 / ${sm.total} 总）</div>` +
+      portLine +
       `<div class="simcon-steps">${stepsHtml || '<div class="simcon-empty">（无步骤）</div>'}</div>`;
   }
 

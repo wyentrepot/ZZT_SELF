@@ -106,6 +106,9 @@ class SerialProfileApplier:
         if not enabled:
             return self._stop_managed(slot, profile)
         if not mapping_id:
+            # simcon 无固定映射：空映射 = 自动选择可用串口（端口不锁定）。
+            if slot == "simcon.main":
+                return self._apply_simcon(profile, None)
             return _SlotResult(slot=slot, status="skipped", reason="未选择映射",
                                current_state=self._current_state(slot, profile))
         device = self.profile_store.device_for(mapping_id)
@@ -167,17 +170,23 @@ class SerialProfileApplier:
         return _SlotResult(slot=slot, status="started",
                            current_state={"state": "running", "session_id": sid, "port": device})
 
-    def _apply_simcon(self, profile: dict[str, Any], device: str) -> dict[str, Any]:
+    def _apply_simcon(self, profile: dict[str, Any], device: str | None) -> dict[str, Any]:
+        """device=None 表示自动选择串口；实际打开端口回填到 current_state。"""
         if self.simcon_service is None:
             return _SlotResult(slot="simcon.main", status="skipped", reason="模拟集中器服务不可用")
         open_port = getattr(self.simcon_service, "open_port", None)
-        if open_port == device:
+        if device and open_port == device:
             return _SlotResult(slot="simcon.main", status="unchanged",
                                reason="模拟集中器已打开同端口",
                                current_state={"state": "open", "port": device})
+        if not device and open_port:
+            return _SlotResult(slot="simcon.main", status="unchanged",
+                               reason="模拟集中器已打开（自动模式不限定端口）",
+                               current_state={"state": "open", "port": open_port})
         self.simcon_service.open(device)
+        actual_port = getattr(self.simcon_service, "open_port", None)
         return _SlotResult(slot="simcon.main", status="started",
-                           current_state={"state": "open", "port": device})
+                           current_state={"state": "open", "port": actual_port})
 
     def _stop_managed(self, slot: str, profile: dict[str, Any]) -> dict[str, Any]:
         """禁用/空槽：停止托管会话（不影响人工会话）。"""

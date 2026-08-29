@@ -128,7 +128,7 @@
       sel.dataset.slot = def.slot;
       var optNone = document.createElement("option");
       optNone.value = "";
-      optNone.textContent = "（未选择）";
+      optNone.textContent = def.slot === "simcon.main" ? "（自动选择可用串口）" : "（未选择）";
       sel.appendChild(optNone);
       mappingOptions().forEach(function (opt) {
         var o = document.createElement("option");

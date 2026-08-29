@@ -271,11 +271,11 @@
           <div class="field">
             <label for="ms-baud">波特率</label>
             <select id="ms-baud" style="width:108px">
-              <option value="9600">9600</option>
+              <option value="9600" selected>9600</option>
               <option value="19200">19200</option>
               <option value="38400">38400</option>
               <option value="57600">57600</option>
-              <option value="115200" selected>115200</option>
+              <option value="115200">115200</option>
               <option value="230400">230400</option>
               <option value="460800">460800</option>
               <option value="921600">921600</option>
@@ -284,8 +284,8 @@
           <div class="field">
             <label for="ms-parity">校验位</label>
             <select id="ms-parity" style="width:76px">
-              <option value="N" selected>无(N)</option>
-              <option value="E">偶(E)</option>
+              <option value="N">无(N)</option>
+              <option value="E" selected>偶(E)</option>
               <option value="O">奇(O)</option>
               <option value="M">标记(M)</option>
               <option value="S">空格(S)</option>
@@ -458,19 +458,19 @@
           <div class="field">
             <label for="simcon-baud">波特率</label>
             <select id="simcon-baud" style="width:110px">
-              <option value="9600">9600</option>
+              <option value="9600" selected>9600</option>
               <option value="19200">19200</option>
               <option value="38400">38400</option>
               <option value="57600">57600</option>
-              <option value="115200" selected>115200</option>
+              <option value="115200">115200</option>
               <option value="230400">230400</option>
             </select>
           </div>
           <div class="field">
             <label for="simcon-parity">校验位</label>
             <select id="simcon-parity" style="width:90px">
-              <option value="N" selected>无(N)</option>
-              <option value="E">偶(E)</option>
+              <option value="N">无(N)</option>
+              <option value="E" selected>偶(E)</option>
               <option value="O">奇(O)</option>
               <option value="M">标记(M)</option>
               <option value="S">空格(S)</option>
@@ -518,16 +518,12 @@
           </div>
           <textarea id="simcon-task-input" class="simcon-task-input" spellcheck="false">{
   "id": "verify.demo",
-  "port": "COM3",
-  "baudrate": 115200,
   "enable_responder": true,
   "fail_fast": true,
   "steps": [
     {
-      "name": "示例步骤：下发并期望回复",
-      "send": { "afn": 0, "seq": 0 },
-      "expect": { "dir": "up" },
-      "expect_timeout": 3.0
+      "name": "示例：下发 00H-F1 确认帧（仅下发，无接收断言）",
+      "send": { "afn": "00", "fn": "F1" }
     }
   ]
 }</textarea>

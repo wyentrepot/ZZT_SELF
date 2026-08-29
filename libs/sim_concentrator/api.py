@@ -146,12 +146,11 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         )
 
     def _port_details() -> list[dict[str, Any]]:
-        # 模拟集中器只展示自己的映射；未映射的实际串口保留作兼容手动选择。
+        # simcon 无固定映射：展示所有未映射实际端口（含离线映射项供 UI 标记）。
         details = [
             detail for detail in list_serial_port_details(catalog)
             if detail.get("usage") in ("", "simcon")
         ]
-        # 让既有 UI 在首次加载时优先选中维护的 simcon 默认映射。
         return sorted(details, key=lambda detail: (
             0 if detail.get("mapping_id") == "simcon" else 1,
             str(detail.get("device", "")),

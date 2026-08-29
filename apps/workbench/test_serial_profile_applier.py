@@ -200,6 +200,38 @@ def test_enabled_slots_start_in_fixed_order(profile_store):
 
 
 # ---------------------------------------------------------------------------
+# simcon 槽空映射 = 自动选择串口
+# ---------------------------------------------------------------------------
+
+def test_simcon_slot_empty_mapping_uses_auto_port(profile_store):
+    profile_store.update_slot("simcon.main", mapping_id="", enabled=True)
+    entry = profile_store.load()["simcon.main"]
+    # 自动模式：空映射 + 1376.2 本地总线缺省参数
+    assert entry["mapping_id"] == ""
+    assert entry["baudrate"] == 9600 and entry["parity"] == "E"
+
+    simcon = FakeSimcon()
+    result = _applier(profile_store, simcon=simcon).apply()
+
+    slot = next(s for s in result["slots"] if s["slot"] == "simcon.main")
+    assert slot["status"] == "started"
+    assert simcon.opened == 1
+    # 自动模式不限定端口：透传 None，由 simcon 执行核心自行选择
+    assert simcon.open_port is None
+
+
+def test_simcon_slot_auto_mode_unchanged_when_already_open(profile_store):
+    profile_store.update_slot("simcon.main", mapping_id="", enabled=True)
+    simcon = FakeSimcon()
+    simcon.open_port = "COM7"  # 已在其他端口打开
+    result = _applier(profile_store, simcon=simcon).apply()
+
+    slot = next(s for s in result["slots"] if s["slot"] == "simcon.main")
+    assert slot["status"] == "unchanged"
+    assert simcon.opened == 0
+
+
+# ---------------------------------------------------------------------------
 # 相同且已运行的托管目标返回 unchanged/reused
 # ---------------------------------------------------------------------------
 

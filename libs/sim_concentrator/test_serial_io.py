@@ -5,15 +5,20 @@
 """
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from sim_concentrator.frame_codec import build_13762_frame
 from sim_concentrator.serial_io import (
     SerialIO,
+    available as _serial_available,
     list_serial_ports,
     resolve_serial_config,
 )
+
+_requires_serial = pytest.mark.skipif(
+    not _serial_available(), reason="无 pyserial 环境")
 
 RTSA = bytes([0x20, 0x16, 0x05, 0x19, 0x09, 0x07])
 
@@ -98,19 +103,53 @@ def test_list_ports_returns_list():
     assert isinstance(ports, list)
 
 
-def test_resolve_simcon_mapping_alias_uses_platform_device_and_defaults():
-    import os
-    resolved = resolve_serial_config(port="COM19")
+def _fake_port(device: str, description: str = ""):
+    return SimpleNamespace(device=device, description=description)
 
-    assert resolved["mapping_id"] == "simcon"
-    # 平台自适应：Windows→COM19，POSIX→/dev/ttyUSB1
-    expected = "COM19" if os.name == "nt" else "/dev/ttyUSB1"
-    assert resolved["port"] == expected
+
+def _stub_catalog():
+    """只含 listener 映射的最小目录（隔离仓库配置，保证断言确定性）。"""
+    from shared.serial_mapping import SerialPortCatalog, SerialPortMapping
+    return SerialPortCatalog(mappings=[
+        SerialPortMapping(id="listener", linux_device="/dev/ttyUSB0",
+                          windows_com="COM4", label="侦听台", usage="listener",
+                          baudrate=115200, parity="E", enabled=True),
+    ])
+
+
+@_requires_serial
+def test_resolve_without_port_auto_selects_available_port(monkeypatch):
+    """不传端口：自动选择可用串口（默认值，不锁定），缺省参数 9600/E/8/1。"""
+    import sim_concentrator.serial_io as mod
+
+    monkeypatch.setattr(mod, "list_ports",
+                        SimpleNamespace(comports=lambda: [
+                            _fake_port("COM10", "USB-SERIAL CH340"),
+                            _fake_port("COM4", "蓝牙链接上的标准串行"),
+                            _fake_port("COM2", "ELTIMA Virtual Serial Port"),
+                        ]))
+    resolved = resolve_serial_config(catalog=_stub_catalog())
+
+    # 已映射的 COM4（listener）被排除；蓝牙靠后；COM2 < COM10 自然序
+    assert resolved["port"] == "COM2"
+    assert resolved["mapping_id"] == ""
     assert resolved["baudrate"] == 9600
     assert resolved["parity"] == "E"
     assert resolved["bytesize"] == 8
     assert resolved["stopbits"] == 1
-    assert resolved["port_identity"]["windows_com"] == "COM19"
+    assert resolved["port_identity"]["device"] == "COM2"
+
+
+@_requires_serial
+def test_resolve_auto_select_raises_when_only_claimed_ports(monkeypatch):
+    import sim_concentrator.serial_io as mod
+
+    monkeypatch.setattr(mod, "list_ports",
+                        SimpleNamespace(comports=lambda: [
+                            _fake_port("COM4", "蓝牙链接上的标准串行"),
+                        ]))
+    with pytest.raises(ValueError, match="未找到可用串口"):
+        resolve_serial_config(catalog=_stub_catalog())
 
 
 def test_resolve_serial_config_preserves_explicit_unmapped_port_override():

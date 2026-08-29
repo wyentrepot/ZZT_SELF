@@ -39,19 +39,6 @@
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true
-    },
-    {
-      "id": "simcon",
-      "linux_device": "/dev/ttyUSB1",
-      "windows_com": "COM19",
-      "label": "模拟集中器",
-      "usage": "simcon",
-      "module": "",
-      "baudrate": 9600,
-      "parity": "E",
-      "bytesize": 8,
-      "stopbits": 1,
-      "enabled": true
     }
   ]
 }
