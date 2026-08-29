@@ -11,8 +11,8 @@ from pathlib import Path
 # 路径
 PROJECT = Path(r"D:\2-侦听台改造")
 IMA_DIR = Path(r"D:\3-obsidian-data\ima\645_698协议\md版本")
-OAD_JSON = PROJECT / "parser_lib" / "adapters" / "adapter_698" / "metadata" / "oad.json"
-DI_JSON = PROJECT / "parser_lib" / "adapters" / "adapter_645" / "metadata" / "di.json"
+OAD_JSON = PROJECT / "libs" / "parser_lib" / "adapters" / "adapter_698" / "metadata" / "oad.json"
+DI_JSON = PROJECT / "libs" / "parser_lib" / "adapters" / "adapter_645" / "metadata" / "di.json"
 PROTOCOL_MD = IMA_DIR / "DLT698.45电能信息采集与管理系统-面向对象的数据交换协议（20170412）.md"
 IMI_MD = IMA_DIR / "DLT 698.42-2010 电能信息采集与管理系统 第4-2部分 通信协议－集中器下行通信.md"
 
@@ -42,9 +42,36 @@ def extract_oi_from_md(md_path):
     # 表A.1到A.14的表格行格式: | OI | IC | 对象名称 | ...
     # 示例: | 0000 | 1 | 组合有功电能 | ...
     oi_pattern = re.compile(r'^\|\s*([0-9A-Fa-f]{4})\s*\|\s*(\d+)\s*\|\s*(.+?)\s*\|')
+    # 纯文本行备用（md 部分表格被转成无管道符文本，如 "5004 9 日冻结"）
+    # 名称捕获到"下一个 OI+数字"或行尾为止（不按 字母+数字 截断，避免 RS232→R）
+    oi_pattern_plain = re.compile(r'^\s*([0-9A-Fa-f]{4})\s+(\d+)\s+([^\s|][^|]{0,80}?)(?=\s+(?:[0-9A-Fa-f]{4})\s+\d+\s|\s*$)', re.IGNORECASE)
+
+    # —— 权威 OI 编号段 → 标准类别 映射 ——
+    # 依据：协议附录A各表真实OI段（实测统计，见 OAD覆盖分析报告）。
+    # md 源文件存在排版错乱（表边界不可靠，如参变量残留行混入冻结表、真实冻结
+    # 续表被标成采集监控），故类别以 OI 段判定，不依赖 md 表格标题切换。
+    def _class_of_oi(oi):
+        v = int(oi, 16)
+        if 0x0000 <= v <= 0x00FF: return '电能量类'          # 表A.1
+        if 0x0300 <= v <= 0x04FF: return '最大需量类'        # 表A.2
+        if 0x1000 <= v <= 0x2FFF: return '变量类'            # 表A.3（含 1173~2xxx）
+        if 0x3000 <= v <= 0x33FF and oi not in ('3320',): return '事件类'  # 表A.4（3320 为参变量）
+        if oi == '3320': return '参变量类'
+        if 0x4000 <= v <= 0x45FF: return '参变量类'          # 表A.5（含 4000~45xx）
+        if 0x5000 <= v <= 0x5011: return '冻结类'            # 表A.6（真实冻结 5000~5011）
+        if 0x6040 <= v <= 0x70FF and oi not in ('7000','7001','7010','7011','7012','7013','7014'): return '采集监控类'  # 表A.7
+        if oi in ('7000','7001','7010','7011','7012','7013','7014'): return '集合类'
+        if 0x8000 <= v <= 0x811F and oi not in ('810D','810E','810F','8110'): return '控制类'  # 表A.9
+        if oi in ('810D','810E','810F','8110'): return '文件传输类'  # 表A.11
+        if 0xF000 <= v <= 0xF002: return '文件传输类'        # 表A.11
+        if oi in ('F100','F101'): return 'ESAM接口类'        # 表A.12
+        if 0xF200 <= v <= 0xF20F and oi not in ('F20C',): return '输入输出设备类'  # 表A.13
+        if oi in ('F20C','F210','F300','F301','3467'): return '显示类'  # 表A.14
+        if oi == '3467': return '显示类'
+        return current_class  # 兜底：无法判定时沿用md表标题
     
     for i, line in enumerate(lines[start_line:], start=start_line):
-        # 识别当前表格类别
+        # 识别当前表格类别（仅用于兜底；主判定走 _class_of_oi）
         if '表A.1' in line:
             current_class = '电能量类'
         elif '表A.2' in line:
@@ -73,18 +100,32 @@ def extract_oi_from_md(md_path):
         elif '表A.14' in line:
             current_class = '显示类'
         
-        # 匹配表格行
+        # 匹配表格行（优先管道表格，其次纯文本行）
         m = oi_pattern.match(line.strip())
+        if not m:
+            m = oi_pattern_plain.match(line.strip())
         if m:
             oi = m.group(1).upper()
             ic = m.group(2)
             name = m.group(3).strip()
+            # 名称清洗：截断混入的表格描述/方法定义/后续行内容
+            for sep in ('属性', '方法', '∷=', '（属性', '(属性'):
+                idx = name.find(sep)
+                if idx > 0:
+                    name = name[:idx]
+                    break
+            # 清理 md 残留标记（表/节标题、方法/属性编号），保留正常英文名（RS232/ESAM/DL/T 等）
+            name = re.sub(r'\s*[A-Za-z]\.\d+.*$', '', name)      # 尾部 "A.7 采集监控类对象"
+            name = re.sub(r'\s*表A\.[0-9]+.*$', '', name)        # 尾部 "表A.7..."
+            name = re.sub(r'\s+方法\d+.*$', '', name)            # 尾部 "方法127：出厂启用..."
+            name = re.sub(r'\s*F3\d\d.*$', '', name)             # 尾部 "F301 17 按键轮显"
+            name = name.strip('| ')  # 去掉可能残留的管道符
             if oi not in oi_entries:
                 oi_entries[oi] = {
                     'oi': oi,
                     'name': name,
                     'ic': ic,
-                    'class': current_class
+                    'class': _class_of_oi(oi)
                 }
     
     return oi_entries
@@ -254,7 +295,8 @@ def main():
     report_lines.append("5. **低优先级**：补充控制类、文件传输类、ESAM接口类等\n")
     report_lines.append("6. **后续**：645协议DI可根据实际抄表业务中遇到的未知DI逐步补充\n")
     
-    report_path = PROJECT / "docs" / "需求管理" / "归档" / "oad_todo.md"
+    report_path = PROJECT / "docs" / "协议" / "698.45-OAD覆盖" / "OAD覆盖分析报告.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, 'w', encoding='utf-8') as f:
         f.writelines(report_lines)
     print(f"  报告已写入: {report_path}")
