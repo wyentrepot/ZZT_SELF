@@ -180,6 +180,7 @@ def create_workbench_app(
 
     _ml_sub = None
     _listener_sub = None
+    _sub = None  # listener 挂载失败时 AI 控制面注入仍需该名字可安全访问
 
     # ---- 1. 挂载 module_log（含内部 simcon 子应用）----
     try:
@@ -284,6 +285,8 @@ def create_workbench_app(
         log_service=getattr(app.state, "listener_log_service", None),
         resource_registry=app.state.serial_resource_registry,
         simcon_service=simcon_service,
+        # 侦听台通信流追踪执行核心（需求 0009）：0008 层间进程内注入模式
+        trace_service=getattr(getattr(_sub, "state", None), "trace_service", None),
         store=OperationStore(storage_path=storage_dir / "operations.json"),
     )
     app.state.ai_admin_key_configured = bool(ai_admin_key or os.environ.get("WORKBENCH_AI_ADMIN_KEY"))

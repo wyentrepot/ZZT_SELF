@@ -17,6 +17,8 @@ S2b=同序号上行、S3=0x0020 显式（铁证）或簇内响应后无重传（
 坏帧不计入判定、单独计数（§9 口径）。
 """
 import json
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -156,6 +158,21 @@ def validate_feature(feature: dict) -> NormalizedFeature:
 
 
 @dataclass
+class LiveTrace:
+    """live 追踪句柄：注册后由帧入库钩子驱动，持续增量匹配。"""
+
+    trace_id: str
+    feature: dict
+    start_frame_id: int          # 注册时的最大 frame_id，只匹配其后入库的帧
+    created_at: str
+    updated_at: str
+    status: str = "live"         # live / stopped
+    last_frame_id: int = 0
+    snapshot: dict | None = None
+    snapshot_at_id: int = -1
+
+
+@dataclass
 class _Frame:
     """配对查询装载的最小帧视图。"""
 
@@ -187,12 +204,100 @@ class TraceService:
 
     def __init__(self, log_service):
         self.log_service = log_service
+        self._live: dict[str, LiveTrace] = {}
+        self._live_lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    # live 模式：注册 / 帧入库钩子 / 快照（与回放共用同一引擎与 schema）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _now_text() -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    def _max_frame_id(self) -> int:
+        with self.log_service._connect() as connection:
+            return connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM frames"
+            ).fetchone()[0] or 0
+
+    def register_live(self, feature: dict, *, actor: str = "page") -> dict:
+        """注册 live 追踪句柄：只匹配注册之后入库的帧。"""
+        nf = validate_feature(feature)
+        if nf.window_mode != "live":
+            raise FeatureError('live 注册要求 window.mode == "live"')
+        trace_id = "tr-" + uuid.uuid4().hex[:12]
+        now = self._now_text()
+        handle = LiveTrace(
+            trace_id=trace_id, feature=feature,
+            start_frame_id=self._max_frame_id(), created_at=now, updated_at=now,
+        )
+        with self._live_lock:
+            self._live[trace_id] = handle
+        return self._live_view(handle)
+
+    def _live_view(self, handle: LiveTrace) -> dict:
+        return {
+            "trace_id": handle.trace_id,
+            "feature": handle.feature,
+            "status": handle.status,
+            "start_frame_id": handle.start_frame_id,
+            "last_frame_id": handle.last_frame_id,
+            "created_at": handle.created_at,
+            "updated_at": handle.updated_at,
+        }
+
+    def on_frames_appended(self, last_frame_id: int) -> None:
+        """帧入库钩子（SerialCaptureService 批量入库后回调）。"""
+        with self._live_lock:
+            for handle in self._live.values():
+                if handle.status != "live":
+                    continue
+                handle.last_frame_id = max(handle.last_frame_id, int(last_frame_id))
+                handle.updated_at = self._now_text()
+
+    def list_live(self) -> list[dict]:
+        with self._live_lock:
+            return [self._live_view(handle) for handle in self._live.values()]
+
+    def stop_live(self, trace_id: str) -> dict:
+        with self._live_lock:
+            handle = self._live.get(trace_id)
+            if handle is None:
+                raise KeyError(trace_id)
+            handle.status = "stopped"
+            handle.updated_at = self._now_text()
+            return self._live_view(handle)
+
+    def live_snapshot(self, trace_id: str) -> dict:
+        """live 追踪当前快照：cursor_range(start_id) 重算，按 last_frame_id 缓存。"""
+        with self._live_lock:
+            handle = self._live.get(trace_id)
+            if handle is None:
+                raise KeyError(trace_id)
+            view = self._live_view(handle)
+            cached, cached_at = handle.snapshot, handle.snapshot_at_id
+        if cached is not None and cached_at >= view["last_frame_id"]:
+            return cached
+        feature = json.loads(json.dumps(handle.feature, ensure_ascii=False))
+        feature["window"] = {"mode": "cursor_range", "start_id": handle.start_frame_id + 1}
+        report = self.run_replay(feature, mode="live")
+        report["trace_id"] = trace_id
+        report["live"] = {
+            "start_frame_id": view["start_frame_id"],
+            "last_frame_id": view["last_frame_id"],
+            "status": view["status"],
+        }
+        with self._live_lock:
+            handle.snapshot = report
+            handle.snapshot_at_id = view["last_frame_id"]
+        return report
 
     # ------------------------------------------------------------------
     # 回放入口
     # ------------------------------------------------------------------
 
-    def run_replay(self, feature: dict, index_id=None) -> dict:
+    def run_replay(self, feature: dict, index_id=None, mode: str = "replay") -> dict:
         nf = validate_feature(feature)
         service = self.log_service.open_index(index_id) if index_id else self.log_service
         if not service.trace_ready():
@@ -201,7 +306,7 @@ class TraceService:
 
         rows, bad_frames = self._load_frames(service, nf)
         if not rows:
-            return self._empty_report(nf, bad_frames)
+            return self._empty_report(nf, bad_frames, mode)
         self._stitch_abs_time(rows)
 
         acks, confirms = self._load_evidence(service, nf, rows)
@@ -217,7 +322,7 @@ class TraceService:
 
         report = {
             "trace_id": "tr-" + uuid.uuid4().hex[:12],
-            "mode": "replay",
+            "mode": mode,
             "scope": nf.scope,
             "feature": nf.raw,
             "summary": self._summary(rounds, bad_frames),
@@ -763,10 +868,10 @@ class TraceService:
             key=lambda e: (-e["observations"], e["meter_addr"]),
         )
 
-    def _empty_report(self, nf: NormalizedFeature, bad_frames: int) -> dict:
+    def _empty_report(self, nf: NormalizedFeature, bad_frames: int, mode: str = "replay") -> dict:
         report = {
             "trace_id": "tr-" + uuid.uuid4().hex[:12],
-            "mode": "replay",
+            "mode": mode,
             "scope": nf.scope,
             "feature": nf.raw,
             "summary": {
@@ -782,42 +887,38 @@ class TraceService:
             report["flow"] = None
         return report
 
-    # ------------------------------------------------------------------
-    # feature_hint（样例反推，DESIGN §5.3；页面 frames/{id} 调用）
-    # ------------------------------------------------------------------
-
-    def build_feature_hint(self, frame: dict) -> dict | None:
-        """由单帧反推特征草稿；非应用层帧返回 None。"""
-        summary = frame.get("summary") or {}
-        app_id = str(summary.get("APP_ID") or "").upper()
-        if not app_id or app_id not in TRACE_APP_IDS:
-            return None
-        src = summary.get("SRC")
-        hint = {
-            "scope": "round" if app_id in TRACE_APP_IDS else "flow",
-            "feature": {
-                "frm_type": summary.get("FrmType"),
-                "app_id": app_id,
-                "dst_tei": (summary.get("DST") or "") if src == "001" else "",
-                "msg_seq": "", "app_raw_contains": "", "nid": "", "channel": "",
-            },
-            "response_policy": {},
-            "tips": [],
-        }
-        app_raw = None
-        if summary.get("APP_RAW"):
-            try:
-                app_raw = bytes.fromhex(summary["APP_RAW"])
-            except (ValueError, TypeError):
-                app_raw = None
-        if app_raw is not None and app_id in TRACE_APP_IDS:
-            ext = extract_trace_fields(app_id, app_raw, src)
-            if ext is not None and ext.msg_seq is not None:
-                hint["feature"]["msg_seq"] = f"{ext.msg_seq:04X}"
-                hint["tips"].append(f"该帧报文序号 0x{ext.msg_seq:04X}；将 msg_seq 留空可升级为 campaign 聚合")
-            if ext is not None and ext.direction == "down" and ext.targets:
-                hint["response_policy"]["expect_meters"] = ext.targets
-                hint["tips"].append(f"下行载荷解析出 {len(ext.targets)} 个目标表地址")
-        if src != "001" and summary.get("SRC"):
-            hint["tips"].append("该帧为上行帧；追踪其应答链请以对端下行帧为锚")
-        return hint
+def build_feature_hint(frame: dict) -> dict | None:
+    """由单帧反推特征草稿（DESIGN §5.3 样例反推）；非应用层帧返回 None。"""
+    summary = frame.get("summary") or {}
+    app_id = str(summary.get("APP_ID") or "").upper()
+    if not app_id or app_id not in TRACE_APP_IDS:
+        return None
+    src = summary.get("SRC")
+    hint = {
+        "scope": "round" if app_id in TRACE_APP_IDS else "flow",
+        "feature": {
+            "frm_type": summary.get("FrmType"),
+            "app_id": app_id,
+            "dst_tei": (summary.get("DST") or "") if src == "001" else "",
+            "msg_seq": "", "app_raw_contains": "", "nid": "", "channel": "",
+        },
+        "response_policy": {},
+        "tips": [],
+    }
+    app_raw = None
+    if summary.get("APP_RAW"):
+        try:
+            app_raw = bytes.fromhex(summary["APP_RAW"])
+        except (ValueError, TypeError):
+            app_raw = None
+    if app_raw is not None and app_id in TRACE_APP_IDS:
+        ext = extract_trace_fields(app_id, app_raw, src)
+        if ext is not None and ext.msg_seq is not None:
+            hint["feature"]["msg_seq"] = f"{ext.msg_seq:04X}"
+            hint["tips"].append(f"该帧报文序号 0x{ext.msg_seq:04X}；将 msg_seq 留空可升级为 campaign 聚合")
+        if ext is not None and ext.direction == "down" and ext.targets:
+            hint["response_policy"]["expect_meters"] = ext.targets
+            hint["tips"].append(f"下行载荷解析出 {len(ext.targets)} 个目标表地址")
+    if src != "001" and summary.get("SRC"):
+        hint["tips"].append("该帧为上行帧；追踪其应答链请以对端下行帧为锚")
+    return hint

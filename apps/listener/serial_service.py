@@ -100,6 +100,9 @@ class SerialCaptureService:
         if serial is None:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
         self.log_service = log_service
+        # 帧入库钩子（需求 0009 live 追踪）：批量入库成功后以
+        # on_frames_appended(last_frame_id) 回调；由 app 装配时注入。
+        self.on_frames_appended = None
         self.port = port
         self.baudrate = baudrate
         self.bytesize = bytesize
@@ -369,7 +372,7 @@ class SerialCaptureService:
             records.append((seq, ts, hex_frame))
             byte_total += len(frame)
         try:
-            self.log_service.append_frames(records, self._minute_state)
+            results = self.log_service.append_frames(records, self._minute_state)
         except Exception:
             self._replace_status(
                 error_count=self._status.get("error_count", 0) + len(records)
@@ -379,6 +382,11 @@ class SerialCaptureService:
             frame_count=self._sequence,
             byte_count=self._status.get("byte_count", 0) + byte_total,
         )
+        if self.on_frames_appended is not None and results:
+            try:
+                self.on_frames_appended(results[-1][0])
+            except Exception:
+                pass  # 追踪钩子异常不影响采集主链路
 
     def _ingest(self, frame: bytes) -> None:
         """单帧入库（兼容旧接口/测试），委托批量实现。"""

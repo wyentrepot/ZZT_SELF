@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from .ai_auth import AuthorizationError, AuthorizationStore
 from .ai_operations import AIControlService, InvalidObservation, SessionBusy, SourceUnavailable
 from .ai_store import IdempotencyConflict
+from listener.trace_service import FeatureError
 
 
 def create_ai_router(
@@ -289,6 +290,46 @@ def create_ai_router(
     def listener_schema(authorization: str | None = Header(None)):
         grant_from_header(authorization, "evidence:read", control.listener_resource())
         return control.listener_schema()
+
+    # -- 侦听台通信流追踪（需求 0009）：scope listener:trace 创建，evidence:read 读 --
+    @router.post("/listener/traces", status_code=202)
+    def listener_trace_create(request: dict[str, Any], authorization: str | None = Header(None)):
+        resource = control.listener_resource()
+        grant = grant_from_header(authorization, "listener:trace", resource)
+        existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
+        if existing is not None:
+            grant_from_header(
+                authorization, "listener:trace", control.operation_resource(existing["operation_id"]),
+            )
+        try:
+            return control.listener_trace_create(
+                request, actor=actor(grant),
+                client_request_id=str(request.get("client_request_id") or ""),
+            )
+        except FeatureError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except IdempotencyConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/listener/traces")
+    def listener_traces_list(authorization: str | None = Header(None)):
+        grant_from_header(authorization, "evidence:read", control.listener_resource())
+        try:
+            return control.listener_traces_list()
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/listener/traces/{trace_id}")
+    def listener_trace_get(trace_id: str, authorization: str | None = Header(None)):
+        grant_from_header(authorization, "evidence:read", control.listener_resource())
+        try:
+            return control.listener_trace_get(trace_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="找不到该追踪") from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @router.get("/listener/indexes")
     def listener_indexes(authorization: str | None = Header(None)):

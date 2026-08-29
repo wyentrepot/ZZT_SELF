@@ -1983,6 +1983,23 @@ class LogFileService:
         frame["frame_id"] = frame_id
         return frame
 
+    @staticmethod
+    def _with_feature_hint(frame: dict) -> dict:
+        """帧详情响应附加 feature_hint（需求 0009 §5.3 样例反推）。
+
+        延迟导入避免 log_service ↔ trace_service 模块级循环
+        （trace_service 需要本模块的 TRACE_APP_IDS）。
+        """
+        try:
+            from listener.trace_service import build_feature_hint
+        except ImportError:  # pragma: no cover - 依赖缺失降级
+            return frame
+        try:
+            frame["feature_hint"] = build_feature_hint(frame)
+        except Exception:
+            frame["feature_hint"] = None
+        return frame
+
     def get_frame(self, frame_id: int) -> dict:
         with self._connect() as connection:
             row = connection.execute(
@@ -2002,7 +2019,7 @@ class LogFileService:
             analysis = self.parser.parse(row["raw_hex"])
         except Exception as exc:
             # 详情解析失败时保留原始帧数据，返回错误信息而非抛异常
-            return {
+            return self._with_feature_hint({
                 "id": row["id"],
                 "index_id": self._index_id,
                 "frame_id": row["id"],
@@ -2017,9 +2034,9 @@ class LogFileService:
                     "simple": {},
                     "full": {},
                 },
-            }
+            })
 
-        return {
+        return self._with_feature_hint({
             "id": row["id"],
             "index_id": self._index_id,
             "frame_id": row["id"],
@@ -2030,7 +2047,7 @@ class LogFileService:
             "summary": json.loads(row["summary_json"] or "{}"),
             "parse_error": row["parse_error"],
             "analysis": analysis,
-        }
+        })
 
     def append_frame(self, sequence, log_time, hex_frame, minute_state=None):
         """追加单帧到索引（供串口实时采集复用）。

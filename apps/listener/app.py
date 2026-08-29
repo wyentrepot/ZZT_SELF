@@ -24,6 +24,7 @@ from shared.parser_service import FrameValidationError, ParserService
 from listener.index_registry import ListenerIndexRegistry
 from listener.log_service import LogFileService
 from listener.serial_service import SerialCaptureService
+from listener.trace_service import FeatureError, TraceService
 
 
 def _is_frozen() -> bool:
@@ -200,6 +201,11 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
     app.state.serial_service = serial_service
     app.state.log_service = log_service
     app.state.parser_service = service
+    # 通信流追踪（需求 0009）：与 log_service 同生命周期；live 句柄注册表在内部
+    trace_service = TraceService(log_service) if log_service is not None else None
+    app.state.trace_service = trace_service
+    if serial_service is not None and trace_service is not None:
+        serial_service.on_frames_appended = trace_service.on_frames_appended
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
@@ -590,6 +596,46 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             raise HTTPException(status_code=404, detail="找不到该帧") from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"帧详情解析失败：{exc}") from exc
+
+    # ---------- 通信流追踪（需求 0009）----------
+
+    @app.post("/api/listener/traces")
+    def create_trace(body: dict):
+        """创建追踪：window.mode=live 注册 live 句柄（201），否则同步回放（200）。"""
+        if trace_service is None:
+            raise HTTPException(status_code=503, detail="追踪服务未启用")
+        try:
+            if (body.get("window") or {}).get("mode") == "live":
+                return trace_service.register_live(body)
+            return trace_service.run_replay(body)
+        except FeatureError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/listener/traces")
+    def list_traces():
+        if trace_service is None:
+            raise HTTPException(status_code=503, detail="追踪服务未启用")
+        return {"traces": trace_service.list_live()}
+
+    @app.get("/api/listener/traces/{trace_id}")
+    def get_trace(trace_id: str):
+        if trace_service is None:
+            raise HTTPException(status_code=503, detail="追踪服务未启用")
+        try:
+            return trace_service.live_snapshot(trace_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="找不到该追踪") from exc
+
+    @app.delete("/api/listener/traces/{trace_id}")
+    def stop_trace(trace_id: str):
+        if trace_service is None:
+            raise HTTPException(status_code=503, detail="追踪服务未启用")
+        try:
+            return trace_service.stop_live(trace_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="找不到该追踪") from exc
 
     # ---------- 串口实时采集 ----------
 

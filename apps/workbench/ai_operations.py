@@ -45,12 +45,14 @@ class AIControlService:
     """Uses in-process backend services; it never opens a second serial handle."""
 
     def __init__(self, *, module_service=None, listener_service=None, log_service=None,
-                 store=None, resource_registry=None, simcon_service=None):
+                 store=None, resource_registry=None, simcon_service=None,
+                 trace_service=None):
         self.module_service = module_service
         self.listener_service = listener_service
         self.log_service = log_service
         self.resource_registry = resource_registry
         self.simcon_service = simcon_service
+        self.trace_service = trace_service
         self.store = store or OperationStore()
         self._simcon_verify_gate = threading.Lock()
         self._simcon_verify_running = False
@@ -1448,6 +1450,8 @@ class AIControlService:
         if operation["state"] == "waiting":
             if operation["kind"] == "module_flash":
                 operation = self._refresh_flash_operation(operation_id)
+            elif operation["kind"] == "listener_trace":
+                pass  # 追踪线程异步落终态，waiting 态无需刷新
             else:
                 operation = self._refresh_observation(operation_id)
         return operation
@@ -1471,3 +1475,64 @@ class AIControlService:
         self.store.audit(actor=actor, action="operation.cancel", result="cancelled",
                          operation_id=operation_id)
         return result
+
+    # -- 侦听台通信流追踪（需求 0009）：202 + wait，live 与回放统一异步化 --------
+
+    def _require_listener_trace(self):
+        if self.trace_service is None:
+            raise SourceUnavailable("侦听台追踪服务不可用")
+        return self.trace_service
+
+    def listener_trace_create(self, request: dict, *, actor: str,
+                              client_request_id: str = "") -> dict:
+        """创建追踪操作：回放=执行完整报告；live=注册句柄并返回首份快照。
+
+        与 simcon_verify 同构：202 + operation_id，GET /operations/{id}/wait 复用；
+        取消走通用 cancel_operation（终态后不可取消）。
+        """
+        service = self._require_listener_trace()
+        request = dict(request or {})
+        # 特征校验前置：坏特征在 HTTP 层即 422，不进入 operation 生命周期
+        from listener.trace_service import validate_feature
+        validate_feature(request)
+        operation = self.store.create(
+            "listener_trace", actor,
+            {"target": {"mapping_id": self.listener_resource()}, "feature": request},
+            client_request_id=client_request_id,
+        )
+        if operation["state"] != "created":
+            return operation
+        started = self.store.set_state(operation["operation_id"], "waiting")
+        thread = threading.Thread(
+            target=self._run_listener_trace, name="ai-listener-trace",
+            args=(operation["operation_id"], request, actor), daemon=True,
+        )
+        thread.start()
+        self.store.audit(actor=actor, action="listener.trace", result="waiting",
+                         resource=self.listener_resource(),
+                         operation_id=operation["operation_id"])
+        return started
+
+    def _run_listener_trace(self, operation_id: str, request: dict, actor: str) -> None:
+        try:
+            service = self._require_listener_trace()
+            if (request.get("window") or {}).get("mode") == "live":
+                handle = service.register_live(request, actor=actor)
+                snapshot = service.live_snapshot(handle["trace_id"])
+                result = {"mode": "live", "trace": handle, "snapshot": snapshot}
+            else:
+                result = {"mode": "replay", "report": service.run_replay(request)}
+            self.store.set_state(operation_id, "succeeded", result=result)
+            self.store.audit(actor=actor, action="listener.trace", result="succeeded",
+                             resource=self.listener_resource(), operation_id=operation_id)
+        except Exception as exc:
+            self.store.set_state(operation_id, "error", error=str(exc))
+            self.store.audit(actor=actor, action="listener.trace", result="error",
+                             resource=self.listener_resource(), operation_id=operation_id)
+
+    def listener_traces_list(self) -> dict:
+        return {"traces": self._require_listener_trace().list_live()}
+
+    def listener_trace_get(self, trace_id: str) -> dict:
+        """读取 live 追踪当前快照（回放报告不走此路径，随操作结果直接返回）。"""
+        return self._require_listener_trace().live_snapshot(trace_id)
