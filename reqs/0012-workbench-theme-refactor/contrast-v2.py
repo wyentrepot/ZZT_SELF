@@ -13,11 +13,12 @@
     · 收发方向色 / 状态色作为文字（on canvas）
 
   观察区（如实报告，不阻塞）—— 门禁外的更严组合，供 P2 接入页面时决策：
-    · 上述全部前景色 × 第五档实心底 elevated（compat 层 --panel-raised 指向它，
-      P2 页面接入后其上是否出现弱化文字/状态文字由人工确认）
+    · 上述全部前景色 × 第五档实心底 elevated（原 compat 层 --panel-raised 指向它，
+      现由 --color-bg-elevated 直接承接；其上是否出现弱化文字/状态文字由人工确认）
     · 状态/方向色 × surface/raised/elevated
 
-附录列出旧方言遗留 FAIL（P2 接入 compat-dialects.css 后自然消除，不计入门禁）。
+附录列出旧方言遗留 FAIL（P2 已随方言变量归零而消除，不计入门禁。
+注：过渡用的 compat-dialects.css 别名层已于 P3 删除，此附录仅为历史记录）。
 
 用法：python contrast-v2.py
 退出码：0 = 门禁通过；1 = 门禁存在 FAIL。
@@ -206,7 +207,7 @@ def main():
         obs_warns += w
 
     lines.append("")
-    lines.append("附录 · 旧方言遗留问题（未计入门禁，P2 页面接入 compat-dialects.css 后消除）")
+    lines.append("附录 · 旧方言遗留问题（已随 P2 方言变量归零而消除；过渡用的 compat-dialects.css 别名层已于 P3 删除，此处为历史记录）")
     lines.append("-" * 80)
     for item, fix in [
         ("A 系 --fg-dim #64748b / surface 3.44", "tokens-v2 --color-fg-dim 已提亮，别名映射后消除"),
