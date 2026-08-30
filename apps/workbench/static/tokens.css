@@ -48,6 +48,16 @@
 
   /* ---- Pre / Code ---- */
   --pre-font: Consolas, "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+
+  /* ---- 原生控件配色（滚动条/下拉框/日期控件随主题走）---- */
+  color-scheme: dark;
+
+  /* ---- Status · inconclusive（REQS-0011 §4.6 铁律）----
+     inconclusive = 证据缺失（≠失败），必须是独立紫色相，不得复用 warn 琥珀。
+     语义色不属于品牌色，故定义在通用区：四套主题共用，不随主题漂移。 */
+  --st-inconclusive:        #a371f7;
+  --st-inconclusive-bg:     color-mix(in srgb, #a371f7 15%, transparent);
+  --st-inconclusive-border: color-mix(in srgb, #a371f7 35%, transparent);
 }
 
 
@@ -180,7 +190,9 @@
   --pre-padding: var(--sp-3);
   --pre-fs:     var(--fs-sm);
 
-  --frame-bg: transparent;
+  /* iframe 背景：实心化。原先 transparent 会让子页面在父页渐变上再叠一层渐变，
+     形成「渐变套渐变」的视觉噪音（P0-1）。用 var() 引用使其随主题自动翻转。 */
+  --frame-bg: var(--bg-page);
 
   --section-title-fs: var(--fs-md);
   --section-title-fw: var(--fw-semibold);
@@ -342,9 +354,11 @@
   color: var(--st-warn);
   border: 1px solid var(--st-warn-border);
 }
+/* inconclusive：独立紫色相（REQS-0011 §4.6 铁律）。
+   原先复用 warn 琥珀 + opacity:0.85 与 .badge.run 区分 —— 同色相仅靠透明度，
+   实际不可辨。改用独立紫后不再需要 opacity 补丁。 */
 .badge.inconclusive {
-  background: var(--st-warn-bg);
-  color: var(--st-warn);
-  border: 1px solid var(--st-warn-border);
-  opacity: 0.85;
+  background: var(--st-inconclusive-bg);
+  color: var(--st-inconclusive);
+  border: 1px solid var(--st-inconclusive-border);
 }
