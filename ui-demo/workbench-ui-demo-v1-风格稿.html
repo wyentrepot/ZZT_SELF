@@ -1,0 +1,1734 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-density="compact">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>侦听台改造 · UI 重设计 Demo</title>
+<style>
+/* ============================================================
+   侦听台改造 —— UI 重设计 Demo
+   方向：深色专业仪表盘 / 扁平 / 高密度 / 单一强调色
+   设计原则：装饰让位于信息，状态必须一眼可判
+   ============================================================ */
+
+/* ---------- 1. Design Tokens ---------- */
+:root{
+  /* 表面：四级灰阶，无渐变无模糊 */
+  --bg-0:#0A0D13;   --bg-1:#0F131B;   --bg-2:#151A24;   --bg-3:#1B2130;
+  --bg-input:#080B11; --bg-hover:#161C27; --bg-active:#1D2532;
+
+  /* 描边：三级，1px 发丝线代替阴影 */
+  --line-1:#171D27;  --line-2:#242C3A;  --line-3:#333D4E;
+
+  /* 文本：四级 */
+  --tx-1:#E6EAF2; --tx-2:#98A2B6; --tx-3:#616E84; --tx-4:#414D5E;
+
+  /* 强调色：单一 */
+  --accent:#4C8DFF; --accent-d:#3B7AE6;
+  --accent-soft:rgba(76,141,255,.13); --accent-line:rgba(76,141,255,.35);
+
+  /* 状态：五态，各自独立色相（关键修复） */
+  --st-pass:#3FB950;  --st-pass-bg:rgba(63,185,80,.13);  --st-pass-ln:rgba(63,185,80,.38);
+  --st-fail:#F85149;  --st-fail-bg:rgba(248,81,73,.13);  --st-fail-ln:rgba(248,81,73,.38);
+  --st-warn:#D29922;  --st-warn-bg:rgba(210,153,34,.13); --st-warn-ln:rgba(210,153,34,.38);
+  --st-run:#4C8DFF;   --st-run-bg:rgba(76,141,255,.13);  --st-run-ln:rgba(76,141,255,.38);
+  --st-incon:#A371F7; --st-incon-bg:rgba(163,113,247,.13); --st-incon-ln:rgba(163,113,247,.38);
+  --st-idle:#5A6678;  --st-idle-bg:rgba(90,102,120,.12); --st-idle-ln:rgba(90,102,120,.3);
+
+  /* 圆角 & 阴影 */
+  --r-sm:3px; --r-md:5px; --r-lg:8px;
+  --sh-1:0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 8px 24px rgba(0,0,0,.45);
+
+  /* 字号 */
+  --fs-11:.6875rem; --fs-12:.75rem; --fs-13:.8125rem;
+  --fs-14:.875rem; --fs-16:1rem; --fs-20:1.25rem; --fs-24:1.5rem;
+
+  /* 密度变量（可切换） */
+  --row-h:28px; --card-pad:12px; --tab-h:30px; --gap:10px;
+  --fs-tbl:var(--fs-12); --fs-body:var(--fs-13);
+
+  /* 布局 */
+  --top-h:48px; --status-h:32px; --side-w:224px; --side-w-mini:56px;
+
+  --mono:"Cascadia Code","JetBrains Mono",Consolas,"Courier New",monospace;
+}
+html[data-density="comfortable"]{
+  --row-h:36px; --card-pad:18px; --tab-h:34px; --gap:14px;
+  --fs-tbl:var(--fs-13); --fs-body:var(--fs-14);
+}
+
+/* ---------- 2. Reset ---------- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg-0);color:var(--tx-1);
+  font:400 var(--fs-body)/1.55 "Segoe UI Variable","Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow:hidden;
+  font-variant-numeric:tabular-nums;
+}
+h1,h2,h3,h4{margin:0;font-weight:600}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+table{border-collapse:collapse;width:100%}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#252D3B;border:2px solid var(--bg-0);border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:#38424F}
+::selection{background:var(--accent-line);color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---------- 3. 应用外壳 ---------- */
+.app{height:100vh;display:flex;flex-direction:column}
+
+/* 顶栏 */
+.topbar{
+  flex:0 0 var(--top-h);height:var(--top-h);display:flex;align-items:center;gap:14px;
+  padding:0 12px;background:var(--bg-1);border-bottom:1px solid var(--line-1);
+}
+.brand{display:flex;align-items:center;gap:9px;flex:0 0 auto}
+.logo{
+  width:26px;height:26px;border-radius:var(--r-md);background:var(--accent);
+  display:grid;place-items:center;color:#0A0D13;font-weight:800;font-size:var(--fs-12);letter-spacing:-.5px;
+}
+.brand-txt .bt-1{font-size:var(--fs-13);font-weight:600;line-height:1.2}
+.brand-txt .bt-2{font-size:var(--fs-11);color:var(--tx-3);line-height:1.2}
+
+/* 顶栏搜索（导航直达） */
+.omni{flex:0 1 340px;position:relative;margin-left:6px}
+.omni svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--tx-3);pointer-events:none}
+.omni input{
+  width:100%;height:28px;padding:0 52px 0 30px;background:var(--bg-input);
+  border:1px solid var(--line-2);border-radius:var(--r-md);font-size:var(--fs-12);color:var(--tx-1);
+}
+.omni input::placeholder{color:var(--tx-4)}
+.omni input:focus{outline:none;border-color:var(--accent);background:var(--bg-0)}
+.omni kbd{
+  position:absolute;right:7px;top:50%;transform:translateY(-50%);
+  font:500 var(--fs-11)/1 var(--mono);color:var(--tx-4);background:var(--bg-2);
+  border:1px solid var(--line-2);border-radius:3px;padding:3px 5px;
+}
+.top-spacer{flex:1}
+.top-btn{
+  height:28px;padding:0 10px;display:inline-flex;align-items:center;gap:6px;
+  border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--bg-2);
+  font-size:var(--fs-12);color:var(--tx-2);transition:.12s;
+}
+.top-btn:hover{background:var(--bg-3);color:var(--tx-1);border-color:var(--line-3)}
+.top-btn.icon{width:28px;padding:0;justify-content:center}
+
+/* 全局状态条 */
+.statusbar{
+  flex:0 0 var(--status-h);height:var(--status-h);display:flex;align-items:center;gap:0;
+  background:var(--bg-0);border-bottom:1px solid var(--line-1);font-size:var(--fs-11);
+}
+.sb-group{display:flex;align-items:center;gap:14px;padding:0 14px;height:100%;border-right:1px solid var(--line-1)}
+.sb-group:last-child{border-right:none}
+.sb-item{display:flex;align-items:center;gap:5px;color:var(--tx-2);white-space:nowrap}
+.sb-item b{color:var(--tx-1);font-weight:500}
+.sb-sep{flex:1}
+.sb-label{color:var(--tx-4);text-transform:uppercase;letter-spacing:.06em;font-size:10px}
+
+/* 主体 */
+.shell{flex:1;display:flex;min-height:0}
+
+/* 侧栏 */
+.sidebar{
+  flex:0 0 var(--side-w);width:var(--side-w);background:var(--bg-1);
+  border-right:1px solid var(--line-1);display:flex;flex-direction:column;
+  transition:width .16s ease;overflow:hidden;
+}
+.app[data-side="mini"] .sidebar{flex-basis:var(--side-w-mini);width:var(--side-w-mini)}
+.nav{flex:1;overflow-y:auto;padding:8px 8px 20px}
+.nav-group{margin-bottom:14px}
+.nav-gtitle{
+  font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--tx-4);padding:0 8px;margin:0 0 5px;white-space:nowrap;
+}
+.nav-item{
+  display:flex;align-items:center;gap:9px;width:100%;height:32px;padding:0 8px;
+  border-radius:var(--r-md);color:var(--tx-2);font-size:var(--fs-13);
+  position:relative;transition:background .1s,color .1s;text-align:left;
+}
+.nav-item:hover{background:var(--bg-hover);color:var(--tx-1)}
+.nav-item.on{background:var(--accent-soft);color:var(--tx-1);font-weight:500}
+.nav-item.on::before{
+  content:"";position:absolute;left:0;top:6px;bottom:6px;width:2px;
+  background:var(--accent);border-radius:0 2px 2px 0;
+}
+.nav-item svg{flex:0 0 16px;color:var(--tx-3)}
+.nav-item.on svg{color:var(--accent)}
+.nav-item .ni-lbl{flex:1;white-space:nowrap;overflow:hidden}
+.nav-count{
+  font:600 10px/1 var(--mono);background:var(--bg-3);color:var(--tx-2);
+  border-radius:9px;padding:3px 6px;min-width:18px;text-align:center;
+}
+.nav-item[data-live="1"] .nav-count{background:var(--st-run-bg);color:var(--st-run)}
+.app[data-side="mini"] .nav-gtitle,
+.app[data-side="mini"] .nav-item .ni-lbl,
+.app[data-side="mini"] .nav-count{display:none}
+.app[data-side="mini"] .nav-item{justify-content:center;padding:0}
+.nav-foot{padding:8px;border-top:1px solid var(--line-1);font-size:var(--fs-11);color:var(--tx-4)}
+.app[data-side="mini"] .nav-foot{display:none}
+
+/* 主区 */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg-0)}
+.page{display:none;flex-direction:column;height:100%;min-height:0}
+.page.on{display:flex}
+.page-head{
+  flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:10px 16px;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1);
+}
+.ph-t{display:flex;flex-direction:column;gap:1px;min-width:0}
+.ph-t h1{font-size:var(--fs-16);line-height:1.3;display:flex;align-items:center;gap:8px}
+.crumb{font-size:var(--fs-11);color:var(--tx-4);letter-spacing:.02em}
+.page-body{flex:1;overflow:auto;padding:var(--gap);min-height:0}
+.page-body.nopad{padding:0;display:flex;flex-direction:column}
+
+/* ---------- 4. 通用组件 ---------- */
+.card{background:var(--bg-1);border:1px solid var(--line-1);border-radius:var(--r-lg)}
+.card-h{
+  display:flex;align-items:center;gap:8px;padding:8px var(--card-pad);
+  border-bottom:1px solid var(--line-1);min-height:34px;
+}
+.card-h h2,.card-h h3{font-size:var(--fs-12);font-weight:600;color:var(--tx-1);letter-spacing:.02em}
+.card-h .ch-sub{font-size:var(--fs-11);color:var(--tx-3)}
+.card-b{padding:var(--card-pad)}
+.card-b.flush{padding:0}
+
+.btn{
+  height:28px;padding:0 11px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--bg-2);
+  color:var(--tx-1);font-size:var(--fs-12);font-weight:500;transition:.12s;white-space:nowrap;
+}
+.btn:hover{background:var(--bg-3);border-color:var(--line-3)}
+.btn:active{transform:translateY(.5px)}
+.btn.sm{height:24px;padding:0 8px;font-size:var(--fs-11)}
+.btn.lg{height:34px;padding:0 16px;font-size:var(--fs-13)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#08101F;font-weight:600}
+.btn.pri:hover{background:var(--accent-d);border-color:var(--accent-d)}
+.btn.dan{color:var(--st-fail);border-color:var(--st-fail-ln);background:var(--st-fail-bg)}
+.btn.dan:hover{background:rgba(248,81,73,.2)}
+.btn.gho{background:transparent;border-color:transparent;color:var(--tx-2)}
+.btn.gho:hover{background:var(--bg-hover);color:var(--tx-1)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.ic{width:28px;padding:0}
+.btn.ic.sm{width:24px}
+
+.field{display:flex;flex-direction:column;gap:4px}
+.field > label{font-size:var(--fs-11);color:var(--tx-3);font-weight:500}
+.inp,select.inp{
+  height:28px;padding:0 8px;background:var(--bg-input);border:1px solid var(--line-2);
+  border-radius:var(--r-md);font-size:var(--fs-12);color:var(--tx-1);width:100%;
+}
+select.inp{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23616E84' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat:no-repeat;background-position:right 7px center;padding-right:24px}
+.inp:focus{outline:none;border-color:var(--accent);background:var(--bg-0)}
+.inp.mono{font-family:var(--mono);font-size:var(--fs-11)}
+.chk{display:flex;align-items:center;gap:6px;font-size:var(--fs-12);color:var(--tx-2);cursor:pointer}
+.chk input{accent-color:var(--accent);width:13px;height:13px}
+
+/* 徽章 —— 五态独立 */
+.bg{
+  display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 7px;
+  border-radius:9px;font-size:10px;font-weight:700;letter-spacing:.03em;
+  border:1px solid transparent;white-space:nowrap;line-height:1;
+}
+.bg-pass{background:var(--st-pass-bg);color:var(--st-pass);border-color:var(--st-pass-ln)}
+.bg-fail{background:var(--st-fail-bg);color:var(--st-fail);border-color:var(--st-fail-ln)}
+.bg-warn{background:var(--st-warn-bg);color:var(--st-warn);border-color:var(--st-warn-ln)}
+.bg-run {background:var(--st-run-bg);color:var(--st-run);border-color:var(--st-run-ln)}
+.bg-incon{background:var(--st-incon-bg);color:var(--st-incon);border-color:var(--st-incon-ln)}
+.bg-idle{background:var(--st-idle-bg);color:var(--st-idle);border-color:var(--st-idle-ln)}
+.bg-acc{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line)}
+
+/* 状态点 */
+.dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;background:var(--st-idle)}
+.dot.pass{background:var(--st-pass);box-shadow:0 0 0 2.5px var(--st-pass-bg)}
+.dot.fail{background:var(--st-fail);box-shadow:0 0 0 2.5px var(--st-fail-bg)}
+.dot.warn{background:var(--st-warn);box-shadow:0 0 0 2.5px var(--st-warn-bg)}
+.dot.run {background:var(--st-run);box-shadow:0 0 0 2.5px var(--st-run-bg);animation:pulse 1.4s infinite}
+.dot.incon{background:var(--st-incon);box-shadow:0 0 0 2.5px var(--st-incon-bg)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* 表格 */
+.tbl{font-size:var(--fs-tbl)}
+.tbl thead th{
+  position:sticky;top:0;z-index:2;background:var(--bg-2);color:var(--tx-3);
+  font-size:var(--fs-11);font-weight:600;text-align:left;letter-spacing:.04em;
+  padding:0 10px;height:28px;border-bottom:1px solid var(--line-2);white-space:nowrap;
+}
+.tbl tbody td{padding:0 10px;height:var(--row-h);border-bottom:1px solid var(--line-1);color:var(--tx-2)}
+.tbl tbody tr{cursor:default}
+.tbl tbody tr:hover td{background:var(--bg-hover)}
+.tbl tbody tr.sel td{background:var(--accent-soft);color:var(--tx-1)}
+.tbl tbody tr.sel td:first-child{box-shadow:inset 2px 0 0 var(--accent)}
+.tbl td.num,.tbl th.num{text-align:right;font-family:var(--mono);font-size:var(--fs-11)}
+.tbl td.mono{font-family:var(--mono);font-size:var(--fs-11)}
+.tbl td.strong{color:var(--tx-1)}
+.tbl-wrap{overflow:auto}
+.tbl-empty{padding:28px 12px;text-align:center;color:var(--tx-4);font-size:var(--fs-12)}
+
+/* 分栏 */
+.split{display:flex;min-height:0;flex:1}
+.split-col{display:flex;flex-direction:column;min-width:0}
+
+/* 标签页 */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line-1);background:var(--bg-1);flex:0 0 auto}
+.tab{
+  height:var(--tab-h);padding:0 12px;font-size:var(--fs-12);color:var(--tx-3);
+  border-bottom:2px solid transparent;display:inline-flex;align-items:center;gap:6px;transition:.12s;
+}
+.tab:hover{color:var(--tx-1)}
+.tab.on{color:var(--tx-1);border-bottom-color:var(--accent);font-weight:500}
+
+/* KPI */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap)}
+.kpi{background:var(--bg-1);border:1px solid var(--line-1);border-radius:var(--r-lg);padding:10px var(--card-pad)}
+.kpi .k-l{font-size:var(--fs-11);color:var(--tx-3);display:flex;align-items:center;gap:5px}
+.kpi .k-v{font:600 var(--fs-20)/1.3 var(--mono);color:var(--tx-1);margin-top:2px}
+.kpi .k-v small{font-size:var(--fs-11);color:var(--tx-3);font-weight:400;margin-left:3px}
+.kpi .k-d{font-size:var(--fs-11);color:var(--tx-4);margin-top:1px}
+
+/* 网格布局助手 */
+.grid{display:grid;gap:var(--gap)}
+.g-2{grid-template-columns:repeat(2,1fr)}
+.g-3{grid-template-columns:repeat(3,1fr)}
+.g-4{grid-template-columns:repeat(4,1fr)}
+.row{display:flex;gap:8px;align-items:center}
+.spacer{flex:1}
+.muted{color:var(--tx-3)}
+.dim{color:var(--tx-4)}
+.mono{font-family:var(--mono)}
+
+/* 空状态 */
+.empty{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:10px;padding:40px;color:var(--tx-4);text-align:center;
+}
+.empty svg{color:var(--tx-4);opacity:.5}
+.empty h4{font-size:var(--fs-14);color:var(--tx-2);font-weight:500}
+.empty p{font-size:var(--fs-12);margin:0;max-width:380px;line-height:1.6}
+
+/* 控制台 */
+.console{
+  background:var(--bg-input);border:1px solid var(--line-1);border-radius:var(--r-md);
+  font-family:var(--mono);font-size:var(--fs-11);line-height:1.7;overflow:auto;padding:8px 10px;
+}
+.console .cl{display:flex;gap:8px;white-space:pre-wrap;word-break:break-all}
+.console .ct{color:var(--tx-4);flex:0 0 auto}
+.console .cm{flex:1}
+.console .lv-I{color:var(--tx-2)}
+.console .lv-W{color:var(--st-warn)}
+.console .lv-E{color:var(--st-fail)}
+.console .lv-S{color:var(--st-pass)}
+.console .lv-D{color:var(--tx-4)}
+
+/* 树 */
+.tree{font-size:var(--fs-12);user-select:none}
+.tree-node{
+  display:flex;align-items:center;gap:5px;height:26px;padding:0 6px;border-radius:var(--r-sm);
+  color:var(--tx-2);cursor:pointer;
+}
+.tree-node:hover{background:var(--bg-hover);color:var(--tx-1)}
+.tree-node.on{background:var(--accent-soft);color:var(--tx-1);font-weight:500}
+.tree-node .tw{width:12px;display:inline-flex;justify-content:center;color:var(--tx-4)}
+.tree-kids{margin-left:12px;border-left:1px solid var(--line-1);padding-left:4px}
+
+/* 进度条 */
+.bar{height:4px;background:var(--bg-3);border-radius:2px;overflow:hidden}
+.bar > i{display:block;height:100%;background:var(--accent);border-radius:2px;transition:width .3s ease}
+.bar.pass > i{background:var(--st-pass)} .bar.fail > i{background:var(--st-fail)} .bar.warn > i{background:var(--st-warn)}
+
+/* ---------- 5. 页面专属 ---------- */
+
+/* 5.1 验证工作台 */
+.wb-grid{display:grid;grid-template-columns:270px 1fr;gap:var(--gap);flex:1;min-height:0}
+.scn-list{overflow:auto;flex:1}
+.scn-item{
+  padding:8px 10px;border-bottom:1px solid var(--line-1);cursor:pointer;transition:background .1s;
+}
+.scn-item:hover{background:var(--bg-hover)}
+.scn-item.on{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+.scn-item .s1{display:flex;align-items:center;gap:6px;font-size:var(--fs-12);color:var(--tx-1)}
+.scn-item .s2{font-size:var(--fs-11);color:var(--tx-3);margin-top:2px;display:flex;gap:8px}
+.wb-right{display:flex;flex-direction:column;gap:var(--gap);min-height:0;overflow:auto}
+.cfg{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+
+/* 流水线步骤 */
+.pipe{display:flex;align-items:stretch;gap:0;padding:4px 0}
+.step{flex:1;display:flex;align-items:flex-start;gap:8px;position:relative;min-width:0}
+.step::after{
+  content:"";position:absolute;left:calc(-1px);top:11px;right:50%;height:1px;background:var(--line-2);z-index:0;
+}
+.step:first-child::after{display:none}
+.step .sd{
+  width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:0 0 22px;
+  background:var(--bg-2);border:1px solid var(--line-2);color:var(--tx-4);
+  font:700 10px/1 var(--mono);z-index:1;position:relative;transition:.2s;
+}
+.step .st-l{display:flex;flex-direction:column;gap:1px;min-width:0;padding-top:1px}
+.step .st-n{font-size:var(--fs-12);color:var(--tx-2);white-space:nowrap}
+.step .st-m{font:400 var(--fs-11)/1.3 var(--mono);color:var(--tx-4)}
+.step[data-s="run"] .sd{background:var(--st-run-bg);border-color:var(--st-run);color:var(--st-run)}
+.step[data-s="run"] .st-n{color:var(--tx-1)}
+.step[data-s="pass"] .sd{background:var(--st-pass-bg);border-color:var(--st-pass);color:var(--st-pass)}
+.step[data-s="pass"] .st-n{color:var(--tx-1)}
+.step[data-s="fail"] .sd{background:var(--st-fail-bg);border-color:var(--st-fail);color:var(--st-fail)}
+.step[data-s="fail"] .st-n{color:var(--st-fail)}
+.step[data-s="incon"] .sd{background:var(--st-incon-bg);border-color:var(--st-incon);color:var(--st-incon)}
+.step[data-s="incon"] .st-n{color:var(--st-incon)}
+.step[data-s="warn"] .sd{background:var(--st-warn-bg);border-color:var(--st-warn);color:var(--st-warn)}
+.step[data-s="skip"] .sd{opacity:.45}
+.step[data-s="skip"] .st-n{color:var(--tx-4)}
+
+/* 5.2 侦听台 */
+.lsn-body{flex:1;display:flex;min-height:0}
+.lsn-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.lsn-side{flex:0 0 380px;width:380px;border-left:1px solid var(--line-1);display:flex;flex-direction:column;background:var(--bg-1);min-height:0}
+.toolbar{
+  flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:7px 10px;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1);flex-wrap:wrap;
+}
+.dir-d{color:var(--st-run)} .dir-u{color:var(--st-pass)}
+.hex{font-family:var(--mono);font-size:var(--fs-11);line-height:1.75;white-space:pre;overflow:auto;padding:8px 10px;background:var(--bg-input);border:1px solid var(--line-1);border-radius:var(--r-md)}
+.hex .off{color:var(--tx-4)} .hex .hx{color:var(--tx-2)} .hex .as{color:var(--tx-4)}
+.parse-tree{font-family:var(--mono);font-size:var(--fs-11);line-height:1.65}
+.pn{display:flex;gap:6px;padding:1px 0}
+.pn .pk{color:var(--st-incon)} .pn .pv{color:var(--tx-1)} .pn .pd{color:var(--tx-4)}
+.pn-l1{font-weight:600;color:var(--accent)}
+
+/* 5.3 模块日志 */
+.mod-body{flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0}
+.log-line{display:flex;gap:8px;padding:1px 10px;font-family:var(--mono);font-size:var(--fs-11);line-height:1.7}
+.log-line:hover{background:var(--bg-hover)}
+.log-line .lt{color:var(--tx-4);flex:0 0 auto}
+.log-line .ll{flex:0 0 42px;font-weight:700}
+.log-line .ll.D{color:var(--tx-4)} .log-line .ll.I{color:var(--st-run)}
+.log-line .ll.W{color:var(--st-warn)} .log-line .ll.E{color:var(--st-fail)}
+
+/* 5.4 模拟集中器 */
+.sim-body{flex:1;display:grid;grid-template-columns:280px 1fr;gap:var(--gap);min-height:0;overflow:hidden}
+
+/* 5.5 报文追踪 */
+.tr-body{flex:1;display:flex;flex-direction:column;min-height:0;overflow:auto}
+.sess{border-bottom:1px solid var(--line-1)}
+.sess-h{display:flex;align-items:center;gap:10px;padding:7px 12px;cursor:pointer;background:var(--bg-1)}
+.sess-h:hover{background:var(--bg-hover)}
+.sess-h .sh-t{flex:1;display:flex;align-items:center;gap:8px;font-size:var(--fs-12);min-width:0}
+.exch{display:flex;align-items:flex-start;gap:10px;padding:6px 12px 6px 34px;border-top:1px solid var(--line-1)}
+.exch .ex-d{flex:0 0 74px;display:flex;align-items:center;gap:5px;font-size:var(--fs-11);color:var(--tx-3)}
+.exch .ex-b{flex:1;font-family:var(--mono);font-size:var(--fs-11);color:var(--tx-2);word-break:break-all}
+
+/* 5.6 报文字典 */
+.dict-body{flex:1;display:grid;grid-template-columns:250px 1fr;min-height:0}
+.dict-side{border-right:1px solid var(--line-1);overflow:auto;background:var(--bg-1);padding:8px}
+.dict-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+
+/* 5.7 串口档案 */
+.port-card{
+  background:var(--bg-1);border:1px solid var(--line-1);border-radius:var(--r-lg);
+  padding:var(--card-pad);display:flex;flex-direction:column;gap:8px;
+}
+.port-card .pc-t{display:flex;align-items:center;gap:8px}
+.port-card .pc-n{font:600 var(--fs-14)/1 var(--mono);color:var(--tx-1)}
+.port-kv{display:flex;justify-content:space-between;font-size:var(--fs-11);padding:2px 0}
+.port-kv span{color:var(--tx-4)} .port-kv b{color:var(--tx-2);font-weight:500;font-family:var(--mono)}
+
+/* 5.8 维护 */
+.maint-body{flex:1;overflow:auto;padding:var(--gap)}
+.svc-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-1)}
+.svc-row:last-child{border-bottom:none}
+.danger-zone{border-color:var(--st-fail-ln);background:rgba(248,81,73,.04)}
+
+/* ---------- 6. 设计说明抽屉 & Toast ---------- */
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:440px;background:var(--bg-1);
+  border-left:1px solid var(--line-2);box-shadow:var(--sh-2);z-index:60;
+  transform:translateX(100%);transition:transform .2s cubic-bezier(.16,1,.3,1);
+  display:flex;flex-direction:column;
+}
+.drawer.on{transform:none}
+.drawer-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line-1)}
+.drawer-b{flex:1;overflow:auto;padding:16px;font-size:var(--fs-12);line-height:1.7;color:var(--tx-2)}
+.drawer-b h4{font-size:var(--fs-13);color:var(--tx-1);margin:16px 0 6px}
+.drawer-b h4:first-child{margin-top:0}
+.drawer-b code{font-family:var(--mono);font-size:var(--fs-11);background:var(--bg-2);padding:1px 5px;border-radius:3px;color:var(--accent)}
+.drawer-b li{margin-bottom:6px}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:55;opacity:0;pointer-events:none;transition:.2s}
+.scrim.on{opacity:1;pointer-events:auto}
+
+.toasts{position:fixed;bottom:14px;right:14px;z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{
+  display:flex;align-items:center;gap:9px;background:var(--bg-2);border:1px solid var(--line-2);
+  border-left:3px solid var(--accent);border-radius:var(--r-md);padding:9px 13px;
+  box-shadow:var(--sh-2);font-size:var(--fs-12);color:var(--tx-1);
+  animation:tin .22s cubic-bezier(.16,1,.3,1);max-width:420px;
+}
+.toast.pass{border-left-color:var(--st-pass)} .toast.fail{border-left-color:var(--st-fail)}
+.toast.warn{border-left-color:var(--st-warn)} .toast.incon{border-left-color:var(--st-incon)}
+@keyframes tin{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+
+.demo-tip{
+  display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-11);color:var(--tx-4);
+  border:1px dashed var(--line-2);border-radius:var(--r-md);padding:3px 8px;
+}
+</style>
+</head>
+<body>
+
+<!-- ============ SVG 图标精灵 ============ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="i-layers" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></g>
+<g id="i-radio" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 16.2a6 6 0 0 0 0-8.4"/><path d="M4.9 4.9a10 10 0 0 0 0 14.2M19.1 19.1a10 10 0 0 0 0-14.2"/></g>
+<g id="i-terminal" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></g>
+<g id="i-cpu" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g>
+<g id="i-route" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M5 8v8M7 6h7a2 2 0 0 1 2 2v2M7 18h7a2 2 0 0 0 2-2v-2"/></g>
+<g id="i-book" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></g>
+<g id="i-cable" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M7 14v3a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-3"/><path d="M12 19v3"/></g>
+<g id="i-wrench" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z"/></g>
+<g id="i-search" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></g>
+<g id="i-play" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></g>
+<g id="i-stop" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></g>
+<g id="i-check" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9 17 20 6"/></g>
+<g id="i-x" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></g>
+<g id="i-alert" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 20h20L12 3z"/><line x1="12" y1="9" x2="12" y2="14"/><line x1="12" y1="17" x2="12" y2="17.01"/></g>
+<g id="i-clock" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></g>
+<g id="i-download" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M4 20h16"/></g>
+<g id="i-upload" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><polyline points="7 13 12 8 17 13"/><path d="M4 4h16"/></g>
+<g id="i-refresh" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><polyline points="20 4 20 11 13 11"/></g>
+<g id="i-filter" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></g>
+<g id="i-panel" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9.5" y1="4" x2="9.5" y2="20"/></g>
+<g id="i-zap" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 4 14 11 14 10 22 20 10 13 10 13 2"/></g>
+<g id="i-more" fill="currentColor"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></g>
+<g id="i-down" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v15"/><polyline points="6 13 12 19 18 13"/></g>
+<g id="i-up" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5"/><polyline points="6 11 12 5 18 11"/></g>
+<g id="i-right" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></g>
+<g id="i-db" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></g>
+<g id="i-trash" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></g>
+<g id="i-info" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="7.6" x2="12" y2="7.61"/></g>
+<g id="i-file" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></g>
+<g id="i-save" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></g>
+<g id="i-copy" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></g>
+<g id="i-note" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></g>
+</defs></svg>
+
+<div class="app" id="app" data-side="full">
+
+  <!-- ===== 顶栏 ===== -->
+  <header class="topbar">
+    <button class="top-btn icon" id="btnSide" title="折叠/展开侧栏 (Ctrl+B)" aria-label="折叠侧栏">
+      <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-panel"/></svg>
+    </button>
+    <div class="brand">
+      <div class="logo">HL</div>
+      <div class="brand-txt">
+        <div class="bt-1">侦听台改造工作台</div>
+        <div class="bt-2">HPLC 报文侦听 · 解析 · 自动验证</div>
+      </div>
+    </div>
+
+    <div class="omni">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-search"/></svg>
+      <input id="navSearch" type="text" placeholder="跳转到功能…（试试输「侦听」「串口」）" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+    </div>
+
+    <div class="top-spacer"></div>
+
+    <button class="top-btn" id="btnDensity" title="切换信息密度">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-layers"/></svg>
+      <span id="densityLbl">紧凑</span>
+    </button>
+    <button class="top-btn" id="btnNotes">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-note"/></svg>
+      设计说明
+    </button>
+  </header>
+
+  <!-- ===== 全局状态条 ===== -->
+  <div class="statusbar">
+    <div class="sb-group">
+      <div class="sb-item"><span class="dot pass"></span>COM4 <span class="dim">侦听口</span> <b>9600</b></div>
+      <div class="sb-item"><span class="dot pass"></span>COM24 <span class="dim">交互口</span> <b>9600</b></div>
+      <div class="sb-item"><span class="dot pass"></span>集中器 <b>在线</b></div>
+      <div class="sb-item"><span class="dot warn"></span>模块 <b>待烧录</b></div>
+    </div>
+    <div class="sb-group">
+      <div class="sb-item"><span class="sb-label">队列</span> <b id="sbQueue">空闲</b></div>
+      <div class="sb-item"><span class="sb-label">最近结论</span> <span class="bg bg-pass" id="sbVerdict">通过</span></div>
+      <div class="sb-item"><span class="sb-label">会话帧数</span> <b class="mono" id="sbFrames">0</b></div>
+    </div>
+    <div class="sb-sep"></div>
+    <div class="sb-group">
+      <div class="sb-item dim">数据目录 <b class="mono">D:\2-侦听台改造\data</b></div>
+      <div class="sb-item dim" id="sbClock">--:--:--</div>
+    </div>
+  </div>
+
+  <!-- ===== 主体 ===== -->
+  <div class="shell">
+    <!-- 侧栏导航 -->
+    <aside class="sidebar">
+      <nav class="nav" id="nav"></nav>
+      <div class="nav-foot">
+        <div class="demo-tip">Demo · 数据均为模拟</div>
+      </div>
+    </aside>
+
+    <!-- 内容区 -->
+    <main class="main" id="main">
+
+      <!-- ============ 1. 验证工作台 ============ -->
+      <section class="page" id="p-workbench">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>
+              验证工作台
+              <span class="bg bg-run" id="wbState">待命</span>
+            </h1>
+            <div class="crumb">执行 / 验证工作台 · 烧录 → 监控 → 激励 → 比对 → 报告</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn" id="btnResetPipe">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-refresh"/></svg>重置
+          </button>
+          <button class="btn pri" id="btnRun">
+            <svg width="12" height="12" viewBox="0 0 24 24"><use href="#i-play"/></svg>执行验证
+          </button>
+        </div>
+
+        <div class="page-body" style="display:flex;flex-direction:column;gap:var(--gap);min-height:0">
+          <!-- KPI -->
+          <div class="kpis" style="flex:0 0 auto">
+            <div class="kpi"><div class="k-l"><span class="dot pass"></span>今日通过率</div><div class="k-v">87.5<small>% (21/24)</small></div><div class="k-d">较昨日 +4.2%</div></div>
+            <div class="kpi"><div class="k-l"><span class="dot run"></span>平均耗时</div><div class="k-v">42<small>s</small></div><div class="k-d">含烧录 18s</div></div>
+            <div class="kpi"><div class="k-l"><span class="dot incon"></span>不确定结论</div><div class="k-v">2<small>次</small></div><div class="k-d">证据缺失，需人工复核</div></div>
+            <div class="kpi"><div class="k-l"><span class="dot fail"></span>失败</div><div class="k-v">1<small>次</small></div><div class="k-d">分钟采集 Ln 断言不符</div></div>
+          </div>
+
+          <div class="wb-grid">
+            <!-- 场景列表 -->
+            <div class="card" style="display:flex;flex-direction:column;min-height:0">
+              <div class="card-h">
+                <h2>验证场景</h2>
+                <span class="ch-sub" id="scnCount">8 项</span>
+                <div class="spacer"></div>
+                <button class="btn ic sm gho" title="筛选"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-filter"/></svg></button>
+              </div>
+              <div style="padding:8px;border-bottom:1px solid var(--line-1)">
+                <input class="inp" id="scnSearch" placeholder="搜索场景名 / 标签…">
+              </div>
+              <div class="scn-list" id="scnList"></div>
+            </div>
+
+            <!-- 右侧 -->
+            <div class="wb-right">
+              <!-- 运行配置 -->
+              <div class="card">
+                <div class="card-h"><h2>运行配置</h2><span class="ch-sub" id="cfgScn">安徽·分钟采集</span></div>
+                <div class="card-b">
+                  <div class="cfg">
+                    <div class="field"><label>固件</label>
+                      <select class="inp"><option>iap_cco_AN_HUI_v2.1.4.bin</option><option>flash_cco_AN_HUI_v2.1.3.bin</option><option>upgrade_cco_v2.0.9.dat</option></select>
+                    </div>
+                    <div class="field"><label>烧录槽位</label>
+                      <select class="inp"><option>slot 0（当前启动）</option><option>slot 1</option></select>
+                    </div>
+                    <div class="field"><label>侦听端口</label>
+                      <select class="inp"><option>COM4 · 9600</option><option>COM4 · 115200</option></select>
+                    </div>
+                    <div class="field"><label>交互端口</label>
+                      <select class="inp"><option>COM24 · 9600</option><option>COM24 · 115200</option></select>
+                    </div>
+                  </div>
+                  <div class="row" style="margin-top:10px;flex-wrap:wrap">
+                    <label class="chk"><input type="checkbox" checked>烧录</label>
+                    <label class="chk"><input type="checkbox" checked>监控</label>
+                    <label class="chk"><input type="checkbox" checked>激励</label>
+                    <label class="chk"><input type="checkbox" checked>比对</label>
+                    <label class="chk"><input type="checkbox">跳过报告归档</label>
+                    <div class="spacer"></div>
+                    <span class="dim" style="font-size:var(--fs-11)">预计 38–52s</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 流水线 -->
+              <div class="card">
+                <div class="card-h">
+                  <h2>执行流水线</h2>
+                  <span class="ch-sub" id="pipeSub">就绪</span>
+                  <div class="spacer"></div>
+                  <div style="width:130px"><div class="bar" id="pipeBar"><i style="width:0%"></i></div></div>
+                  <span class="mono dim" style="font-size:var(--fs-11)" id="pipePct">0%</span>
+                </div>
+                <div class="card-b">
+                  <div class="pipe" id="pipe"></div>
+                </div>
+              </div>
+
+              <!-- 实时输出 -->
+              <div class="card" style="flex:1;min-height:150px;display:flex;flex-direction:column">
+                <div class="card-h">
+                  <h2>实时输出</h2>
+                  <span class="ch-sub" id="conStatus">—</span>
+                  <div class="spacer"></div>
+                  <button class="btn sm gho" id="btnClearCon">清空</button>
+                </div>
+                <div class="card-b" style="flex:1;min-height:0;display:flex">
+                  <div class="console" id="console" style="flex:1"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 最近运行 -->
+          <div class="card" style="flex:0 0 auto">
+            <div class="card-h">
+              <h2>最近运行</h2><span class="ch-sub">共 24 条</span>
+              <div class="spacer"></div>
+              <button class="btn sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-download"/></svg>导出 CSV</button>
+            </div>
+            <div class="card-b flush">
+              <div class="tbl-wrap" style="max-height:220px">
+                <table class="tbl">
+                  <thead><tr>
+                    <th style="width:34px"></th><th>运行 ID</th><th>场景</th><th>开始时间</th>
+                    <th class="num">耗时</th><th>结论</th><th class="num">断言</th><th class="num">帧数</th><th style="width:80px">产物</th>
+                  </tr></thead>
+                  <tbody id="runsBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 2. 侦听台 ============ -->
+      <section class="page" id="p-listener">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>侦听台 <span class="bg bg-pass" id="lsnState">已停止</span></h1>
+            <div class="crumb">观测 / 侦听台 · COM4 · 9600 8N1</div>
+          </div>
+          <div class="spacer"></div>
+          <span class="dim" style="font-size:var(--fs-11)">已缓冲 <b class="mono" id="lsnCount">0</b> 帧</span>
+          <button class="btn" id="btnLsn"><svg width="12" height="12" viewBox="0 0 24 24"><use href="#i-play"/></svg>开始侦听</button>
+        </div>
+        <div class="page-body nopad">
+          <div class="toolbar">
+            <select class="inp" style="width:120px"><option>COM4</option><option>COM24</option></select>
+            <select class="inp" style="width:96px"><option>9600</option><option>115200</option></select>
+            <span class="dim">|</span>
+            <input class="inp" id="lsnFilter" placeholder="过滤：地址 / AFN / 内容…" style="width:220px">
+            <select class="inp" style="width:110px"><option>全部方向</option><option>下行</option><option>上行</option></select>
+            <div class="spacer"></div>
+            <button class="btn sm gho"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-filter"/></svg>高级</button>
+            <button class="btn sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-download"/></svg>导出</button>
+            <button class="btn sm gho ic"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-trash"/></svg></button>
+          </div>
+          <div class="lsn-body">
+            <div class="lsn-main">
+              <div class="tbl-wrap" style="flex:1">
+                <table class="tbl">
+                  <thead><tr>
+                    <th class="num" style="width:56px">#</th>
+                    <th style="width:96px">时间</th>
+                    <th style="width:44px">方向</th>
+                    <th style="width:150px">帧类型</th>
+                    <th style="width:130px">源地址</th>
+                    <th style="width:130px">目的地址</th>
+                    <th class="num" style="width:52px">长度</th>
+                    <th>摘要</th>
+                    <th style="width:60px">校验</th>
+                  </tr></thead>
+                  <tbody id="framesBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="lsn-side">
+              <div class="tabs">
+                <button class="tab on">解析详情</button>
+                <button class="tab">原始报文</button>
+                <button class="tab">统计</button>
+              </div>
+              <div id="frameDetail" style="flex:1;overflow:auto;padding:12px">
+                <div class="empty" style="height:100%">
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#i-radio"/></svg>
+                  <h4>未选择帧</h4>
+                  <p>在左侧列表点选任意一帧，这里会显示它的分层解析结果与原始十六进制。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 3. 模块日志 ============ -->
+      <section class="page" id="p-module">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>模块日志 <span class="bg bg-idle">未连接</span></h1>
+            <div class="crumb">观测 / 模块日志 · 串口日志采集与固件烧录</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-upload"/></svg>烧录固件</button>
+          <button class="btn pri" id="btnModConn"><svg width="12" height="12" viewBox="0 0 24 24"><use href="#i-play"/></svg>连接</button>
+        </div>
+        <div class="page-body nopad">
+          <div class="mod-body">
+            <div class="card" style="border-radius:0;border-left:none;border-top:none;border-bottom:none;display:flex;flex-direction:column;min-height:0">
+              <div class="card-h"><h2>烧录参数</h2></div>
+              <div class="card-b" style="display:flex;flex-direction:column;gap:10px;overflow:auto">
+                <div class="field"><label>目标端口</label><select class="inp"><option>COM24 · CP210x</option><option>COM4 · CP210x</option></select></div>
+                <div class="field"><label>波特率计划</label><input class="inp mono" value="9600 → 115200 → 9600" readonly></div>
+                <div class="field"><label>固件文件</label><select class="inp"><option>iap_cco_AN_HUI_v2.1.4.bin</option><option>flash_cco_AN_HUI_v2.1.4.bin</option></select></div>
+                <div class="row" style="justify-content:space-between;font-size:var(--fs-11)">
+                  <span class="dim">大小</span><b class="mono">464,432 B</b>
+                </div>
+                <div class="row" style="justify-content:space-between;font-size:var(--fs-11)">
+                  <span class="dim">CRC</span><b class="mono">0x31C3</b>
+                </div>
+                <div class="row" style="justify-content:space-between;font-size:var(--fs-11)">
+                  <span class="dim">命令</span><b class="mono">download 0</b>
+                </div>
+                <div class="field"><label>槽位</label><select class="inp"><option>slot 0</option><option>slot 1</option></select></div>
+                <div style="border-top:1px solid var(--line-1);padding-top:10px">
+                  <div class="row" style="justify-content:space-between;font-size:var(--fs-11);margin-bottom:5px">
+                    <span class="dim">烧录进度</span><b class="mono" id="modPct">0%</b>
+                  </div>
+                  <div class="bar"><i id="modBar" style="width:0%"></i></div>
+                </div>
+                <button class="btn sm" style="width:100%">自检 (--selftest)</button>
+                <button class="btn sm" style="width:100%">Dry-run</button>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;min-width:0;min-height:0">
+              <div class="toolbar">
+                <select class="inp" style="width:110px"><option>全部级别</option><option>INFO+</option><option>WARN+</option><option>ERROR</option></select>
+                <input class="inp" placeholder="过滤日志…" style="width:200px">
+                <label class="chk"><input type="checkbox" checked>自动滚动</label>
+                <div class="spacer"></div>
+                <span class="dim mono" style="font-size:var(--fs-11)">1,284 行</span>
+                <button class="btn sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-save"/></svg>保存</button>
+              </div>
+              <div style="flex:1;overflow:auto;background:var(--bg-0)" id="modLog"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 4. 模拟集中器 ============ -->
+      <section class="page" id="p-simcon">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>模拟集中器 <span class="bg bg-idle">空闲</span></h1>
+            <div class="crumb">执行 / 模拟集中器 · 按脚本向真实模块下发激励报文</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn pri" id="btnSimRun"><svg width="12" height="12" viewBox="0 0 24 24"><use href="#i-play"/></svg>执行脚本</button>
+        </div>
+        <div class="page-body nopad" style="flex-direction:column">
+          <div class="sim-body" style="padding:var(--gap)">
+            <div class="card" style="display:flex;flex-direction:column;min-height:0">
+              <div class="card-h"><h2>脚本库</h2><span class="ch-sub">6 项</span></div>
+              <div class="scn-list" id="simList"></div>
+            </div>
+            <div class="card" style="display:flex;flex-direction:column;min-height:0">
+              <div class="card-h">
+                <h2 id="simTitle">anhui_minute_collect.json</h2>
+                <span class="ch-sub">9 步 · 预计 24s</span>
+                <div class="spacer"></div>
+                <span class="bg bg-pass">最近：通过</span>
+              </div>
+              <div class="card-b flush">
+                <div class="tbl-wrap" style="max-height:100%">
+                  <table class="tbl">
+                    <thead><tr>
+                      <th style="width:34px"></th><th class="num" style="width:40px">#</th><th>动作</th>
+                      <th style="width:170px">报文</th><th style="width:80px">期望</th><th class="num" style="width:56px">耗时</th><th>结果</th>
+                    </tr></thead>
+                    <tbody id="simBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 5. 报文追踪 ============ -->
+      <section class="page" id="p-trace">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>报文追踪</h1>
+            <div class="crumb">观测 / 报文追踪 · 按会话还原请求-响应链</div>
+          </div>
+          <div class="spacer"></div>
+          <input class="inp" placeholder="搜索会话 / 地址 / 内容…" style="width:230px">
+          <select class="inp" style="width:120px"><option>全部结果</option><option>仅异常</option><option>仅超时</option></select>
+        </div>
+        <div class="page-body nopad">
+          <div class="toolbar">
+            <span class="dim" style="font-size:var(--fs-11)">共 <b class="mono">6</b> 个会话 · <b class="mono">23</b> 次交互</span>
+            <div class="spacer"></div>
+            <button class="btn sm gho">全部展开</button>
+            <button class="btn sm gho">全部折叠</button>
+          </div>
+          <div class="tr-body" id="traceBody"></div>
+        </div>
+      </section>
+
+      <!-- ============ 6. 报文字典 ============ -->
+      <section class="page" id="p-dict">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>报文字典</h1>
+            <div class="crumb">资源 / 报文字典 · 协议帧结构与字段定义</div>
+          </div>
+          <div class="spacer"></div>
+          <input class="inp" placeholder="搜索字段 / 名称…" style="width:220px">
+          <button class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-upload"/></svg>导入 Excel</button>
+        </div>
+        <div class="page-body nopad">
+          <div class="dict-body">
+            <div class="dict-side">
+              <div style="font-size:10px;font-weight:700;letter-spacing:.09em;color:var(--tx-4);padding:0 6px 6px">协议族</div>
+              <div class="tree" id="dictTree"></div>
+            </div>
+            <div class="dict-main">
+              <div class="card-h" style="border-bottom:1px solid var(--line-1);min-height:34px">
+                <h3 id="dictTitle">11H-F231 · 分钟采集</h3>
+                <span class="ch-sub">共 14 个字段 · 32 字节</span>
+                <div class="spacer"></div>
+                <button class="btn sm gho"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-copy"/></svg>复制结构</button>
+              </div>
+              <div class="tbl-wrap" style="flex:1">
+                <table class="tbl">
+                  <thead><tr>
+                    <th class="num" style="width:56px">偏移</th><th class="num" style="width:56px">长度</th>
+                    <th style="width:140px">字段</th><th style="width:90px">类型</th><th>说明</th><th style="width:110px">枚举/取值</th>
+                  </tr></thead>
+                  <tbody id="dictBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 7. 串口档案 ============ -->
+      <section class="page" id="p-serial">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>串口档案</h1>
+            <div class="crumb">资源 / 串口档案 · 端口与设备的绑定关系（全局唯一事实源）</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-refresh"/></svg>扫描端口</button>
+          <button class="btn pri"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-save"/></svg>保存档案</button>
+        </div>
+        <div class="page-body">
+          <div class="grid g-3" id="portGrid"></div>
+          <div class="card" style="margin-top:var(--gap)">
+            <div class="card-h"><h2>绑定校验</h2><span class="ch-sub">保存前自动执行</span></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:6px;font-size:var(--fs-12)">
+              <div class="row"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--st-pass)" stroke-width="2.2"><use href="#i-check"/></svg><span>每个端口最多绑定一个角色，无冲突</span></div>
+              <div class="row"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--st-pass)" stroke-width="2.2"><use href="#i-check"/></svg><span>侦听口与交互口未指向同一物理端口</span></div>
+              <div class="row"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--st-warn)" stroke-width="1.8"><use href="#i-alert"/></svg><span class="muted">COM4 的 USB 序列号缺失（usbip 不传递）· 建议按物理端口号人工确认后补录</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 8. 维护 ============ -->
+      <section class="page" id="p-maint">
+        <div class="page-head">
+          <div class="ph-t">
+            <h1>维护</h1>
+            <div class="crumb">系统 / 维护 · 服务状态、数据清理与备份</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-refresh"/></svg>重新检测</button>
+        </div>
+        <div class="maint-body">
+          <div class="grid g-2">
+            <div class="card">
+              <div class="card-h"><h2>服务状态</h2><span class="ch-sub">4 个</span></div>
+              <div class="card-b" id="svcList"></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>存储占用</h2></div>
+              <div class="card-b" style="display:flex;flex-direction:column;gap:10px">
+                <div>
+                  <div class="row" style="justify-content:space-between;font-size:var(--fs-12);margin-bottom:4px">
+                    <span class="muted">报文数据 data/</span><b class="mono">1.42 GB</b>
+                  </div>
+                  <div class="bar"><i style="width:46%"></i></div>
+                </div>
+                <div>
+                  <div class="row" style="justify-content:space-between;font-size:var(--fs-12);margin-bottom:4px">
+                    <span class="muted">运行产物 dist/</span><b class="mono">892 MB</b>
+                  </div>
+                  <div class="bar warn"><i style="width:78%"></i></div>
+                </div>
+                <div>
+                  <div class="row" style="justify-content:space-between;font-size:var(--fs-12);margin-bottom:4px">
+                    <span class="muted">日志 LOG/</span><b class="mono">64 MB</b>
+                  </div>
+                  <div class="bar"><i style="width:8%"></i></div>
+                </div>
+                <div class="row" style="margin-top:4px">
+                  <button class="btn sm">清理 30 天前产物</button>
+                  <button class="btn sm">归档并压缩</button>
+                  <div class="spacer"></div>
+                  <span class="dim" style="font-size:var(--fs-11)">可释放约 610 MB</span>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h2>依赖完整性</h2></div>
+              <div class="card-b" style="display:flex;flex-direction:column;gap:7px;font-size:var(--fs-12)">
+                <div class="row"><span class="dot pass"></span><span>Python 3.13 · venv 就绪</span></div>
+                <div class="row"><span class="dot pass"></span><span>parser_lib 已编译</span></div>
+                <div class="row"><span class="dot fail"></span><span class="muted">GwHPLCAnalysis.dll 缺失 <span class="dim">（.NET 解析库，影响 5 项 DLL 一致性测试）</span></span></div>
+                <div class="row"><span class="dot warn"></span><span class="muted">sim_concentrator 固件版本较旧（v2.0.9 → v2.1.4）</span></div>
+              </div>
+            </div>
+            <div class="card danger-zone">
+              <div class="card-h"><h2 style="color:var(--st-fail)">危险操作</h2><span class="ch-sub">不可回退，需二次确认</span></div>
+              <div class="card-b" style="display:flex;flex-direction:column;gap:8px">
+                <div class="row">
+                  <div style="flex:1"><div style="font-size:var(--fs-12)">清空全部运行记录</div><div class="dim" style="font-size:var(--fs-11)">删除 24 条运行及其产物</div></div>
+                  <button class="btn sm dan">清空</button>
+                </div>
+                <div class="row">
+                  <div style="flex:1"><div style="font-size:var(--fs-12)">重置串口档案</div><div class="dim" style="font-size:var(--fs-11)">恢复出厂绑定，需重新扫描</div></div>
+                  <button class="btn sm dan">重置</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ===== 设计说明抽屉 ===== -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-h">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7"><use href="#i-note"/></svg>
+    <b style="font-size:var(--fs-13)">设计说明</b>
+    <div class="spacer"></div>
+    <button class="btn ic sm gho" id="btnCloseDrawer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="drawer-b">
+    <h4>一、为什么去掉渐变和玻璃拟态</h4>
+    <p>原方案用 <code>--bg-gradient</code> + <code>backdrop-filter: blur(8px)</code> 铺满全屏。在报文表格场景中，模糊背景会让 11px 的等宽字符边缘发虚，长时间盯屏的眼动成本显著上升。新方案改为<b>四级纯色表面 + 1px 发丝描边</b>，用明度差而非阴影建立层次——这也是 VS Code、Grafana、Linear 的共同选择。</p>
+
+    <h4>二、状态五态独立色相（关键修复）</h4>
+    <p>原 <code>tokens.css</code> 第 345 行：<code>.badge.inconclusive</code> 与 <code>.badge.run</code> 共用 warn 配色，仅靠 <code>opacity:0.85</code> 区分。而 inconclusive（证据缺失、无法判定）与 warn（有告警但已跑完）在测试结论里语义完全不同。</p>
+    <p>新方案把 inconclusive 提升为<b>独立紫色语义位</b>，与 pass/fail/warn/run 平级。流水线里可以看到六个步骤各自的状态色：通过绿、失败红、不确定紫、告警黄、进行中蓝、跳过灰。</p>
+
+    <h4>三、解决「导航不直观」</h4>
+    <ul>
+      <li>8 个页面按<b>作业流顺序</b>分组：观测 → 执行 → 资源 → 系统，而不是平铺</li>
+      <li>组标题使用大写小字 + 字距，弱化到「扫视时不抢注意力，需要时能定位」</li>
+      <li>顶栏 <code>Ctrl+K</code> 直达：输入「侦听」「串口」即可过滤导航</li>
+      <li>激活态用左侧 2px 强调条，折叠后仍可辨识</li>
+    </ul>
+
+    <h4>四、解决「信息密度低」</h4>
+    <ul>
+      <li>表格行高从 ~44px 压到 <b>28px</b>（紧凑模式），字号 12px，表头 sticky</li>
+      <li>几乎所有页面改为<b>主从分栏</b>（列表 + 详情），而非卡片纵向堆叠</li>
+      <li>顶栏常驻状态条，把「设备链路 + 队列 + 最近结论」压进 32px 高度</li>
+      <li>提供<b>紧凑 / 舒适</b>密度切换（顶栏按钮），适配不同屏幕与视力</li>
+    </ul>
+
+    <h4>五、解决「状态不清晰」</h4>
+    <ul>
+      <li>顶栏下<b>全局状态条</b>：COM4 / COM24 / 集中器 / 模块 四路链路实时点阵，无需进页面就知道能不能开工</li>
+      <li>验证工作台用<b>横向流水线</b>表达 6 阶段，每步独立状态 + 耗时，比单一「运行中」徽章信息量高一个量级</li>
+      <li>结论徽章区分 pass / fail / <b>inconclusive</b>，后者会提示「证据缺失，需人工复核」</li>
+      <li>空态不再只写「无数据」，而是说明<b>下一步该做什么</b></li>
+    </ul>
+
+    <h4>六、交互约定</h4>
+    <ul>
+      <li>所有主操作按钮固定在页面头部右侧，不随内容滚动</li>
+      <li>危险操作统一收进红色边框区域，按钮二次确认</li>
+      <li>等宽字体仅用于 ID、偏移、十六进制、时间戳，正文保持无衬线</li>
+      <li>数字统一 <code>tabular-nums</code>，表格里纵向对齐</li>
+    </ul>
+
+    <h4>七、还没做的（等你定）</h4>
+    <ul>
+      <li>响应式：当前按 ≥1280px 桌面设计，未做窄屏兜底</li>
+      <li>浅色主题：Token 已按变量组织，加一套 <code>[data-theme=light]</code> 即可</li>
+      <li>无障碍：焦点环已有，但未做完整 ARIA 与对比度审计</li>
+      <li>本 Demo 未接任何后端，所有数据为模拟</li>
+    </ul>
+  </div>
+</aside>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ============================================================
+   Demo 交互逻辑 —— 数据全部为模拟，未连接任何后端
+   ============================================================ */
+(function(){
+"use strict";
+const $  = (s,r)=> (r||document).querySelector(s);
+const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
+const svg = (id,sz,st)=> '<svg width="'+(sz||14)+'" height="'+(sz||14)+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+(st||1.7)+'"><use href="#'+id+'"/></svg>';
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* 确定性伪随机，保证每次打开数据一致 */
+let _s = 20260830;
+const rnd = ()=>{ _s = (_s*1664525+1013904223)>>>0; return _s/4294967296; };
+const pick = a => a[Math.floor(rnd()*a.length)];
+const hex = n => Array.from({length:n},()=>Math.floor(rnd()*256).toString(16).padStart(2,'0').toUpperCase()).join(' ');
+const pad = (n,w)=> String(n).padStart(w||2,'0');
+
+/* ---------------- 导航 ---------------- */
+const NAV = [
+  {g:'观测', items:[
+    {id:'listener', n:'侦听台',   ic:'i-radio'},
+    {id:'trace',    n:'报文追踪', ic:'i-route'},
+    {id:'module',   n:'模块日志', ic:'i-terminal'},
+  ]},
+  {g:'执行', items:[
+    {id:'simcon',    n:'模拟集中器', ic:'i-cpu'},
+    {id:'workbench', n:'验证工作台', ic:'i-layers'},
+  ]},
+  {g:'资源', items:[
+    {id:'serial', n:'串口档案', ic:'i-cable'},
+    {id:'dict',   n:'报文字典', ic:'i-book'},
+  ]},
+  {g:'系统', items:[
+    {id:'maint', n:'维护', ic:'i-wrench'},
+  ]},
+];
+const CRUMB = {
+  listener:'观测 / 侦听台', trace:'观测 / 报文追踪', module:'观测 / 模块日志',
+  simcon:'执行 / 模拟集中器', workbench:'执行 / 验证工作台',
+  serial:'资源 / 串口档案', dict:'资源 / 报文字典', maint:'系统 / 维护'
+};
+
+function renderNav(filter){
+  const f = (filter||'').trim().toLowerCase();
+  let html = '';
+  NAV.forEach(grp=>{
+    const items = grp.items.filter(it=> !f || it.n.toLowerCase().includes(f) || grp.g.toLowerCase().includes(f));
+    if(!items.length) return;
+    html += '<div class="nav-group"><div class="nav-gtitle">'+grp.g+'</div>';
+    items.forEach(it=>{
+      const live = it.id==='listener' ? ' data-live="1"' : '';
+      const cnt  = it.id==='listener' ? '<span class="nav-count">'+(frames?frames.length:0)+'</span>' : '';
+      html += '<button class="nav-item" data-page="'+it.id+'"'+live+'>'+svg(it.ic,16)+'<span class="ni-lbl">'+it.n+'</span>'+cnt+'</button>';
+    });
+    html += '</div>';
+  });
+  if(!html) html = '<div style="padding:14px 10px;color:var(--tx-4);font-size:var(--fs-12)">没有匹配的功能</div>';
+  $('#nav').innerHTML = html;
+  $$('.nav-item').forEach(b=> b.classList.toggle('on', b.dataset.page===current));
+}
+let current = 'workbench';
+function go(id){
+  current = id;
+  $$('.page').forEach(p=> p.classList.toggle('on', p.id==='p-'+id));
+  $$('.nav-item').forEach(b=> b.classList.toggle('on', b.dataset.page===id));
+  const cr = $('.page.on .crumb');
+  if(cr) cr.textContent = CRUMB[id] || '';
+  if(id==='listener' && lsnOn) tickStart();   /* 回到侦听页时恢复推流 */
+}
+$('#nav').addEventListener('click', e=>{
+  const b = e.target.closest('.nav-item'); if(b) go(b.dataset.page);
+});
+$('#navSearch').addEventListener('input', e=> renderNav(e.target.value));
+$('#btnSide').addEventListener('click', ()=>{
+  const a = $('#app');
+  a.dataset.side = a.dataset.side==='mini' ? 'full' : 'mini';
+});
+document.addEventListener('keydown', e=>{
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); $('#navSearch').focus(); $('#navSearch').select(); }
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='b'){ e.preventDefault(); $('#btnSide').click(); }
+  if(e.key==='Escape'){ closeDrawer(); }
+});
+
+/* ---------------- 顶栏：密度 / 抽屉 / 时钟 / Toast ---------------- */
+$('#btnDensity').addEventListener('click', ()=>{
+  const r = document.documentElement;
+  const compact = r.dataset.density !== 'comfortable';
+  r.dataset.density = compact ? 'comfortable' : 'compact';
+  $('#densityLbl').textContent = compact ? '舒适' : '紧凑';
+  toast('info','信息密度已切换为「'+(compact?'舒适':'紧凑')+'」');
+});
+const drawer = $('#drawer'), scrim = $('#scrim');
+function openDrawer(){ drawer.classList.add('on'); scrim.classList.add('on'); }
+function closeDrawer(){ drawer.classList.remove('on'); scrim.classList.remove('on'); }
+$('#btnNotes').addEventListener('click', openDrawer);
+$('#btnCloseDrawer').addEventListener('click', closeDrawer);
+scrim.addEventListener('click', closeDrawer);
+
+function toast(kind,msg){
+  const el = document.createElement('div');
+  el.className = 'toast '+kind;
+  const ic = kind==='pass'?'i-check' : kind==='fail'?'i-alert' : kind==='warn'?'i-alert' : kind==='incon'?'i-alert' : 'i-info';
+  el.innerHTML = svg(ic,14,1.8)+'<span>'+esc(msg)+'</span>';
+  $('#toasts').appendChild(el);
+  setTimeout(()=>{ el.style.transition='.25s'; el.style.opacity='0'; el.style.transform='translateX(14px)';
+    setTimeout(()=>el.remove(),260); }, 3600);
+}
+setInterval(()=>{ $('#sbClock').textContent = new Date().toTimeString().slice(0,8); },1000);
+$('#sbClock').textContent = new Date().toTimeString().slice(0,8);
+
+/* ---------------- 1. 验证工作台 ---------------- */
+const SCN = [
+  {id:'anhui_minute',   n:'安徽·分钟采集',   t:['安徽','抄表','核心'], steps:9,  dur:'24s', last:'13:02', v:'fail',  out:{step:4, s:'fail',  msg:'Ln 实际 2 字节，期望 1 字节'}},
+  {id:'anhui_day',      n:'安徽·日冻结抄表', t:['安徽','抄表'],       steps:6,  dur:'31s', last:'12:41', v:'pass',  out:{step:4, s:'pass',  msg:'12/12 断言通过'}},
+  {id:'route_topo',     n:'路由拓扑查询',    t:['路由','拓扑'],       steps:4,  dur:'18s', last:'12:20', v:'incon', out:{step:3, s:'incon', msg:'monitor 0 事件，证据不足'}},
+  {id:'archive_sync',   n:'档案同步验证',    t:['档案'],              steps:5,  dur:'22s', last:'11:58', v:'pass',  out:{step:4, s:'pass',  msg:'8/8 断言通过'}},
+  {id:'event_report',   n:'事件上报验证',    t:['事件'],              steps:7,  dur:'28s', last:'11:34', v:'pass',  out:{step:4, s:'warn',  msg:'2 条非关键告警'}},
+  {id:'broadcast_time', n:'广播校时',        t:['校时'],              steps:3,  dur:'12s', last:'11:12', v:'pass',  out:{step:4, s:'pass',  msg:'时钟偏差 < 1s'}},
+  {id:'phase_detect',   n:'相位识别',        t:['相位','采集'],       steps:5,  dur:'26s', last:'10:47', v:'pass',  out:{step:4, s:'pass',  msg:'三相识别一致'}},
+  {id:'power_outage',   n:'停电上报',        t:['事件','异常'],       steps:4,  dur:'19s', last:'10:05', v:'incon', out:{step:3, s:'incon', msg:'未捕获期望帧'}},
+];
+const VBG = {pass:'bg-pass', fail:'bg-fail', incon:'bg-incon', warn:'bg-warn'};
+const VTXT= {pass:'通过', fail:'失败', incon:'不确定', warn:'告警'};
+let selScn = SCN[0];
+
+function renderScn(filter){
+  const f=(filter||'').toLowerCase();
+  const list = SCN.filter(s=> !f || s.n.toLowerCase().includes(f) || s.t.join(' ').toLowerCase().includes(f));
+  $('#scnCount').textContent = list.length+' 项';
+  $('#scnList').innerHTML = list.map(s=>
+    '<div class="scn-item'+(s.id===selScn.id?' on':'')+'" data-id="'+s.id+'">'+
+      '<div class="s1"><span class="dot '+s.v+'"></span>'+esc(s.n)+'</div>'+
+      '<div class="s2"><span class="mono">'+s.steps+' 步</span><span class="mono">'+s.dur+'</span>'+
+        '<span class="mono dim">'+s.last+'</span><span class="spacer" style="flex:1"></span>'+
+        '<span class="bg '+(VBG[s.v]||'bg-idle')+'">'+VTXT[s.v]+'</span></div>'+
+    '</div>').join('') || '<div class="tbl-empty">无匹配场景</div>';
+  $$('#scnList .scn-item').forEach(el=> el.addEventListener('click', ()=>{
+    selScn = SCN.find(s=>s.id===el.dataset.id) || selScn;
+    $('#cfgScn').textContent = selScn.n;
+    renderScn($('#scnSearch').value); resetPipe();
+  }));
+}
+$('#scnSearch').addEventListener('input', e=> renderScn(e.target.value));
+
+const PIPE = [
+  {k:'prep',    n:'准备',   m:'装载场景'},
+  {k:'flash',   n:'烧录',   m:'download 0'},
+  {k:'monitor', n:'监控',   m:'COM4 侦听'},
+  {k:'stim',    n:'激励',   m:'simcon 步骤'},
+  {k:'compare', n:'比对',   m:'断言比对'},
+  {k:'report',  n:'报告',   m:'生成产物'},
+];
+function renderPipe(states){
+  $('#pipe').innerHTML = PIPE.map((s,i)=>{
+    const st = states[i] || {s:'idle', d:'—'};
+    const mark = st.s==='pass' ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><use href="#i-check"/></svg>'
+               : st.s==='fail' ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><use href="#i-x"/></svg>'
+               : st.s==='incon' ? '?' : st.s==='warn' ? '!' : (i+1);
+    return '<div class="step" data-s="'+st.s+'"><div class="sd">'+mark+'</div>'+
+           '<div class="st-l"><div class="st-n">'+s.n+'</div><div class="st-m">'+esc(st.d)+'</div></div></div>';
+  }).join('');
+}
+let pipeStates = PIPE.map(()=>({s:'idle',d:'—'}));
+function resetPipe(){
+  pipeStates = PIPE.map(()=>({s:'idle',d:'—'}));
+  renderPipe(pipeStates);
+  $('#pipeBar').className='bar'; $('#pipeBar').firstElementChild.style.width='0%';
+  $('#pipePct').textContent='0%'; $('#pipeSub').textContent='就绪';
+  $('#wbState').className='bg bg-run'; $('#wbState').textContent='待命';
+  $('#sbQueue').textContent='空闲';
+  $('#btnRun').disabled=false;
+}
+$('#btnResetPipe').addEventListener('click', ()=>{ resetPipe(); clearCon(); });
+
+/* 控制台 */
+let conLines = [];
+function conLog(lv,msg){
+  const t = new Date();
+  const ts = pad(t.getHours())+':'+pad(t.getMinutes())+':'+pad(t.getSeconds())+'.'+pad(t.getMilliseconds(),3);
+  conLines.push({ts:ts, lv:lv, msg:msg});
+  const box = $('#console');
+  box.innerHTML = conLines.map(l=>
+    '<div class="cl"><span class="ct">'+l.ts+'</span><span class="cm lv-'+l.lv+'">'+esc(l.msg)+'</span></div>').join('');
+  box.scrollTop = box.scrollHeight;
+}
+function clearCon(){ conLines=[]; $('#console').innerHTML=''; }
+
+let running = false;
+$('#btnRun').addEventListener('click', ()=>{
+  if(running){ toast('warn','已有任务在执行'); return; }
+  running = true; $('#btnRun').disabled = true;
+  clearCon(); resetPipe();
+  $('#wbState').className='bg bg-run'; $('#wbState').textContent='执行中';
+  $('#sbQueue').textContent='1 个任务';
+  $('#pipeSub').textContent = selScn.n;
+  toast('info','已启动验证：'+selScn.n);
+
+  const out = selScn.out;
+  const script = [
+    {i:0, s:'pass', d:'0.4s', log:['I','装载场景配置 '+selScn.id], wait:420},
+    {i:1, s:'pass', d:'18.2s',log:['I','burn: iap_cco_AN_HUI_v2.1.4.bin → slot 0','I','baud plan 9600→115200→9600','S','CRC 0x31C3 校验通过'], wait:900},
+    {i:2, s:'pass', d:'9.6s', log:['I','monitor: COM4 @9600 开始捕获','D','captured 137 frames'], wait:800},
+    {i:3, s: out.step===3 ? out.s : 'pass', d:'14.8s',
+      log: out.step===3 ? ['I','stimulus: 执行 '+selScn.steps+' 步','W','期望帧未出现，未捕获到报文']
+                        : ['I','stimulus: 执行 '+selScn.steps+' 步','S','9/9 步骤响应正常'], wait:1100},
+    {i:4, s: out.s, d: out.s==='pass'?'2.1s':(out.s==='incon'?'1.4s':'3.6s'),
+      log: out.s==='fail' ? ['E','assertion failed: '+out.msg,'E','verdict = fail']
+         : out.s==='incon' ? ['W','evidence missing: '+out.msg,'W','verdict = inconclusive（证据缺失，需人工复核）']
+         : out.s==='warn' ? ['S','断言通过','W',out.msg]
+         : ['S',out.msg], wait:900},
+    {i:5, s: out.s==='fail' ? 'pass' : 'pass', d:'1.2s',
+      log:['I','生成报告与产物清单','S','artifact: 3 files (sha256 已登记)'], wait:500},
+  ];
+  let idx = 0;
+  (function next(){
+    if(idx >= script.length){
+      running = false; $('#btnRun').disabled = false;
+      $('#sbQueue').textContent='空闲';
+      const fin = out.s;
+      $('#wbState').className = 'bg '+(VBG[fin]||'bg-idle');
+      $('#wbState').textContent = fin==='pass'?'已完成':fin==='fail'?'失败':fin==='incon'?'不确定':'完成';
+      $('#sbVerdict').className = 'bg '+(VBG[fin]||'bg-idle');
+      $('#sbVerdict').textContent = VTXT[fin];
+      $('#pipeSub').textContent = '完成 · '+VTXT[fin];
+      toast(fin, '验证结束：'+selScn.n+' → '+VTXT[fin]+(fin==='incon'?'（证据缺失，需人工复核）':''));
+      if(fin==='incon') toast('incon','提示：inconclusive 表示证据不足以判定，与「失败」是两种不同结论');
+      return;
+    }
+    const step = script[idx];
+    pipeStates[step.i] = {s:'run', d:'执行中…'};
+    renderPipe(pipeStates);
+    step.log.forEach((l,k)=> setTimeout(()=> conLog(l[0], l[1]), k*160));
+    setTimeout(()=>{
+      pipeStates[step.i] = {s:step.s, d:step.d};
+      renderPipe(pipeStates);
+      const done = pipeStates.filter(p=>p.s!=='idle').length;
+      const pct = Math.round(done/PIPE.length*100);
+      $('#pipePct').textContent = pct+'%';
+      $('#pipeBar').firstElementChild.style.width = pct+'%';
+      if(step.s==='fail') $('#pipeBar').className='bar fail';
+      else if(step.s==='incon') $('#pipeBar').className='bar warn';
+      idx++; next();
+    }, step.wait);
+  })();
+});
+
+/* 最近运行表 */
+(function renderRuns(){
+  const verdicts = ['pass','pass','fail','pass','pass','incon','pass','pass','warn','pass','pass','fail'];
+  let rows = '';
+  for(let i=0;i<12;i++){
+    const v = verdicts[i];
+    const h = 13 - Math.floor(i/2), m = pad((58 - i*7 + 60)%60), s = pad((30 + i*11)%60);
+    const id = 'run-'+String(26083000+i);
+    rows += '<tr>'+
+      '<td><span class="dot '+v+'"></span></td>'+
+      '<td class="mono">'+id+'</td>'+
+      '<td class="strong">'+esc(pick(SCN).n)+'</td>'+
+      '<td class="mono dim">'+pad(h)+':'+m+':'+s+'</td>'+
+      '<td class="num">'+(28+i*3)+'.'+(i%10)+'s</td>'+
+      '<td><span class="bg '+(VBG[v]||'bg-idle')+'">'+VTXT[v]+'</span></td>'+
+      '<td class="num">'+(v==='pass'?'12/12':v==='fail'?'9/12':v==='incon'?'7/12':'11/12')+'</td>'+
+      '<td class="num">'+(90+i*17)+'</td>'+
+      '<td><button class="btn sm gho">3 项</button></td>'+
+    '</tr>';
+  }
+  $('#runsBody').innerHTML = rows;
+})();
+
+/* ---------------- 2. 侦听台 ---------------- */
+const FTYPES = [
+  {t:'AFN=02H-F1 登录',     s:'集中器入网认证'},
+  {t:'AFN=05H-F1 心跳',     s:'链路保活'},
+  {t:'AFN=0DH-F1 档案同步', s:'表档案下发'},
+  {t:'AFN=11H-F1 实时抄表', s:'当前电量读取'},
+  {t:'AFN=11H-F231 分钟采集',s:'分钟冻结数据'},
+  {t:'AFN=13H-F1 路由查询', s:'路由拓扑查询'},
+  {t:'AFN=14H-F1 事件上报', s:'停电/异常上报'},
+];
+const ADDR = ['000000000001','000000000002','F1F2F3F4F5F6','FFFFFFFFFFFF','1234567890AB','00A1B2C3D4E5'];
+let frames = [], lsnOn = true, selFrame = null, lsnTimer = null;
+
+function mkFrame(i){
+  const ft = FTYPES[Math.floor(rnd()*FTYPES.length)];
+  const down = rnd() > 0.45;
+  const len = 24 + Math.floor(rnd()*90);
+  const t = new Date(2026,7,30,13,2,11,104);
+  t.setMilliseconds(t.getMilliseconds() + i*137 + Math.floor(rnd()*90));
+  const ok = rnd() > 0.04;
+  return {
+    i: i+1,
+    ts: pad(t.getHours())+':'+pad(t.getMinutes())+':'+pad(t.getSeconds())+'.'+pad(t.getMilliseconds(),3),
+    down: down,
+    type: ft.t,
+    sum: ft.s,
+    src: down ? ADDR[0] : pick(ADDR),
+    dst: down ? pick(ADDR) : ADDR[0],
+    len: len,
+    ok: ok,
+    raw: hex(len),
+    afn: ft.t.split('=')[1].split(' ')[0],
+    fn:  ft.t.split(' ')[1] || 'F1'
+  };
+}
+for(let i=0;i<64;i++) frames.push(mkFrame(i));
+
+function renderFrames(filter){
+  const f=(filter||'').toLowerCase();
+  const rows = frames.filter(fr=> !f || fr.type.toLowerCase().includes(f) || fr.src.includes(f) || fr.dst.includes(f) || fr.sum.includes(f));
+  const body = $('#framesBody');
+  body.innerHTML = rows.map(fr=>
+    '<tr data-i="'+fr.i+'"'+(selFrame===fr.i?' class="sel"':'')+'>'+
+      '<td class="num dim">'+fr.i+'</td>'+
+      '<td class="mono dim">'+fr.ts+'</td>'+
+      '<td class="'+(fr.down?'dir-d':'dir-u')+'">'+(fr.down?'↓ 下行':'↑ 上行')+'</td>'+
+      '<td class="strong">'+esc(fr.type)+'</td>'+
+      '<td class="mono">'+fr.src+'</td>'+
+      '<td class="mono">'+fr.dst+'</td>'+
+      '<td class="num">'+fr.len+'</td>'+
+      '<td class="muted">'+esc(fr.sum)+'</td>'+
+      '<td>'+(fr.ok?'<span class="bg bg-pass">OK</span>':'<span class="bg bg-fail">ERR</span>')+'</td>'+
+    '</tr>').join('') || '<tr><td colspan="9"><div class="tbl-empty">没有匹配的帧</div></td></tr>';
+  $$('#framesBody tr[data-i]').forEach(tr=> tr.addEventListener('click', ()=>{
+    selFrame = Number(tr.dataset.i); renderFrames($('#lsnFilter').value); showFrame();
+  }));
+  $('#lsnCount').textContent = frames.length;
+  $('#sbFrames').textContent = frames.length;
+}
+function hexView(raw){
+  const b = raw.split(' '); let out='';
+  for(let o=0;o<b.length;o+=16){
+    const chunk = b.slice(o,o+16);
+    const h = chunk.map(x=>x.padEnd(2,' ')).join(' ').padEnd(48,' ');
+    const a = chunk.map(x=>{ const v=parseInt(x,16); return (v>=32&&v<127)?String.fromCharCode(v):'.'; }).join('');
+    out += '<span class="off">'+o.toString(16).toUpperCase().padStart(4,'0')+'  </span>'+
+           '<span class="hx">'+esc(h)+'</span>  <span class="as">'+esc(a)+'</span>\n';
+  }
+  return out;
+}
+function showFrame(){
+  const fr = frames.find(x=>x.i===selFrame); if(!fr) return;
+  const bytes = fr.raw.split(' ');
+  const cs = bytes[bytes.length-1];
+  const apduLen = Math.max(1, bytes.length - 12);
+  $('#frameDetail').innerHTML =
+    '<div style="display:flex;flex-direction:column;gap:12px">'+
+    '<div class="row" style="flex-wrap:wrap">'+
+      '<span class="bg '+(fr.ok?'bg-pass':'bg-fail')+'">'+(fr.ok?'校验通过':'校验失败')+'</span>'+
+      '<span class="bg '+(fr.down?'bg-acc':'bg-pass')+'">'+(fr.down?'下行 集中器→表':'上行 表→集中器')+'</span>'+
+      '<span class="bg bg-idle mono">'+fr.len+' B</span>'+
+      '<div class="spacer"></div>'+
+      '<span class="mono dim" style="font-size:var(--fs-11)">'+fr.ts+'</span>'+
+    '</div>'+
+    '<div><div style="font-size:var(--fs-11);color:var(--tx-3);margin-bottom:5px">分层解析</div>'+
+      '<div class="parse-tree">'+
+      '<div class="pn"><span class="pk pn-l1">[帧头]</span></div>'+
+      '<div class="pn"><span class="pk">起始符</span><span class="pv">68H</span><span class="pd">固定</span></div>'+
+      '<div class="pn"><span class="pk">长度域 L</span><span class="pv">0x'+fr.len.toString(16).toUpperCase()+'</span><span class="pd">'+fr.len+' 字节</span></div>'+
+      '<div class="pn"><span class="pk">控制域 C</span><span class="pv">'+(fr.down?'DIR=1 PRM=1':'DIR=0 PRM=0')+'</span><span class="pd">'+fr.raw.split(' ')[2]+'H</span></div>'+
+      '<div class="pn"><span class="pk">地址域 A</span><span class="pv">'+fr.src+' → '+fr.dst+'</span></div>'+
+      '<div class="pn"><span class="pk pn-l1">[应用层]</span></div>'+
+      '<div class="pn"><span class="pk">AFN</span><span class="pv">'+fr.afn+'</span><span class="pd">'+(fr.down?'下发':'上报')+'</span></div>'+
+      '<div class="pn"><span class="pk">Fn</span><span class="pv">'+fr.fn+'</span><span class="pd">'+esc(fr.sum)+'</span></div>'+
+      '<div class="pn"><span class="pk">数据单元</span><span class="pv">0x'+apduLen.toString(16).toUpperCase()+'</span><span class="pd">'+apduLen+' 字节</span></div>'+
+      '<div class="pn"><span class="pk pn-l1">[链路尾]</span></div>'+
+      '<div class="pn"><span class="pk">校验和 CS</span><span class="pv">'+cs+'H</span><span class="pd">'+(fr.ok?'与计算值一致':'与计算值不符')+'</span></div>'+
+      '<div class="pn"><span class="pk">结束符</span><span class="pv">16H</span></div>'+
+      '</div></div>'+
+    '<div><div style="font-size:var(--fs-11);color:var(--tx-3);margin-bottom:5px">原始报文（'+fr.len+' 字节）</div>'+
+      '<div class="hex">'+hexView(fr.raw)+'</div></div>'+
+    '</div>';
+}
+function tickStart(){
+  if(lsnTimer) return;                       /* 幂等：已启动则不再重复挂定时器 */
+  lsnTimer = setInterval(()=>{
+    if(frames.length > 400) frames.shift();
+    frames.push(mkFrame(frames.length));
+    renderFrames($('#lsnFilter').value);
+    const box = $('#framesBody').closest('.tbl-wrap');
+    if(box && box.scrollHeight - box.scrollTop - box.clientHeight < 120) box.scrollTop = box.scrollHeight;
+  }, 1400);
+}
+function tickStop(){ if(lsnTimer){ clearInterval(lsnTimer); lsnTimer = null; } }
+function setLsn(on, silent){
+  lsnOn = on;
+  $('#btnLsn').innerHTML = on ? svg('i-stop',12)+'停止侦听' : svg('i-play',12)+'开始侦听';
+  $('#lsnState').className   = 'bg '+(on?'bg-run':'bg-idle');
+  $('#lsnState').textContent = on ? '侦听中' : '已停止';
+  if(on) tickStart(); else tickStop();
+  if(!silent) toast(on?'pass':'info', on ? 'COM4 已开始侦听 @9600' : '已停止侦听，缓冲 '+frames.length+' 帧');
+}
+$('#btnLsn').addEventListener('click', ()=> setLsn(!lsnOn));
+$('#lsnFilter').addEventListener('input', e=> renderFrames(e.target.value));
+$('#btnClearCon').addEventListener('click', clearCon);
+
+/* ---------------- 3. 模块日志 ---------------- */
+const LOGTPL = [
+  ['I','[boot] HPLC CCO module starting'],
+  ['I','[boot] firmware v2.1.4 build 20260812'],
+  ['D','[uart] open COM24 baud=9600 8N1'],
+  ['I','[net] network discovery started'],
+  ['I','[net] found 12 meters, 0 timeout'],
+  ['W','[net] meter 00A1B2C3D4E5 SNR low (14dB)'],
+  ['I','[app] minute collect task scheduled'],
+  ['D','[app] AFN=11H Fn=F231 len=32'],
+  ['I','[app] minute collect done, 12/12 ok'],
+  ['W','[flash] slot0 CRC mismatch, retry #1'],
+  ['I','[flash] download 0 -> 464432 bytes'],
+  ['E','[flash] write timeout at 0x1A400'],
+  ['I','[flash] rollback to slot1'],
+  ['S','[sys] self-test PASS crc=0x31C3'],
+];
+$('#modLog').innerHTML = Array.from({length:60},(_,i)=>{
+  const l = LOGTPL[i % LOGTPL.length];
+  const h = 13, m = pad(2 + Math.floor(i/7)), s = pad((i*3)%60), ms = pad((i*47)%1000,3);
+  return '<div class="log-line"><span class="lt">'+pad(h)+':'+m+':'+s+'.'+ms+'</span>'+
+         '<span class="ll '+l[0]+'">'+l[0]+'</span><span style="color:var(--tx-2)">'+esc(l[1])+'</span></div>';
+}).join('');
+let modConn = false, modTimer = null;
+$('#btnModConn').addEventListener('click', ()=>{
+  modConn = !modConn;
+  $('#btnModConn').innerHTML = modConn ? svg('i-stop',12)+'断开' : svg('i-play',12)+'连接';
+  $('.page#p-module .bg').className = 'bg '+(modConn?'bg-pass':'bg-idle');
+  $('.page#p-module .bg').textContent = modConn?'已连接':'未连接';
+  if(modConn){
+    toast('pass','模块已连接 COM24 @9600');
+    let p=0;
+    modTimer = setInterval(()=>{
+      p = Math.min(100, p + Math.floor(rnd()*9)+2);
+      $('#modBar').style.width = p+'%'; $('#modPct').textContent = p+'%';
+      if(p>=100){ clearInterval(modTimer); toast('pass','烧录完成 CRC 0x31C3'); }
+    }, 220);
+  } else { clearInterval(modTimer); $('#modBar').style.width='0%'; $('#modPct').textContent='0%'; toast('info','已断开'); }
+});
+
+/* ---------------- 4. 模拟集中器 ---------------- */
+const SIMS = [
+  {id:'anhui_minute_collect.json', n:'安徽·分钟采集', steps:9},
+  {id:'anhui_day_freeze.json',     n:'安徽·日冻结',   steps:6},
+  {id:'route_query.json',          n:'路由查询',      steps:4},
+  {id:'archive_sync.json',         n:'档案同步',      steps:5},
+  {id:'event_report.json',         n:'事件上报',      steps:7},
+  {id:'broadcast_clock.json',      n:'广播校时',      steps:3},
+];
+const ACTS = ['连接串口','发送登录帧','等待登录确认','下发档案','查询路由','发送抄表帧','等待抄表响应','校验数据项','断开连接'];
+$('#simList').innerHTML = SIMS.map((s,i)=>
+  '<div class="scn-item'+(i===0?' on':'')+'" data-i="'+i+'">'+
+    '<div class="s1"><span class="dot '+(i===0?'pass':'idle')+'"></span><span class="mono" style="font-size:var(--fs-11)">'+s.id+'</span></div>'+
+    '<div class="s2"><span>'+s.n+'</span><span class="mono">'+s.steps+' 步</span></div>'+
+  '</div>').join('');
+function renderSim(idx){
+  const s = SIMS[idx];
+  $('#simTitle').textContent = s.id;
+  let rows='';
+  for(let i=0;i<s.steps;i++){
+    const st = i===4 && idx===0 ? 'fail' : (i===3 && idx===2 ? 'warn' : 'pass');
+    rows += '<tr><td><span class="dot '+st+'"></span></td><td class="num dim">'+(i+1)+'</td>'+
+      '<td class="strong">'+ACTS[i % ACTS.length]+'</td>'+
+      '<td class="mono">68 '+(hex(6))+'</td>'+
+      '<td class="mono dim">'+(st==='fail'?'ERR':'OK')+'</td>'+
+      '<td class="num">'+(0.4+i*0.7).toFixed(1)+'s</td>'+
+      '<td><span class="bg '+(st==='pass'?'bg-pass':st==='fail'?'bg-fail':'bg-warn')+'">'+
+        (st==='pass'?'通过':st==='fail'?'失败':'告警')+'</span></td></tr>';
+  }
+  $('#simBody').innerHTML = rows;
+}
+renderSim(0);
+$$('#simList .scn-item').forEach(el=> el.addEventListener('click', ()=>{
+  $$('#simList .scn-item').forEach(x=>x.classList.remove('on'));
+  el.classList.add('on'); renderSim(Number(el.dataset.i));
+}));
+$('#btnSimRun').addEventListener('click', ()=> toast('info','脚本执行为 Demo 模拟，未连接串口'));
+
+/* ---------------- 5. 报文追踪 ---------------- */
+(function(){
+  const sess = [
+    {t:'分钟采集 · 000000000001', v:'pass', n:4},
+    {t:'分钟采集 · 000000000002', v:'pass', n:4},
+    {t:'路由查询 · 广播',         v:'warn', n:3},
+    {t:'档案同步 · 12 表',        v:'pass', n:5},
+    {t:'事件上报 · 停电',         v:'incon',n:2},
+    {t:'实时抄表 · 00A1B2C3D4E5', v:'fail', n:5},
+  ];
+  const BODY = ['68 2E 00 41 01 00 00 00 00 00 11 71 F2 31 … 16',
+                '68 1A 80 01 00 00 00 00 00 00 91 71 F2 31 00 … 16',
+                '68 32 00 43 01 00 00 00 00 00 13 01 00 01 … 16'];
+  $('#traceBody').innerHTML = sess.map((s,si)=>{
+    let ex='';
+    for(let i=0;i<s.n;i++){
+      const down = i%2===0;
+      const bad = s.v==='fail' && i===s.n-1;
+      ex += '<div class="exch">'+
+        '<div class="ex-d">'+(down?svg('i-down',12)+'下发':svg('i-up',12)+'响应')+'</div>'+
+        '<div class="ex-b">'+esc(BODY[i%3])+'</div>'+
+        '<div style="flex:0 0 64px;text-align:right"><span class="bg '+(bad?'bg-fail':'bg-pass')+'">'+(bad?'ERR':'OK')+'</span></div>'+
+        '<div class="mono dim" style="flex:0 0 52px;text-align:right">'+(0.2+i*0.35).toFixed(2)+'s</div>'+
+      '</div>';
+    }
+    return '<div class="sess">'+
+      '<div class="sess-h">'+
+        '<span class="dot '+s.v+'"></span>'+
+        '<div class="sh-t"><b style="font-weight:500">'+esc(s.t)+'</b>'+
+          '<span class="dim mono" style="font-size:var(--fs-11)">'+s.n+' 次交互</span></div>'+
+        '<span class="bg '+(VBG[s.v]||'bg-idle')+'">'+VTXT[s.v]+'</span>'+
+        '<span class="mono dim" style="font-size:var(--fs-11);flex:0 0 62px;text-align:right">13:0'+(2+si%6)+':'+pad(11+si*7)+'</span>'+
+      '</div>'+
+      (si===0 ? '<div>'+ex+'</div>' : '')+
+    '</div>';
+  }).join('');
+  $$('#traceBody .sess-h').forEach((h,i)=> h.addEventListener('click', ()=>{
+    const d = h.nextElementSibling;
+    if(d && d.tagName==='DIV' && !d.classList.contains('exch') && d.children.length){
+      d.remove(); return;
+    }
+    if(d && d.classList.contains('exch')) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<div class="exch"><div class="ex-d">'+svg('i-down',12)+'下发</div><div class="ex-b">'+esc(BODY[0])+'</div><div style="flex:0 0 64px;text-align:right"><span class="bg bg-pass">OK</span></div><div class="mono dim" style="flex:0 0 52px;text-align:right">0.20s</div></div>';
+    h.after(wrap);
+  }));
+})();
+
+/* ---------------- 6. 报文字典 ---------------- */
+const TREE = [
+  {n:'Q/GDW 1376.1 — 主站通信', open:true, kids:[
+    {n:'AFN=11H 转发/采集', kids:[
+      {n:'F231 分钟采集', id:'f231'}, {n:'F1 实时抄表', id:'f1'}, {n:'F25 日冻结', id:'f25'}]},
+    {n:'AFN=13H 路由', kids:[{n:'F1 路由查询', id:'r1'}]},
+    {n:'AFN=0DH 档案', kids:[{n:'F1 档案同步', id:'a1'}]},
+  ]},
+  {n:'HPLC 双模 — 本地通信', kids:[
+    {n:'组网/入网', kids:[{n:'关联请求', id:'h1'}, {n:'关联确认', id:'h2'}]},
+  ]},
+  {n:'DL/T 645 — 表计协议', kids:[
+    {n:'07 版', kids:[{n:'读数据', id:'d1'}]},
+  ]},
+];
+function renderTree(nodes, depth){
+  return nodes.map(nd=>{
+    if(!nd.kids){
+      return '<div class="tree-node leaf" data-id="'+(nd.id||'')+'" style="padding-left:'+(6+depth*12)+'px">'+
+        '<span class="tw"></span>'+svg('i-file',13,1.6)+'<span>'+esc(nd.n)+'</span></div>';
+    }
+    const open = !!nd._open;
+    return '<div class="tree-node branch" data-path="'+nd._path+'">'+
+        '<span class="tw">'+svg(open?'i-down':'i-right',11,2)+'</span>'+
+        svg('i-book',13,1.6)+'<span>'+esc(nd.n)+'</span></div>'+
+      (open ? '<div class="tree-kids">'+renderTree(nd.kids,depth+1)+'</div>' : '');
+  }).join('');
+}
+/* 给每个节点编号，便于按路径反查对象并保存展开状态 */
+(function indexTree(nodes, prefix){
+  nodes.forEach((nd,i)=>{
+    nd._path = (prefix||'')+i;
+    if(nd.kids) indexTree(nd.kids, nd._path+'.');
+  });
+})(TREE, '');
+TREE[0]._open = true;
+const byPath = p => p.split('.').reduce((acc,k)=> acc[Number(k)], TREE);
+function paintTree(){
+  $('#dictTree').innerHTML = renderTree(TREE,0);
+  $$('#dictTree .tree-node.branch').forEach(n=> n.addEventListener('click', ()=>{
+    const nd = byPath(n.dataset.path);
+    nd._open = !nd._open;
+    paintTree();
+  }));
+  $$('#dictTree .tree-node.leaf').forEach(n=> n.addEventListener('click', ()=>{
+    $$('#dictTree .tree-node').forEach(x=> x.classList.remove('on'));
+    n.classList.add('on');
+    $('#dictTitle').textContent = n.textContent.trim();
+  }));
+}
+paintTree();
+const FIELDS = [
+  [0,1,'起始符','HEX','固定 68H','68H'],
+  [1,2,'长度域 L','UINT16','含协议类型与用户数据长度','0x002E'],
+  [3,1,'控制域 C','BITMAP','DIR/PRM/FCB/FCV/ACD','41H'],
+  [4,6,'地址域 A','BCD','源/目的地址，低字节在前','000000000001'],
+  [10,1,'AFN','HEX','应用层功能码','11H'],
+  [11,1,'SEQ','BITMAP','帧序号 / 首帧 / 末帧','71H'],
+  [12,2,'Fn','BITMAP','数据单元标识','F231'],
+  [14,1,'数据单元数','UINT8','后续单元个数','0x01'],
+  [15,4,'数据时标','CP56Time','分时标，分/时/日/月/年','26-08-30 13:02'],
+  [19,1,'数据项数','UINT8','本帧携带数据项数','0x0C'],
+  [20,2,'费率1电量','UINT16','0.01 kWh','0x1A2B'],
+  [22,2,'费率2电量','UINT16','0.01 kWh','0x0C1D'],
+  [24,2,'费率3电量','UINT16','0.01 kWh','0x0000'],
+  [26,6,'保留','—','协议预留，填 0','—'],
+];
+$('#dictBody').innerHTML = FIELDS.map(f=>
+  '<tr><td class="num mono">0x'+f[0].toString(16).toUpperCase().padStart(2,'0')+'</td>'+
+  '<td class="num mono">'+f[1]+'</td>'+
+  '<td class="strong">'+f[2]+'</td>'+
+  '<td class="mono dim">'+f[3]+'</td>'+
+  '<td class="muted">'+f[4]+'</td>'+
+  '<td class="mono dim">'+f[5]+'</td></tr>').join('');
+/* 叶子节点选中逻辑已在 paintTree() 中绑定 */
+
+/* ---------------- 7. 串口档案 ---------------- */
+const PORTS = [
+  {p:'COM4',  role:'侦听口',   dev:'CP210x USB-UART', baud:9600,  st:'pass', stx:'已连接',
+   note:'USB 序列号缺失（usbip 不传递），建议按物理端口号人工确认'},
+  {p:'COM24', role:'交互口',   dev:'CP210x USB-UART', baud:9600,  st:'pass', stx:'已连接', note:'—'},
+  {p:'COM12', role:'模块日志', dev:'CH343',           baud:115200,st:'pass', stx:'已连接', note:'—'},
+  {p:'COM7',  role:'未分配',   dev:'Prolific',        baud:9600,  st:'idle', stx:'空闲',   note:'未绑定角色'},
+];
+$('#portGrid').innerHTML = PORTS.map(o=>
+  '<div class="port-card">'+
+    '<div class="pc-t"><span class="dot '+o.st+'"></span><span class="pc-n">'+o.p+'</span>'+
+      '<span class="bg '+(o.role==='未分配'?'bg-idle':'bg-acc')+'">'+o.role+'</span>'+
+      '<div class="spacer"></div><span class="dim" style="font-size:var(--fs-11)">'+o.stx+'</span></div>'+
+    '<div style="border-top:1px solid var(--line-1);padding-top:4px">'+
+      '<div class="port-kv"><span>设备</span><b>'+o.dev+'</b></div>'+
+      '<div class="port-kv"><span>波特率</span><b>'+o.baud+'</b></div>'+
+      '<div class="port-kv"><span>格式</span><b>8N1</b></div>'+
+    '</div>'+
+    '<div class="dim" style="font-size:var(--fs-11);border-top:1px solid var(--line-1);padding-top:6px;line-height:1.5">'+o.note+'</div>'+
+    '<div class="row" style="margin-top:auto"><button class="btn sm" style="flex:1">编辑</button>'+
+      '<button class="btn sm gho">测试</button></div>'+
+  '</div>').join('');
+
+/* ---------------- 8. 维护 ---------------- */
+const SVC = [
+  {n:'workbench',        p:8790, st:'pass', t:'运行中', d:'统一工作台 · /api/ai/v1'},
+  {n:'listener',         p:8765, st:'pass', t:'运行中', d:'侦听台服务'},
+  {n:'module_log',       p:8766, st:'fail', t:'已停止', d:'模块日志服务'},
+  {n:'sim_concentrator', p:null, st:'pass', t:'内置',   d:'以库形式嵌入 workbench'},
+];
+$('#svcList').innerHTML = SVC.map(s=>
+  '<div class="svc-row">'+
+    '<span class="dot '+s.st+'"></span>'+
+    '<div style="flex:1;min-width:0">'+
+      '<div style="font-size:var(--fs-12);color:var(--tx-1)">'+s.n+
+        (s.p?' <span class="mono dim" style="font-size:var(--fs-11)">:'+s.p+'</span>':'')+'</div>'+
+      '<div class="dim" style="font-size:var(--fs-11)">'+s.d+'</div>'+
+    '</div>'+
+    '<span class="bg '+(s.st==='pass'?'bg-pass':'bg-idle')+'">'+s.t+'</span>'+
+    '<button class="btn sm gho">'+(s.st==='pass'?'停止':'启动')+'</button>'+
+  '</div>').join('');
+
+/* ---------------- 启动 ---------------- */
+renderNav();
+renderScn();
+resetPipe();
+renderFrames();
+setLsn(true, true);      /* 默认处于侦听中，页面打开即有数据流入 */
+go('workbench');
+conLog('I','工作台就绪 · 等待执行');
+conLog('D','提示：点右上角「设计说明」查看每个改动背后的理由');
+})();
+</script>
+</body>
+</html>
