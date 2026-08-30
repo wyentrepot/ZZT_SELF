@@ -1,0 +1,94 @@
+审计对象：D:\2-侦听台改造\apps\workbench\static\tokens-v2.css
+门禁：AA >= 4.5:1，0 FAIL 方可通过；观察区 ⚠ 项不阻塞，供 P2 决策
+================================================================================
+
+◆ 门禁区（对应旧版 21 组审计口径 + tokens-v2 声明的四种底色）
+  —— 门禁区 · 主题 midnight 墨夜 ——
+  PASS   15.75:1  正文 #e8f0f7 / canvas #0a1628  (--color-fg-default on --color-bg-canvas)
+  PASS    8.80:1  次级 #a8b6c8 / canvas #0a1628  (--color-fg-muted on --color-bg-canvas)
+  PASS    7.07:1  弱化 #94a3b8 / canvas #0a1628  (--color-fg-subtle on --color-bg-canvas)
+  PASS    5.97:1  最弱 #8296ad / canvas #0a1628  (--color-fg-dim on --color-bg-canvas)
+  PASS   14.21:1  正文 #e8f0f7 / surface #0f1f3d  (--color-fg-default on --color-bg-surface)
+  PASS    7.94:1  次级 #a8b6c8 / surface #0f1f3d  (--color-fg-muted on --color-bg-surface)
+  PASS    6.38:1  弱化 #94a3b8 / surface #0f1f3d  (--color-fg-subtle on --color-bg-surface)
+  PASS    5.39:1  最弱 #8296ad / surface #0f1f3d  (--color-fg-dim on --color-bg-surface)
+  PASS   12.48:1  正文 #e8f0f7 / raised #152a4a  (--color-fg-default on --color-bg-raised)
+  PASS    6.97:1  次级 #a8b6c8 / raised #152a4a  (--color-fg-muted on --color-bg-raised)
+  PASS    5.60:1  弱化 #94a3b8 / raised #152a4a  (--color-fg-subtle on --color-bg-raised)
+  PASS    4.73:1  最弱 #8296ad / raised #152a4a  (--color-fg-dim on --color-bg-raised)
+  PASS   15.10:1  正文 #e8f0f7 / input #0d1a30  (--color-fg-default on --color-bg-input)
+  PASS    8.44:1  次级 #a8b6c8 / input #0d1a30  (--color-fg-muted on --color-bg-input)
+  PASS    6.78:1  弱化 #94a3b8 / input #0d1a30  (--color-fg-subtle on --color-bg-input)
+  PASS    5.73:1  最弱 #8296ad / input #0d1a30  (--color-fg-dim on --color-bg-input)
+  PASS    6.91:1  accent 反色字 #04202e / accent 填充 #06b6d4  (--color-accent-fg on --color-accent)
+  PASS   10.03:1  accent 强调字 #22d3ee / canvas #0a1628  (--color-accent-emphasis on --color-bg-canvas)
+  PASS    9.74:1  接收方向 RX #2dd4bf / canvas #0a1628  (--color-dir-rx on --color-bg-canvas)
+  PASS    9.73:1  发送方向 TX #f0b429 / canvas #0a1628  (--color-dir-tx on --color-bg-canvas)
+  PASS    7.15:1  状态 pass #10b981 / canvas #0a1628  (--color-status-pass on --color-bg-canvas)
+  PASS    8.44:1  状态 warn #f59e0b / canvas #0a1628  (--color-status-warn on --color-bg-canvas)
+  PASS    4.82:1  状态 fail #ef4444 / canvas #0a1628  (--color-status-fail on --color-bg-canvas)
+  PASS    6.14:1  状态 info #5a94ff / canvas #0a1628  (--color-status-info on --color-bg-canvas)
+  PASS    5.41:1  状态 inconclusive #a371f7 / canvas #0a1628  (--color-status-inconclusive on --color-bg-canvas)
+  —— 门禁区 · 主题 daylight 晴昼 ——
+  PASS   16.49:1  正文 #0f172a / canvas #f4f6f9  (--color-fg-default on --color-bg-canvas)
+  PASS    9.56:1  次级 #334155 / canvas #f4f6f9  (--color-fg-muted on --color-bg-canvas)
+  PASS    7.00:1  弱化 #475569 / canvas #f4f6f9  (--color-fg-subtle on --color-bg-canvas)
+  PASS    5.04:1  最弱 #5a6b80 / canvas #f4f6f9  (--color-fg-dim on --color-bg-canvas)
+  PASS   17.85:1  正文 #0f172a / surface #ffffff  (--color-fg-default on --color-bg-surface)
+  PASS   10.35:1  次级 #334155 / surface #ffffff  (--color-fg-muted on --color-bg-surface)
+  PASS    7.58:1  弱化 #475569 / surface #ffffff  (--color-fg-subtle on --color-bg-surface)
+  PASS    5.46:1  最弱 #5a6b80 / surface #ffffff  (--color-fg-dim on --color-bg-surface)
+  PASS   15.88:1  正文 #0f172a / raised #eef2f7  (--color-fg-default on --color-bg-raised)
+  PASS    9.21:1  次级 #334155 / raised #eef2f7  (--color-fg-muted on --color-bg-raised)
+  PASS    6.74:1  弱化 #475569 / raised #eef2f7  (--color-fg-subtle on --color-bg-raised)
+  PASS    4.85:1  最弱 #5a6b80 / raised #eef2f7  (--color-fg-dim on --color-bg-raised)
+  PASS   17.85:1  正文 #0f172a / input #ffffff  (--color-fg-default on --color-bg-input)
+  PASS   10.35:1  次级 #334155 / input #ffffff  (--color-fg-muted on --color-bg-input)
+  PASS    7.58:1  弱化 #475569 / input #ffffff  (--color-fg-subtle on --color-bg-input)
+  PASS    5.46:1  最弱 #5a6b80 / input #ffffff  (--color-fg-dim on --color-bg-input)
+  PASS    6.91:1  accent 反色字 #04202e / accent 填充 #06b6d4  (--color-accent-fg on --color-accent)
+  PASS    4.95:1  accent 强调字 #0e7490 / canvas #f4f6f9  (--color-accent-emphasis on --color-bg-canvas)
+  PASS    5.06:1  接收方向 RX #0f766e / canvas #f4f6f9  (--color-dir-rx on --color-bg-canvas)
+  PASS    4.64:1  发送方向 TX #b45309 / canvas #f4f6f9  (--color-dir-tx on --color-bg-canvas)
+  PASS    4.63:1  状态 pass #15803d / canvas #f4f6f9  (--color-status-pass on --color-bg-canvas)
+  PASS    4.64:1  状态 warn #b45309 / canvas #f4f6f9  (--color-status-warn on --color-bg-canvas)
+  PASS    5.98:1  状态 fail #b91c1c / canvas #f4f6f9  (--color-status-fail on --color-bg-canvas)
+  PASS    6.19:1  状态 info #1d4ed8 / canvas #f4f6f9  (--color-status-info on --color-bg-canvas)
+  PASS    5.26:1  状态 inconclusive #7c3aed / canvas #f4f6f9  (--color-status-inconclusive on --color-bg-canvas)
+
+◆ 观察区（门禁外更严组合：第五档实心底 elevated 等）
+  —— 观察区 · 主题 midnight 墨夜 ——
+  PASS   10.81:1  正文 #e8f0f7 / elevated #1b3555  (--color-fg-default on --color-bg-elevated)
+  PASS    6.04:1  次级 #a8b6c8 / elevated #1b3555  (--color-fg-muted on --color-bg-elevated)
+  PASS    4.85:1  弱化 #94a3b8 / elevated #1b3555  (--color-fg-subtle on --color-bg-elevated)
+  ⚠WARN    4.10:1  最弱 #8296ad / elevated #1b3555  (--color-fg-dim on --color-bg-elevated)
+  PASS    6.89:1  accent 强调字 #22d3ee / elevated #1b3555  (--color-accent-emphasis on --color-bg-elevated)
+  PASS    6.69:1  接收方向 RX #2dd4bf / elevated #1b3555  (--color-dir-rx on --color-bg-elevated)
+  PASS    6.68:1  发送方向 TX #f0b429 / elevated #1b3555  (--color-dir-tx on --color-bg-elevated)
+  PASS    4.91:1  状态 pass #10b981 / elevated #1b3555  (--color-status-pass on --color-bg-elevated)
+  PASS    5.80:1  状态 warn #f59e0b / elevated #1b3555  (--color-status-warn on --color-bg-elevated)
+  ⚠WARN    3.31:1  状态 fail #ef4444 / elevated #1b3555  (--color-status-fail on --color-bg-elevated)
+  ⚠WARN    4.22:1  状态 info #5a94ff / elevated #1b3555  (--color-status-info on --color-bg-elevated)
+  ⚠WARN    3.71:1  状态 inconclusive #a371f7 / elevated #1b3555  (--color-status-inconclusive on --color-bg-elevated)
+  —— 观察区 · 主题 daylight 晴昼 ——
+  PASS   15.02:1  正文 #0f172a / elevated #e6ecf4  (--color-fg-default on --color-bg-elevated)
+  PASS    8.71:1  次级 #334155 / elevated #e6ecf4  (--color-fg-muted on --color-bg-elevated)
+  PASS    6.38:1  弱化 #475569 / elevated #e6ecf4  (--color-fg-subtle on --color-bg-elevated)
+  PASS    4.59:1  最弱 #5a6b80 / elevated #e6ecf4  (--color-fg-dim on --color-bg-elevated)
+  PASS    4.51:1  accent 强调字 #0e7490 / elevated #e6ecf4  (--color-accent-emphasis on --color-bg-elevated)
+  PASS    4.61:1  接收方向 RX #0f766e / elevated #e6ecf4  (--color-dir-rx on --color-bg-elevated)
+  ⚠WARN    4.23:1  发送方向 TX #b45309 / elevated #e6ecf4  (--color-dir-tx on --color-bg-elevated)
+  ⚠WARN    4.22:1  状态 pass #15803d / elevated #e6ecf4  (--color-status-pass on --color-bg-elevated)
+  ⚠WARN    4.23:1  状态 warn #b45309 / elevated #e6ecf4  (--color-status-warn on --color-bg-elevated)
+  PASS    5.44:1  状态 fail #b91c1c / elevated #e6ecf4  (--color-status-fail on --color-bg-elevated)
+  PASS    5.64:1  状态 info #1d4ed8 / elevated #e6ecf4  (--color-status-info on --color-bg-elevated)
+  PASS    4.79:1  状态 inconclusive #7c3aed / elevated #e6ecf4  (--color-status-inconclusive on --color-bg-elevated)
+
+附录 · 旧方言遗留问题（未计入门禁，P2 页面接入 compat-dialects.css 后消除）
+--------------------------------------------------------------------------------
+  [遗留] A 系 --fg-dim #64748b / surface 3.44  →  tokens-v2 --color-fg-dim 已提亮，别名映射后消除
+  [遗留] B 系 --tx-4 #465768 / bg-2 2.36  →  compat 层 --tx-4 → --color-fg-dim，接入后消除
+  [遗留] C 系 --faint #536678 / panel 3.04  →  compat 层 --faint → --color-fg-subtle，接入后消除
+
+================================================================================
+门禁 50 组 / FAIL 0 —— ✅ 通过    （观察区 24 组 / ⚠ 7，见上表）
