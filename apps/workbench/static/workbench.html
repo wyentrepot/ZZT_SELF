@@ -4,15 +4,32 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>验证工作台</title>
-<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/tokens-v2.css">
+<link rel="stylesheet" href="/static/compat-dialects.css">
 <!-- P0-4 防主题闪跳：子页面在 iframe 中独立渲染，父页 CSS 变量不会渗透进来，
-     必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。 -->
+     必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。
+
+     REQS-0012：className → data-theme；主题白名单改从 --theme-registry 读取。 -->
 <script>
+(function () {
   try {
-    var _t = localStorage.getItem("wb-theme");
-    var _valid = ["theme-deepblue", "theme-emerald", "theme-charcoal", "theme-indigo"];
-    if (_t && _valid.indexOf(_t) > -1) document.documentElement.className = _t;
+    var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+      return s.split("|")[0].trim();
+    }).filter(Boolean);
+    var _saved = localStorage.getItem("wb-theme");
+    var _t;
+    if (_saved && _keys.indexOf(_saved) > -1) {
+      _t = _saved;
+    } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+               && _keys.indexOf("daylight") > -1) {
+      _t = "daylight";
+    } else {
+      _t = _keys[0] || "midnight";
+    }
+    document.documentElement.dataset.theme = _t;
   } catch (e) {}
+})();
 </script>
 <style>
 /* workbench 验证工作台页面专属样式 —— 引用 tokens.css 中的 Token 变量 */
@@ -401,13 +418,25 @@ tr:hover td {
 <script>
 (function () {
   "use strict";
+  // 主题名白名单来自 tokens-v2.css 的 --theme-registry（单一数据源），
+  // 防止父页传入脏值或旧主题名把 html 的 data-theme 写坏。
+  function validThemes() {
+    try {
+      var raw = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+      return raw.replace(/["']/g, "").split(",").map(function (s) {
+        return s.split("|")[0].trim();
+      }).filter(Boolean);
+    } catch (e) { return []; }
+  }
   function applyTheme(theme) {
-    if (theme) document.documentElement.className = theme;
+    if (theme && validThemes().indexOf(theme) > -1) {
+      document.documentElement.dataset.theme = theme;
+    }
   }
   // 初始化时从父页面读取主题
   try {
-    var parentTheme = window.top.document.documentElement.className;
-    applyTheme(parentTheme);
+    // REQS-0012：父页由 className 改为 data-theme 属性
+    applyTheme(window.top.document.documentElement.dataset.theme);
   } catch (e) {}
   // 监听父页面广播
   window.addEventListener("message", function (e) {

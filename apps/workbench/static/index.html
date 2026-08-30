@@ -4,18 +4,39 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 闭环研发验证工作台</title>
-<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/tokens-v2.css">
+<link rel="stylesheet" href="/static/compat-dialects.css">
 <link rel="stylesheet" href="/static/styles.css">
 <!-- P0-4 防主题闪跳：必须在首屏渲染前执行，故内联于 head 且不 defer。
      原先 app.js 在 </body> 前才应用主题，非默认主题下刷新会先渲染默认深蓝，
      再经 body 的 transition 0.3s 渐变跳到目标主题 —— 一次可见的闪跳。
-     白名单校验防止 localStorage 脏值写坏 html 的 className。 -->
+
+     REQS-0012 变更：
+       · className → data-theme 属性（className 会清空 html 上其他 class）
+       · 主题白名单不再硬编码，改从 tokens-v2.css 的 --theme-registry 读取，
+         实现「新增主题只改 CSS 一处」。CSS 若加载失败则 _keys 为空，
+         回退 midnight —— 主题定义留在 CSS，JS 异常仍有兜底（D1 决策）。
+       · 无本地偏好时按 prefers-color-scheme 自动跟随（P3）。 -->
 <script>
+(function () {
   try {
-    var _t = localStorage.getItem("wb-theme");
-    var _valid = ["theme-deepblue", "theme-emerald", "theme-charcoal", "theme-indigo"];
-    if (_t && _valid.indexOf(_t) > -1) document.documentElement.className = _t;
+    var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+      return s.split("|")[0].trim();
+    }).filter(Boolean);
+    var _saved = localStorage.getItem("wb-theme");
+    var _t;
+    if (_saved && _keys.indexOf(_saved) > -1) {
+      _t = _saved;
+    } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+               && _keys.indexOf("daylight") > -1) {
+      _t = "daylight";
+    } else {
+      _t = _keys[0] || "midnight";
+    }
+    document.documentElement.dataset.theme = _t;
   } catch (e) {}
+})();
 </script>
 </head>
 <body>
@@ -29,12 +50,10 @@
       </div>
     </div>
     <div class="wb-header-actions">
-      <div class="wb-themes" id="wbThemes">
-        <button class="theme-dot active" data-theme="theme-deepblue" title="深蓝科技">🌊</button>
-        <button class="theme-dot" data-theme="theme-emerald" title="暗色翡翠">🌿</button>
-        <button class="theme-dot" data-theme="theme-charcoal" title="炭黑灰金">✦</button>
-        <button class="theme-dot" data-theme="theme-indigo" title="靛蓝玻璃">🔮</button>
-      </div>
+      <!-- 主题切换按钮由 app.js 依据 tokens-v2.css 的 --theme-registry 动态生成。
+           按钮携带的属性是 data-theme-key（不是 data-theme）——
+           data-theme 已被 <html> 独占，两者同名会让 [data-theme=...] 误命中按钮。 -->
+      <div class="wb-themes" id="wbThemes"></div>
       <button class="wb-collapse-btn" id="wbCollapseBtn" type="button" aria-label="折叠侧栏" aria-expanded="true" title="折叠/展开侧栏">☰</button>
     </div>
   </header>
