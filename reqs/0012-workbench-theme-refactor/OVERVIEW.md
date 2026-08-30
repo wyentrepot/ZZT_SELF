@@ -98,7 +98,7 @@ body 背景色是否变化。主题名从 `--theme-registry` 读取，不硬编�
 
 | # | 事项 | 影响 |
 |---|------|------|
-| L1 | 侦听台 `app.js` 内 16 处硬编码色 | canvas 趋势图在晴昼浅色下不跟随主题（深色底 + 亮线）。修法需 JS 读 `getComputedStyle` 取 token 喂给 canvas，属 JS 逻辑改动，已越过本次红线 |
+| L1 | 侦听台 `app.js` 硬编码色（已定位到行） | **周期成功率趋势图在晴昼浅色下会保持一整块近黑底**，与浅色页面割裂。具体：`app.js:2006` 画布底 `#0a141e`、`:2011`/`:2078` 坐标轴文字 `#698095`、`:2026` 网格 `#536678`、`:2044` 折线 `#45e0c2`、`:2069-2070` 评级点 `#4dd27a`/`#f2c14e`/`#ff7385`，另 `:1191-1192` 内联状态色。修法是 JS 读 `getComputedStyle` 取 token 值喂给 canvas，属 JS 逻辑改动，已越过本次「只改 CSS/HTML」红线 |
 | L2 | `rating-degraded` / `legend-dot.pending` 用 `--color-dir-tx` | 语义上属「健康度/待定状态」，严格该用 `--color-status-warn`。当前保与 module-serial 视觉一致，改了会产生差异，建议两页一起改 |
 | L3 | `simcon.html:133` `.s-A` 用 `--color-dir-rx` | 是报文**地址域**的语法高亮色，非收发方向。系 P2 忠实 1:1 迁移，非新错 |
 | L4 | `apps/listener/test_ui_layout.py` 3 条失败 | 已用 HEAD 版本双向验证为**改造前既有**，与本次无关 |
