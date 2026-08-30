@@ -5,10 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>验证工作台</title>
 <link rel="stylesheet" href="/static/tokens.css">
+<!-- P0-4 防主题闪跳：子页面在 iframe 中独立渲染，父页 CSS 变量不会渗透进来，
+     必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。 -->
+<script>
+  try {
+    var _t = localStorage.getItem("wb-theme");
+    var _valid = ["theme-deepblue", "theme-emerald", "theme-charcoal", "theme-indigo"];
+    if (_t && _valid.indexOf(_t) > -1) document.documentElement.className = _t;
+  } catch (e) {}
+</script>
 <style>
 /* workbench 验证工作台页面专属样式 —— 引用 tokens.css 中的 Token 变量 */
+:root { color-scheme: dark; }
 body {
-  background: var(--bg-gradient);
+  background: var(--bg-page);
   color: var(--fg-default);
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
   padding: var(--sp-5);
