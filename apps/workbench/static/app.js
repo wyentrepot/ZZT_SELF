@@ -51,9 +51,12 @@
     .catch(function () {});
 
   // ---------- 主题 ----------
+  // 注意：读取的是 <html data-theme>，不再读 className。
+  // 旧实现用 className 兼作「主题名」与「其他 class 容器」，双向脆弱：
+  // 赋值会清空 html 上其他 class，读取又依赖它只含主题名（REQS-0012 D2）。
   function postTheme(frame) {
-    const currentTheme = document.documentElement.className;
-    if (!currentTheme || !THEMES[currentTheme]) return;
+    const currentTheme = document.documentElement.dataset.theme;
+    if (!currentTheme) return;
     try {
       frame.contentWindow.postMessage({
         type: "wb-theme-change",
@@ -202,39 +205,71 @@
   }
 
   // ---------- 主题 ----------
-  const THEMES = {
-    "theme-deepblue": "深蓝科技",
-    "theme-emerald": "暗色翡翠",
-    "theme-charcoal": "炭黑灰金",
-    "theme-indigo": "靛蓝玻璃",
-  };
+  // 单一数据源：主题清单只存在于 tokens-v2.css 的 --theme-registry。
+  // 新增/删除一套主题 = 只改 CSS 那一处，本文件的按钮与逻辑自动跟随。
+  // 这是 REQS-0012 P2 的验收项 8（旧架构需同步 CSS 选择器 / JS THEMES / HTML .theme-dot 三处）。
+  function readThemeRegistry() {
+    let raw = "";
+    try {
+      raw = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    } catch (error) {
+      return [];
+    }
+    return raw.replace(/["']/g, "").split(",").map(function (entry) {
+      const parts = entry.split("|");
+      return {
+        key: (parts[0] || "").trim(),
+        label: (parts[1] || "").trim(),
+        icon: (parts[2] || "").trim()
+      };
+    }).filter(function (theme) { return theme.key; });
+  }
+
+  const THEMES = readThemeRegistry();
 
   function switchTheme(theme) {
-    if (!THEMES[theme]) return;
-    document.documentElement.className = theme;
+    if (!THEMES.some(function (item) { return item.key === theme; })) return;
+    document.documentElement.dataset.theme = theme;
     try { localStorage.setItem("wb-theme", theme); } catch (error) {}
 
     const dots = document.querySelectorAll(".theme-dot");
     for (let index = 0; index < dots.length; index += 1) {
-      dots[index].classList.toggle("active", dots[index].dataset.theme === theme);
+      dots[index].classList.toggle("active", dots[index].dataset.themeKey === theme);
     }
     framesByPage.forEach(function (frame) { postTheme(frame); });
   }
 
-  if (themesEl) {
-    const dots = themesEl.querySelectorAll(".theme-dot");
-    for (let index = 0; index < dots.length; index += 1) {
-      dots[index].addEventListener("click", function () {
-        switchTheme(this.dataset.theme);
-      });
-    }
+  // 由注册表渲染切换按钮。注意按钮用 data-theme-key，避开已被 <html> 占用的 data-theme。
+  function renderThemes() {
+    if (!themesEl) return;
+    themesEl.textContent = "";
+    const current = document.documentElement.dataset.theme;
+    THEMES.forEach(function (theme) {
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "theme-dot";
+      dot.dataset.themeKey = theme.key;
+      dot.title = theme.label;
+      dot.setAttribute("aria-label", "切换主题：" + theme.label);
+      dot.textContent = theme.icon || "●";
+      if (theme.key === current) dot.classList.add("active");
+      dot.addEventListener("click", function () { switchTheme(theme.key); });
+      themesEl.appendChild(dot);
+    });
   }
 
   // ---------- 初始化 ----------
-  try {
-    const saved = localStorage.getItem("wb-theme");
-    if (saved && THEMES[saved]) switchTheme(saved);
-  } catch (error) {}
+  // 主题已在 <head> 内联脚本中应用（防闪跳），此处只补渲染按钮，
+  // 不再重复应用一次（旧实现在这里调用 switchTheme 会重复 postMessage）。
+  renderThemes();
+
+  // 漂移检测：CSS 注册表与 <html> 当前值若不一致，说明某处出现了硬编码残留。
+  if (THEMES.length && !THEMES.some(function (item) {
+    return item.key === document.documentElement.dataset.theme;
+  })) {
+    console.warn("[wb-theme] 当前 data-theme 不在 --theme-registry 中：",
+                 document.documentElement.dataset.theme, THEMES.map(function (t) { return t.key; }));
+  }
 
   try {
     if (localStorage.getItem(COLLAPSE_KEY) === "1") setCollapsed(true);
