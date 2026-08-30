@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>验证工作台</title>
 <link rel="stylesheet" href="/static/tokens-v2.css">
-<link rel="stylesheet" href="/static/compat-dialects.css">
 <!-- P0-4 防主题闪跳：子页面在 iframe 中独立渲染，父页 CSS 变量不会渗透进来，
      必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。
 
@@ -32,12 +31,11 @@
 })();
 </script>
 <style>
-/* workbench 验证工作台页面专属样式 —— 引用 tokens.css 中的 Token 变量 */
-:root { color-scheme: dark; }
+/* workbench 验证工作台页面专属样式 —— 引用 tokens-v2.css 中的 Token 变量 */
 body {
-  background: var(--bg-page);
-  color: var(--fg-default);
-  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: var(--color-bg-canvas);
+  color: var(--color-fg-default);
+  font-family: var(--font-sans);
   padding: var(--sp-5);
   line-height: var(--lh-relax);
   min-height: 100vh;
@@ -47,7 +45,7 @@ h1 {
   margin-bottom: var(--sp-1-5);
 }
 .sub {
-  color: var(--fg-dim);
+  color: var(--color-fg-dim);
   font-size: var(--fs-sm);
   margin-bottom: var(--sp-5);
 }
@@ -135,7 +133,7 @@ tr:hover td {
   background: var(--table-row-hover);
 }
 .hint {
-  color: var(--fg-dim);
+  color: var(--color-fg-dim);
   font-size: var(--fs-xs);
   margin-top: var(--sp-2);
 }

@@ -1,6 +1,5 @@
 /* AI 闭环研发验证工作台 —— 页签式统一前端（纯静态，零构建）
-   所有颜色/间距/排版值均引用 tokens.css 中的 Token 变量 */
-@import url("tokens.css");
+   所有颜色/间距/排版值均引用 tokens-v2.css 中的 Token 变量 */
 
 /* ---- Reset ---- */
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -8,9 +7,9 @@ html, body { height: 100%; }
 
 /* ---- Body（纯色：REQS-0011 §2 已拍板「去掉渐变与重玻璃拟态」）---- */
 body {
-  background: var(--bg-page);
-  color: var(--fg-default);
-  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: var(--color-bg-canvas);
+  color: var(--color-fg-default);
+  font-family: var(--font-sans);
   display: flex;
   flex-direction: column;
   transition: background 0.3s, color 0.3s;
@@ -120,8 +119,8 @@ body {
 .theme-dot.active {
   opacity: 1;
   filter: grayscale(0);
-  border-color: var(--accent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 40%, transparent);
   transform: scale(1.1);
 }
 
@@ -255,7 +254,7 @@ body {
 .wb-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--color-bg-overlay) 45%, transparent);
   z-index: 40;
 }
 .wb-overlay[hidden] {
@@ -277,7 +276,7 @@ body {
   }
   .wb-sidebar.wb-drawer-active {
     transform: translateX(0);
-    box-shadow: 0 0 24px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--sh-lg);
   }
   .wb-sidebar-collapsed .wb-sidebar {
     width: 240px;
