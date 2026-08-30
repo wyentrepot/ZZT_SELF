@@ -105,5 +105,5 @@
 | --- | --- |
 | `docs/api-contract.md` | 接口契约总表（路由/参数/响应键/状态码/前缀映射/契约红线） |
 | `docs/16-AI操作指南.md` | AI 控制面完整操作手册 |
-| `.agents/skills/ai-control-plane/SKILL.md` | AI 控制面执行步骤（v1.4.0） |
+| `.agents/skills/ai-control-plane/SKILL.md` | AI 控制面执行步骤（v2.0.0：路由器 + references 按需加载） |
 | `REQS-INDEX.md` / `DECISIONS.md` | 需求索引 / ADR 决策记录 |
