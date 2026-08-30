@@ -69,15 +69,15 @@
     api("/api/simcon/status").then(function (st) {
       var chip = $("#stChip");
       if (st.open) {
-        chip.innerHTML = "<span class='dot' style='color:var(--ok-c)'></span>" +
+        chip.innerHTML = "<span class='dot' style='color:var(--color-status-pass)'></span>" +
           esc(st.port || "") + " · 待发帧 " + (st.pending_frames || 0);
         $("#btnOpen").textContent = "重新打开";
       } else {
-        chip.innerHTML = "<span class='dot' style='color:var(--tx-4)'></span>未连接";
+        chip.innerHTML = "<span class='dot' style='color:var(--color-fg-dim)'></span>未连接";
         $("#btnOpen").textContent = "打开串口";
       }
     }).catch(function () {
-      $("#stChip").innerHTML = "<span class='dot' style='color:var(--err-c)'></span>simcon 不可用";
+      $("#stChip").innerHTML = "<span class='dot' style='color:var(--color-status-fail)'></span>simcon 不可用";
     });
   }
 
@@ -132,12 +132,12 @@
     $("#fnCnt").textContent = (a.fns || []).length + " Fn";
     $("#fnCol").innerHTML = (a.fns || []).map(function (f, j) {
       return '<button class="fn-item" data-j="' + j + '"><span class="fn-no">' + esc(f.no) + "</span>" +
-        '<span class="fn-nm">' + esc(f.name) + (f.todo ? "<br><span class='mono' style='font-size:10px;color:var(--tx-4)'>字段待补</span>" : "") + "</span></button>";
+        '<span class="fn-nm">' + esc(f.name) + (f.todo ? "<br><span class='mono' style='font-size:10px;color:var(--color-fg-dim)'>字段待补</span>" : "") + "</span></button>";
     }).join("");
     Array.prototype.forEach.call(document.querySelectorAll("#fnCol .fn-item"), function (el) {
       el.addEventListener("click", function () { selectFn(+el.dataset.j); });
     });
-    $("#parHead").innerHTML = '<div class="par-t1"><b style="font-family:var(--fm);color:var(--ac)">AFN ' + esc(a.code) + "</b><b>" + esc(a.name) + "</b>" +
+    $("#parHead").innerHTML = '<div class="par-t1"><b style="font-family:var(--font-mono);color:var(--color-accent)">AFN ' + esc(a.code) + "</b><b>" + esc(a.name) + "</b>" +
       "<span class='chip chip--ghost'>" + esc(a.dir || "—") + "</span></div>" +
       '<div class="par-t2">' + esc(a.sem || "") + "</div>";
     $("#parBody").innerHTML = '<div class="empty"><p>选择具体 Fn 载入参数</p></div>';
@@ -151,7 +151,7 @@
     });
     var a = state.afnList[state.curAfn];
     var f = a.fns[j];
-    $("#parHead").innerHTML = '<div class="par-t1"><b style="font-family:var(--fm);color:var(--ac)">' + esc(a.code + " " + f.no) + "</b><b>" + esc(f.name) + "</b>" +
+    $("#parHead").innerHTML = '<div class="par-t1"><b style="font-family:var(--font-mono);color:var(--color-accent)">' + esc(a.code + " " + f.no) + "</b><b>" + esc(f.name) + "</b>" +
       "<span class='chip chip--" + (f.dir === "下行" ? "tx" : "rx") + "'>" + esc(f.dir || "—") + "</span></div>" +
       '<div class="par-t2">' + esc(f.sem || f.d || a.sem || "") + "</div>";
     var key = a.code + "-" + f.no;
@@ -200,7 +200,7 @@
     var send;
     try { send = currentSend(); }
     catch (e) {
-      $("#prevHex").innerHTML = "<span style='color:var(--err-c)'>" + esc(e.message) + "</span>";
+      $("#prevHex").innerHTML = "<span style='color:var(--color-status-fail)'>" + esc(e.message) + "</span>";
       $("#frameMeta").textContent = "—";
       return;
     }
@@ -211,7 +211,7 @@
       $("#prevHex").innerHTML = colorHex(r.hex);
       $("#frameMeta").textContent = "帧长 " + r.length + " 字节";
     }).catch(function (err) {
-      $("#prevHex").innerHTML = "<span style='color:var(--err-c)'>" + esc(err.message) + "</span>";
+      $("#prevHex").innerHTML = "<span style='color:var(--color-status-fail)'>" + esc(err.message) + "</span>";
       $("#frameMeta").textContent = "构帧失败";
     });
   }
@@ -274,16 +274,16 @@
         if (empty) empty.remove();
         frames.reverse().forEach(function (f) {
           var row = document.createElement("div");
-          row.className = "tx-row";
+          row.className = "tr-row";
           row.innerHTML =
-            '<button class="tx-main"><span class="tm">' + esc((f.ts || "").replace("T", " ").slice(0, 12)) + "</span>" +
+            '<button class="tr-main"><span class="tm">' + esc((f.ts || "").replace("T", " ").slice(0, 12)) + "</span>" +
             '<span class="dir ' + f.dir + '">' + (f.dir === "tx" ? "TX" : "RX") + "</span>" +
             '<span class="afn-tag2">' + esc(f.afn || "—") + " " + esc(f.fn || "") + "</span>" +
             (f.kind ? '<span class="kind-tag">' + esc(f.kind) + "</span>" : "") +
             '<span class="sum mono">' + esc(f.frame_hex || "") + "</span></button>" +
-            '<div class="tx-det"><div class="hexwrap"><div class="hex">' + colorHex(f.frame_hex) + "</div></div>" +
+            '<div class="tr-det"><div class="hexwrap"><div class="hex">' + colorHex(f.frame_hex) + "</div></div>" +
             (f.updown ? '<div class="hint" style="margin-top:6px">CCO 主动上报（updown=' + esc(f.updown) + "）</div>" : "") + "</div>";
-          row.querySelector(".tx-main").addEventListener("click", function () { row.classList.toggle("open"); });
+          row.querySelector(".tr-main").addEventListener("click", function () { row.classList.toggle("open"); });
           body.insertBefore(row, body.firstChild);
         });
         while (body.children.length > 300) body.removeChild(body.lastChild);
@@ -322,7 +322,7 @@
       }
       strip.innerHTML = '<span class="lbl">内置应答 · ' + rules.length + "</span>" + rules.map(function (r) {
         var m = r.match || {}, rp = r.reply || {};
-        return "<span class='chip'><span class='mono' style='color:var(--ac)'>" + esc(r.id || "—") + "</span>" +
+        return "<span class='chip'><span class='mono' style='color:var(--color-accent)'>" + esc(r.id || "—") + "</span>" +
           (m.afn != null ? esc(afnTxt(m.afn, m.fn)) : "") +
           (rp.afn != null ? " → " + esc(afnTxt(rp.afn, rp.fn)) : "") +
           (r.desc ? "<span class='hint'>" + esc(r.desc) + "</span>" : "") + "</span>";
