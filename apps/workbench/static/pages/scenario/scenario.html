@@ -28,6 +28,19 @@
   } catch (e) {}
 })();
 </script>
+<script>
+/* 主题实时跟随：外壳切主题时向保活 iframe 广播 wb-theme-change（REQS-0012），
+   这里按 --theme-registry 白名单校验后再应用。 */
+window.addEventListener("message", function (e) {
+  if (e.data && e.data.type === "wb-theme-change") {
+    var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+      return s.split("|")[0].trim();
+    }).filter(Boolean);
+    if (_keys.indexOf(e.data.theme) > -1) document.documentElement.dataset.theme = e.data.theme;
+  }
+});
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
