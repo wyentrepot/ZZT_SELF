@@ -78,7 +78,7 @@
         sub = '<div class="tr-sum"><span>起始帧 <b>' + esc(row.meta.start_frame_id) + "</b></span>" +
           '<span>最新 <b>' + esc(row.meta.last_frame_id) + "</b></span>" +
           '<span class="bad">' + esc(row.meta.status) + "</span></div>" +
-          '<div class="tr-sum" style="color:var(--tx-4)">' + esc(row.meta.created_at || "") + "</div>";
+          '<div class="tr-sum" style="color:var(--color-fg-dim)">' + esc(row.meta.created_at || "") + "</div>";
       } else {
         var s = row.report.summary || {};
         sub = '<div class="tr-sum"><span>轮 <b>' + (s.rounds || 0) + "</b></span><span>流 <b>" + (s.flows || 0) + "</b></span>" +
@@ -370,7 +370,7 @@
     }
     strip.innerHTML = '<span class="lbl">代理关系观测 · ' + px.length + "</span>" + px.slice(0, 24).map(function (p) {
       return '<span class="px-item"><span class="mono">' + esc(p.meter_addr) + '</span><span class="arr">→</span>' +
-        "STA <span class='mono'>" + esc(p.sta_tei || "—") + "</span><span style='color:var(--tx-4)'>×" + p.observations + "</span></span>";
+        "STA <span class='mono'>" + esc(p.sta_tei || "—") + "</span><span style='color:var(--color-fg-dim)'>×" + p.observations + "</span></span>";
     }).join("");
   }
 
