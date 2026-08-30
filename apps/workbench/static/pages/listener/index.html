@@ -4,16 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>国网 HPLC 日志解析台</title>
-  <link rel="stylesheet" href="/static/pages/listener/styles.css?v=loader-collapse">
+  <link rel="stylesheet" href="/static/tokens-v2.css">
+  <link rel="stylesheet" href="/static/pages/listener/styles.css?v=tokens-v2">
   <!-- P0-4 防主题闪跳：子页面在 iframe 中独立渲染，父页 CSS 变量不会渗透进来，
        必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。
-       color-scheme: dark 已在 styles.css 的 :root 中声明，此处不重复。 -->
+       REQS-0012：className → data-theme 属性（className 会清空 html 上其他 class）；
+       主题白名单不再硬编码，改从 tokens-v2.css 的 --theme-registry 读取，
+       实现「新增主题只改 CSS 一处」。CSS 若加载失败则回退 midnight。 -->
   <script>
-    try {
-      var _t = localStorage.getItem("wb-theme");
-      var _valid = ["theme-deepblue", "theme-emerald", "theme-charcoal", "theme-indigo"];
-      if (_t && _valid.indexOf(_t) > -1) document.documentElement.className = _t;
-    } catch (e) {}
+    (function () {
+      try {
+        var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+        var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+          return s.split("|")[0].trim();
+        }).filter(Boolean);
+        var _saved = localStorage.getItem("wb-theme");
+        var _t;
+        if (_saved && _keys.indexOf(_saved) > -1) {
+          _t = _saved;
+        } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+                   && _keys.indexOf("daylight") > -1) {
+          _t = "daylight";
+        } else {
+          _t = _keys[0] || "midnight";
+        }
+        document.documentElement.dataset.theme = _t;
+      } catch (e) {}
+    })();
   </script>
 </head>
 <body>
@@ -57,13 +74,14 @@
     <!-- 新版帧浏览（reqs/0010 P2）：三列布局 + feature_hint + 报文追踪联动 -->
     <section id="frames-pro-view" aria-label="新版帧浏览" style="display:flex;flex-direction:column;height:100%;min-height:0">
       <style>
-        #frames-pro-view{--pbg0:#090c10;--pbg1:#0e1319;--pbg2:#131a22;--pbg3:#18212b;--pbg4:#1e2833;
-          --pline1:#1f2935;--pline2:#2a3644;--pline3:#3a4a5c;
-          --ptx1:#e8f0f7;--ptx2:#9aabbb;--ptx3:#65798c;--ptx4:#465768;
-          --pac:#22d3ee;--pac-soft:rgba(34,211,238,.12);--pam:#f0b429;--pam-soft:rgba(240,180,41,.12);
-          --pok:#34d399;--perr:#f87171;--pr-s:5px;--pr-m:8px;--pr-l:12px;
-          --pff:"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
-          --pfm:"JetBrains Mono","Cascadia Mono","Consolas",ui-monospace,monospace}
+        /* 本地 L3 槽位：一律指向 tokens-v2 的 L2 语义层，随主题切换自动改变指向。 */
+        #frames-pro-view{--pbg0:var(--color-bg-canvas);--pbg1:var(--color-bg-surface);--pbg2:var(--color-bg-input);--pbg3:var(--color-bg-raised);--pbg4:var(--color-bg-elevated);
+          --pline1:var(--color-border-default);--pline2:var(--color-border-strong);--pline3:var(--color-border-emphasis);
+          --ptx1:var(--color-fg-default);--ptx2:var(--color-fg-muted);--ptx3:var(--color-fg-subtle);--ptx4:var(--color-fg-dim);
+          --pac:var(--color-accent-emphasis);--pac-soft:var(--color-accent-soft);--pam:var(--color-dir-tx);--pam-soft:var(--color-dir-tx-soft);
+          --pok:var(--color-status-pass);--perr:var(--color-status-fail);--pr-s:5px;--pr-m:8px;--pr-l:12px;
+          --pff:var(--font-sans);
+          --pfm:var(--font-mono)}
         #frames-pro-view .pro-work{flex:1;display:grid;grid-template-columns:250px minmax(300px,360px) 1fr;min-height:0}
         #frames-pro-view .pro-col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--pbg1);border-left:1px solid var(--pline1)}
         #frames-pro-view .pro-col:first-child{border-left:none}
@@ -75,18 +93,18 @@
         #frames-pro-view .pro-hint{font-size:11px;color:var(--ptx4)}
         #frames-pro-view .pro-chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;
           font-size:11px;font-weight:500;background:var(--pbg3);color:var(--ptx2);border:1px solid var(--pline1)}
-        #frames-pro-view .pro-chip--ac{background:var(--pac-soft);color:var(--pac);border-color:rgba(34,211,238,.25)}
-        #frames-pro-view .pro-chip--am{background:var(--pam-soft);color:var(--pam);border-color:rgba(240,180,41,.25)}
+        #frames-pro-view .pro-chip--ac{background:var(--pac-soft);color:var(--pac);border-color:color-mix(in srgb, var(--color-accent) 25%, transparent)}
+        #frames-pro-view .pro-chip--am{background:var(--pam-soft);color:var(--pam);border-color:color-mix(in srgb, var(--color-dir-tx) 25%, transparent)}
         #frames-pro-view .pro-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;padding:0 10px;
           border-radius:8px;border:1px solid var(--pline2);background:var(--pbg3);color:var(--ptx2);font-size:12px;
           font-family:var(--pff);font-weight:500;cursor:pointer;text-decoration:none;transition:all .14s cubic-bezier(.4,0,.2,1)}
         #frames-pro-view .pro-btn:hover{background:var(--pbg4);color:var(--ptx1);border-color:var(--pline3)}
-        #frames-pro-view .pro-btn--primary{background:linear-gradient(180deg,#22d3ee,#0ea5c4);color:#04222b;border-color:#0e9ab5}
+        #frames-pro-view .pro-btn--primary{background:linear-gradient(180deg,var(--color-accent-emphasis),var(--color-accent));color:var(--color-accent-fg);border-color:var(--color-accent-active)}
         #frames-pro-view .pro-filter{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--pline1)}
         #frames-pro-view .pro-input{height:26px;padding:0 8px;border-radius:8px;background:var(--pbg1);
           border:1px solid var(--pline2);color:var(--ptx1);font-size:12px;font-family:var(--pff)}
         #frames-pro-view .pro-input:focus{outline:none;border-color:var(--pac);box-shadow:0 0 0 3px var(--pac-soft)}
-        #frames-pro-view .pro-fr{border-bottom:1px solid rgba(31,41,53,.6);cursor:pointer;position:relative;transition:background .14s}
+        #frames-pro-view .pro-fr{border-bottom:1px solid color-mix(in srgb, var(--color-border-default) 60%, transparent);cursor:pointer;position:relative;transition:background .14s}
         #frames-pro-view .pro-fr:hover{background:var(--pbg2)}
         #frames-pro-view .pro-fr.sel{background:linear-gradient(90deg,var(--pac-soft),transparent)}
         #frames-pro-view .pro-fr.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--pac)}
@@ -105,8 +123,8 @@
         #frames-pro-view .pro-card-in{padding:13px}
         #frames-pro-view .pro-hex{background:var(--pbg0);border:1px solid var(--pline1);border-radius:8px;padding:10px 12px;
           font-family:var(--pfm);font-size:11.5px;line-height:1.9;letter-spacing:.03em;word-break:break-all;color:var(--ptx2);max-height:200px;overflow:auto}
-        #frames-pro-view .pro-hintcard{border-color:rgba(240,180,41,.35)}
-        #frames-pro-view .pro-hintcard .pro-card-h{background:rgba(240,180,41,.08);color:var(--pam)}
+        #frames-pro-view .pro-hintcard{border-color:color-mix(in srgb, var(--color-dir-tx) 35%, transparent)}
+        #frames-pro-view .pro-hintcard .pro-card-h{background:color-mix(in srgb, var(--color-dir-tx) 8%, transparent);color:var(--pam)}
         #frames-pro-view .pro-json{font-family:var(--pfm);font-size:11px;line-height:1.7;color:var(--ptx2);white-space:pre-wrap;word-break:break-all;
           background:var(--pbg0);border:1px solid var(--pline1);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto}
         #frames-pro-view .pro-pgn{display:flex;align-items:center;gap:8px;padding:7px 12px;border-top:1px solid var(--pline1);
