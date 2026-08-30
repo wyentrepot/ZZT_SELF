@@ -4,17 +4,22 @@ const path = require('path');
 
 const ROOT = 'apps/workbench/static';
 
-function walk(dir, out = []) {
-  for (const name of fs.readdirSync(dir)) {
-    const p = path.join(dir, name);
-    const st = fs.statSync(p);
-    if (st.isDirectory()) walk(p, out);
-    else if (/\.html?$/.test(name)) out.push(p);
-  }
-  return out;
-}
+// Keep the production gate explicit. Local prototypes under static/preview are
+// intentionally excluded from delivery and must not affect the P0 result.
+const PAGES = [
+  'index.html',
+  'pages/dict/dict.html',
+  'pages/listener/index.html',
+  'pages/maintenance/maintenance.html',
+  'pages/module-serial/module-serial.html',
+  'pages/scenario/scenario.html',
+  'pages/serial-profile/serial-profile.html',
+  'pages/simcon/simcon.html',
+  'pages/trace/trace.html',
+  'workbench.html',
+].map((file) => path.join(ROOT, file));
 
-const pages = walk(ROOT).sort();
+const pages = PAGES;
 let fail = 0;
 const rows = [];
 

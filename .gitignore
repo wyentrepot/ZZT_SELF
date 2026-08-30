@@ -405,3 +405,4 @@ use/
 .kilo/
 reasonix.toml
 .worktrees/
+/apps/workbench/static/preview/
