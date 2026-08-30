@@ -406,3 +406,8 @@ use/
 reasonix.toml
 .worktrees/
 /apps/workbench/static/preview/
+# 本机会话/代理工具状态目录（不入库）
+.workbuddy/
+.zcode/
+# 临时审计目录（reqs/0012 TODO L5：审计脚本产物，本地保留供文档路径引用，不入库）
+_tmp_*/
