@@ -50,7 +50,7 @@
       $("#dctCnt").textContent = list.length + " 本";
       $("#dctList").innerHTML = list.map(function (d) {
         return '<button class="dct-card" data-d="' + d.id + '">' +
-          '<span class="dct-r"><span class="dot" style="color:var(--tx-4)"></span>' + esc(d.name) +
+          '<span class="dct-r"><span class="dot" style="color:var(--color-fg-dim)"></span>' + esc(d.name) +
           "<span class='mono'>" + d.count + (d.fn_count ? " AFN · " + d.fn_count + " Fn" : " 条") + "</span></span>" +
           '<span class="dct-s"><code>' + esc(d.path) + "</code></span></button>";
       }).join("");
@@ -69,14 +69,14 @@
     Array.prototype.forEach.call(document.querySelectorAll("#dctList .dct-card"), function (el) {
       var on = el.dataset.d === id;
       el.classList.toggle("on", on);
-      el.querySelector(".dot").style.color = on ? "var(--ac)" : "var(--tx-4)";
+      el.querySelector(".dot").style.color = on ? "var(--color-accent)" : "var(--color-fg-dim)";
     });
     $("#enTitle").textContent = state.cur.name + " · 条目";
     $("#parHead").innerHTML = '<div class="par-t1"><b>' + esc(state.cur.name) + "</b></div>" +
       '<div class="par-t2">' + esc(state.cur.desc || "") + '</div>';
     $("#parBody").innerHTML =
       '<div class="card"><div class="card-h">来源文件<span class="hint">' + esc(state.cur.path) + "</span></div>" +
-      '<div class="card-in"><div style="font-size:12px;color:var(--tx-2);line-height:1.7">从左侧选择一个条目查看属性定义、desc 注记与原始 JSON。<br>' +
+      '<div class="card-in"><div style="font-size:12px;color:var(--color-fg-muted);line-height:1.7">从左侧选择一个条目查看属性定义、desc 注记与原始 JSON。<br>' +
       '<span class="hint">simple JSON 键即事实契约：改键名/删条目 = 契约变更，需同步 adapter 与 UI。</span></div></div></div>';
     loadEntries();
   }
@@ -171,10 +171,10 @@
         var ev = e.event || {};
         return '<div class="card"><div class="card-h">' + esc(ev.label || e.id || "规则") +
           '<span class="hint">' + esc(e.id || "") + "</span></div>" +
-          '<div class="card-in"><div style="font-size:11.5px;color:var(--tx-2);line-height:1.7">' +
-          "事件 <span class='mono' style='color:var(--ac)'>" + esc(ev.type || "—") + "</span>" +
+          '<div class="card-in"><div style="font-size:11.5px;color:var(--color-fg-muted);line-height:1.7">' +
+          "事件 <span class='mono' style='color:var(--color-accent)'>" + esc(ev.type || "—") + "</span>" +
           (e.level ? " · 级别 <span class='mono'>" + esc(e.level) + "</span>" : "") +
-          (e.match && e.match.pattern ? " · 匹配 <span class='mono' style='color:var(--am)'>" + esc(e.match.pattern) + "</span>" : "") +
+          (e.match && e.match.pattern ? " · 匹配 <span class='mono' style='color:var(--color-status-warn)'>" + esc(e.match.pattern) + "</span>" : "") +
           "</div></div></div>";
       }).join("") || '<div class="empty" style="height:120px"><p>该文件无匹配规则</p></div>';
     } else if (id === "afn-fn") {
@@ -183,7 +183,7 @@
         (item.route && item.route !== "—" ? "<span class='chip'>" + esc(item.route) + "</span>" : "") + "</div>" +
         '<div class="par-t2">' + esc(item.sem || "") + "</div>";
       var fnRows = (item.fns || []).map(function (f) {
-        return "<tr><td><div class='nm'><span class='mono' style='color:var(--ac)'>" + esc(f.no) + "</span> " + esc(f.name) +
+        return "<tr><td><div class='nm'><span class='mono' style='color:var(--color-accent)'>" + esc(f.no) + "</span> " + esc(f.name) +
           (f.todo ? " <span class='chip chip--am' style='height:16px;font-size:10px'>字段待补</span>" : "") + "</div>" +
           (f.sem ? "<div class='ds'>" + esc(f.sem) + "</div>" : "") + "</td>" +
           "<td><span class='chip chip--" + (f.dir === "下行" ? "am" : "ghost") + "' style='height:18px;font-size:10px'>" + esc(f.dir || "—") + "</span></td>" +
@@ -193,7 +193,7 @@
         '<div class="card-in"><table class="ft"><thead><tr><th style="width:56%">命令</th><th style="width:20%">方向</th><th>字段</th></tr></thead><tbody>' +
         fnRows + "</tbody></table></div></div>" +
         (state.raw.note ? '<div class="card fixcard"><div class="card-h">字典说明</div><div class="card-in">' +
-          '<div style="font-size:11.5px;color:var(--tx-2);line-height:1.7">' + esc(state.raw.note) + "</div></div></div>" : "");
+          '<div style="font-size:11.5px;color:var(--color-fg-muted);line-height:1.7">' + esc(state.raw.note) + "</div></div></div>" : "");
     } else {
       var note = NOTE_RE.test(item.desc || "");
       $("#parHead").innerHTML = '<div class="par-t1"><b class="mono">' + esc(item.key) + "</b><b>" + esc(item.name) + "</b>" +
@@ -204,12 +204,12 @@
         ["数据类型", "<span class='mono'>" + esc(item.data_type || "—") + "</span>"],
         ["单位 / 换算", "<span class='mono'>" + esc(item.unit || "—") + "</span>" +
           (item.scale ? " · ×10<sup>" + esc(item.scale) + "</sup>" : "")],
-        ["desc", "<span style='font-size:11.5px;color:var(--tx-2)'>" + esc(item.desc || "—") + "</span>"],
+        ["desc", "<span style='font-size:11.5px;color:var(--color-fg-muted)'>" + esc(item.desc || "—") + "</span>"],
       ];
       if (item.length != null) rows.splice(2, 0, ["字节数", "<span class='mono'>" + esc(item.length) + "</span>"]);
       body = kvTable(rows) +
         (note ? '<div class="card fixcard" style="margin-top:14px"><div class="card-h">纠错 / 实证注记</div>' +
-          '<div class="card-in"><div style="font-size:11.5px;color:var(--tx-2);line-height:1.7">' + esc(item.desc) + "</div></div></div>" : "");
+          '<div class="card-in"><div style="font-size:11.5px;color:var(--color-fg-muted);line-height:1.7">' + esc(item.desc) + "</div></div></div>" : "");
     }
     body += '<div class="card" style="margin-top:14px"><div class="card-h">原始 JSON<span class="hint">' + esc(state.cur.path) + "</span></div>" +
       '<div class="card-in"><div class="jsonwrap">' + esc(JSON.stringify(item, null, 2)) + "</div></div></div>";
