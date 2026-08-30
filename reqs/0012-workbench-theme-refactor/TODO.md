@@ -45,27 +45,27 @@
 
 ### P0 遗留待决
 
-- [ ] **目视验收**（用户本地起服务确认效果）—— 阻塞 P1/P2 是否投入
-- [ ] `preview/index.html` 未纳入：无 `.py` 引用、不在 `app.js` 的 PAGES 注册表，属孤儿页面。
-      自带 109 行硬编码颜色，P1 决定「接入」还是「删除」。
-      注：该文件曾在 `git rm` 时触发 apps/ 消失事故，处理时须格外谨慎。
-- [ ] `tokens.css` 残留 4 处 `--bg-gradient` 定义（已无引用），P1 清理
+- [x] **目视验收**（用户本地起服务确认效果）—— ✅ 2026-08-30 已批准
+- [x] `preview/index.html` 不纳入产品交付：保留为本地独立样板，`preview/` 已从 Git 跟踪与生产静态校验中排除。
+- [x] `tokens.css` 残留 4 处 `--bg-gradient` 定义（已无引用），P1 清理（`c6505a6`）
 
 ## 阶段 2 · P1 架构地基（~1 天）
 
-- [ ] 建 `tokens-v2.css`：primitive 层（原始色板）
-- [ ] 建 `tokens-v2.css`：semantic 层（`--color-*` 语义角色）
-- [ ] 建 `tokens-v2.css`：component 层（`--btn-*` / `--card-*` / `--table-*` 槽位）
-- [ ] 建 `compat-dialects.css`：B 系（`--bg-0..4` / `--tx-1..4` / `--ac` / `--am`）别名映射
-- [ ] 建 `compat-dialects.css`：C 系（`--canvas` / `--panel` / `--ink` / `--cyan`）别名映射
-- [ ] 别名层头部标注废弃计划与删除条件
-- [ ] 主题机制 `className` → `data-theme` 属性（`app.js:214` / `workbench.html:395`）
-- [ ] `postTheme()` 不再反向读 `className`（`app.js:55`）
-- [ ] 对比度修正：`--fg-dim` 3.44 → ≥4.5
-- [ ] 对比度修正：`--tx-4` 2.36 → ≥4.5
-- [ ] 对比度修正：`--faint` 3.04 / 3.17 → ≥4.5
-- [ ] `styles.css` 的 7 处魔数收编进 spacing / font-size token
-- [ ] 对比度回归：`python contrast.py` 应为 0 FAIL
+- [x] 建 `tokens-v2.css`：primitive 层（原始色板）（`b355fc2`）
+- [x] 建 `tokens-v2.css`：semantic 层（`--color-*` 语义角色）（`b355fc2`）
+- [x] 建 `tokens-v2.css`：component 层（`--btn-*` / `--card-*` / `--table-*` 槽位）（`b355fc2`）
+- [x] 建 `compat-dialects.css`：B 系（`--bg-0..4` / `--tx-1..4` / `--ac` / `--am`）别名映射（`54ba9df`）
+- [x] 建 `compat-dialects.css`：C 系（`--canvas` / `--panel` / `--ink` / `--cyan`）别名映射（`54ba9df`）
+- [x] 别名层头部标注废弃计划与删除条件（`54ba9df`）
+- [x] 主题机制 `className` → `data-theme` 属性（`app.js:214` / `workbench.html:395`）（`873d543`、`48185bd`）
+- [x] `postTheme()` 不再反向读 `className`（`app.js:55`）（`873d543`）
+- [x] 对比度修正：`--fg-dim` 3.44 → ≥4.5（`b355fc2`）
+- [x] 对比度修正：`--tx-4` 2.36 → ≥4.5（`b355fc2`）
+- [x] 对比度修正：`--faint` 3.04 / 3.17 → ≥4.5（`b355fc2`）
+- [x] `styles.css` 的 7 处魔数收编进 spacing / font-size token（`2cf7e20`）
+- [x] 对比度回归：`python contrast.py` 应为 0 FAIL（`f72e93e`；门禁 50 组 / FAIL 0）
+
+> P1 状态：✅ 已完成（2026-08-30）。7 个逐步提交为 `b355fc2`、`54ba9df`、`873d543`、`48185bd`、`2cf7e20`、`c6505a6`、`f72e93e`。
 
 ## 阶段 3 · P2 全面接入（~2-3 天，高风险，逐页灰度）
 
@@ -102,5 +102,11 @@
 
 | # | 事项 | 阻塞了 |
 |---|------|--------|
-| D1 | 统一主色待用户拍板 | P0 之后的全部配色工作 |
-| D2 | P0 目视验收未做 | P1/P2 是否投入 |
+| D1 | 统一主色 | ✅ 已拍板为蔚蓝科技风 `#06b6d4`，P1 已按此为锚完成 |
+| D2 | P0 目视验收 | ✅ 2026-08-30 用户验收通过，P1 已完成；P2 仍待人工语义门禁 |
+
+## 2026-08-30 对账记录
+
+- P0 目视验收：用户已批准。
+- 生产静态校验：10 页，0 issues；`preview/` 为本地忽略的独立样板，不计入生产页面。
+- 对比度门禁：50 组 / 0 FAIL（观察区弱对比项留待 P2 人工决策）。
