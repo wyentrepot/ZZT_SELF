@@ -76,6 +76,7 @@
         chip.innerHTML = "<span class='dot' style='color:var(--color-fg-dim)'></span>未连接";
         $("#btnOpen").textContent = "打开串口";
       }
+      if (st.open && !state.pollTimer) startPolling();
     }).catch(function () {
       $("#stChip").innerHTML = "<span class='dot' style='color:var(--color-status-fail)'></span>simcon 不可用";
     });
@@ -262,12 +263,16 @@
     var dir = $("#segF button.on").dataset.f || "";
     api("/api/simcon/frames?limit=200" + (dir ? "&direction=" + dir : "") + (state.lastSeq ? "&after_seq=" + state.lastSeq : ""))
       .then(function (data) {
-        var frames = data.frames || [];
+        var frames = data.entries || [];
         if (data.counts) {
           $("#cTx").textContent = data.counts.tx || 0;
           $("#cRx").textContent = data.counts.rx || 0;
         }
-        if (!frames.length) return;
+        if (!frames.length) {
+          var pending = body.querySelector(".empty");
+          if (pending) pending.querySelector("p").textContent = "暂无帧记录";
+          return;
+        }
         state.lastSeq = frames[frames.length - 1].seq || state.lastSeq;
         var body = $("#trBody");
         var empty = body.querySelector(".empty");
