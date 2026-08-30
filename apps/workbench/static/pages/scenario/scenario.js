@@ -39,7 +39,7 @@
       $("#scList").innerHTML = state.scenarios.map(function (s, i) {
         var flowN = (s.expected_flow || []).length;
         return '<button class="sc-card" data-s="' + i + '">' +
-          '<span class="sc-r"><span class="dot" style="color:var(--tx-4)"></span>' + esc(s.name || s.id) +
+          '<span class="sc-r"><span class="dot" style="color:var(--color-fg-dim)"></span>' + esc(s.name || s.id) +
           '<span class="mono">' + esc(s.id) + '</span></span>' +
           '<span class="sc-meta">' +
           '<span class="chip" style="height:17px;font-size:10px">' + flowN + " 事件步</span>" +
@@ -65,7 +65,7 @@
     Array.prototype.forEach.call(document.querySelectorAll("#scList .sc-card"), function (el) {
       var on = +el.dataset.s === i;
       el.classList.toggle("on", on);
-      el.querySelector(".dot").style.color = on ? "var(--ac)" : "var(--tx-4)";
+      el.querySelector(".dot").style.color = on ? "var(--color-accent)" : "var(--color-fg-dim)";
     });
     api("/api/scenarios/" + encodeURIComponent(s.id) + "/task").then(function (task) {
       state.task = task;
@@ -111,12 +111,12 @@
       '<div class="ed-label">内置应答 · responders</div>' +
       (responders.length ? responders.map(function (r) {
         var m = r.match || {}, rp = r.reply || {};
-        return '<div class="resp-row"><span class="mono">' + esc(r.id || "—") + '</span><span style="color:var(--mg)">match</span>' +
+        return '<div class="resp-row"><span class="mono">' + esc(r.id || "—") + '</span><span style="color:var(--color-status-special)">match</span>' +
           '<span class="chip chip--rx" style="height:18px;font-size:10px">' + esc(afnTag(m.afn, m.fn)) + '</span>' +
-          '<span style="color:var(--mg)">→ reply</span>' +
+          '<span style="color:var(--color-status-special)">→ reply</span>' +
           '<span class="chip chip--tx" style="height:18px;font-size:10px">' + esc(afnTag(rp.afn, rp.fn)) + "</span>" +
           (rp.desc ? '<span class="hint" style="margin-left:auto">' + esc(rp.desc) + "</span>" : "") + "</div>";
-      }).join("") : '<div class="resp-row" style="color:var(--tx-4)">无任务级应答规则，使用全局内置应答表</div>') +
+      }).join("") : '<div class="resp-row" style="color:var(--color-fg-dim)">无任务级应答规则，使用全局内置应答表</div>') +
       '<div class="ed-label">监控 · monitor</div>' +
       '<div class="moni">' +
       (monitor.rules || []).map(function (r) { return '<span class="chip chip--ac">' + esc(r) + "</span>"; }).join("") +
@@ -154,7 +154,7 @@
       '<div class="par-t2">语义化步骤（ADR-5）：send 只写 afn/fn + 业务参数，构帧由 scenario_codec 完成；本页只读，执行请到验证工作台。</div>';
     var rows = [];
     Object.keys(send.params || {}).forEach(function (k) {
-      rows.push("<tr><td><div class='nm mono' style='color:var(--tx-2)'>" + esc(k) + "</div></td>" +
+      rows.push("<tr><td><div class='nm mono' style='color:var(--color-fg-muted)'>" + esc(k) + "</div></td>" +
         "<td><span class='mono'>" + esc(JSON.stringify(send.params[k])) + "</span></td></tr>");
     });
     var expectDesc = [];
@@ -169,7 +169,7 @@
           rows.join("") + "</tbody></table></div></div>"
         : '<div class="card"><div class="card-h">send</div><div class="card-in"><span class="hint">纯监听步（recv_only / expect_no_reply），不下发报文。</span></div></div>') +
       '<div class="card" style="margin-top:14px"><div class="card-h">expect / 判定<span class="hint">' + esc(expectDesc.join(" · ") || "—") + "</span></div>" +
-      '<div class="card-in"><div style="font-size:11.5px;color:var(--tx-2);line-height:1.7">' +
+      '<div class="card-in"><div style="font-size:11.5px;color:var(--color-fg-muted);line-height:1.7">' +
       (expectDesc.length ? "期望：" + esc(expectDesc.join("；")) : "无显式期望——结果由场景执行器按监控规则判定。") +
       "</div></div></div>" +
       '<div class="card" style="margin-top:14px"><div class="card-h">步骤原始 JSON</div>' +
