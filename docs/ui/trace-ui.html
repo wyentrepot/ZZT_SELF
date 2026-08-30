@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>报文追踪 · 侦听台通信流追踪 — UI 设计稿</title>
+<style>
+/* ============ Design Tokens（与 sim-concentrator-ui.html 同源） ============ */
+:root{
+  --bg-0:#090c10; --bg-1:#0e1319; --bg-2:#131a22; --bg-3:#18212b; --bg-4:#1e2833;
+  --line-1:#1f2935; --line-2:#2a3644; --line-3:#3a4a5c;
+  --tx-1:#e8f0f7; --tx-2:#9aabbb; --tx-3:#65798c; --tx-4:#465768;
+  --ac:#22d3ee; --ac-dim:#0e7490; --ac-soft:rgba(34,211,238,.12);
+  --am:#f0b429; --am-soft:rgba(240,180,41,.12); --mg:#e879a8;
+  --tx-c:#f0b429; --rx-c:#2dd4bf; --ok-c:#34d399; --warn-c:#fbbf24; --err-c:#f87171;
+  --r-s:5px; --r-m:8px; --r-l:12px; --sp:4px;
+  --ff:"HarmonyOS Sans SC","PingFang SC","Source Han Sans SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --fm:"JetBrains Mono","Cascadia Mono","Sarasa Mono SC","Consolas",ui-monospace,monospace;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--ff);font-size:13px;line-height:1.6;color:var(--tx-1);
+  background:
+    radial-gradient(1200px 700px at 12% -10%, #12212c 0%, transparent 60%),
+    radial-gradient(900px 600px at 100% 110%, #17202b 0%, transparent 55%),
+    var(--bg-0);
+  overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--line-3);background-clip:content-box}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--fm);font-variant-ligatures:none}
+
+/* ============ 通用组件 ============ */
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-s);
+  font-size:11px;font-weight:500;letter-spacing:.02em;background:var(--bg-3);color:var(--tx-2);border:1px solid var(--line-1)}
+.chip--ac{background:var(--ac-soft);color:var(--ac);border-color:rgba(34,211,238,.25)}
+.chip--am{background:var(--am-soft);color:var(--am);border-color:rgba(240,180,41,.25)}
+.chip--tx{background:rgba(240,180,41,.12);color:var(--tx-c);border-color:rgba(240,180,41,.28)}
+.chip--rx{background:rgba(45,212,191,.12);color:var(--rx-c);border-color:rgba(45,212,191,.28)}
+.chip--ok{background:rgba(52,211,153,.12);color:var(--ok-c);border-color:rgba(52,211,153,.28)}
+.chip--err{background:rgba(248,113,113,.12);color:var(--err-c);border-color:rgba(248,113,113,.3)}
+.chip--mg{background:rgba(232,121,168,.12);color:var(--mg);border-color:rgba(232,121,168,.3)}
+.chip--ghost{background:transparent;color:var(--tx-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 13px;
+  border-radius:var(--r-m);border:1px solid var(--line-2);background:var(--bg-3);color:var(--tx-2);
+  font-size:12.5px;font-weight:500;transition:all .14s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--bg-4);color:var(--tx-1);border-color:var(--line-3)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:linear-gradient(180deg,#22d3ee,#0ea5c4);color:#04222b;border-color:#0e9ab5;font-weight:500}
+.btn--primary:hover{background:linear-gradient(180deg,#3fdcf5,#12b4d4);color:#04222b}
+.btn--sm{height:26px;padding:0 10px;font-size:12px}
+.btn--icon{width:30px;padding:0}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--tx-3)}
+.btn--ghost:hover{background:var(--bg-3);color:var(--tx-1)}
+a.btn{text-decoration:none}
+.fld{width:100%;height:30px;padding:0 9px;border-radius:var(--r-m);background:var(--bg-1);
+  border:1px solid var(--line-2);color:var(--tx-1);font-size:12.5px;transition:all .14s var(--ease)}
+.fld:hover{border-color:var(--line-3)}
+.fld:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+select.fld{appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%2365798c' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 9px center;padding-right:26px}
+.sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-2)}
+.sec-h h3{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--tx-2)}
+.sec-h .sp{margin-left:auto}
+
+/* ============ 骨架 ============ */
+.app{display:grid;grid-template-columns:var(--sb-w,232px) 1fr;height:100vh;
+  transition:grid-template-columns .22s var(--ease)}
+.app.collapsed{--sb-w:56px}
+
+/* ---------- 侧栏 ---------- */
+.sb{display:flex;flex-direction:column;min-width:0;background:var(--bg-1);
+  border-right:1px solid var(--line-1);position:relative;z-index:5}
+.sb-top{display:flex;align-items:center;gap:10px;height:50px;padding:0 10px 0 13px;flex:none;
+  border-bottom:1px solid var(--line-1)}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
+.brand-mark{width:26px;height:26px;flex:none;border-radius:7px;
+  background:linear-gradient(140deg,#22d3ee,#0e7490);display:grid;place-items:center}
+.brand-mark svg{width:15px;height:15px}
+.brand-txt{min-width:0}
+.brand-txt b{display:block;font-size:13px;font-weight:500;letter-spacing:.02em;white-space:nowrap}
+.brand-txt span{display:block;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+.collapsed .brand-txt{opacity:0;pointer-events:none}
+.collapsed .sb-top{justify-content:center;padding:0}
+.sb-toggle{flex:none;width:28px;height:28px;border-radius:var(--r-m);display:grid;place-items:center;
+  color:var(--tx-3);transition:all .14s var(--ease)}
+.sb-toggle:hover{background:var(--bg-3);color:var(--tx-1)}
+.collapsed .sb-toggle{transform:rotate(180deg)}
+.sb-nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 8px 16px}
+.nav-label{font-size:10px;letter-spacing:.12em;color:var(--tx-4);padding:12px 8px 5px;white-space:nowrap}
+.collapsed .nav-label{opacity:0;height:14px;padding:8px 0 0;text-align:center;overflow:hidden}
+.collapsed .nav-label::after{content:"";display:block;height:1px;background:var(--line-1);margin:6px 8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;height:34px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-2);font-size:13px;cursor:pointer;position:relative;width:100%;text-align:left;text-decoration:none;
+  transition:background .14s var(--ease),color .14s var(--ease)}
+.nav-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.nav-item.on{background:linear-gradient(90deg,var(--ac-soft),transparent 92%);color:var(--ac)}
+.nav-item.on::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2.5px;
+  border-radius:0 3px 3px 0;background:var(--ac)}
+.nav-item svg{width:16px;height:16px;flex:none}
+.nav-item .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-item .cnt{font-size:10.5px;color:var(--tx-4);font-family:var(--fm)}
+.collapsed .nav-item{justify-content:center;padding:0}
+.collapsed .nav-item .t,.collapsed .nav-item .cnt{display:none}
+.collapsed .nav-item.on::before{left:0}
+.collapsed .nav-item::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;
+  transform:translateY(-50%);background:var(--bg-4);border:1px solid var(--line-2);color:var(--tx-1);
+  padding:5px 9px;border-radius:var(--r-s);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:40}
+.collapsed .nav-item:hover::after{opacity:1}
+.grp{margin-top:2px}
+.grp-h{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.grp-h:hover{background:var(--bg-2);color:var(--tx-2)}
+.grp-h .car{width:13px;height:13px;flex:none;transition:transform .18s var(--ease);opacity:.7}
+.grp.open .grp-h .car{transform:rotate(90deg)}
+.grp-h .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.grp.open .grp-b{grid-template-rows:1fr}
+.grp-b>div{overflow:hidden;min-height:0}
+.grp-b .inner{padding:2px 0 4px 0}
+.collapsed .grp-h{justify-content:center;padding:0}
+.collapsed .grp-h .t,.collapsed .grp-h .car{display:none}
+.collapsed .grp-b{display:none}
+.sub-item{display:flex;align-items:center;gap:8px;height:29px;padding:0 9px 0 20px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.sub-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.sub-item.on{color:var(--ac);background:var(--ac-soft)}
+.sub-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live{width:5px;height:5px;border-radius:50%;flex:none}
+.sb-foot{flex:none;padding:9px;border-top:1px solid var(--line-1);display:grid;gap:7px}
+.com-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);padding:8px 9px}
+.com-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--tx-3)}
+.com-row+.com-row{margin-top:5px}
+.com-row b{font-family:var(--fm);color:var(--tx-2);font-size:11.5px;font-weight:400}
+.collapsed .sb-foot{padding:9px 7px}
+.collapsed .com-card{display:none}
+.collapsed .sb-foot .btn span{display:none}
+.collapsed .sb-foot .btn{width:100%}
+
+/* ---------- 主区 ---------- */
+.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.top{display:flex;align-items:center;gap:10px;height:50px;padding:0 16px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1)}
+.crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx-3);min-width:0;white-space:nowrap}
+.crumb b{color:var(--tx-1);font-weight:500;font-size:14px}
+.crumb .sep{color:var(--tx-4)}
+.top .sp{margin-left:auto}
+
+/* 工作区三列 */
+.work{flex:1;display:grid;grid-template-columns:var(--c1,292px) var(--c2,436px) 1fr;min-height:0}
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-1)}
+.col+.col{border-left:1px solid var(--line-1)}
+.col-body{flex:1;overflow-y:auto;min-height:0}
+.empty{display:grid;place-items:center;height:100%;padding:32px 20px;text-align:center;color:var(--tx-4)}
+.empty svg{width:38px;height:38px;opacity:.35;margin-bottom:12px}
+.empty p{font-size:12.5px;line-height:1.7}
+
+/* 列1：追踪列表 */
+.tr-item{border-bottom:1px solid rgba(31,41,53,.6);cursor:pointer;position:relative;
+  transition:background .14s var(--ease)}
+.tr-item:hover{background:var(--bg-2)}
+.tr-item.sel{background:linear-gradient(90deg,var(--ac-soft),transparent)}
+.tr-item.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--ac)}
+.tr-in{padding:9px 11px;display:grid;gap:6px}
+.tr-r1{display:flex;align-items:center;gap:7px}
+.tr-id{font-family:var(--fm);font-size:12px;color:var(--ac);font-weight:500}
+.tr-r2{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.tr-sum{font-size:11px;color:var(--tx-3);display:flex;gap:9px;flex-wrap:wrap}
+.tr-sum b{color:var(--tx-2);font-weight:500;font-family:var(--fm)}
+.tr-sum .bad{color:var(--warn-c)}
+.lst-filter{display:flex;gap:5px;padding:8px 10px;border-bottom:1px solid var(--line-1);flex-wrap:wrap}
+.fchip{height:22px;padding:0 9px;border-radius:11px;font-size:11px;color:var(--tx-3);
+  background:var(--bg-2);border:1px solid var(--line-1);transition:all .14s var(--ease)}
+.fchip:hover{color:var(--tx-1);border-color:var(--line-3)}
+.fchip.on{color:var(--ac);background:var(--ac-soft);border-color:rgba(34,211,238,.3)}
+
+/* 列2：特征 + 轮 + 子流 */
+.ft-head{padding:11px 12px;border-bottom:1px solid var(--line-1);background:var(--bg-2);flex:none;display:grid;gap:8px}
+.ft-r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ft-r1 b{font-family:var(--fm);font-size:13px;color:var(--ac)}
+.ft-r1 span{font-size:12.5px;color:var(--tx-1)}
+.ft-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:11px}
+.ft-grid .k{color:var(--tx-4);white-space:nowrap}
+.ft-grid .v{color:var(--tx-2);font-family:var(--fm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sumbar{display:flex;gap:5px;flex-wrap:wrap}
+.round{border-bottom:1px solid rgba(31,41,53,.6)}
+.round-h{display:flex;align-items:center;gap:9px;width:100%;padding:8px 12px;text-align:left;
+  transition:background .14s var(--ease)}
+.round-h:hover{background:var(--bg-2)}
+.round.open .round-h{background:var(--bg-2)}
+.rnd-seq{font-family:var(--fm);font-size:12px;font-weight:500;color:var(--ac);flex:none;min-width:58px}
+.rnd-cluster{flex:1;min-width:0;font-size:11px;color:var(--tx-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rnd-cnt{font-family:var(--fm);font-size:10.5px;color:var(--tx-4);flex:none}
+.round-h .car{width:12px;height:12px;color:var(--tx-4);transition:transform .18s var(--ease);flex:none}
+.round.open .round-h .car{transform:rotate(90deg)}
+.round-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.round.open .round-b{grid-template-rows:1fr}
+.round-b>div{overflow:hidden;min-height:0}
+.tg{width:100%;display:flex;align-items:center;gap:8px;padding:6px 12px 6px 24px;text-align:left;
+  border-top:1px solid rgba(31,41,53,.45);transition:background .12s var(--ease);position:relative}
+.tg:hover{background:var(--bg-2)}
+.tg.sel{background:var(--ac-soft)}
+.tg.sel::before{content:"";position:absolute;left:12px;top:0;bottom:0;width:2px;background:var(--ac);border-radius:2px}
+.tg-m{font-family:var(--fm);font-size:11.5px;color:var(--tx-1);flex:none;width:88px}
+.tg-tei{font-family:var(--fm);font-size:10.5px;color:var(--tx-3);flex:none;width:52px}
+.tg-tei b{color:var(--mg);font-weight:400}
+/* 三段状态链：S1 ●─S2a ●─S2b ●─S3 ● */
+.chain{display:flex;align-items:center;flex:1;min-width:0}
+.chain i{width:8px;height:8px;border-radius:50%;flex:none;display:block}
+.chain s{flex:1;min-width:7px;height:1.5px;display:block;margin:0 2px}
+.chain .off{background:var(--line-2)!important;box-shadow:none}
+.chain .unk{background:var(--line-3)!important}
+.st-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.lat{font-family:var(--fm);font-size:10.5px;color:var(--tx-4);flex:none;width:52px;text-align:right}
+.st{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;
+  font-size:10px;font-family:var(--fm);flex:none;letter-spacing:.02em}
+.st-confirmed{color:var(--ok-c);background:rgba(52,211,153,.12)}
+.st-responded{color:var(--ac);background:var(--ac-soft)}
+.st-acked{color:var(--am);background:var(--am-soft)}
+.st-sent{color:var(--tx-c);background:rgba(240,180,41,.1)}
+.st-denied{color:var(--mg);background:rgba(232,121,168,.12)}
+.st-failed{color:var(--err-c);background:rgba(248,113,113,.12)}
+.st-absent{color:var(--tx-3);background:var(--bg-3)}
+
+/* 列3：证据链 */
+.par{display:flex;flex-direction:column;min-height:0;background:var(--bg-1)}
+.par-head{padding:12px 16px;border-bottom:1px solid var(--line-1);background:var(--bg-2);flex:none}
+.par-t1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.par-t1 b{font-size:15px;font-weight:500;font-family:var(--fm)}
+.par-t2{margin-top:7px;font-size:12px;color:var(--tx-3);line-height:1.6}
+.par-t2 em{font-style:normal;color:var(--am);font-family:var(--fm)}
+.par-body{flex:1;overflow-y:auto;padding:14px 16px 20px;display:grid;gap:14px;align-content:start}
+.card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-l);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:9px;padding:9px 13px;cursor:pointer;background:var(--bg-3);
+  border-bottom:1px solid transparent;transition:background .14s var(--ease)}
+.card-h:hover{background:var(--bg-4)}
+.card.open .card-h{border-bottom-color:var(--line-1)}
+.card-h .ic{width:15px;height:15px;color:var(--ac);flex:none}
+.card-h b{font-size:12.5px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--tx-4);display:flex;align-items:center;gap:6px}
+.card-h .car{width:13px;height:13px;color:var(--tx-4);transition:transform .18s var(--ease)}
+.card.open .card-h .car{transform:rotate(90deg)}
+.card-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.card.open .card-b{grid-template-rows:1fr}
+.card-b>div{overflow:hidden;min-height:0}
+.card-in{padding:13px}
+/* 证据时间线 */
+.ev{position:relative;padding-left:26px;display:grid;gap:0}
+.ev::before{content:"";position:absolute;left:9px;top:6px;bottom:14px;width:1.5px;background:var(--line-2)}
+.ev-it{position:relative;padding-bottom:14px}
+.ev-it:last-child{padding-bottom:2px}
+.ev-it::before{content:"";position:absolute;left:-22px;top:5px;width:10px;height:10px;border-radius:50%;
+  background:var(--bg-2);border:2.5px solid var(--tx-4)}
+.ev-it.done::before{border-color:var(--ok-c);background:var(--ok-c)}
+.ev-it.part::before{border-color:var(--am)}
+.ev-it.warn::before{border-color:var(--tx-c)}
+.ev-it.bad::before{border-color:var(--err-c)}
+.ev-r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ev-r1 b{font-size:12.5px;font-weight:500}
+.ev-r1 .mono{font-size:11px;color:var(--tx-3)}
+.ev-ds{margin-top:3px;font-size:11.5px;color:var(--tx-3);line-height:1.6}
+.ev-ds em{font-style:normal;color:var(--am);font-family:var(--fm)}
+.ev-ds .ok{color:var(--ok-c)}
+.ev-frame{display:inline-flex;align-items:center;gap:5px;margin-top:6px;height:22px;padding:0 8px;
+  border-radius:var(--r-s);background:var(--bg-1);border:1px solid var(--line-2);font-size:11px;color:var(--tx-2);cursor:pointer}
+.ev-frame:hover{border-color:var(--line-3);color:var(--tx-1)}
+.ev-frame .mono{color:var(--ac)}
+
+/* hex */
+.hexwrap{background:var(--bg-0);border:1px solid var(--line-1);border-radius:var(--r-m);padding:11px 12px}
+.hex{font-family:var(--fm);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all}
+.hx{padding:1px 3px;border-radius:3px;cursor:default;transition:background .12s var(--ease)}
+.hx:hover{outline:1px solid var(--line-3)}
+.s-68,.s-16{color:var(--mg)}
+.s-L{color:var(--mg)}
+.s-C{color:var(--am)}
+.s-R{color:var(--tx-2)}
+.s-A{color:var(--rx-c)}
+.s-AFN{color:var(--ac);font-weight:500}
+.s-DT{color:#a78bfa}
+.s-DU{color:var(--tx-1)}
+.s-SEQ{color:var(--am);font-weight:600;background:rgba(240,180,41,.14);outline:1px dashed rgba(240,180,41,.5)}
+.s-CS{color:var(--am)}
+.par-foot{flex:none;padding:11px 16px;border-top:1px solid var(--line-1);background:var(--bg-2);
+  display:flex;align-items:center;gap:10px}
+.par-foot .sp{margin-left:auto}
+.par-foot .meta{font-size:11px;color:var(--tx-4);font-family:var(--fm)}
+
+/* ---------- 底部：代理关系观测 + 控制面 ---------- */
+.traffic{flex:none;display:flex;flex-direction:column;background:var(--bg-1);
+  border-top:1px solid var(--line-2);height:var(--th,208px);transition:height .22s var(--ease)}
+.traffic.fold{--th:37px}
+.tr-h2{display:flex;align-items:center;gap:10px;height:37px;padding:0 12px;flex:none;cursor:pointer;
+  user-select:none;background:var(--bg-2)}
+.tr-h2:hover{background:var(--bg-3)}
+.tr-h2 .car{width:13px;height:13px;color:var(--tx-3);transition:transform .18s var(--ease)}
+.traffic:not(.fold) .tr-h2 .car{transform:rotate(90deg)}
+.tr-h2 .ttl{font-size:12.5px;font-weight:500;letter-spacing:.02em}
+.tr-h2 .sp{margin-left:auto}
+.tr-body2{flex:1;overflow-y:auto;min-height:0;padding:10px 12px;display:grid;gap:10px;grid-template-columns:1fr 1fr;align-content:start}
+.px-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);overflow:hidden;min-width:0}
+.px-card h5{font-size:10.5px;font-weight:400;letter-spacing:.08em;color:var(--tx-4);
+  padding:7px 11px;background:var(--bg-3);border-bottom:1px solid var(--line-1);display:flex;align-items:center;gap:7px}
+.px-card .bd{padding:10px 11px}
+.px-item{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11.5px;color:var(--tx-2)}
+.px-item .mono{color:var(--tx-1);font-size:11.5px}
+.px-item .arr{color:var(--mg)}
+.px-item .obs{margin-left:auto;font-family:var(--fm);font-size:10.5px;color:var(--tx-4)}
+.ai-line{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--tx-3);padding:3px 0;flex-wrap:wrap}
+.ai-line code{font-family:var(--fm);font-size:11px;color:var(--ac);background:var(--bg-1);
+  border:1px solid var(--line-1);border-radius:4px;padding:1px 6px}
+@media (max-width:1240px){.tr-body2{grid-template-columns:1fr}}
+
+/* ---------- 标注层 ---------- */
+.anno{position:fixed;right:16px;bottom:16px;width:300px;z-index:60;
+  background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--r-l);
+  box-shadow:0 12px 40px rgba(0,0,0,.55);overflow:hidden}
+.anno-h{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-3);
+  border-bottom:1px solid var(--line-1);cursor:pointer}
+.anno-h b{font-size:12px;font-weight:500}
+.anno-h .sp{margin-left:auto}
+.anno-h .car{width:13px;height:13px;color:var(--tx-3);transition:transform .18s var(--ease)}
+.anno.open .anno-h .car{transform:rotate(90deg)}
+.anno-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.anno.open .anno-b{grid-template-rows:1fr}
+.anno-b>div{overflow:hidden;min-height:0}
+.anno-l{max-height:46vh;overflow-y:auto;padding:8px;list-style:none}
+.anno-l li{display:flex;gap:9px;padding:6px 6px;border-radius:var(--r-s);font-size:11.5px;
+  color:var(--tx-2);line-height:1.55;cursor:default}
+.anno-l li:hover{background:var(--bg-3)}
+.anno-l li b{font-family:var(--fm);font-size:10.5px;color:var(--am);flex:none;width:15px;height:15px;
+  border-radius:3px;background:var(--am-soft);display:grid;place-items:center;margin-top:2px}
+.anno-pages{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;border-top:1px solid var(--line-1)}
+.anno-pages a{font-size:10.5px;color:var(--tx-3);text-decoration:none;border:1px solid var(--line-1);
+  border-radius:var(--r-s);padding:2px 7px;transition:all .14s var(--ease)}
+.anno-pages a:hover{color:var(--ac);border-color:rgba(34,211,238,.3)}
+.anno-pages a.cur{color:var(--ac);background:var(--ac-soft);border-color:rgba(34,211,238,.3)}
+.tag{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;flex:none;border-radius:3px;background:var(--am-soft);color:var(--am);
+  font-family:var(--fm);font-size:10px;cursor:help;vertical-align:middle}
+.tag::after{content:attr(data-d);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  background:var(--bg-4);border:1px solid var(--line-3);color:var(--tx-1);padding:6px 9px;border-radius:var(--r-s);
+  font-family:var(--ff);font-size:11.5px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:70}
+.tag:hover::after{opacity:1}
+body.anno-on [data-an]{outline:1px dashed var(--am);outline-offset:2px;border-radius:var(--r-s)}
+body.anno-on [data-an]::after{content:attr(data-an-t);position:absolute;top:-8px;right:-4px;
+  background:var(--am);color:#23180a;font-size:9.5px;font-family:var(--fm);padding:0 4px;border-radius:3px;z-index:30}
+body.anno-on .app>*{position:relative}
+body.anno-on .col{position:relative}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+<!-- ════════════ 侧栏 ════════════ -->
+<aside class="sb">
+  <div class="sb-top">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#04222b" stroke-width="2.2" stroke-linecap="round"><path d="M3 12h3l2-6 3 14 3-11 2 5h5"/></svg></span>
+      <span class="brand-txt"><b>侦听台工作台</b><span>Listener Workbench</span></span>
+    </div>
+    <button class="sb-toggle" id="sbToggle" title="收敛 / 展开侧栏" aria-label="收敛或展开侧栏">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+  </div>
+
+  <nav class="sb-nav">
+    <div class="nav-label">主功能</div>
+    <a class="nav-item" href="listener-ui.html" data-tip="侦听台">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span class="t">侦听台</span>
+    </a>
+    <a class="nav-item" href="sim-concentrator-ui.html" data-tip="模拟集中器">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7.5h.01M7 17h.01"/></svg>
+      <span class="t">模拟集中器</span>
+      <span class="cnt">15</span>
+    </a>
+
+    <div class="grp open" id="grpResp">
+      <button class="grp-h" id="grpRespH" aria-expanded="true">
+        <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="t">内置应答</span>
+        <span class="dot" style="color:var(--ok-c)"></span>
+      </button>
+      <div class="grp-b"><div><div class="inner">
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 00H 确认/否认</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 03H 查询应答</span></button>
+        <button class="sub-item"><span class="live" style="background:#465768"></span><span class="t">AFN 06H 主动上报</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 10H 路由应答</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 14H 抄读协同</span></button>
+        <button class="sub-item"><span class="live" style="background:#fbbf24"></span><span class="t">超时兜底否认</span></button>
+      </div></div></div>
+    </div>
+
+    <div class="nav-label">辅助</div>
+    <a class="nav-item on" href="trace-ui.html" data-tip="报文追踪">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+      <span class="t">报文追踪</span>
+      <span class="cnt">4</span>
+    </a>
+    <a class="nav-item" href="dict-ui.html" data-tip="协议字典">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h9a3 3 0 013 3v13a2.5 2.5 0 00-2.5-2.5H4z"/><path d="M20 4h-1a3 3 0 00-3 3v13a2.5 2.5 0 012.5-2.5H20z"/></svg>
+      <span class="t">协议字典</span>
+    </a>
+    <a class="nav-item" href="scenario-ui.html" data-tip="场景脚本">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+      <span class="t">场景脚本</span>
+    </a>
+  </nav>
+
+  <div class="sb-foot">
+    <div class="com-card">
+      <div class="com-row"><span class="dot" style="color:var(--ok-c)"></span>串口 <b>COM14</b> · 9600 8E1</div>
+      <div class="com-row"><span class="dot" style="color:var(--ac)"></span>索引 <b>idx-20260829</b> · 53.6万帧</div>
+    </div>
+    <button class="btn btn--sm" style="width:100%"><span>串口设置</span></button>
+  </div>
+</aside>
+
+<!-- ════════════ 主区 ════════════ -->
+<main class="main">
+  <header class="top">
+    <div class="crumb">
+      <b>报文追踪</b><span class="sep">/</span><span>侦听台通信流追踪 · 三段证据链</span>
+      <span class="chip chip--ac" style="margin-left:4px">S1 → S2a → S2b → S3</span>
+    </div>
+    <div class="sp"></div>
+    <div class="seg" id="segMode">
+      <button class="on" data-m="replay">回放</button>
+      <button data-m="live">Live</button>
+    </div>
+    <select class="fld" id="scopeSel" style="width:118px">
+      <option value="round">粒度 · round</option>
+      <option value="flow">粒度 · flow</option>
+      <option value="campaign">粒度 · campaign</option>
+    </select>
+    <select class="fld" style="width:196px">
+      <option>idx-20260829-023631（53.6万帧）</option>
+      <option>COM14 · 实时采集会话</option>
+    </select>
+    <button class="btn btn--sm btn--primary" id="newTrace">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新建追踪
+    </button>
+    <button class="btn btn--sm" id="annoBtn">标注说明</button>
+  </header>
+
+  <!-- 三列：追踪列表 | 轮与子流 | 三段证据链 -->
+  <section class="work">
+
+    <!-- 列1：追踪列表 -->
+    <div class="col" data-an data-an-t="5">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        <h3>追踪任务</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 5：追踪输出的是“断在哪一跳”，不是二值 pass/fail">5</span>
+      </div>
+      <div class="lst-filter" id="fBar">
+        <button class="fchip on" data-s="all">全部 4</button>
+        <button class="fchip" data-s="flow">flow 2</button>
+        <button class="fchip" data-s="round">round 1</button>
+        <button class="fchip" data-s="campaign">campaign 1</button>
+      </div>
+      <div class="col-body" id="traceList"></div>
+    </div>
+
+    <!-- 列2：特征 + 轮 + 子流 -->
+    <div class="col" data-an data-an-t="2">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        <h3>轮与子流 · 按表地址对账</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 2：flow=(业务ID,报文序号)；round=时间簇(缺省60s空闲切簇)；campaign=业务ID×时间窗聚合">2</span>
+      </div>
+      <div class="ft-head" id="ftHead"></div>
+      <div class="col-body" id="roundCol"></div>
+    </div>
+
+    <!-- 列3：三段证据链 -->
+    <div class="col par" data-an data-an-t="8">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9"/></svg>
+        <h3>三段证据链 · S1 发出 → S2 收到/响应 → S3 已接收</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 8：状态机 armed→sent→acked→responded→confirmed，判定全部来自空口自证">8</span>
+      </div>
+      <div class="par-head" id="parHead"></div>
+      <div class="par-body" id="parBody"></div>
+      <div class="par-foot">
+        <button class="btn btn--sm btn--ghost">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+          导出 artifact
+        </button>
+        <button class="btn btn--sm btn--ghost">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg>
+          送 AI 复核
+        </button>
+        <span class="sp"></span>
+        <span class="meta" id="chainMeta">—</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 底部：代理关系观测 + AI 控制面 -->
+  <section class="traffic" id="traffic" data-an data-an-t="11">
+    <div class="tr-h2" id="trH">
+      <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <span class="ttl">代理关系观测 · 追踪副产物</span>
+      <span class="chip chip--mg">表地址 → 应答 STA</span>
+      <span class="sp"></span>
+      <span class="chip chip--ghost" id="artChip">artifact art-8812</span>
+      <span class="tag" data-d="标注 11：多轮累积的 (表地址→应答STA TEI) 映射为代理关系/户变观测副产物">11</span>
+    </div>
+    <div class="tr-body2">
+      <div class="px-card">
+        <h5>代理关系 / 户变观测（多轮累积）<span class="sp" style="margin-left:auto"></span><span class="tag" data-d="标注 12：AI 控制面 POST /api/ai/v1/listener/traces，202+wait，审计 scope listener:trace，幂等冲突 422">12</span></h5>
+        <div class="bd" id="pxList"></div>
+      </div>
+      <div class="px-card">
+        <h5>AI 控制面 · 工作流</h5>
+        <div class="bd">
+          <div class="ai-line"><code>GET /listener/frames/{id}</code> 取 <b style="color:var(--tx-2)">feature_hint</b>（单帧反推特征草稿）</div>
+          <div class="ai-line"><code>POST /api/ai/v1/listener/traces</code> · 202 + wait 轮询 · scope <code>listener:trace</code></div>
+          <div class="ai-line">幂等冲突返回 <code>422</code> · 同特征重复提交直接复用既有 trace</div>
+          <div class="ai-line" style="margin-top:4px;color:var(--tx-4)">回放与 Live 共用同一引擎与状态机（ADR-9）：切换只换数据源，输出 schema 不变。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+</div>
+
+<!-- ════════════ 标注说明浮层 ════════════ -->
+<div class="anno open" id="anno">
+  <div class="anno-h" id="annoH">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--am)" stroke-width="2" stroke-linecap="round"><path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1z"/></svg>
+    <b>功能标注 · 12 项</b>
+    <span class="sp"></span>
+    <button class="btn btn--sm btn--ghost" id="annoHl">高亮区域</button>
+    <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+  </div>
+  <div class="anno-b"><div>
+    <ol class="anno-l" id="annoList"></ol>
+    <div class="anno-pages">
+      <a href="index.html">总览</a><a href="listener-ui.html">侦听台</a><a href="sim-concentrator-ui.html">模拟集中器</a><a class="cur" href="trace-ui.html">报文追踪</a><a href="dict-ui.html">协议字典</a><a href="scenario-ui.html">场景脚本</a>
+    </div>
+  </div></div>
+</div>
+
+<script>
+/* ═══════════ mock：追踪任务列表（schema 对齐 ADR-9 §6 输出） ═══════════ */
+const TRACES=[
+ {id:"tr-9f2c",scope:"round",mode:"replay",frm:"终端主动并发抄表",app:"0003",port:"0x11",seq:"0x04d2",
+  win:"01:22:00 ~ 01:23:00",created:"08-29 01:24",
+  sum:{rounds:12,meters:13,full:9,noack:2,noresp:1,denied:0,noconf:1},
+  note:"一轮 44.4 s，13 块表按地址对账；无 ACK 2 块（信道层丢帧）"},
+ {id:"tr-b1a7",scope:"flow",mode:"replay",frm:"单表 645 转发",app:"0003",port:"0x11",seq:"0x04d5",
+  win:"01:31:12 ~ 01:31:20",created:"08-29 01:33",
+  sum:{rounds:1,meters:1,full:0,noack:0,noresp:1,denied:0,noconf:0},
+  note:"有 ACK 无响应：STA 业务层卡滞，断在 S2b"},
+ {id:"tr-c4de",scope:"campaign",mode:"replay",frm:"终端主动并发抄表",app:"0003",port:"0x11",seq:"—",
+  win:"01:00:00 ~ 02:00:00",created:"08-29 02:01",
+  sum:{rounds:58,meters:13,full:44,noack:6,noresp:5,denied:2,noconf:1},
+  note:"时间窗聚合：58 轮自动立轮，整体确认率 75.9%"},
+ {id:"tr-d8e1",scope:"flow",mode:"live",frm:"STA 主动上报",app:"—",port:"0x11",seq:"0x04e1",
+  win:"Live · COM14",created:"刚刚",
+  sum:{rounds:1,meters:1,full:1,noack:0,noresp:0,denied:0,noconf:0},
+  note:"反向流：STA 发起 → CCO 回 0x0020 显式确认（铁证）"}
+];
+
+/* 选中追踪 tr-9f2c 的轮与子流 */
+const ROUNDS=[
+ {seq:"0x04d2",t0:"01:22:03.118",t1:"01:22:47.512",dur:"44.4 s",
+  sent:{fid:406737,t:"01:22:03.118",retries:0,maxr:3},req:13,rsp:10,denied:0,
+  targets:[
+   {m:"06C21E280A",tei:"087",stage:"confirmed",ek:"explicit_ack",lat:360,f:{s1:406737,s2a:406741,s2b:406744,s3:406760}},
+   {m:"33C61E280A",tei:"006",stage:"confirmed",ek:"explicit_ack",lat:412,f:{s1:406737,s2a:406745,s2b:406752,s3:406761}},
+   {m:"08A11E280A",tei:"0D8",stage:"confirmed",ek:"explicit_ack",lat:388,f:{s1:406737,s2a:406743,s2b:406758,s3:406763}},
+   {m:"19B01E280A",tei:"140",stage:"confirmed",ek:"explicit_ack",lat:437,f:{s1:406737,s2a:406746,s2b:406760,s3:406766}},
+   {m:"24D71E280A",tei:"087",stage:"confirmed",ek:"explicit_ack",lat:351,f:{s1:406737,s2a:406742,s2b:406749,s3:406762}},
+   {m:"31F31E280A",tei:"006",stage:"confirmed",ek:"inference",lat:395,f:{s1:406737,s2a:406747,s2b:406755,s3:null}},
+   {m:"45A81E280A",tei:"0D8",stage:"confirmed",ek:"inference",lat:403,f:{s1:406737,s2a:406744,s2b:406757,s3:null}},
+   {m:"52C01E280A",tei:"140",stage:"confirmed",ek:"inference",lat:421,f:{s1:406737,s2a:406748,s2b:406759,s3:null}},
+   {m:"60E91E280A",tei:"087",stage:"confirmed",ek:"inference",lat:366,f:{s1:406737,s2a:406743,s2b:406753,s3:null}},
+   {m:"77B41E280A",tei:"006",stage:"responded",ek:"no_confirm",lat:442,f:{s1:406737,s2a:406749,s2b:406764,s3:null}},
+   {m:"84D01E280A",tei:"140",stage:"acked",ek:null,lat:null,f:{s1:406737,s2a:406750,s2b:null,s3:null},note:"有 ACK 无响应 · STA 业务层卡滞"},
+   {m:"96F71E280A",tei:"0D8",stage:"sent",ek:null,lat:null,f:{s1:406737,s2a:null,s2b:null,s3:null},note:"无 ACK · 信道层丢帧"},
+   {m:"A3E21E280A",tei:"087",stage:"sent",ek:null,lat:null,f:{s1:406737,s2a:null,s2b:null,s3:null},note:"无 ACK · 信道层丢帧"}
+  ]},
+ {seq:"0x04d3",t0:"01:24:10.332",t1:"01:24:52.870",dur:"42.5 s",
+  sent:{fid:407102,t:"01:24:10.332",retries:1,maxr:3},req:13,rsp:12,denied:0,
+  targets:[
+   {m:"06C21E280A",tei:"087",stage:"confirmed",ek:"explicit_ack",lat:354,f:{s1:407102,s2a:407106,s2b:407118,s3:407142}},
+   {m:"33C61E280A",tei:"006",stage:"confirmed",ek:"explicit_ack",lat:389,f:{s1:407102,s2a:407107,s2b:407120,s3:407145}},
+   {m:"08A11E280A",tei:"0D8",stage:"confirmed",ek:"inference",lat:372,f:{s1:407102,s2a:407105,s2b:407116,s3:null}},
+   {m:"19B01E280A",tei:"140",stage:"sent",ek:null,lat:null,f:{s1:407102,s2a:null,s2b:null,s3:null},note:"重传 1 次后仍无 ACK"}
+  ]},
+ {seq:"0x04d4",t0:"01:26:02.004",t1:"01:26:40.238",dur:"38.2 s",bcast:1,
+  sent:{fid:407508,t:"01:26:02.004",retries:0,maxr:1},req:8,rsp:5,denied:1,
+  targets:[
+   {m:"06C21E280A",tei:"FFF",stage:"confirmed",ek:"explicit_ack",lat:401,f:{s1:407508,s2a:null,s2b:407530,s3:407552}},
+   {m:"33C61E280A",tei:"FFF",stage:"confirmed",ek:"inference",lat:418,f:{s1:407508,s2a:null,s2b:407533,s3:null}},
+   {m:"08A11E280A",tei:"FFF",stage:"denied",ek:"denied",lat:365,f:{s1:407508,s2a:null,s2b:407536,s3:null},note:"应答控制码异常 · 否认单独分类"},
+   {m:"19B01E280A",tei:"FFF",stage:"absent",ek:null,lat:null,f:{s1:407508,s2a:null,s2b:null,s3:null},note:"缺席 · M_req − M_rsp"}
+  ]}
+];
+
+/* 证据链 mock（选中 0x04d2 / 06C21E280A / explicit_ack） */
+const CHAIN=[
+ {s:"S1",name:"发出 · CCO 下行帧被捕获",st:"done",badge:"ok",
+  ds:"frame <em>406737</em> · 01:22:03.118 · FrmType=终端主动并发抄表。业务头前缀 <em>1103 0000 0102</em>（0x0201 为静态字段，非序号）；真报文序号取 <em>APP_RAW[8:10] = 04 D2</em>。重试 0 / 配置最大 3（配置字 bit4~7 + 设备超时 5.1 s 帧内推导）。"},
+ {s:"S2a",name:"收到 · 链路层选择确认（4-2）",st:"done",badge:"ok",
+  ds:"frame <em>406741</em> · 01:22:03.154（+36 ms）· FrmType=ACK。ACK 对端字段 <em>ack_peer = 087</em> 命中被确认帧 STA 端 TEI（MAC 头 [27..28]）——与经 TEI <em>087</em> 一致。"},
+ {s:"S2b",name:"响应 · 同序号上行帧（4-3 配对义务）",st:"done",badge:"ok",
+  ds:"frame <em>406744</em> · 延时 <em>360 ms</em> · 抄表应答，报文序号 <em>04 D2</em> 与下行一致（4-3 §抄表应答：与下行报文序号一致）。载荷自 645 控制字节起分叉，应答表地址 <em>06C21E280A</em>。"},
+ {s:"S3",name:"已接收 · 0x0020 显式确认（铁证）",st:"done",badge:"ok",
+  ds:"frame <em>406760</em> · 确认/否认帧序号域 = <em>04 D2</em>，直接指认。evidence_kind = <em>explicit_ack</em>。"}
+];
+
+const HEX_DL="68 2E 00 00 00 00 00 00 00 00 03 11 03 00 00 01 02 04 D2 33 33 33 06 C2 1E 28 0A 68 C2 1E 28 0A 33 86 1E 28 0A 16";
+const HEX_ACK="68 08 00 00 00 00 00 00 00 00 0E 87 3C 16";
+const HEX_CF="68 0A 00 00 00 00 00 00 00 00 20 04 D2 26 16";
+
+/* 代理关系 mock */
+const PX=[
+ {m:"06C21E280A",t:"087",n:12},{m:"33C61E280A",t:"006",n:11},{m:"08A11E280A",t:"0D8",n:12},
+ {m:"19B01E280A",t:"140",n:9},{m:"24D71E280A",t:"087",n:10},{m:"31F31E280A",t:"006",n:8}
+];
+
+/* 标注清单 */
+const ANNOS=[
+ ["1","回放 / Live 同一引擎同一状态机：切换只换数据源，输出 schema 不变（ADR-9）"],
+ ["2","粒度三层：flow=(业务ID,报文序号)；round=时间簇（缺省 60s 空闲切簇）；campaign=业务ID×时间窗聚合"],
+ ["3","特征 JSON 分层匹配 L0 元组 / L1 报文头 / L2 载荷，字段留空=通配；dst_tei 留空=广播/批量"],
+ ["4","响应策略缺省全部从帧内参数推导：设备超时、最大重试次数（配置字 bit4~7）、0x0020 确认策略"],
+ ["5","追踪任务列表：每条输出“断在哪一跳”；bad 计数黄色提示，而非二值 pass/fail"],
+ ["6","summary 七项计数：rounds / meters / full_chain / no_ack / no_response / denied / no_confirm"],
+ ["7","轮内按应用层表地址对账：M_req−M_rsp=没回（absent）；应答否认单独分类（denied）"],
+ ["8","子流三段状态链 S1●─S2a●─S2b●─S3●，状态机 armed→sent→acked→responded→confirmed"],
+ ["9","S3 两类证据：0x0020 显式确认=铁证 explicit；簇内响应后无重传=推断 inference，evidence_kind 区分"],
+ ["10","每阶段挂 frame_id 可钻取原始帧；feature_hint 支持单帧反推特征草稿→新建追踪"],
+ ["11","底部代理关系观测：多轮累积 (表地址→应答STA TEI) 映射，户变关系副产物"],
+ ["12","AI 控制面：POST /api/ai/v1/listener/traces，202+wait，幂等冲突 422，审计 scope listener:trace"]
+];
+
+/* ═══════════ 渲染 ═══════════ */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SCOPE_TXT={flow:"flow",round:"round",campaign:"campaign"};
+
+/* 列1：追踪列表 */
+let curTrace=0,curRound=0,curTarget=0;
+function renderTraces(filter="all"){
+  const rows=TRACES.map((t,i)=>({t,i})).filter(x=>filter==="all"||x.t.scope===filter);
+  $("#traceList").innerHTML=rows.map(({t,i})=>`
+   <div class="tr-item${i===curTrace?' sel':''}" data-t="${i}">
+    <div class="tr-in">
+      <div class="tr-r1"><span class="tr-id">${t.id}</span>
+        <span class="chip chip--${t.mode==='live'?'rx':'ghost'}">${t.mode==="live"?"LIVE":"回放"}</span>
+        <span class="chip" style="margin-left:auto">${SCOPE_TXT[t.scope]}</span></div>
+      <div class="tr-r2"><span class="chip chip--ac">${esc(t.frm)}</span>
+        <span class="chip chip--ghost">app ${t.app}</span>
+        ${t.seq!=="—"?`<span class="chip chip--ghost">seq ${t.seq}</span>`:''}</div>
+      <div class="tr-sum"><span>轮 <b>${t.sum.rounds}</b></span><span>表 <b>${t.sum.meters}</b></span>
+        <span>全链 <b>${t.sum.full}</b></span><span class="bad">无ACK <b>${t.sum.noack}</b></span>
+        <span class="bad">无响应 <b>${t.sum.noresp}</b></span>${t.sum.denied?`<span class="bad">否认 <b>${t.sum.denied}</b></span>`:''}${t.sum.noconf?`<span class="bad">未确认 <b>${t.sum.noconf}</b></span>`:''}</div>
+      <div class="tr-sum" style="color:var(--tx-4)">${esc(t.note)}</div>
+    </div>
+   </div>`).join("");
+  $$("#traceList .tr-item").forEach(el=>el.addEventListener("click",()=>selectTrace(+el.dataset.t)));
+}
+function selectTrace(i){
+  curTrace=i;curRound=0;curTarget=0;
+  renderTraces($("#fBar .fchip.on").dataset.s);
+  renderFeature();
+  renderRounds();
+  renderChain();
+}
+
+/* 列2：特征 + 轮 */
+function renderFeature(){
+  const t=TRACES[curTrace];
+  $("#ftHead").innerHTML=`
+   <div class="ft-r1"><b>${t.id}</b><span>${esc(t.frm)}</span>
+     <span class="chip chip--${t.mode==='live'?'rx':'am'}" style="margin-left:auto">${t.mode==="live"?"Live 增量":"回放窗口"}</span></div>
+   <div class="ft-grid">
+     <span class="k">frm_type</span><span class="v">${esc(t.frm)}</span>
+     <span class="k">app_id / port</span><span class="v">${t.app} / ${t.port}</span>
+     <span class="k">msg_seq</span><span class="v">${t.seq}${t.seq!=="—"?' <span style="color:var(--tx-4)">= APP_RAW[8:10]</span>':''}</span>
+     <span class="k">dst_tei</span><span class="v">（留空 = 全部对端）</span>
+     <span class="k">window</span><span class="v">${esc(t.win)}</span>
+     <span class="k">响应策略</span><span class="v">帧内推导 · ACK✓ · 0x0020✓</span>
+   </div>
+   <div class="sumbar">
+     <span class="chip">轮 <b style="font-family:var(--fm)">${t.sum.rounds}</b></span>
+     <span class="chip">表 <b style="font-family:var(--fm)">${t.sum.meters}</b></span>
+     <span class="chip chip--ok">全链 <b style="font-family:var(--fm)">${t.sum.full}</b></span>
+     <span class="chip chip--tx">无ACK <b style="font-family:var(--fm)">${t.sum.noack}</b></span>
+     <span class="chip chip--am">无响应 <b style="font-family:var(--fm)">${t.sum.noresp}</b></span>
+     <span class="chip chip--mg">否认 <b style="font-family:var(--fm)">${t.sum.denied}</b></span>
+     <span class="chip chip--err">未确认 <b style="font-family:var(--fm)">${t.sum.noconf}</b></span>
+   </div>
+   <div style="font-size:10.5px;color:var(--tx-4)">⚠ 静态业务头 0x0201 非报文序号；真序号在 APP_RAW[8:10]，全局递增、重发不增（ADR-9 §10.1）</div>`;
+}
+const STG={confirmed:["st-confirmed","已确认"],responded:["st-responded","已响应"],acked:["st-acked","已ACK"],
+  sent:["st-sent","已发出"],denied:["st-denied","否认"],absent:["st-absent","缺席"]};
+const EK={explicit_ack:["chip--ok","铁证 · explicit"],inference:["chip--am","推断 · inference"],
+  no_confirm:["chip--err","未获确认"],denied:["chip--mg","否认"]};
+function chainDots(t){
+  const seq=[["s1","#f0b429"],["s2a","#22d3ee"],["s2b","#2dd4bf"],["s3","#34d399"]];
+  const on={s1:1,s2a:t.f.s2a?1:0,s2b:t.f.s2b?1:0,s3:(t.stage==="confirmed"||t.stage==="denied")?1:0};
+  let h="";
+  seq.forEach(([k,c],idx)=>{
+    h+=`<i class="${on[k]?'':'off'}" style="background:${c}"></i>`;
+    if(idx<3)h+=`<s class="${on[k]&&on[seq[idx+1][0]]?'':'unk'}" style="background:${c}"></s>`;
+  });
+  return `<span class="chain">${h}</span>`;
+}
+function renderRounds(){
+  const rs=ROUNDS;
+  $("#roundCol").innerHTML=rs.map((r,i)=>`
+   <div class="round${i===curRound?' open':''}" data-r="${i}">
+    <button class="round-h" data-rh="${i}">
+      <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <span class="rnd-seq">${r.seq}</span>
+      <span class="rnd-cluster">${r.bcast?'<span class="chip chip--mg" style="height:16px;font-size:10px">广播 FFF</span> ':''}${r.t0.slice(0,12)} ~ ${r.dur}${r.sent.retries?` · 重传 ${r.sent.retries}`:''}</span>
+      <span class="rnd-cnt">${r.rsp}/${r.req} 回</span>
+    </button>
+    <div class="round-b"><div>
+      ${r.targets.map((tg,j)=>`
+      <button class="tg${i===curRound&&j===curTarget?' sel':''}" data-r="${i}" data-g="${j}">
+        <span class="tg-m">${tg.m}</span>
+        <span class="tg-tei">TEI <b>${tg.tei}</b></span>
+        ${chainDots(tg)}
+        <span class="lat">${tg.lat?tg.lat+"ms":"—"}</span>
+        <span class="st ${STG[tg.stage][0]}">${STG[tg.stage][1]}</span>
+      </button>`).join("")}
+    </div></div>
+   </div>`).join("");
+  $$("#roundCol .round-h").forEach(b=>b.addEventListener("click",()=>{
+    const el=b.parentElement;el.classList.toggle("open");
+  }));
+  $$("#roundCol .tg").forEach(b=>b.addEventListener("click",()=>{
+    curRound=+b.dataset.r;curTarget=+b.dataset.g;
+    $$("#roundCol .round").forEach((x,i)=>x.classList.toggle("open",i===curRound));
+    $$("#roundCol .tg").forEach(x=>x.classList.remove("sel"));b.classList.add("sel");
+    renderChain();
+  }));
+}
+
+/* 列3：三段证据链 */
+function colorHex(raw){
+  const p=raw.trim().split(/\s+/);
+  const c=new Array(p.length).fill("s-DU");
+  if(p.length<8)return p.map(x=>`<span class="hx s-DU">${x}</span>`).join(" ");
+  c[0]="s-68";c[p.length-1]="s-16";c[p.length-2]="s-CS";c[1]="s-L";c[2]="s-L";c[3]="s-C";
+  for(let i=4;i<Math.min(10,p.length-2);i++)c[i]="s-R";
+  if(p.length>10){c[10]="s-AFN";
+    /* 4-3 帧内序号：下行在业务头后（偏移 17~18），0x0020 确认帧在偏移 11~12 */
+    for(let i=0;i<p.length;i++){if(p[i]==="04"&&p[i+1]==="D2"&&i>10){c[i]="s-SEQ";c[i+1]="s-SEQ";break;}}
+  }
+  return p.map((x,i)=>`<span class="hx ${c[i]}" title="偏移 ${i}">${x}</span>`).join(" ");
+}
+function renderChain(){
+  const r=ROUNDS[curRound],tg=r.targets[curTarget];
+  $("#parHead").innerHTML=`
+   <div class="par-t1"><b>${tg.m}</b>
+     <span class="chip chip--ac">SEQ ${r.seq}</span>
+     <span class="chip chip--ghost">经 TEI ${tg.tei}</span>
+     <span class="st ${STG[tg.stage][0]}" style="height:20px;font-size:11px">${STG[tg.stage][1]}</span>
+     ${tg.ek&&EK[tg.ek]?`<span class="chip ${EK[tg.ek][0]}">${EK[tg.ek][1]}</span>`:''}</div>
+   <div class="par-t2">状态机 <em>armed → sent → acked → responded → confirmed</em>；判定全部来自侦听台空口自证。${tg.note?esc(tg.note):"逐段点击下方证据帧可钻取原始帧解析。"}</div>`;
+  const evItems=CHAIN.map(c=>`
+   <div class="ev-it ${c.st}">
+     <div class="ev-r1"><b style="color:var(--ac);font-family:var(--fm)">${c.s}</b><b>${c.name}</b>
+       <span class="chip chip--${c.badge}" style="margin-left:auto">${c.st==="done"?"通过":"—"}</span></div>
+     <div class="ev-ds">${c.ds}</div>
+   </div>`).join("");
+  $("#parBody").innerHTML=`
+   <div class="card open"><div class="card-h">
+     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9"/></svg>
+     <b>证据链 · ${tg.m}</b><span class="hint">S1 → S2a → S2b → S3</span>
+     <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="card-b"><div><div class="card-in"><div class="ev">${evItems}</div></div></div></div></div>
+   <div class="card open"><div class="card-h">
+     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3"/><path d="M9 9h6M9 15h6"/></svg>
+     <b>关键帧 · 逐段着色</b><span class="hint">序号 04 D2 高亮</span>
+     <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="card-b"><div><div class="card-in">
+      <div class="hexwrap"><div class="hex">${colorHex(HEX_DL)}</div>
+        <div class="hexlg" style="display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line-1)">
+          <span style="font-size:10.5px;color:var(--tx-4)">下行并发抄表帧 · 高亮 = APP_RAW[8:10] 真报文序号（重发不增）</span></div></div>
+      <div style="display:grid;gap:8px;margin-top:10px">
+        <div class="hexwrap" style="padding:9px 10px"><div style="font-size:10.5px;color:var(--tx-4);margin-bottom:5px">S2a · 链路 ACK（frame 406741）· ack_peer = MAC 头 [27..28]</div><div class="hex" style="font-size:11.5px">${colorHex(HEX_ACK)}</div></div>
+        <div class="hexwrap" style="padding:9px 10px"><div style="font-size:10.5px;color:var(--tx-4);margin-bottom:5px">S3 · 0x0020 显式确认（frame 406760）· 序号域直接指认</div><div class="hex" style="font-size:11.5px">${colorHex(HEX_CF)}</div></div>
+      </div>
+    </div></div></div></div>`;
+  $("#chainMeta").textContent=`trace ${TRACES[curTrace].id} · round ${r.seq} · ${tg.m} · 延时 ${tg.lat?tg.lat+" ms":"—"}`;
+  $$("#parBody .card-h").forEach(h=>h.addEventListener("click",e=>{
+    if(e.target.closest(".tag"))return;
+    h.parentElement.classList.toggle("open");
+  }));
+}
+
+/* 底部代理关系 */
+$("#pxList").innerHTML=PX.map(p=>`
+ <div class="px-item"><span class="mono">${p.m}</span><span class="arr">→</span>
+   <span class="chip chip--mg" style="height:18px;font-size:10.5px">STA ${p.t}</span>
+   <span class="obs">×${p.n} 轮观测</span></div>`).join("");
+
+/* 交互 */
+$("#sbToggle").addEventListener("click",()=>$("#app").classList.toggle("collapsed"));
+$("#grpRespH").addEventListener("click",()=>{
+  const g=$("#grpResp");g.classList.toggle("open");
+  $("#grpRespH").setAttribute("aria-expanded",g.classList.contains("open"));
+});
+$("#fBar").addEventListener("click",e=>{
+  const b=e.target.closest(".fchip");if(!b)return;
+  $$("#fBar .fchip").forEach(x=>x.classList.remove("on"));b.classList.add("on");
+  renderTraces(b.dataset.s);
+});
+$("#segMode").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  $$("#segMode button").forEach(x=>x.classList.remove("on"));b.classList.add("on");
+  renderTraces($("#fBar .fchip.on").dataset.s);
+});
+$("#scopeSel").addEventListener("change",e=>{
+  const v=e.target.value;
+  $$("#fBar .fchip").forEach(x=>x.classList.toggle("on",x.dataset.s===v||v==="all"&&x.dataset.s==="all"));
+  renderTraces(v==="all"?"all":v);
+});
+$("#trH").addEventListener("click",e=>{
+  if(e.target.closest(".tag"))return;
+  $("#traffic").classList.toggle("fold");
+});
+$("#annoH").addEventListener("click",e=>{
+  if(e.target.closest("#annoHl"))return;
+  $("#anno").classList.toggle("open");
+});
+$("#annoHl").addEventListener("click",e=>{
+  e.stopPropagation();document.body.classList.toggle("anno-on");
+  $("#annoHl").textContent=document.body.classList.contains("anno-on")?"取消高亮":"高亮区域";
+});
+$("#annoBtn").addEventListener("click",()=>$("#anno").classList.toggle("open"));
+$("#annoList").innerHTML=ANNOS.map(a=>`<li><b>${a[0]}</b><span>${esc(a[1])}</span></li>`).join("");
+$("#newTrace").addEventListener("click",()=>{
+  selectTrace(0);
+  $("#parBody").scrollIntoView({behavior:"smooth"});
+});
+
+/* 初始态 */
+renderTraces();
+renderFeature();
+renderRounds();
+renderChain();
+</script>
+</body>
+</html>

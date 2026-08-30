@@ -951,6 +951,8 @@ function switchView(name) {
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-selected", active ? "true" : "false");
   });
+  const proView = document.getElementById("frames-pro-view");
+  if (proView) proView.hidden = name !== "frames-pro";
   minuteElements.framesView.hidden = name !== "frames";
   minuteElements.framesData.hidden = name !== "frames";
   minuteElements.view.hidden = name !== "minute";

@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>侦听台 · 国网 HPLC 双模空口帧 — UI 设计稿</title>
+<style>
+/* ============ Design Tokens（与 sim-concentrator-ui.html 同源） ============ */
+:root{
+  --bg-0:#090c10; --bg-1:#0e1319; --bg-2:#131a22; --bg-3:#18212b; --bg-4:#1e2833;
+  --line-1:#1f2935; --line-2:#2a3644; --line-3:#3a4a5c;
+  --tx-1:#e8f0f7; --tx-2:#9aabbb; --tx-3:#65798c; --tx-4:#465768;
+  --ac:#22d3ee; --ac-dim:#0e7490; --ac-soft:rgba(34,211,238,.12);
+  --am:#f0b429; --am-soft:rgba(240,180,41,.12); --mg:#e879a8;
+  --tx-c:#f0b429; --rx-c:#2dd4bf; --ok-c:#34d399; --warn-c:#fbbf24; --err-c:#f87171;
+  --r-s:5px; --r-m:8px; --r-l:12px; --sp:4px;
+  --ff:"HarmonyOS Sans SC","PingFang SC","Source Han Sans SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --fm:"JetBrains Mono","Cascadia Mono","Sarasa Mono SC","Consolas",ui-monospace,monospace;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--ff);font-size:13px;line-height:1.6;color:var(--tx-1);
+  background:
+    radial-gradient(1200px 700px at 12% -10%, #12212c 0%, transparent 60%),
+    radial-gradient(900px 600px at 100% 110%, #17202b 0%, transparent 55%),
+    var(--bg-0);
+  overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--line-3);background-clip:content-box}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--fm);font-variant-ligatures:none}
+
+/* ============ 通用组件 ============ */
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-s);
+  font-size:11px;font-weight:500;letter-spacing:.02em;background:var(--bg-3);color:var(--tx-2);border:1px solid var(--line-1)}
+.chip--ac{background:var(--ac-soft);color:var(--ac);border-color:rgba(34,211,238,.25)}
+.chip--am{background:var(--am-soft);color:var(--am);border-color:rgba(240,180,41,.25)}
+.chip--tx{background:rgba(240,180,41,.12);color:var(--tx-c);border-color:rgba(240,180,41,.28)}
+.chip--rx{background:rgba(45,212,191,.12);color:var(--rx-c);border-color:rgba(45,212,191,.28)}
+.chip--ok{background:rgba(52,211,153,.12);color:var(--ok-c);border-color:rgba(52,211,153,.28)}
+.chip--err{background:rgba(248,113,113,.12);color:var(--err-c);border-color:rgba(248,113,113,.3)}
+.chip--ghost{background:transparent;color:var(--tx-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 13px;
+  border-radius:var(--r-m);border:1px solid var(--line-2);background:var(--bg-3);color:var(--tx-2);
+  font-size:12.5px;font-weight:500;transition:all .14s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--bg-4);color:var(--tx-1);border-color:var(--line-3)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:linear-gradient(180deg,#22d3ee,#0ea5c4);color:#04222b;border-color:#0e9ab5;font-weight:500}
+.btn--primary:hover{background:linear-gradient(180deg,#3fdcf5,#12b4d4);color:#04222b}
+.btn--sm{height:26px;padding:0 10px;font-size:12px}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--tx-3)}
+.btn--ghost:hover{background:var(--bg-3);color:var(--tx-1)}
+a.btn{text-decoration:none}
+.fld{width:100%;height:30px;padding:0 9px;border-radius:var(--r-m);background:var(--bg-1);
+  border:1px solid var(--line-2);color:var(--tx-1);font-size:12.5px;transition:all .14s var(--ease)}
+.fld:hover{border-color:var(--line-3)}
+.fld:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+select.fld{appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%2365798c' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 9px center;padding-right:26px}
+.sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-2)}
+.sec-h h3{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--tx-2)}
+.sec-h .sp{margin-left:auto}
+.seg{display:flex;background:var(--bg-1);border:1px solid var(--line-2);border-radius:var(--r-m);padding:2px;gap:2px}
+.seg button{height:22px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--tx-3);transition:all .14s var(--ease)}
+.seg button:hover{color:var(--tx-1)}
+.seg button.on{background:var(--bg-4);color:var(--tx-1)}
+
+/* ============ 骨架 ============ */
+.app{display:grid;grid-template-columns:var(--sb-w,232px) 1fr;height:100vh;
+  transition:grid-template-columns .22s var(--ease)}
+.app.collapsed{--sb-w:56px}
+.sb{display:flex;flex-direction:column;min-width:0;background:var(--bg-1);
+  border-right:1px solid var(--line-1);position:relative;z-index:5}
+.sb-top{display:flex;align-items:center;gap:10px;height:50px;padding:0 10px 0 13px;flex:none;
+  border-bottom:1px solid var(--line-1)}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
+.brand-mark{width:26px;height:26px;flex:none;border-radius:7px;
+  background:linear-gradient(140deg,#22d3ee,#0e7490);display:grid;place-items:center}
+.brand-mark svg{width:15px;height:15px}
+.brand-txt{min-width:0}
+.brand-txt b{display:block;font-size:13px;font-weight:500;letter-spacing:.02em;white-space:nowrap}
+.brand-txt span{display:block;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+.collapsed .brand-txt{opacity:0;pointer-events:none}
+.collapsed .sb-top{justify-content:center;padding:0}
+.sb-toggle{flex:none;width:28px;height:28px;border-radius:var(--r-m);display:grid;place-items:center;
+  color:var(--tx-3);transition:all .14s var(--ease)}
+.sb-toggle:hover{background:var(--bg-3);color:var(--tx-1)}
+.collapsed .sb-toggle{transform:rotate(180deg)}
+.sb-nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 8px 16px}
+.nav-label{font-size:10px;letter-spacing:.12em;color:var(--tx-4);padding:12px 8px 5px;white-space:nowrap}
+.collapsed .nav-label{opacity:0;height:14px;padding:8px 0 0;text-align:center;overflow:hidden}
+.collapsed .nav-label::after{content:"";display:block;height:1px;background:var(--line-1);margin:6px 8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;height:34px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-2);font-size:13px;cursor:pointer;position:relative;width:100%;text-align:left;text-decoration:none;
+  transition:background .14s var(--ease),color .14s var(--ease)}
+.nav-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.nav-item.on{background:linear-gradient(90deg,var(--ac-soft),transparent 92%);color:var(--ac)}
+.nav-item.on::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2.5px;
+  border-radius:0 3px 3px 0;background:var(--ac)}
+.nav-item svg{width:16px;height:16px;flex:none}
+.nav-item .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-item .cnt{font-size:10.5px;color:var(--tx-4);font-family:var(--fm)}
+.collapsed .nav-item{justify-content:center;padding:0}
+.collapsed .nav-item .t,.collapsed .nav-item .cnt{display:none}
+.collapsed .nav-item.on::before{left:0}
+.collapsed .nav-item::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;
+  transform:translateY(-50%);background:var(--bg-4);border:1px solid var(--line-2);color:var(--tx-1);
+  padding:5px 9px;border-radius:var(--r-s);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:40}
+.collapsed .nav-item:hover::after{opacity:1}
+.grp{margin-top:2px}
+.grp-h{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.grp-h:hover{background:var(--bg-2);color:var(--tx-2)}
+.grp-h .car{width:13px;height:13px;flex:none;transition:transform .18s var(--ease);opacity:.7}
+.grp.open .grp-h .car{transform:rotate(90deg)}
+.grp-h .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.grp.open .grp-b{grid-template-rows:1fr}
+.grp-b>div{overflow:hidden;min-height:0}
+.grp-b .inner{padding:2px 0 4px 0}
+.collapsed .grp-h{justify-content:center;padding:0}
+.collapsed .grp-h .t,.collapsed .grp-h .car{display:none}
+.collapsed .grp-b{display:none}
+.sub-item{display:flex;align-items:center;gap:8px;height:29px;padding:0 9px 0 20px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.sub-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.sub-item.on{color:var(--ac);background:var(--ac-soft)}
+.sub-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live{width:5px;height:5px;border-radius:50%;flex:none}
+.sb-foot{flex:none;padding:9px;border-top:1px solid var(--line-1);display:grid;gap:7px}
+.com-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);padding:8px 9px}
+.com-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--tx-3)}
+.com-row+.com-row{margin-top:5px}
+.com-row b{font-family:var(--fm);color:var(--tx-2);font-size:11.5px;font-weight:400}
+.collapsed .sb-foot{padding:9px 7px}
+.collapsed .com-card{display:none}
+.collapsed .sb-foot .btn span{display:none}
+.collapsed .sb-foot .btn{width:100%}
+
+/* ---------- 主区 ---------- */
+.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.top{display:flex;align-items:center;gap:10px;height:50px;padding:0 16px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1)}
+.crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx-3);min-width:0;white-space:nowrap}
+.crumb b{color:var(--tx-1);font-weight:500;font-size:14px}
+.crumb .sep{color:var(--tx-4)}
+.top .sp{margin-left:auto}
+.work{flex:1;display:grid;grid-template-columns:var(--c1,238px) var(--c2,304px) 1fr;min-height:0}
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-1)}
+.col+.col{border-left:1px solid var(--line-1)}
+.col-body{flex:1;overflow-y:auto;min-height:0}
+.empty{display:grid;place-items:center;height:100%;padding:32px 20px;text-align:center;color:var(--tx-4)}
+.empty svg{width:38px;height:38px;opacity:.35;margin-bottom:12px}
+.empty p{font-size:12.5px;line-height:1.7}
+
+/* 列1：数据源与索引 */
+.src-sec{padding:10px;display:grid;gap:8px}
+.src-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);padding:9px 10px;display:grid;gap:5px}
+.src-card.on{border-color:rgba(34,211,238,.3);background:linear-gradient(180deg,var(--ac-soft),var(--bg-2))}
+.src-r{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--tx-3)}
+.src-r b{font-family:var(--fm);color:var(--tx-2);font-weight:400;font-size:11.5px}
+.src-r .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.src-big{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx-1);font-weight:500}
+.src-big .mono{font-size:11px;color:var(--ac);font-weight:400}
+.src-sub{font-size:10.5px;color:var(--tx-4);line-height:1.55}
+.idx-meter{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--tx-4);font-family:var(--fm)}
+.idx-meter .bar{flex:1;height:3px;border-radius:2px;background:var(--bg-1);overflow:hidden}
+.idx-meter .bar i{display:block;height:100%;width:73%;background:linear-gradient(90deg,var(--ac-dim),var(--ac))}
+
+/* 列2：帧索引 */
+.fr-filter{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line-1)}
+.fr-item{border-bottom:1px solid rgba(31,41,53,.6);cursor:pointer;position:relative;transition:background .14s var(--ease)}
+.fr-item:hover{background:var(--bg-2)}
+.fr-item.sel{background:linear-gradient(90deg,var(--ac-soft),transparent)}
+.fr-item.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--ac)}
+.fr-in{padding:7px 11px;display:grid;gap:4px}
+.fr-r1{display:flex;align-items:center;gap:7px}
+.fr-t{font-family:var(--fm);font-size:11px;color:var(--tx-4);flex:none;width:74px}
+.fr-ft{font-size:11.5px;color:var(--tx-1);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fr-len{font-family:var(--fm);font-size:10.5px;color:var(--tx-4);flex:none}
+.fr-r2{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.tei{font-family:var(--fm);font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg-1);
+  border:1px solid var(--line-2);color:var(--tx-3)}
+.tei i{font-style:normal;color:var(--tx-4)}
+.tei--dl{color:var(--tx-c);border-color:rgba(240,180,41,.25)}
+.tei--ul{color:var(--rx-c);border-color:rgba(45,212,191,.25)}
+.fr-seq{font-family:var(--fm);font-size:10.5px;color:var(--am)}
+.hintdot{width:6px;height:6px;border-radius:50%;background:var(--am);flex:none;box-shadow:0 0 6px rgba(240,180,41,.7)}
+.baddot{width:6px;height:6px;border-radius:50%;background:var(--err-c);flex:none}
+.fr-item.bad{opacity:.75}
+.fr-item.bad .fr-ft{color:var(--err-c)}
+.pgn{display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--line-1);
+  background:var(--bg-2);font-size:11px;color:var(--tx-4);font-family:var(--fm)}
+.pgn .sp{margin-left:auto}
+.pgn button{color:var(--tx-3);width:24px;height:22px;border-radius:4px;border:1px solid var(--line-1);background:var(--bg-2)}
+.pgn button:hover{color:var(--tx-1);border-color:var(--line-3)}
+
+/* 列3：深度解析 */
+.par{display:flex;flex-direction:column;min-height:0;background:var(--bg-1)}
+.par-head{padding:12px 16px;border-bottom:1px solid var(--line-1);background:var(--bg-2);flex:none}
+.par-t1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.par-t1 b{font-size:15px;font-weight:500}
+.par-t2{margin-top:7px;font-size:12px;color:var(--tx-3);line-height:1.6}
+.par-t2 em{font-style:normal;color:var(--am);font-family:var(--fm)}
+.par-body{flex:1;overflow-y:auto;padding:14px 16px 20px;display:grid;gap:14px;align-content:start}
+.card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-l);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:9px;padding:9px 13px;cursor:pointer;background:var(--bg-3);
+  border-bottom:1px solid transparent;transition:background .14s var(--ease)}
+.card-h:hover{background:var(--bg-4)}
+.card.open .card-h{border-bottom-color:var(--line-1)}
+.card-h .ic{width:15px;height:15px;color:var(--ac);flex:none}
+.card-h b{font-size:12.5px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--tx-4)}
+.card-h .car{width:13px;height:13px;color:var(--tx-4);transition:transform .18s var(--ease)}
+.card.open .card-h .car{transform:rotate(90deg)}
+.card-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.card.open .card-b{grid-template-rows:1fr}
+.card-b>div{overflow:hidden;min-height:0}
+.card-in{padding:13px}
+.kv{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 16px}
+.kv .k{font-size:10.5px;color:var(--tx-4);letter-spacing:.04em}
+.kv .v{font-family:var(--fm);font-size:11.5px;color:var(--tx-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kv .v.hl{color:var(--am)}
+.kv .v.ac{color:var(--ac)}
+.ft{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.ft th{text-align:left;font-weight:400;font-size:10.5px;letter-spacing:.08em;color:var(--tx-4);
+  padding:0 8px 7px;border-bottom:1px solid var(--line-1)}
+.ft td{padding:7px 8px;border-bottom:1px solid rgba(31,41,53,.55);vertical-align:top}
+.ft tr:last-child td{border-bottom:none}
+.ft .nm{color:var(--tx-1);font-size:12px}
+.ft .ds{margin-top:3px;font-size:11px;color:var(--tx-4);line-height:1.55}
+.ft .fmt{font-family:var(--fm);font-size:10.5px;color:var(--tx-3)}
+.hexwrap{background:var(--bg-0);border:1px solid var(--line-1);border-radius:var(--r-m);padding:11px 12px}
+.hex{font-family:var(--fm);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all}
+.hx{padding:1px 3px;border-radius:3px;cursor:default;transition:background .12s var(--ease)}
+.hx:hover{outline:1px solid var(--line-3)}
+.s-68,.s-16{color:var(--mg)}
+.s-L{color:var(--mg)}
+.s-C{color:var(--am)}
+.s-R{color:var(--tx-2)}
+.s-A{color:var(--rx-c)}
+.s-AFN{color:var(--ac);font-weight:500}
+.s-DT{color:#a78bfa}
+.s-DU{color:var(--tx-1)}
+.s-SEQ{color:var(--am);font-weight:600;background:rgba(240,180,41,.14);outline:1px dashed rgba(240,180,41,.5)}
+.s-APP{color:var(--tx-1);background:rgba(232,121,168,.07)}
+.s-CS{color:var(--am)}
+.hexlg{display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line-1)}
+.hexlg span{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--tx-4)}
+.hexlg i{width:8px;height:8px;border-radius:2px;font-style:normal}
+.hintcard{border-color:rgba(240,180,41,.35)}
+.hintcard .card-h{background:rgba(240,180,41,.08)}
+.hintcard .card-h .ic{color:var(--am)}
+.hint-body{font-size:12px;color:var(--tx-2);line-height:1.7}
+.hint-body code{font-family:var(--fm);font-size:11px;color:var(--am);background:var(--bg-1);
+  border:1px solid var(--line-1);border-radius:4px;padding:1px 5px}
+
+/* ---------- 底部：汇总条 ---------- */
+.traffic{flex:none;display:flex;flex-direction:column;background:var(--bg-1);
+  border-top:1px solid var(--line-2);height:var(--th,116px);transition:height .22s var(--ease)}
+.traffic.fold{--th:37px}
+.tr-h{display:flex;align-items:center;gap:10px;height:37px;padding:0 12px;flex:none;cursor:pointer;
+  user-select:none;background:var(--bg-2)}
+.tr-h:hover{background:var(--bg-3)}
+.tr-h .car{width:13px;height:13px;color:var(--tx-3);transition:transform .18s var(--ease)}
+.traffic:not(.fold) .tr-h .car{transform:rotate(90deg)}
+.tr-h .ttl{font-size:12.5px;font-weight:500;letter-spacing:.02em}
+.tr-h .sp{margin-left:auto}
+.stat-row{flex:1;overflow-x:auto;min-height:0;display:flex;gap:10px;padding:10px 12px;align-items:stretch}
+.stat{flex:none;min-width:128px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);
+  padding:8px 12px;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.stat .k{font-size:10.5px;color:var(--tx-4);letter-spacing:.06em;white-space:nowrap}
+.stat .v{font-family:var(--fm);font-size:17px;color:var(--tx-1);line-height:1.3}
+.stat .v small{font-size:10.5px;color:var(--tx-4);margin-left:3px}
+.stat.warn .v{color:var(--warn-c)}
+.stat.ac .v{color:var(--ac)}
+.stat.ok .v{color:var(--ok-c)}
+
+/* ---------- 标注层 ---------- */
+.anno{position:fixed;right:16px;bottom:16px;width:300px;z-index:60;
+  background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--r-l);
+  box-shadow:0 12px 40px rgba(0,0,0,.55);overflow:hidden}
+.anno-h{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-3);
+  border-bottom:1px solid var(--line-1);cursor:pointer}
+.anno-h b{font-size:12px;font-weight:500}
+.anno-h .sp{margin-left:auto}
+.anno-h .car{width:13px;height:13px;color:var(--tx-3);transition:transform .18s var(--ease)}
+.anno.open .anno-h .car{transform:rotate(90deg)}
+.anno-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.anno.open .anno-b{grid-template-rows:1fr}
+.anno-b>div{overflow:hidden;min-height:0}
+.anno-l{max-height:46vh;overflow-y:auto;padding:8px;list-style:none}
+.anno-l li{display:flex;gap:9px;padding:6px 6px;border-radius:var(--r-s);font-size:11.5px;
+  color:var(--tx-2);line-height:1.55;cursor:default}
+.anno-l li:hover{background:var(--bg-3)}
+.anno-l li b{font-family:var(--fm);font-size:10.5px;color:var(--am);flex:none;width:15px;height:15px;
+  border-radius:3px;background:var(--am-soft);display:grid;place-items:center;margin-top:2px}
+.anno-pages{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;border-top:1px solid var(--line-1)}
+.anno-pages a{font-size:10.5px;color:var(--tx-3);text-decoration:none;border:1px solid var(--line-1);
+  border-radius:var(--r-s);padding:2px 7px;transition:all .14s var(--ease)}
+.anno-pages a:hover{color:var(--ac);border-color:rgba(34,211,238,.3)}
+.anno-pages a.cur{color:var(--ac);background:var(--ac-soft);border-color:rgba(34,211,238,.3)}
+.tag{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;flex:none;border-radius:3px;background:var(--am-soft);color:var(--am);
+  font-family:var(--fm);font-size:10px;cursor:help;vertical-align:middle}
+.tag::after{content:attr(data-d);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  background:var(--bg-4);border:1px solid var(--line-3);color:var(--tx-1);padding:6px 9px;border-radius:var(--r-s);
+  font-family:var(--ff);font-size:11.5px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:70}
+.tag:hover::after{opacity:1}
+body.anno-on [data-an]{outline:1px dashed var(--am);outline-offset:2px;border-radius:var(--r-s)}
+body.anno-on [data-an]::after{content:attr(data-an-t);position:absolute;top:-8px;right:-4px;
+  background:var(--am);color:#23180a;font-size:9.5px;font-family:var(--fm);padding:0 4px;border-radius:3px;z-index:30}
+body.anno-on .app>*{position:relative}
+body.anno-on .col{position:relative}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+<!-- ════════════ 侧栏 ════════════ -->
+<aside class="sb">
+  <div class="sb-top">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#04222b" stroke-width="2.2" stroke-linecap="round"><path d="M3 12h3l2-6 3 14 3-11 2 5h5"/></svg></span>
+      <span class="brand-txt"><b>侦听台工作台</b><span>Listener Workbench</span></span>
+    </div>
+    <button class="sb-toggle" id="sbToggle" title="收敛 / 展开侧栏" aria-label="收敛或展开侧栏">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+  </div>
+
+  <nav class="sb-nav">
+    <div class="nav-label">主功能</div>
+    <a class="nav-item on" href="listener-ui.html" data-tip="侦听台">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span class="t">侦听台</span>
+      <span class="cnt">53.6万</span>
+    </a>
+    <a class="nav-item" href="sim-concentrator-ui.html" data-tip="模拟集中器">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7.5h.01M7 17h.01"/></svg>
+      <span class="t">模拟集中器</span>
+      <span class="cnt">15</span>
+    </a>
+
+    <div class="grp open" id="grpResp">
+      <button class="grp-h" id="grpRespH" aria-expanded="true">
+        <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="t">内置应答</span>
+        <span class="dot" style="color:var(--ok-c)"></span>
+      </button>
+      <div class="grp-b"><div><div class="inner">
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 00H 确认/否认</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 03H 查询应答</span></button>
+        <button class="sub-item"><span class="live" style="background:#465768"></span><span class="t">AFN 06H 主动上报</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 10H 路由应答</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 14H 抄读协同</span></button>
+        <button class="sub-item"><span class="live" style="background:#fbbf24"></span><span class="t">超时兜底否认</span></button>
+      </div></div></div>
+    </div>
+
+    <div class="nav-label">辅助</div>
+    <a class="nav-item" href="trace-ui.html" data-tip="报文追踪">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+      <span class="t">报文追踪</span>
+      <span class="cnt">4</span>
+    </a>
+    <a class="nav-item" href="dict-ui.html" data-tip="协议字典">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h9a3 3 0 013 3v13a2.5 2.5 0 00-2.5-2.5H4z"/><path d="M20 4h-1a3 3 0 00-3 3v13a2.5 2.5 0 012.5-2.5H20z"/></svg>
+      <span class="t">协议字典</span>
+    </a>
+    <a class="nav-item" href="scenario-ui.html" data-tip="场景脚本">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+      <span class="t">场景脚本</span>
+    </a>
+  </nav>
+
+  <div class="sb-foot">
+    <div class="com-card">
+      <div class="com-row"><span class="dot" style="color:var(--ok-c)"></span>串口 <b>COM14</b> · 9600 8E1</div>
+      <div class="com-row"><span class="dot" style="color:var(--rx-c)"></span>采集中 · <b>12,431</b> 帧</div>
+    </div>
+    <button class="btn btn--sm" style="width:100%"><span>串口设置</span></button>
+  </div>
+</aside>
+
+<!-- ════════════ 主区 ════════════ -->
+<main class="main">
+  <header class="top">
+    <div class="crumb">
+      <b>侦听台</b><span class="sep">/</span><span>国网 HPLC 双模空口帧</span>
+      <span class="chip chip--ac" style="margin-left:4px">idx-20260829-023631</span>
+    </div>
+    <div class="sp"></div>
+    <input class="fld" style="width:104px" placeholder="NID 筛选" value="28">
+    <input class="fld" style="width:150px" placeholder="01:22:00 ~ 01:30:00">
+    <div class="seg" id="segView">
+      <button class="on" data-v="frames">帧浏览</button>
+      <button data-v="minute">分钟采集</button>
+      <button data-v="task">任务配置</button>
+      <button data-v="carrier">承载评估</button>
+    </div>
+    <button class="btn btn--sm" id="capBtn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 9a7 7 0 0014 0M12 16v4"/></svg>
+      停止采集
+    </button>
+    <button class="btn btn--sm" id="annoBtn">标注说明</button>
+  </header>
+
+  <!-- 三列：数据源与索引 | 帧索引 | 深度解析 -->
+  <section class="work">
+
+    <!-- 列1：数据源与索引 -->
+    <div class="col" data-an data-an-t="2">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+        <h3>数据源与索引</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 2：三入口——日志导入建索引 / 串口实时采集 / 单帧调试">2</span>
+      </div>
+      <div class="col-body">
+        <div class="src-sec">
+          <div class="src-card on">
+            <div class="src-big"><span class="dot" style="color:var(--ac)"></span>日志索引<span class="mono" style="margin-left:auto">idx-20260829-023631</span></div>
+            <div class="idx-meter"><span>回填</span><span class="bar"><i></i></span><span>73%</span></div>
+            <div class="src-sub">真机双模样本 · 536,042 帧 · 01:29:46 跨度 · G4 校验通过</div>
+          </div>
+          <div class="src-card">
+            <div class="src-big"><span class="dot" style="color:var(--rx-c)"></span>串口实时采集<span class="mono" style="margin-left:auto">COM14</span></div>
+            <div class="src-sub">9600 8E1 · 帧带时间戳写入解析索引 · 本会话 12,431 帧</div>
+          </div>
+          <div class="src-card">
+            <div class="src-big"><span class="dot" style="color:var(--tx-3)"></span>导入日志文件<span class="mono" style="margin-left:auto">.bin / .log</span></div>
+            <div class="src-sub">后台建索引，进度不阻塞浏览；重复导入幂等去重</div>
+          </div>
+          <div class="src-card" data-an data-an-t="12">
+            <div class="src-big"><span class="dot" style="color:var(--am)"></span>单帧调试<span class="mono" style="margin-left:auto">hex 粘贴</span>
+              <span class="tag" data-d="标注 12：单帧调试入口——手工贴 hex 即时解析，不落索引" style="margin-left:2px">12</span></div>
+            <div class="src-sub">贴一段 MAC 帧 hex 即时出解析结果，用于离线复核与教学演示</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 列2：帧索引 -->
+    <div class="col" data-an data-an-t="4">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        <h3 id="listTitle">帧索引</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 4：物化列驱动筛选 frm_type / TEI / 报文序号，全部来自 frames 表增列">4</span>
+      </div>
+      <div class="fr-filter">
+        <select class="fld" id="ftSel" style="width:150px;height:26px;font-size:12px">
+          <option>全部业务</option><option>终端主动并发抄表</option><option>ACK</option><option>中央信标</option>
+          <option>关联请求</option><option>心跳检测</option><option>代理信标</option>
+        </select>
+        <input class="fld" style="width:88px;height:26px;font-size:12px" placeholder="TEI">
+        <label style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--tx-3);white-space:nowrap">
+          <input type="checkbox" id="badOnly" style="accent-color:var(--ac)">仅坏帧</label>
+      </div>
+      <div class="col-body" id="frList"></div>
+      <div class="pgn"><span id="pgInfo">第 1 / 53,605 页 · 406,720~406,739</span><span class="sp"></span>
+        <button>‹</button><button>›</button></div>
+    </div>
+
+    <!-- 列3：深度解析 -->
+    <div class="col par" data-an data-an-t="6">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <h3>深度解析 · 单帧</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 6：hex 分段着色，APP_RAW[8:10] 真序号高亮——全局递增、重发不增（ADR-9 §10.1）">6</span>
+      </div>
+      <div class="par-head" id="parHead"></div>
+      <div class="par-body" id="parBody"></div>
+    </div>
+  </section>
+
+  <!-- 底部：汇总条 -->
+  <section class="traffic" id="traffic" data-an data-an-t="11">
+    <div class="tr-h" id="trH">
+      <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <span class="ttl">索引汇总</span>
+      <span class="chip chip--ac">帧浏览 <b id="cFt">536,042</b></span>
+      <span class="chip chip--am">坏帧 <b id="cBad">412</b></span>
+      <span class="sp"></span>
+      <span class="chip chip--ghost">分钟采集 · 周期 1 min</span>
+      <span class="chip chip--ghost">任务下发 128 · 应答 121 · 超时 7</span>
+      <span class="tag" data-d="标注 11：底部汇总条——另三视图（分钟采集/任务配置/承载评估）复用同一三列布局">11</span>
+    </div>
+    <div class="stat-row" id="statRow"></div>
+  </section>
+</main>
+</div>
+
+<!-- ════════════ 标注说明浮层 ════════════ -->
+<div class="anno open" id="anno">
+  <div class="anno-h" id="annoH">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--am)" stroke-width="2" stroke-linecap="round"><path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1z"/></svg>
+    <b>功能标注 · 12 项</b>
+    <span class="sp"></span>
+    <button class="btn btn--sm btn--ghost" id="annoHl">高亮区域</button>
+    <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+  </div>
+  <div class="anno-b"><div>
+    <ol class="anno-l" id="annoList"></ol>
+    <div class="anno-pages">
+      <a href="index.html">总览</a><a class="cur" href="listener-ui.html">侦听台</a><a href="sim-concentrator-ui.html">模拟集中器</a><a href="trace-ui.html">报文追踪</a><a href="dict-ui.html">协议字典</a><a href="scenario-ui.html">场景脚本</a>
+    </div>
+  </div></div>
+</div>
+
+<script>
+/* ═══════════ mock：帧索引（字段对齐 frames 表物化列） ═══════════ */
+const FR=[
+ {t:"01:22:03.118",ft:"终端主动并发抄表",dir:"dl",src:"000",dst:"087",ori:"000",fin:"087",seq:"04 D2",app:"0003",len:118,rssi:-58,ch:"PLC",hint:1,fid:406720},
+ {t:"01:22:03.154",ft:"ACK",dir:"ul",src:"087",dst:"000",seq:"—",len:46,rssi:-61,ch:"PLC",fid:406721},
+ {t:"01:22:03.478",ft:"抄表应答",dir:"ul",src:"087",dst:"000",seq:"04 D2",len:96,rssi:-63,ch:"PLC",fid:406722},
+ {t:"01:22:04.920",ft:"中央信标",dir:"dl",src:"000",dst:"FFF",seq:"—",len:210,rssi:-52,ch:"PLC",fid:406723},
+ {t:"01:22:05.102",ft:"关联请求",dir:"ul",src:"0A3",dst:"000",seq:"—",len:64,rssi:-67,ch:"RF",fid:406724},
+ {t:"01:22:07.331",ft:"心跳检测",dir:"ul",src:"0D8",dst:"000",seq:"04 D1",len:52,rssi:-66,ch:"PLC",fid:406725},
+ {t:"01:22:09.860",ft:"坏帧",dir:"—",bad:1,note:"CRC 校验失败 · 已隔离不入索引主列表",len:87,fid:406726},
+ {t:"01:22:11.204",ft:"代理信标",dir:"ul",src:"087",dst:"FFF",seq:"—",len:88,rssi:-60,ch:"PLC",fid:406727},
+ {t:"01:22:13.552",ft:"终端主动并发抄表",dir:"dl",src:"000",dst:"006",seq:"04 D2",app:"0003",len:118,rssi:-57,ch:"PLC",hint:1,fid:406728},
+ {t:"01:22:13.940",ft:"ACK",dir:"ul",src:"006",dst:"000",seq:"—",len:46,rssi:-62,ch:"PLC",fid:406729}
+];
+const HEX="68 2E 00 00 00 00 00 00 00 00 03 11 03 00 00 01 02 04 D2 33 33 33 06 C2 1E 28 0A 68 C2 1E 28 0A 33 86 1E 28 0A 16";
+const STATS=[
+ {k:"帧总数",v:"536,042",cls:"ac"},{k:"坏帧（隔离）",v:"412",s:"0.08%",cls:"warn"},
+ {k:"STA 节点",v:"58"},{k:"表地址",v:"217"},{k:"时间跨度",v:"01:29:46",small:true},
+ {k:"信标周期",v:"2.0 s",small:true},{k:"并发抄表轮",v:"342",cls:"ok"},{k:"分钟采集应答率",v:"94.1%",cls:"ok"}
+];
+
+/* 标注清单 */
+const ANNOS=[
+ ["1","侧栏与顶栏：侦听台与模拟集中器同级并列；数据源、视图、采集启停全部收在顶栏一行"],
+ ["2","数据源三入口：日志文件导入建索引 / 串口实时采集（帧带时间戳入库）/ 单帧调试（不落索引）"],
+ ["3","索引卡：53.6 万帧真机库（G4 校验通过）；坏帧单独计数隔离，不混入帧列表"],
+ ["4","帧索引列：frm_type / TEI / 序号筛选均走 frames 表物化列（msg_seq、meter_addrs、ack_peer…）"],
+ ["5","frm_type 业务名直出：DLL 已拆——并发抄表 / ACK / 信标 / 关联请求 / 心跳 / 代理信标"],
+ ["6","深度解析 hex：MAC 头与 APP_RAW 分段着色；APP_RAW[8:10] 即真报文序号（全局递增、重发不增）"],
+ ["7","TEI 观测：SRC/DST 逐跳 + ORI_S/FINL_D 跨信道转发不变，是中继场景的关联键"],
+ ["8","feature_hint 卡：单帧反推特征草稿，一键送报文追踪——AI 工作流“翻帧→hint→POST /traces”"],
+ ["9","四视图复用同一三列布局：帧浏览 / 分钟采集 / 任务配置下发应答统计 / 网络承载评估"],
+ ["10","trace 关联：同序号已有追踪时就地提示 chip，可跳报文追踪页"],
+ ["11","底部汇总条：帧总数 / 坏帧 / STA / 表地址 / 时间跨度，任务下发应答与承载评估微缩常驻"],
+ ["12","单帧调试：粘贴 hex 即时解析，服务离线复核与教学演示，不污染正式索引"]
+];
+
+/* ═══════════ 渲染 ═══════════ */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let curFrame=0;
+
+function renderFrames(){
+  const ftSel=$("#ftSel").value, badOnly=$("#badOnly").checked;
+  const rows=FR.map((f,i)=>({f,i})).filter(x=>
+    (ftSel==="全部业务"||x.f.ft===ftSel)&&(!badOnly||x.f.bad));
+  $("#frList").innerHTML=rows.map(({f,i})=>`
+   <div class="fr-item${f.bad?' bad':''}${i===curFrame?' sel':''}" data-f="${i}">
+    <div class="fr-in">
+      <div class="fr-r1"><span class="fr-t">${f.t}</span><span class="fr-ft">${esc(f.ft)}</span>
+        ${f.hint?'<span class="hintdot" title="可反推 feature_hint"></span>':''}${f.bad?'<span class="baddot" title="坏帧"></span>':''}
+        <span class="fr-len">${f.len}B</span></div>
+      <div class="fr-r2">
+        ${f.dir==="dl"?'<span class="tei tei--dl">DL</span>':f.dir==="ul"?'<span class="tei tei--ul">UL</span>':'<span class="tei">—</span>'}
+        ${f.src?`<span class="tei"><i>SRC</i> ${f.src}</span><span class="tei"><i>DST</i> ${f.dst}</span>`:''}
+        ${f.ori?`<span class="tei"><i>O→F</i> ${f.ori}/${f.fin}</span>`:''}
+        ${f.seq&&f.seq!=="—"?`<span class="fr-seq">seq ${f.seq}</span>`:''}
+        ${f.bad?`<span style="font-size:10.5px;color:var(--err-c)">${esc(f.note)}</span>`:''}
+      </div>
+    </div>
+   </div>`).join("")||`<div class="empty" style="height:160px"><p>无匹配帧</p></div>`;
+  $$("#frList .fr-item").forEach(el=>el.addEventListener("click",()=>{
+    curFrame=+el.dataset.f;
+    $$("#frList .fr-item").forEach(x=>x.classList.remove("sel"));el.classList.add("sel");
+    renderDetail();
+  }));
+}
+
+function colorHex(raw){
+  const p=raw.trim().split(/\s+/);
+  if(p.length<8)return p.map(x=>`<span class="hx s-DU">${x}</span>`).join(" ");
+  const c=new Array(p.length).fill("s-R");
+  c[0]="s-68";c[p.length-1]="s-16";c[p.length-2]="s-CS";c[1]="s-L";c[2]="s-L";c[3]="s-C";
+  /* APP_RAW 从偏移 10 起（R 6B + AFN + DT…按 4-3 帧）；序号在第 17~18 字节 */
+  for(let i=10;i<p.length-2;i++)c[i]="s-APP";
+  for(let i=0;i<p.length-1;i++){if(p[i]==="04"&&p[i+1]==="D2"&&i>12){c[i]="s-SEQ";c[i+1]="s-SEQ";break;}}
+  return p.map((x,i)=>`<span class="hx ${c[i]}" title="偏移 ${i}">${x}</span>`).join(" ");
+}
+
+function renderDetail(){
+  const f=FR[curFrame];
+  $("#parHead").innerHTML=f.bad?`
+    <div class="par-t1"><b style="color:var(--err-c)">坏帧</b>
+      <span class="chip chip--err">CRC 校验失败</span><span class="chip chip--ghost">${f.t}</span></div>
+    <div class="par-t2">坏帧单独计数隔离（底部 <em>412</em>），保留原始字节供离线复核，不入帧索引主列表。</div>`:`
+    <div class="par-t1"><b>${esc(f.ft)}</b>
+      <span class="chip chip--${f.dir==="dl"?'tx':'rx'}">${f.dir==="dl"?"下行":"上行"}</span>
+      <span class="chip chip--ghost">${f.t}</span>
+      <span class="chip chip--ghost">frame ${f.fid}</span>
+      <span class="chip chip--ghost">RSSI ${f.rssi} dBm</span>
+      <span class="chip chip--ghost">${f.ch}</span></div>
+    <div class="par-t2">SNID <em>28</em> · 信道类型 <em>${f.ch}</em> · ${f.dir==="dl"?"CCO → STA（经 TEI "+f.dst+"）":"STA "+f.src+" → CCO"}。telemetry 与应用层拆分见下方物化列。</div>`;
+
+  if(f.bad){
+    $("#parBody").innerHTML=`
+     <div class="card open"><div class="card-h"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg><b>原始字节</b><span class="hint">87 B</span>
+       <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="card-b"><div><div class="card-in"><div class="hexwrap"><div class="hex">${"68 5C 00 00 00 00 00 00 00 00 03 10 20 30 40 50 60 70 80 90 A0 B0 C0 D0 E0 F0 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20 21 22 23 24 25 26 27 28 29 2A 2B 2C 2D 2E 2F 30 31 32 33 34 35 36 37 38 39 3A 3B 3C 3D 3E 3F 40 41 42 43 44 45 46 47 48 49 4A 4B 16".split(" ").map(x=>`<span class="hx s-DU">${x}</span>`).join(" ")}</div></div></div></div></div>`;
+    return;
+  }
+
+  const kv=(items)=>`<div class="kv">${items.map(x=>`<div><div class="k">${x[0]}</div><div class="v ${x[2]||''}" title="${esc(String(x[1]))}">${esc(String(x[1]))}</div></div>`).join("")}</div>`;
+  $("#parBody").innerHTML=`
+   <div class="card open"><div class="card-h">
+     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+     <b>解析摘要 · 物化列</b><span class="hint">frames 表增列</span>
+     <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="card-b"><div><div class="card-in">
+      ${kv([["app_port","0x11"],["app_id",f.app||"—"],["msg_seq",f.seq&&f.seq!=="—"?f.seq+"  = APP_RAW[8:10]":"—","hl"],
+        ["flow_dir",f.dir==="dl"?"下行":"上行","ac"],["sta_tei",f.dir==="dl"?f.dst:f.src],["ori_tei → fin_tei",f.ori?f.ori+" → "+f.fin:"—"],
+        ["ack_peer","—"],["meter_addrs",f.app?"13 个（06C21E280A …）":"—"]])}
+      ${f.app?`<div style="margin-top:9px;padding-top:9px;border-top:1px solid var(--line-1);font-size:11.5px;color:var(--tx-3);line-height:1.7">
+        业务头前缀 <span class="mono" style="color:var(--am)">1103 0000 0102</span>（0x0201 为静态字段，非序号）· 设备超时 <span class="mono" style="color:var(--am)">5.1 s</span> · 配置字 bit4~7：未应答重试 ✓ / 否认重试 ✗ / 最大重试 <span class="mono" style="color:var(--am)">3</span></div>`:''}
+    </div></div></div></div>
+
+   <div class="card open"><div class="card-h">
+     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3"/></svg>
+     <b>原始帧 · 逐段着色</b><span class="hint">${f.len} B</span>
+     <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="card-b"><div><div class="card-in">
+      <div class="hexwrap"><div class="hex">${colorHex(HEX)}</div>
+        <div class="hexlg">
+          <span><i style="background:#e879a8"></i>68H / L / 16H</span>
+          <span><i style="background:#f0b429"></i>C · CS</span>
+          <span><i style="background:#9aabbb"></i>MAC 头（SRC/DST/TEI…）</span>
+          <span><i style="background:#e8f0f7"></i>APP_RAW</span>
+          <span><i style="background:#f0b429;outline:1px dashed rgba(240,180,41,.5)"></i>序号 APP_RAW[8:10]</span>
+        </div></div>
+    </div></div></div></div>
+
+   <div class="card open hintcard" data-an data-an-t="8"><div class="card-h">
+     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1z"/></svg>
+     <b>feature_hint · 特征草稿</b><span class="hint">单帧反推</span>
+     <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="card-b"><div><div class="card-in">
+      <div class="hint-body">
+        该帧可构成追踪特征草稿：<code>frm_type=终端主动并发抄表</code> · <code>app_id=0003</code> · <code>msg_seq=0x04d2</code> · dst_tei 留空=全部对端。
+        建议升级为 <code>round</code> 粒度观察整轮 13 块表的对账。
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <a class="btn btn--sm btn--primary" href="trace-ui.html">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+          送报文追踪</a>
+        <button class="btn btn--sm">复制特征 JSON</button>
+      </div>
+    </div></div></div></div>
+
+   <div class="card open"><div class="card-h">
+     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+     <b>追踪关联</b><span class="hint">同序号流</span>
+     <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+    <div class="card-b"><div><div class="card-in">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--tx-2)">
+        <span class="chip chip--ac">tr-9f2c</span> 已追踪该序号 · round 粒度 · 全链 9/13
+        <a class="btn btn--sm btn--ghost" href="trace-ui.html" style="margin-left:auto">打开追踪 →</a>
+      </div>
+    </div></div></div></div>`;
+  $$("#parBody .card-h").forEach(h=>h.addEventListener("click",()=>{
+    h.parentElement.classList.toggle("open");
+  }));
+}
+
+/* 底部汇总 */
+$("#statRow").innerHTML=STATS.map(s=>`
+ <div class="stat ${s.cls||''}"><span class="k">${s.k}</span>
+   <span class="v">${s.v}${s.s?`<small>${s.s}</small>`:''}</span></div>`).join("");
+
+/* 交互 */
+$("#sbToggle").addEventListener("click",()=>$("#app").classList.toggle("collapsed"));
+$("#grpRespH").addEventListener("click",()=>{
+  const g=$("#grpResp");g.classList.toggle("open");
+  $("#grpRespH").setAttribute("aria-expanded",g.classList.contains("open"));
+});
+$("#segView").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  $$("#segView button").forEach(x=>x.classList.remove("on"));b.classList.add("on");
+  const names={frames:"帧索引",minute:"分钟采集 · 周期聚合",task:"任务配置下发应答",carrier:"网络承载评估 · 按信标周期"};
+  $("#listTitle").textContent=names[b.dataset.v];
+  /* 设计稿聚焦帧浏览态；其余视图复用同一三列布局（见标注 9） */
+});
+$("#ftSel").addEventListener("change",renderFrames);
+$("#badOnly").addEventListener("change",renderFrames);
+$("#trH").addEventListener("click",e=>{
+  if(e.target.closest(".tag")||e.target.closest(".chip"))return;
+  $("#traffic").classList.toggle("fold");
+});
+$("#capBtn").addEventListener("click",()=>{
+  const on=$("#capBtn").classList.toggle("btn--primary");
+  $("#capBtn").lastChild.textContent=on?"停止采集":"开始采集";
+});
+$("#annoH").addEventListener("click",e=>{
+  if(e.target.closest("#annoHl"))return;
+  $("#anno").classList.toggle("open");
+});
+$("#annoHl").addEventListener("click",e=>{
+  e.stopPropagation();document.body.classList.toggle("anno-on");
+  $("#annoHl").textContent=document.body.classList.contains("anno-on")?"取消高亮":"高亮区域";
+});
+$("#annoBtn").addEventListener("click",()=>$("#anno").classList.toggle("open"));
+$("#annoList").innerHTML=ANNOS.map(a=>`<li><b>${a[0]}</b><span>${esc(a[1])}</span></li>`).join("");
+
+/* 初始态 */
+renderFrames();
+renderDetail();
+</script>
+</body>
+</html>

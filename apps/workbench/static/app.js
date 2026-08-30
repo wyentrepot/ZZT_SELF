@@ -9,18 +9,23 @@
 (function () {
   "use strict";
 
-  // 页面注册表：id / title / src / group（验证 | 设备 | 维护）
+  // 页面注册表：id / title / src / group（验证 | 设备 | 辅助 | 维护）
   const PAGES = [
     { id: "workbench", title: "验证工作台", src: "/static/workbench.html", group: "验证" },
     { id: "serial-profile", title: "串口配置", src: "/static/pages/serial-profile/serial-profile.html", group: "设备" },
     { id: "module", title: "模块日志", src: "/static/pages/module-serial/module-serial.html", group: "设备" },
     { id: "listener", title: "侦听台", src: "/static/pages/listener/index.html", group: "设备" },
+    { id: "simcon", title: "模拟集中器", src: "/static/pages/simcon/simcon.html", group: "设备" },
+    { id: "trace", title: "报文追踪", src: "/static/pages/trace/trace.html", group: "辅助" },
+    { id: "dict", title: "协议字典", src: "/static/pages/dict/dict.html", group: "辅助" },
+    { id: "scenario", title: "场景脚本", src: "/static/pages/scenario/scenario.html", group: "辅助" },
     { id: "maintenance", title: "工作台状态", src: "/static/pages/maintenance/maintenance.html", group: "维护" },
   ];
 
   const GROUPS = [
     { name: "验证", pages: ["workbench"] },
-    { name: "设备", pages: ["serial-profile", "module", "listener"] },
+    { name: "设备", pages: ["serial-profile", "module", "listener", "simcon"] },
+    { name: "辅助", pages: ["trace", "dict", "scenario"] },
     { name: "维护", pages: ["maintenance"] },
   ];
 

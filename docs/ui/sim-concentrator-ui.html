@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模拟集中器 · 1376.2 下发 — UI 设计稿</title>
+<style>
+/* ============ Design Tokens ============ */
+:root{
+  /* 背景层：三级递进，营造纵深（禁用纯黑/纯灰平铺） */
+  --bg-0:#090c10;
+  --bg-1:#0e1319;
+  --bg-2:#131a22;
+  --bg-3:#18212b;
+  --bg-4:#1e2833;
+
+  --line-1:#1f2935;
+  --line-2:#2a3644;
+  --line-3:#3a4a5c;
+
+  --tx-1:#e8f0f7;
+  --tx-2:#9aabbb;
+  --tx-3:#65798c;
+  --tx-4:#465768;
+
+  /* 主色 = 工业青；次色 = 琥珀；点缀 = 品红 */
+  --ac:#22d3ee;
+  --ac-dim:#0e7490;
+  --ac-soft:rgba(34,211,238,.12);
+  --am:#f0b429;
+  --am-soft:rgba(240,180,41,.12);
+  --mg:#e879a8;
+
+  --tx-c:#f0b429;      /* 发送 TX */
+  --rx-c:#2dd4bf;      /* 接收 RX */
+  --ok-c:#34d399;
+  --warn-c:#fbbf24;
+  --err-c:#f87171;
+
+  --r-s:5px; --r-m:8px; --r-l:12px;
+  --sp:4px;
+  --ff:"HarmonyOS Sans SC","PingFang SC","Source Han Sans SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --fm:"JetBrains Mono","Cascadia Mono","Sarasa Mono SC","Consolas",ui-monospace,monospace;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--ff); font-size:13px; line-height:1.6; color:var(--tx-1);
+  background:
+    radial-gradient(1200px 700px at 12% -10%, #12212c 0%, transparent 60%),
+    radial-gradient(900px 600px at 100% 110%, #17202b 0%, transparent 55%),
+    var(--bg-0);
+  overflow:hidden;
+}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--line-3);background-clip:content-box}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--fm);font-variant-ligatures:none}
+
+/* ============ 通用组件 ============ */
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-s);
+  font-size:11px;font-weight:500;letter-spacing:.02em;background:var(--bg-3);color:var(--tx-2);border:1px solid var(--line-1)}
+.chip--ac{background:var(--ac-soft);color:var(--ac);border-color:rgba(34,211,238,.25)}
+.chip--am{background:var(--am-soft);color:var(--am);border-color:rgba(240,180,41,.25)}
+.chip--tx{background:rgba(240,180,41,.12);color:var(--tx-c);border-color:rgba(240,180,41,.28)}
+.chip--rx{background:rgba(45,212,191,.12);color:var(--rx-c);border-color:rgba(45,212,191,.28)}
+.chip--ghost{background:transparent;color:var(--tx-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 13px;
+  border-radius:var(--r-m);border:1px solid var(--line-2);background:var(--bg-3);color:var(--tx-2);
+  font-size:12.5px;font-weight:500;transition:all .14s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--bg-4);color:var(--tx-1);border-color:var(--line-3)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:linear-gradient(180deg,#22d3ee,#0ea5c4);color:#04222b;border-color:#0e9ab5;font-weight:500}
+.btn--primary:hover{background:linear-gradient(180deg,#3fdcf5,#12b4d4);color:#04222b}
+.btn--sm{height:26px;padding:0 10px;font-size:12px}
+.btn--icon{width:30px;padding:0}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--tx-3)}
+.btn--ghost:hover{background:var(--bg-3);color:var(--tx-1)}
+.fld{width:100%;height:30px;padding:0 9px;border-radius:var(--r-m);background:var(--bg-1);
+  border:1px solid var(--line-2);color:var(--tx-1);font-size:12.5px;transition:all .14s var(--ease)}
+.fld:hover{border-color:var(--line-3)}
+.fld:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+select.fld{appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%2365798c' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 9px center;padding-right:26px}
+.sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-2)}
+.sec-h h3{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--tx-2);text-transform:none}
+.sec-h .sp{margin-left:auto}
+
+/* ============ 骨架 ============ */
+.app{display:grid;grid-template-columns:var(--sb-w,232px) 1fr;height:100vh;
+  transition:grid-template-columns .22s var(--ease)}
+.app.collapsed{--sb-w:56px}
+
+/* ---------- 侧栏（可收敛） ---------- */
+.sb{display:flex;flex-direction:column;min-width:0;background:var(--bg-1);
+  border-right:1px solid var(--line-1);position:relative;z-index:5}
+.sb-top{display:flex;align-items:center;gap:10px;height:50px;padding:0 10px 0 13px;flex:none;
+  border-bottom:1px solid var(--line-1)}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
+.brand-mark{width:26px;height:26px;flex:none;border-radius:7px;
+  background:linear-gradient(140deg,#22d3ee,#0e7490);display:grid;place-items:center}
+.brand-mark svg{width:15px;height:15px}
+.brand-txt{min-width:0}
+.brand-txt b{display:block;font-size:13px;font-weight:500;letter-spacing:.02em;white-space:nowrap}
+.brand-txt span{display:block;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+.collapsed .brand-txt{opacity:0;pointer-events:none}
+.collapsed .sb-top{justify-content:center;padding:0}
+.sb-toggle{flex:none;width:28px;height:28px;border-radius:var(--r-m);display:grid;place-items:center;
+  color:var(--tx-3);transition:all .14s var(--ease)}
+.sb-toggle:hover{background:var(--bg-3);color:var(--tx-1)}
+.collapsed .sb-toggle{transform:rotate(180deg)}
+
+.sb-nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 8px 16px}
+.nav-label{font-size:10px;letter-spacing:.12em;color:var(--tx-4);padding:12px 8px 5px;white-space:nowrap}
+.collapsed .nav-label{opacity:0;height:14px;padding:8px 0 0;text-align:center;overflow:hidden}
+.collapsed .nav-label::after{content:"";display:block;height:1px;background:var(--line-1);margin:6px 8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;height:34px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-2);font-size:13px;cursor:pointer;position:relative;
+  transition:background .14s var(--ease),color .14s var(--ease);width:100%;text-align:left}
+.nav-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.nav-item.on{background:linear-gradient(90deg,var(--ac-soft),transparent 92%);color:var(--ac)}
+.nav-item.on::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2.5px;
+  border-radius:0 3px 3px 0;background:var(--ac)}
+.nav-item svg{width:16px;height:16px;flex:none}
+.nav-item .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-item .cnt{font-size:10.5px;color:var(--tx-4);font-family:var(--fm)}
+.collapsed .nav-item{justify-content:center;padding:0}
+.collapsed .nav-item .t,.collapsed .nav-item .cnt,.collapsed .nav-item .car{display:none}
+.collapsed .nav-item.on::before{left:0}
+.collapsed .nav-item::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;
+  transform:translateY(-50%);background:var(--bg-4);border:1px solid var(--line-2);color:var(--tx-1);
+  padding:5px 9px;border-radius:var(--r-s);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:40}
+.collapsed .nav-item:hover::after{opacity:1}
+
+/* 内置应答：可收缩分组 */
+.grp{margin-top:2px}
+.grp-h{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.grp-h:hover{background:var(--bg-2);color:var(--tx-2)}
+.grp-h .car{width:13px;height:13px;flex:none;transition:transform .18s var(--ease);opacity:.7}
+.grp.open .grp-h .car{transform:rotate(90deg)}
+.grp-h .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.grp.open .grp-b{grid-template-rows:1fr}
+.grp-b>div{overflow:hidden;min-height:0}
+.grp-b .inner{padding:2px 0 4px 0}
+.collapsed .grp-h{justify-content:center;padding:0}
+.collapsed .grp-h .t,.collapsed .grp-h .car{display:none}
+.collapsed .grp-b{display:none}
+.sub-item{display:flex;align-items:center;gap:8px;height:29px;padding:0 9px 0 20px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.sub-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.sub-item.on{color:var(--ac);background:var(--ac-soft)}
+.sub-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live{width:5px;height:5px;border-radius:50%;flex:none}
+
+.sb-foot{flex:none;padding:9px;border-top:1px solid var(--line-1);display:grid;gap:7px}
+.com-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);padding:8px 9px}
+.com-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--tx-3)}
+.com-row+.com-row{margin-top:5px}
+.com-row b{font-family:var(--fm);color:var(--tx-2);font-size:11.5px;font-weight:400}
+.collapsed .sb-foot{padding:9px 7px}
+.collapsed .com-card{display:none}
+.collapsed .sb-foot .btn span{display:none}
+.collapsed .sb-foot .btn{width:100%}
+
+/* ---------- 主区 ---------- */
+.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.top{display:flex;align-items:center;gap:12px;height:50px;padding:0 16px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1)}
+.crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx-3);min-width:0}
+.crumb b{color:var(--tx-1);font-weight:500;font-size:14px}
+.crumb .sep{color:var(--tx-4)}
+.top .sp{margin-left:auto}
+.port{padding:0 8px}
+
+/* 工作区：AFN 列 | Fn 列 | 参数列 */
+.work{flex:1;display:grid;grid-template-columns:var(--c1,244px) var(--c2,252px) 1fr;min-height:0;
+  transition:grid-template-columns .22s var(--ease)}
+.work.c1-off{--c1:0px}
+.work.c1-off .col-afn{border-right:none;overflow:hidden}
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-1)}
+.col+.col{border-left:1px solid var(--line-1)}
+.col-body{flex:1;overflow-y:auto;min-height:0}
+
+/* AFN 列 */
+.afn-item{border-bottom:1px solid rgba(31,41,53,.6)}
+.afn-h{display:flex;align-items:center;gap:9px;width:100%;padding:9px 11px;text-align:left;
+  transition:background .14s var(--ease);position:relative}
+.afn-h:hover{background:var(--bg-2)}
+.afn-item.open .afn-h{background:var(--bg-2)}
+.afn-item.sel .afn-h{background:linear-gradient(90deg,var(--ac-soft),transparent)}
+.afn-item.sel .afn-h::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--ac)}
+.afn-code{font-family:var(--fm);font-size:12px;font-weight:500;color:var(--ac);flex:none;
+  min-width:30px;padding:1px 5px;border-radius:4px;background:var(--bg-3);text-align:center}
+.afn-name{flex:1;min-width:0;font-size:12.5px;color:var(--tx-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.afn-meta{display:flex;align-items:center;gap:6px;flex:none}
+.afn-car{width:12px;height:12px;color:var(--tx-4);transition:transform .18s var(--ease);flex:none}
+.afn-item.open .afn-car{transform:rotate(90deg)}
+.afn-dir{font-size:10px;color:var(--tx-4);font-family:var(--fm);flex:none}
+
+/* Fn 列 */
+.fn-head{padding:10px 12px;border-bottom:1px solid var(--line-1);background:var(--bg-2);flex:none}
+.fn-head .r1{display:flex;align-items:center;gap:8px}
+.fn-head .r1 b{font-family:var(--fm);font-size:13px;color:var(--ac)}
+.fn-head .r1 span{font-size:12.5px;color:var(--tx-1)}
+.fn-head .sem{margin-top:7px;font-size:11.5px;color:var(--tx-3);line-height:1.55}
+.fn-item{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px 12px;text-align:left;
+  border-bottom:1px solid rgba(31,41,53,.5);transition:background .14s var(--ease);position:relative}
+.fn-item:hover{background:var(--bg-2)}
+.fn-item.on{background:linear-gradient(90deg,var(--ac-soft),transparent)}
+.fn-item.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--ac)}
+.fn-no{font-family:var(--fm);font-size:11.5px;color:var(--tx-3);flex:none;min-width:34px;padding-top:1px}
+.fn-item.on .fn-no{color:var(--ac)}
+.fn-nm{flex:1;min-width:0;font-size:12.5px;color:var(--tx-2);line-height:1.5}
+.fn-item.on .fn-nm{color:var(--tx-1)}
+.fn-todo{font-size:10px;color:var(--tx-4);display:block;font-family:var(--fm)}
+.empty{display:grid;place-items:center;height:100%;padding:32px 20px;text-align:center;color:var(--tx-4)}
+.empty svg{width:38px;height:38px;opacity:.35;margin-bottom:12px}
+.empty p{font-size:12.5px;line-height:1.7}
+
+/* 参数列 */
+.par{display:flex;flex-direction:column;min-height:0;background:var(--bg-1)}
+.par-head{padding:12px 16px;border-bottom:1px solid var(--line-1);background:var(--bg-2);flex:none}
+.par-t1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.par-t1 b{font-size:15px;font-weight:500;letter-spacing:.01em}
+.par-t2{margin-top:7px;font-size:12px;color:var(--tx-3);line-height:1.6}
+.par-t2 em{font-style:normal;color:var(--am);font-family:var(--fm)}
+.par-body{flex:1;overflow-y:auto;padding:14px 16px 20px;display:grid;gap:14px;align-content:start}
+
+.card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-l);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:9px;padding:9px 13px;cursor:pointer;
+  background:var(--bg-3);border-bottom:1px solid transparent;transition:background .14s var(--ease)}
+.card-h:hover{background:var(--bg-4)}
+.card.closed .card-h{border-bottom-color:transparent}
+.card.open .card-h{border-bottom-color:var(--line-1)}
+.card-h .ic{width:15px;height:15px;color:var(--ac);flex:none}
+.card-h b{font-size:12.5px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--tx-4);display:flex;align-items:center;gap:6px}
+.card-h .car{width:13px;height:13px;color:var(--tx-4);transition:transform .18s var(--ease)}
+.card.open .card-h .car{transform:rotate(90deg)}
+.card-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.card.open .card-b{grid-template-rows:1fr}
+.card-b>div{overflow:hidden;min-height:0}
+.card-in{padding:13px}
+
+/* 字段表 */
+.ft{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.ft th{text-align:left;font-weight:400;font-size:10.5px;letter-spacing:.08em;color:var(--tx-4);
+  padding:0 8px 7px;border-bottom:1px solid var(--line-1)}
+.ft td{padding:7px 8px;border-bottom:1px solid rgba(31,41,53,.55);vertical-align:top}
+.ft tr:last-child td{border-bottom:none}
+.ft .c-n{width:23%}
+.ft .c-f{width:52px}
+.ft .c-b{width:40px}
+.ft .c-v{width:auto}
+.ft .nm{color:var(--tx-1);font-size:12px}
+.ft .ds{margin-top:3px;font-size:11px;color:var(--tx-4);line-height:1.55}
+.ft .fmt{font-family:var(--fm);font-size:10.5px;color:var(--tx-3)}
+.ft .byt{font-family:var(--fm);font-size:11px;color:var(--tx-3);text-align:right}
+.ft .in{width:100%;height:28px;padding:0 8px;border-radius:var(--r-s);background:var(--bg-1);
+  border:1px solid var(--line-2);font-family:var(--fm);font-size:12px;transition:all .14s var(--ease)}
+.ft .in:hover{border-color:var(--line-3)}
+.ft .in:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+.ft select.in{font-family:var(--ff);font-size:12px;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%2365798c' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 7px center;padding-right:22px;appearance:none}
+.ft tr.ro .nm::after{content:"上行";margin-left:6px;font-size:10px;color:var(--rx-c);
+  border:1px solid rgba(45,212,191,.3);border-radius:3px;padding:0 4px;background:rgba(45,212,191,.1)}
+
+.bits{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.bit{font-family:var(--fm);font-size:10px;padding:1px 5px;border-radius:3px;
+  background:var(--bg-1);border:1px solid var(--line-2);color:var(--tx-3)}
+.bit i{font-style:normal;color:var(--am)}
+
+/* 帧预览 */
+.hexwrap{background:var(--bg-0);border:1px solid var(--line-1);border-radius:var(--r-m);padding:11px 12px}
+.hex{font-family:var(--fm);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all}
+.hx{padding:1px 3px;border-radius:3px;cursor:default;transition:background .12s var(--ease)}
+.hx:hover{outline:1px solid var(--line-3)}
+.s-68,.s-16{color:var(--mg)}
+.s-L{color:var(--mg)}
+.s-C{color:var(--am)}
+.s-R{color:var(--tx-2)}
+.s-A{color:var(--rx-c)}
+.s-AFN{color:var(--ac);font-weight:500}
+.s-DT{color:#a78bfa}
+.s-DU{color:var(--tx-1)}
+.s-CS{color:var(--am)}
+.hexlg{display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:10px;padding-top:9px;border-top:1px solid var(--line-1)}
+.hexlg span{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--tx-4)}
+.hexlg i{width:8px;height:8px;border-radius:2px;font-style:normal}
+.par-foot{flex:none;padding:11px 16px;border-top:1px solid var(--line-1);background:var(--bg-2);
+  display:flex;align-items:center;gap:10px}
+.par-foot .sp{margin-left:auto}
+.par-foot .meta{font-size:11px;color:var(--tx-4);font-family:var(--fm)}
+
+/* ---------- 底部收发记录 ---------- */
+.traffic{flex:none;display:flex;flex-direction:column;background:var(--bg-1);
+  border-top:1px solid var(--line-2);height:var(--th,268px);transition:height .22s var(--ease)}
+.traffic.fold{--th:37px}
+.tr-h{display:flex;align-items:center;gap:10px;height:37px;padding:0 12px;flex:none;
+  cursor:pointer;user-select:none;background:var(--bg-2)}
+.tr-h:hover{background:var(--bg-3)}
+.tr-h .car{width:13px;height:13px;color:var(--tx-3);transition:transform .18s var(--ease)}
+.traffic:not(.fold) .tr-h .car{transform:rotate(90deg)}
+.tr-h .ttl{font-size:12.5px;font-weight:500;letter-spacing:.02em}
+.tr-h .sp{margin-left:auto}
+.seg{display:flex;background:var(--bg-1);border:1px solid var(--line-2);border-radius:var(--r-m);padding:2px;gap:2px}
+.seg button{height:22px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--tx-3);transition:all .14s var(--ease)}
+.seg button:hover{color:var(--tx-1)}
+.seg button.on{background:var(--bg-4);color:var(--tx-1)}
+.traffic.fold .tr-h .seg,.traffic.fold .tr-h .tr-act{display:none}
+.tr-body{flex:1;overflow-y:auto;min-height:0}
+
+.tx-row{border-bottom:1px solid rgba(31,41,53,.55);transition:background .12s var(--ease)}
+.tx-row:hover{background:var(--bg-2)}
+.tx-row.open{background:var(--bg-2)}
+.tx-main{display:flex;align-items:center;gap:10px;padding:7px 12px;cursor:pointer;width:100%;text-align:left}
+.tx-main .car{width:11px;height:11px;color:var(--tx-4);transition:transform .18s var(--ease);flex:none}
+.tx-row.open .tx-main .car{transform:rotate(90deg)}
+.tm{font-family:var(--fm);font-size:11px;color:var(--tx-4);flex:none;width:76px}
+.dir{display:inline-flex;align-items:center;gap:4px;font-family:var(--fm);font-size:10.5px;font-weight:500;
+  width:44px;flex:none;padding:1px 0;border-radius:3px;justify-content:center}
+.dir.tx{color:var(--tx-c);background:rgba(240,180,41,.12)}
+.dir.rx{color:var(--rx-c);background:rgba(45,212,191,.12)}
+.afn-tag{font-family:var(--fm);font-size:11px;color:var(--ac);flex:none;
+  background:var(--bg-3);border-radius:3px;padding:1px 5px}
+.fn-tag{font-family:var(--fm);font-size:11px;color:var(--tx-3);flex:none;min-width:32px}
+.sum{flex:1;min-width:0;font-size:12px;color:var(--tx-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.raw{font-family:var(--fm);font-size:10.5px;color:var(--tx-4);flex:none;max-width:190px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.len{font-family:var(--fm);font-size:10.5px;color:var(--tx-4);flex:none;width:34px;text-align:right}
+
+.tx-det{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.tx-row.open .tx-det{grid-template-rows:1fr}
+.tx-det>div{overflow:hidden;min-height:0}
+.det-in{padding:2px 12px 14px 43px;display:grid;gap:11px}
+.sem-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 11px;border-radius:var(--r-m);
+  background:var(--bg-3);border:1px solid var(--line-1)}
+.sem-banner .k{font-size:10.5px;color:var(--tx-4);letter-spacing:.06em}
+.sem-banner .v{font-size:12.5px;color:var(--tx-1)}
+.sem-banner .v em{font-style:normal;color:var(--ac);font-family:var(--fm)}
+.det-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:11px}
+@media (max-width:1180px){.det-grid{grid-template-columns:minmax(0,1fr)}
+  .work{grid-template-columns:var(--c1,200px) var(--c2,210px) 1fr}}
+.det-box{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);overflow:hidden;min-width:0}
+.det-box h5{font-size:10.5px;font-weight:400;letter-spacing:.08em;color:var(--tx-4);
+  padding:7px 11px;background:var(--bg-3);border-bottom:1px solid var(--line-1)}
+.det-box .bd{padding:10px 11px}
+.hexwrap.sm{padding:9px 10px}
+.hex.sm{font-size:11.5px;line-height:1.85}
+
+/* ---------- 标注层 ---------- */
+.anno{position:fixed;right:16px;bottom:16px;width:290px;z-index:60;
+  background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--r-l);
+  box-shadow:0 12px 40px rgba(0,0,0,.55);overflow:hidden}
+.anno-h{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--bg-3);
+  border-bottom:1px solid var(--line-1);cursor:pointer}
+.anno-h b{font-size:12px;font-weight:500}
+.anno-h .sp{margin-left:auto}
+.anno-h .car{width:13px;height:13px;color:var(--tx-3);transition:transform .18s var(--ease)}
+.anno.open .anno-h .car{transform:rotate(90deg)}
+.anno-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.anno.open .anno-b{grid-template-rows:1fr}
+.anno-b>div{overflow:hidden;min-height:0}
+.anno-l{max-height:46vh;overflow-y:auto;padding:8px}
+.anno-l li{display:flex;gap:9px;padding:6px 6px;border-radius:var(--r-s);font-size:11.5px;
+  color:var(--tx-2);line-height:1.55;cursor:default}
+.anno-l li:hover{background:var(--bg-3)}
+.anno-l li b{font-family:var(--fm);font-size:10.5px;color:var(--am);flex:none;width:15px;height:15px;
+  border-radius:3px;background:var(--am-soft);display:grid;place-items:center;margin-top:2px}
+.anno-l li s{text-decoration:none;color:var(--tx-4)}
+
+.tag{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;flex:none;border-radius:3px;background:var(--am-soft);color:var(--am);
+  font-family:var(--fm);font-size:10px;cursor:help;vertical-align:middle}
+.tag::after{content:attr(data-d);position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+  background:var(--bg-4);border:1px solid var(--line-3);color:var(--tx-1);padding:6px 9px;border-radius:var(--r-s);
+  font-family:var(--ff);font-size:11.5px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:70}
+.tag:hover::after{opacity:1}
+body.anno-on [data-an]{outline:1px dashed var(--am);outline-offset:2px;border-radius:var(--r-s)}
+body.anno-on [data-an]::after{content:attr(data-an-t);position:absolute;top:-8px;right:-4px;
+  background:var(--am);color:#23180a;font-size:9.5px;font-family:var(--fm);padding:0 4px;border-radius:3px;z-index:30}
+body.anno-on .app>*{position:relative}
+
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+<!-- ════════════ 侧栏（可收敛） ════════════ -->
+<aside class="sb">
+  <div class="sb-top">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#04222b" stroke-width="2.2" stroke-linecap="round"><path d="M3 12h3l2-6 3 14 3-11 2 5h5"/></svg></span>
+      <span class="brand-txt"><b>侦听台工作台</b><span>Listener Workbench</span></span>
+    </div>
+    <button class="sb-toggle" id="sbToggle" title="收敛 / 展开侧栏" aria-label="收敛或展开侧栏">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+  </div>
+
+  <nav class="sb-nav">
+    <div class="nav-label">主功能</div>
+
+    <button class="nav-item" data-tip="侦听台">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span class="t">侦听台</span>
+    </button>
+
+    <button class="nav-item on" data-tip="模拟集中器">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7.5h.01M7 17h.01"/></svg>
+      <span class="t">模拟集中器</span>
+      <span class="cnt">15</span>
+    </button>
+
+    <!-- 内置应答：可收缩栏 -->
+    <div class="grp open" id="grpResp">
+      <button class="grp-h" id="grpRespH" aria-expanded="true">
+        <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="t">内置应答</span>
+        <span class="dot" style="color:var(--ok-c)"></span>
+      </button>
+      <div class="grp-b"><div><div class="inner" id="respList"></div></div></div>
+    </div>
+
+    <div class="nav-label">辅助</div>
+    <button class="nav-item" data-tip="报文追踪">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+      <span class="t">报文追踪</span>
+    </button>
+    <button class="nav-item" data-tip="协议字典">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h9a3 3 0 013 3v13a2.5 2.5 0 00-2.5-2.5H4z"/><path d="M20 4h-1a3 3 0 00-3 3v13a2.5 2.5 0 012.5-2.5H20z"/></svg>
+      <span class="t">协议字典</span>
+    </button>
+    <button class="nav-item" data-tip="场景脚本">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+      <span class="t">场景脚本</span>
+    </button>
+  </nav>
+
+  <div class="sb-foot">
+    <div class="com-card">
+      <div class="com-row"><span class="dot" style="color:var(--ok-c)"></span>串口 <b>COM14</b> · 9600 8E1</div>
+      <div class="com-row"><span class="dot" style="color:var(--ac)"></span>模块 <b>CCO</b> · 已就绪</div>
+    </div>
+    <button class="btn btn--sm" style="width:100%"><span>串口设置</span></button>
+  </div>
+</aside>
+
+<!-- ════════════ 主区 ════════════ -->
+<main class="main">
+  <header class="top">
+    <div class="crumb">
+      <b>模拟集中器</b><span class="sep">/</span><span>Q/GDW 10376.2 — 1376.2 下发</span>
+      <span class="chip chip--ac" style="margin-left:4px">AFN 15 类 · Fn 70+</span>
+    </div>
+    <div class="sp"></div>
+    <select class="fld port" style="width:104px"><option>COM14</option><option>COM7</option></select>
+    <select class="fld" style="width:88px"><option>9600</option><option>19200</option><option>115200</option></select>
+    <select class="fld" style="width:132px"><option>1376.2 集中器↔模块</option><option>1376.2 路由扩展</option></select>
+    <button class="btn btn--sm" id="colToggle" title="收起 / 展开 AFN 列">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+      列
+    </button>
+    <button class="btn btn--sm" id="annoBtn">标注说明</button>
+  </header>
+
+  <!-- 三列工作区：AFN 列 | Fn 列 | 参数列 -->
+  <section class="work" id="work">
+
+    <!-- 列 1：AFN（按 AFN 收拢，点击一列列展开） -->
+    <div class="col col-afn" data-an data-an-t="4">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <h3>AFN 应用功能码</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 4：按 AFN 收拢的一列列可点击设定">4</span>
+      </div>
+      <div class="col-body" id="afnCol"></div>
+    </div>
+
+    <!-- 列 2：Fn -->
+    <div class="col col-fn" data-an data-an-t="5">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+        <h3>Fn 命令</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 5：点击某个 AFN 下的 Fn，右侧载入字段参数">5</span>
+      </div>
+      <div class="fn-head" id="fnHead" hidden></div>
+      <div class="col-body" id="fnCol"></div>
+    </div>
+
+    <!-- 列 3：字段参数 -->
+    <div class="col par" data-an data-an-t="6">
+      <div class="sec-h">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></svg>
+        <h3>字段参数 · 数据单元</h3>
+        <span class="sp"></span>
+        <span class="tag" data-d="标注 6：字段参数区，随所选 Fn 动态渲染">6</span>
+      </div>
+      <div class="par-head" id="parHead"></div>
+      <div class="par-body" id="parBody"></div>
+      <div class="par-foot">
+        <button class="btn btn--sm btn--ghost">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          加入队列
+        </button>
+        <button class="btn btn--sm">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+          存为模板
+        </button>
+        <span class="sp"></span>
+        <span class="meta" id="frameMeta">— 字节 · CS —</span>
+        <button class="btn btn--sm btn--primary">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+          下发
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 底部：发送与接收记录 -->
+  <section class="traffic" id="traffic" data-an data-an-t="9">
+    <div class="tr-h" id="trH">
+      <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <span class="ttl">收发记录</span>
+      <span class="chip chip--tx">发送 <b id="cTx">0</b></span>
+      <span class="chip chip--rx">接收 <b id="cRx">0</b></span>
+      <span class="sp"></span>
+      <div class="seg" id="segF">
+        <button class="on" data-f="all">全部</button>
+        <button data-f="tx">发送</button>
+        <button data-f="rx">接收</button>
+      </div>
+      <div class="tr-act" style="display:flex;gap:6px;margin-left:4px">
+        <button class="btn btn--sm btn--ghost">导出</button>
+        <button class="btn btn--sm btn--ghost">清空</button>
+      </div>
+      <span class="tag" data-d="标注 9：底部收发记录框，可折叠；点击任一条展开解析">9</span>
+    </div>
+    <div class="tr-body" id="trBody"></div>
+  </section>
+</main>
+</div>
+
+<!-- ════════════ 标注说明浮层 ════════════ -->
+<div class="anno open" id="anno">
+  <div class="anno-h" id="annoH">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--am)" stroke-width="2" stroke-linecap="round"><path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1z"/></svg>
+    <b>功能标注 · 12 项</b>
+    <span class="sp"></span>
+    <button class="btn btn--sm btn--ghost" id="annoHl">高亮区域</button>
+    <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+  </div>
+  <div class="anno-b"><div><ol class="anno-l" id="annoList"></ol></div></div>
+</div>
+
+<script>
+/* ═══════════ 协议字典（源自 03_QGDW10376.2_全帧类型.md） ═══════════ */
+const F=(n,f,b,d,c,o)=>({n,f,b,d,c,o});
+const AFN=[
+{code:"00H",name:"确认/否认",dir:"上行",route:"通用",sem:"从动站对下行命令的应答，分确认与否认两类，否认时携带错误状态字定位失败原因。",
+ fns:[
+  {no:"F1",name:"确认",dir:"上行",fields:[
+    F("命令状态 + 信道状态","BS",4,"D7~D0 命令状态(0未处理/1已处理) + 1~7 信道状态；后续 3 字节覆盖 8~31 信道（0 忙 / 1 闲）","bits"),
+    F("等待时间","BIN",2,"单位 s，告知启动站需等待的最短时间","num","s")]},
+  {no:"F2",name:"否认",dir:"上行",fields:[
+    F("错误状态字","BIN",1,"0通信超时 / 1无效数据单元 / 2长度错 / 3校验错误 / 4信息类不存在 / 5格式错误 / 6表号重复 / 7表号不存在 / 8电表应用层无应答 / 9主节点忙 / 10主节点不支持此命令 / 11从节点不应答 / 12从节点不在网内 / 109超过最大并发数 / 111正在抄读该表","select",
+      [[0,"0 通信超时"],[1,"1 无效数据单元"],[2,"2 长度错"],[3,"3 校验错误"],[4,"4 信息类不存在"],[5,"5 格式错误"],[9,"9 主节点忙"],[10,"10 主节点不支持"],[11,"11 从节点不应答"],[12,"12 从节点不在网内"],[109,"109 超过最大并发数"],[111,"111 正在抄读该表"]])]}]},
+
+{code:"01H",name:"初始化",dir:"下行",route:"通用",sem:"对本地通信模块做硬件复位，或清除其参数区/数据区档案，是开局与恢复现场的第一步。",
+ fns:[
+  {no:"F1",name:"硬件初始化（复位）",dir:"下行",fields:[]},
+  {no:"F2",name:"参数区初始化",dir:"下行",fields:[]},
+  {no:"F3",name:"数据区初始化",dir:"下行",fields:[]}]},
+
+{code:"02H",name:"数据转发",dir:"下行",route:"无路由",sem:"集中器把一整帧电能表协议报文（645/698）塞进 1376.2 净荷，透传给指定从节点。",
+ fns:[
+  {no:"F1",name:"转发通信协议数据帧",dir:"下行",fields:[
+    F("通信协议类型","BIN",1,"00H 透明传输 / 01H DL/T645-1997 / 02H DL/T645-2007 / 03H DL/T698.45","select",
+      [[0,"00H 透明传输"],[1,"01H DL/T 645-1997"],[2,"02H DL/T 645-2007"],[3,"03H DL/T 698.45"]]),
+    F("报文长度 L","BIN",1,"后续报文内容的字节数，跟随内容自动计算","num"),
+    F("报文内容","—","L","被透传的完整电能表协议报文（如 645 读表帧）","hex")]}]},
+
+{code:"03H",name:"查询数据",dir:"下行",route:"通用",sem:"集中器向本地通信模块/路由查询运行状态、参数与档案信息，是最高频的诊断类命令。",
+ fns:[
+  {no:"F1",name:"厂商代码和版本信息",dir:"查询",ro:1,fields:[]},
+  {no:"F2",name:"噪声值",dir:"查询",ro:1,fields:[]},
+  {no:"F3",name:"从节点侦听信息",dir:"下行",fields:[
+    F("开始节点指针","BIN",1,"本次读取的起始从节点序号，用于分批拉取","num"),
+    F("读取节点的数量 N","BIN",1,"N ≤ 16，单帧最多带回 16 个从节点","num")]},
+  {no:"F4",name:"主节点地址",dir:"查询",ro:1,fields:[]},
+  {no:"F5",name:"主节点状态字和通信速率",dir:"查询",ro:1,fields:[]},
+  {no:"F6",name:"主节点干扰状态",dir:"下行",fields:[
+    F("持续时间","BIN",1,"干扰检测持续时间，单位 min","num","min")]},
+  {no:"F7",name:"读取从节点监控最大超时时间",dir:"查询",ro:1,fields:[]},
+  {no:"F8",name:"查询无线通信参数",dir:"查询",ro:1,fields:[]},
+  {no:"F9",name:"通信延时相关广播时长",dir:"下行",fields:[
+    F("通信协议类型","BIN",1,"被测广播报文所遵循的下行电表协议","select",[[0,"00H 透明传输"],[2,"02H DL/T 645-2007"],[3,"03H DL/T 698.45"]]),
+    F("报文长度 L","BIN",1,"广播报文字节数","num"),
+    F("报文内容","—","L","用于测量广播通信时长的完整报文","hex")]},
+  {no:"F10",name:"本地通信模块运行模式信息",dir:"查询",ro:1,fields:[]},
+  {no:"F11",name:"本地通信模块 AFN 索引",dir:"下行",fields:[
+    F("AFN 功能码","BIN",1,"查询该 AFN 下 F1~F255 的支持位图（32 字节 / 256 位）","hex")]},
+  {no:"F12",name:"查询本地主节点通信模块 ID",dir:"查询",ro:1,fields:[]},
+  {no:"F16",name:"查询宽带载波通信参数",dir:"查询",ro:1,fields:[]},
+  {no:"F100",name:"查询场强门限",dir:"查询",ro:1,fields:[]}]},
+
+{code:"04H",name:"链路接口检测",dir:"下行",route:"通用",sem:"验证集中器与本地通信模块之间串口链路是否完好，含发送测试、点名与报文回环。",
+ fns:[
+  {no:"F1",name:"发送测试",dir:"下行",fields:[
+    F("持续时间","BIN",1,"单位 s，0 = 停止发送。模块持续交替发送 0 和 1 供示波器观测","num","s")]},
+  {no:"F2",name:"从节点点名",dir:"下行",fields:[]},
+  {no:"F3",name:"本地通信模块报文通信测试",dir:"下行",fields:[
+    F("测试通信速率","BIN",1,"本次回环测试所采用的通信速率档位","num"),
+    F("目标地址","BCD",6,"被测从节点的 6 字节 BCD 地址","bcd"),
+    F("通信协议类型","BIN",1,"回环报文的电表协议类型","select",[[0,"00H 透明传输"],[1,"01H DL/T 645-1997"],[2,"02H DL/T 645-2007"],[3,"03H DL/T 698.45"]]),
+    F("报文长度 L","BIN",1,"回环报文字节数","num"),
+    F("报文内容","—","L","完整回环测试报文","hex")]}]},
+
+{code:"05H",name:"控制命令",dir:"下行",route:"通用",sem:"集中器下发控制与参数配置，上行仅回确认/否认。是改变模块行为的主通道。",
+ fns:[
+  {no:"F1",name:"设置主节点地址",dir:"下行",fields:[
+    F("主节点地址","BCD",6,"6 字节 BCD，集中器侧主节点（CCO）的 MAC 地址","bcd")]},
+  {no:"F2",name:"允许/禁止从节点上报",dir:"下行",fields:[
+    F("事件上报状态标志","BIN",1,"0 = 禁止上报，1 = 允许上报","select",[[0,"0 禁止"],[1,"1 允许"]])]},
+  {no:"F3",name:"启动广播",dir:"下行",fields:[
+    F("控制字","BIN",1,"00H 透明传输 / 01H DL/T645-1997 / 02H DL/T645-2007 / 03H 相位识别功能","select",
+      [[0,"00H 透明传输"],[1,"01H DL/T 645-1997"],[2,"02H DL/T 645-2007"],[3,"03H 相位识别"]]),
+    F("报文长度 L","BIN",1,"广播报文字节数","num"),
+    F("报文内容","—","L","向全网广播的电能表协议报文","hex")]},
+  {no:"F4",name:"设置从节点监控最大超时时间",dir:"下行",fields:[
+    F("最大超时时间","BIN",1,"单位 s，超过该时间判定从节点监控失败","num","s")]},
+  {no:"F5",name:"设置无线通信参数",dir:"下行",fields:[
+    F("无线信道组","BIN",1,"0~63 对应 0~63 组；254 = 自动选择；255 = 保持不变","num"),
+    F("无线主节点发射功率","BIN",1,"00 最高 / 01 次高 / 02 次低 / 03 最低 / 255 保持不变","select",
+      [[0,"00 最高"],[1,"01 次高"],[2,"02 次低"],[3,"03 最低"],[255,"255 保持不变"]])]},
+  {no:"F6",name:"允许/禁止台区识别",dir:"下行",fields:[
+    F("台区识别使能标志","BIN",1,"0 = 禁止，1 = 允许","select",[[0,"0 禁止"],[1,"1 允许"]])]},
+  {no:"F16",name:"设置宽带载波通信参数",dir:"下行",fields:[
+    F("宽带载波频段","BIN",1,"0 = 1.953~11.96MHz；1 = 2.441~5.615MHz；2 = 0.781~2.930MHz；3 = 1.758~2.930MHz","select",
+      [[0,"0 · 1.953~11.96 MHz"],[1,"1 · 2.441~5.615 MHz"],[2,"2 · 0.781~2.930 MHz"],[3,"3 · 1.758~2.930 MHz"]])]},
+  {no:"F100",name:"设置场强门限",dir:"下行",fields:[
+    F("场强门限","BIN",1,"取值 50~120，默认 96","num")]},
+  {no:"F101",name:"设置中心节点时间",dir:"下行",fields:[
+    F("当前时间","BCD",6,"秒 分 时 日 月 年，各 1 字节 BCD","bcd")]},
+  {no:"F200",name:"控制拒绝节点上报",dir:"下行",fields:[
+    F("拒绝节点上报标志","BIN",1,"0 = 禁止，1 = 允许","select",[[0,"0 禁止"],[1,"1 允许"]])]}]},
+
+{code:"06H",name:"主动上报",dir:"上行",route:"通用",sem:"模块/路由无需轮询，主动把从节点信息、抄读数据、工况变动与事件推送给集中器。",
+ fns:[
+  {no:"F1",name:"上报从节点信息",dir:"上行",ro:1,fields:[]},
+  {no:"F2",name:"上报抄读数据",dir:"上行",ro:1,fields:[]},
+  {no:"F3",name:"上报路由工况变动信息",dir:"上行",ro:1,fields:[]},
+  {no:"F4",name:"上报从节点信息及设备类型",dir:"上行",ro:1,fields:[]},
+  {no:"F5",name:"上报从节点事件",dir:"上行",ro:1,fields:[]}]},
+
+{code:"10H",name:"路由查询",dir:"下行",route:"有路由",sem:"面向路由模块的档案与拓扑查询，覆盖从节点数量、路由层级、运行状态与相位信息。",
+ fns:[
+  {no:"F1",name:"从节点数量",dir:"查询",ro:1,fields:[]},
+  {no:"F2",name:"从节点信息",dir:"下行",fields:[
+    F("从节点起始序号","BIN",2,"从该序号开始回传从节点档案","num"),
+    F("从节点数量","BIN",1,"本次请求的从节点条数","num")]},
+  {no:"F3",name:"上一级中继路由信息",dir:"下行",fields:[
+    F("从节点地址","BCD",6,"待查中继路径的从节点地址","bcd")]},
+  {no:"F4",name:"路由运行状态",dir:"查询",ro:1,fields:[]},
+  {no:"F5",name:"未抄读成功的从节点信息",dir:"下行",fields:[
+    F("从节点起始序号","BIN",2,"起始序号","num"),
+    F("从节点数量","BIN",1,"请求的条数","num")]},
+  {no:"F6",name:"主动注册的从节点信息",dir:"下行",fields:[
+    F("从节点起始序号","BIN",2,"起始序号","num"),
+    F("从节点数量","BIN",1,"请求的条数","num")]},
+  {no:"F7",name:"查询从节点 ID 号信息",dir:"下行",fields:[
+    F("从节点起始序号","BIN",2,"起始序号","num"),
+    F("从节点数量","BIN",1,"请求的条数","num")]},
+  {no:"F9",name:"查询 HPLC 网络规模",dir:"查询",ro:1,fields:[]},
+  {no:"F21",name:"查询网络拓扑信息",dir:"查询",ro:1,fields:[]},
+  {no:"F31",name:"查询相线信息",dir:"查询",ro:1,fields:[]},
+  {no:"F40",name:"流水线查询 ID 信息",dir:"查询",ro:1,fields:[]},
+  {no:"F100",name:"查询无线网络规模",dir:"查询",ro:1,fields:[]},
+  {no:"F101",name:"查询微功率无线从节点信息",dir:"查询",ro:1,fields:[]},
+  {no:"F104",name:"查询升级后模块版本信息",dir:"查询",ro:1,fields:[]},
+  {no:"F111",name:"查询网络信息",dir:"查询",ro:1,fields:[]},
+  {no:"F112",name:"查询宽带载波芯片信息",dir:"查询",ro:1,fields:[]}]},
+
+{code:"11H",name:"路由设置",dir:"下行",route:"有路由",sem:"增删改路由档案、配置工作模式与触发组网动作，上行仅回确认/否认。",
+ fns:[
+  {no:"F1",name:"添加从节点",dir:"下行",fields:[
+    F("从节点的数量 n","BIN",1,"本帧携带的从节点条数","num"),
+    F("从节点 1 地址","BCD",6,"6 字节 BCD 从节点地址","bcd"),
+    F("从节点 1 通信协议类型","BIN",1,"00H 透明传输 / 01H 645-1997 / 02H 645-2007 / 03H 698.45","select",
+      [[0,"00H 透明传输"],[1,"01H DL/T 645-1997"],[2,"02H DL/T 645-2007"],[3,"03H DL/T 698.45"]])]},
+  {no:"F2",name:"删除从节点",dir:"下行",fields:[
+    F("从节点的数量 n","BIN",1,"本帧携带的从节点条数","num"),
+    F("从节点 1 地址","BCD",6,"6 字节 BCD 从节点地址","bcd")]},
+  {no:"F3",name:"设置从节点固定中继路径",dir:"下行",fields:[
+    F("从节点地址","BCD",6,"目标从节点地址","bcd"),
+    F("中继级别 n","BIN",1,"固定中继的级数，n 级后紧跟 n 个中继地址","num"),
+    F("第 1 级中继从节点地址","BCD",6,"第 1 级中继节点地址","bcd")]},
+  {no:"F4",name:"设置路由工作模式",dir:"下行",fields:[
+    F("工作模式","BS",1,"D7~D4 纠错编码 · D1 注册允许(1允许/0不允许) · D0 工作状态(1学习/0抄表)","hex"),
+    F("速率单位标识 + 通信速率 1","BS",2,"D15 速率单位(0 bit/s / 1 kbit/s) + D14~D0 通信速率","hex")]},
+  {no:"F5",name:"激活从节点主动注册",dir:"下行",fields:[
+    F("开始时间","BCD",6,"秒 分 时 日 月 年 BCD 编码","bcd"),
+    F("持续时间","BIN",2,"单位 min","num","min"),
+    F("从节点重发次数","BIN",1,"注册报文的重发次数","num"),
+    F("随机等待时间片个数","BIN",1,"时间片 = 150 ms","num")]},
+  {no:"F6",name:"终止从节点主动注册",dir:"下行",fields:[]},
+  {no:"F100",name:"设置网络规模",dir:"下行",fields:[
+    F("网络规模","BIN",2,"路由网络支持的最大从节点数量","num")]},
+  {no:"F101",name:"启动网络维护进程",dir:"下行",fields:[]},
+  {no:"F102",name:"启动组网",dir:"下行",fields:[]}]},
+
+{code:"12H",name:"路由控制",dir:"下行",route:"有路由",sem:"对路由进程本身做重启、暂停与恢复，用于故障恢复与临时让出信道。",
+ fns:[
+  {no:"F1",name:"重启",dir:"下行",fields:[]},
+  {no:"F2",name:"暂停",dir:"下行",fields:[]},
+  {no:"F3",name:"恢复",dir:"下行",fields:[]}]},
+
+{code:"13H",name:"路由数据转发",dir:"下行",route:"有路由",sem:"带路由信息的透传抄表，可携带附属节点并声明报文是否与通信延时相关。",
+ fns:[
+  {no:"F1",name:"监控从节点",dir:"下行",fields:[
+    F("通信协议类型","BIN",1,"00H 透明传输 / 01H 645-1997 / 02H 645-2007 / 03H 698.45","select",
+      [[0,"00H 透明传输"],[1,"01H DL/T 645-1997"],[2,"02H DL/T 645-2007"],[3,"03H DL/T 698.45"]]),
+    F("通信延时相关性标志","BIN",1,"00H = 与延时无关；01H = 与延时相关","select",[[0,"00H 与延时无关"],[1,"01H 与延时相关"]]),
+    F("从节点附属节点数量 n","BIN",1,"附属节点个数","num"),
+    F("从节点附属节点 1 地址","BCD",6,"6 字节 BCD 附属节点地址","bcd"),
+    F("报文长度 L","BIN",1,"报文内容字节数","num"),
+    F("报文内容","—","L","透传的电表协议报文","hex")]}]},
+
+{code:"14H",name:"路由数据抄读",dir:"上行",route:"有路由",sem:"路由与集中器之间的抄读协同：路由请求抄读内容/时钟/交采信息，集中器回填或修正。",
+ fns:[
+  {no:"F1",name:"路由请求抄读内容",dir:"下行",fields:[
+    F("抄读标志","BIN",1,"00H 抄读失败(L=0,n=0) / 01H 抄读成功(L=0,n=0) / 02H 可以抄读(L>0,n≥0)","select",
+      [[0,"00H 抄读失败"],[1,"01H 抄读成功"],[2,"02H 可以抄读"]]),
+    F("通信延时相关性标志","BIN",1,"00H = 无关；01H = 相关","select",[[0,"00H 无关"],[1,"01H 相关"]]),
+    F("路由请求数据长度 L","BIN",1,"请求数据字节数","num"),
+    F("路由请求数据内容","—","L","路由侧待抄读的报文内容","hex"),
+    F("从节点附属节点数量 n","BIN",1,"附属节点个数","num"),
+    F("从节点附属节点 1 地址","BCD",6,"6 字节 BCD 附属节点地址","bcd")]},
+  {no:"F2",name:"路由请求集中器时钟",dir:"下行",fields:[
+    F("当前时间","BCD",6,"秒 分 时 日 月 年 BCD 编码","bcd")]},
+  {no:"F3",name:"请求依通信延时修正通信数据",dir:"下行",fields:[
+    F("数据长度 L","BIN",1,"修正后通信数据字节数；L = 0 代表放弃本次通信","num"),
+    F("修正通信数据内容","—","L","按预计延迟时间修正后的报文","hex")]},
+  {no:"F4",name:"路由请求交采信息",dir:"下行",fields:[
+    F("数据项类型","BIN",1,"1 = DL/T 645-2007；2 = DL/T 698.45","select",[[1,"1 · DL/T 645-2007"],[2,"2 · DL/T 698.45"]]),
+    F("交采数据项标识","BIN",4,"4 字节数据项标识 DI","hex"),
+    F("交采数据项内容","BIN","N","交采数据项的具体内容","hex")]}]},
+
+{code:"15H",name:"文件传输",dir:"下行",route:"有路由",sem:"用于模块远程升级的固件/文件分块下发，上行按分块回确认。",
+ fns:[
+  {no:"F1",name:"文件传输方式 1",dir:"下行",fields:[
+    F("文件标识","BIN",1,"待传输文件的编号","num"),
+    F("文件属性","BIN",1,"文件类型与加密/压缩属性位","hex"),
+    F("文件长度","BIN",4,"文件总字节数","num"),
+    F("数据块序号","BIN",2,"当前分块序号，从 0 起","num"),
+    F("数据块长度 L","BIN",1,"本块有效数据字节数","num"),
+    F("数据块内容","—","L","文件分块负载","hex")]}]},
+
+{code:"F0H",name:"内部调试",dir:"—",route:"—",sem:"厂家自定义调试通道，帧结构与 Fn 由厂商自行约定，不下发至现网。",
+ fns:[{no:"—",name:"厂家自定义（无标准 Fn）",dir:"—",todo:1,fields:[]}]},
+
+{code:"F1H",name:"并发抄表",dir:"下行",route:"有路由",sem:"集中器一次性下发批量抄表任务，由路由并发执行后汇总回传，显著提升抄表吞吐。",
+ fns:[
+  {no:"F1",name:"集中器主动并发抄表",dir:"下行",todo:1,fields:[]}]}
+];
+
+/* 内置应答可收缩栏的条目 */
+const RESP=[
+ {t:"AFN 00H 确认/否认",on:1,c:"#34d399"},
+ {t:"AFN 03H 查询应答",on:1,c:"#34d399"},
+ {t:"AFN 06H 主动上报",on:0,c:"#465768"},
+ {t:"AFN 10H 路由应答",on:1,c:"#34d399"},
+ {t:"AFN 14H 抄读协同",on:1,c:"#34d399"},
+ {t:"超时兜底否认",on:1,c:"#fbbf24"}
+];
+
+/* 收发记录样例 */
+const LOG=[
+ {t:"01:22:07.412",d:"tx",afn:"05H",fn:"F1",sum:"设置主节点地址 000000000001",
+  raw:"68 00 0F 00 00 00 00 00 00 00 05 01 00 01 00 00 00 00 00 12 16",
+  sem:"把本地通信模块的主节点（CCO）地址改写为 000000000001，使模块在组网时以该地址作为归属集中器标识。",
+  fields:[["主节点地址","BCD","01 00 00 00 00 00","小端 BCD，倒序读为 000000000001"]],
+  ack:{t:"01:22:07.508",raw:"68 00 09 00 00 00 00 00 00 00 00 01 00 02 16",st:"ok",txt:"确认（命令已处理，等待时间 0 s）"}},
+ {t:"01:22:09.104",d:"rx",afn:"06H",fn:"F1",sum:"上报从节点信息 · 12 个节点入网",
+  raw:"68 00 1B 00 00 00 00 00 00 00 06 01 00 0C 00 12 00 01 00 00 00 00 00 11 04 02 3A 16",
+  sem:"模块主动上报侦听到的从节点档案：共 12 个从节点，本帧携带起始 2 个的地址、信号品质与中继级别。",
+  fields:[["侦听到的从节点总数量 m","BIN","0C","12 个从节点"],["本帧传输的从节点数量 n","BIN","02","本帧 2 条"],["从节点 1 地址","BCD","01 00 00 00 00 00","小端读为 000000000001"],["从节点 1 信号品质+中继级别","BIN","11","品质 1 / 中继级别 1"],["从节点 1 侦听次数","BIN","04","侦听到 4 次"]]},
+ {t:"01:22:11.660",d:"tx",afn:"11H",fn:"F1",sum:"添加从节点 · 3 个（645-2007）",
+  raw:"68 00 1A 00 00 00 00 00 00 00 11 01 00 03 01 00 00 00 00 00 02 02 00 00 00 00 00 02 03 00 00 00 00 00 02 8C 16",
+  sem:"向路由档案中批量追加 3 个从节点，协议类型统一为 DL/T 645-2007，写入后路由方可对其发起抄读。",
+  fields:[["从节点的数量 n","BIN","03","本帧 3 个"],["从节点 1 地址","BCD","01 00 00 00 00 00","000000000001"],["从节点 1 通信协议类型","BIN","02","DL/T 645-2007"],["从节点 2 地址","BCD","02 00 00 00 00 00","000000000002"],["从节点 3 地址","BCD","03 00 00 00 00 00","000000000003"]],
+  ack:{t:"01:22:11.744",raw:"68 00 09 00 00 00 00 00 00 00 00 01 00 02 16",st:"ok",txt:"确认（命令已处理）"}},
+ {t:"01:22:14.002",d:"tx",afn:"03H",fn:"F10",sum:"查询本地通信模块运行模式信息",
+  raw:"68 00 09 00 00 00 00 00 00 00 03 02 01 05 16",
+  sem:"读取模块能力集：通信方式、路由管理方式、周期抄表模式、传输延时支持位与最大报文长度等关键能力位。",
+  fields:[],
+  ack:{t:"01:22:14.096",raw:"68 00 2E 00 00 00 00 00 00 00 03 02 01 00 00 00 00 00 00 1E 00 04 00 02 00 0A 00 00 00 00 E8 03 00 00 00 00 00 00 00 22 04 15 22 04 15 01 02 03 04 05 06 07 08 09 00 10 6B 16",st:"ok",txt:"数据响应 · 运行模式字 6 字节 + 能力参数"}},
+ {t:"01:22:16.338",d:"rx",afn:"00H",fn:"F2",sum:"否认 · 错误状态字 = 12（从节点不在网内）",
+  raw:"68 00 0A 00 00 00 00 00 00 00 00 02 00 0C 0E 16",
+  sem:"对上一条 13H 监控从节点命令的否认应答：目标从节点尚未入网，需先执行 11H-F1 添加档案或等待注册。",
+  fields:[["错误状态字","BIN","0C","12 = 从节点不在网内"]],st:"err"}
+];
+
+/* 标注清单 */
+const ANNOS=[
+ ["1","侧栏可收敛：点击左上角箭头，232px → 56px 图标轨道，hover 出 tooltip"],
+ ["2","侦听台与模拟集中器同级并列，占据左栏同一列"],
+ ["3","内置应答收敛为可收缩分组，展开后露出应答规则子项与启用状态灯"],
+ ["4","AFN 列：15 类 AFN 一列列排布，点击任一 AFN 展开其 Fn"],
+ ["5","Fn 列：点击某个 AFN 下的 Fn，右侧载入该命令的字段参数"],
+ ["6","字段参数区：数据单元字段表，按 Fn 动态渲染，类型含 BIN/BCD/BS/ASCII/—"],
+ ["7","信息域 R / 地址域 A 高级折叠区：路由标识、通信模块标识、中继级别、信道、速率、序列号"],
+ ["8","帧预览：68H|L|C|R|A|AFN|DT|数据|CS|16H 按段着色，hover 显示字段归属"],
+ ["9","底部收发记录：可整体折叠，支持全部/发送/接收过滤与计数"],
+ ["10","点击任一条发送或接收，就地展开解析详情（hex + 字段级语义）"],
+ ["11","语义解释横幅：AFN 含义 + Fn 含义 + 这条报文在业务上到底干了什么"],
+ ["12","确认/否认回执内联展示，失败时错误状态字直接给出中文原因"]
+];
+
+/* ═══════════ 渲染 ═══════════ */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* 侧栏：内置应答 */
+$("#respList").innerHTML=RESP.map(r=>
+ `<button class="sub-item${r.on?' on':''}"><span class="live" style="background:${r.on?r.c:'#3a4a5c'}"></span><span class="t">${esc(r.t)}</span></button>`).join("");
+
+/* AFN 列 */
+let curAFN=null,curFN=null;
+$("#afnCol").innerHTML=AFN.map((a,i)=>`
+ <div class="afn-item" data-i="${i}">
+   <button class="afn-h" data-afn="${i}">
+     <svg class="afn-car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+     <span class="afn-code">${a.code}</span>
+     <span class="afn-name">${esc(a.name)}</span>
+     <span class="afn-meta">
+       <span class="afn-dir">${a.fns.length}F</span>
+       ${a.route==='有路由'?'<span class="chip chip--ac" style="height:16px;font-size:10px">R</span>':''}
+     </span>
+   </button>
+ </div>`).join("");
+
+$("#afnCol").addEventListener("click",e=>{
+  const h=e.target.closest("[data-afn]"); if(!h)return;
+  const i=+h.dataset.afn, el=h.parentElement;
+  $$(".afn-item").forEach(x=>{if(x!==el)x.classList.remove("open","sel")});
+  $$(".afn-item").forEach(x=>x.classList.remove("sel"));
+  el.classList.toggle("open");
+  if(el.classList.contains("open")){el.classList.add("sel");selectAFN(i);}
+});
+
+function selectAFN(i){
+  curAFN=i;curFN=null;
+  const a=AFN[i];
+  const fh=$("#fnHead"); fh.hidden=false;
+  fh.innerHTML=`
+    <div class="r1"><b>AFN ${a.code}</b><span>${esc(a.name)}</span>
+      <span class="chip chip--ghost" style="margin-left:auto">${a.dir}</span></div>
+    <div class="sem">${esc(a.sem)}</div>`;
+  $("#fnCol").innerHTML=a.fns.map((f,j)=>`
+    <button class="fn-item" data-fn="${j}">
+      <span class="fn-no">${f.no}</span>
+      <span class="fn-nm">${esc(f.name)}${f.todo?'<span class="fn-todo">字段待补</span>':''}</span>
+    </button>`).join("");
+  renderParam(null);
+}
+
+$("#fnCol").addEventListener("click",e=>{
+  const b=e.target.closest("[data-fn]"); if(!b)return;
+  $$(".fn-item").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");
+  curFN=+b.dataset.fn;
+  renderParam(AFN[curAFN].fns[curFN]);
+});
+
+/* 参数列 */
+function card(ic,title,hint,body,open,id){
+  return `<div class="card ${open?'open':'closed'}" data-card="${id||''}">
+    <div class="card-h">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ic}</svg>
+      <b>${title}</b><span class="hint">${hint||''}</span>
+      <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+    </div>
+    <div class="card-b"><div><div class="card-in">${body}</div></div></div></div>`;
+}
+const ICON_FLD='<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>';
+const ICON_R='<path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="4"/>';
+const ICON_A='<path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>';
+const ICON_HEX='<path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3"/><path d="M9 9h6M9 15h6"/>';
+const ICON_SEM='<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>';
+
+function fldInput(f,idx){
+  const ph=f.c==='num'?(f.o?'0':'0'):(f.c==='bcd'?'00 00 00 00 00 00':(f.c==='hex'?'00':'…'));
+  if(f.c==='select')return `<select class="in">${f.o.map(o=>`<option value="${o[0]}">${esc(o[1])}</option>`).join("")}</select>`;
+  return `<input class="in" value="" placeholder="${ph}">`;
+}
+
+function renderParam(f){
+  const a=curAFN!==null?AFN[curAFN]:null;
+  if(!a){
+    $("#parHead").innerHTML=`<div class="par-t1"><b style="color:var(--tx-3)">未选择命令</b></div>
+      <div class="par-t2">从左侧 AFN 列点开一个应用功能码，再点选其下的 <em>Fn</em>，此处会载入该命令的字段参数与帧预览。</div>`;
+    $("#parBody").innerHTML=`<div class="empty" style="height:100%">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <p>级联选择路径<br><span class="mono" style="color:var(--tx-3)">AFN 列 → Fn 列 → 字段参数</span></p></div>`;
+    $("#frameMeta").textContent="— 字节 · CS —"; return;
+  }
+  const meta=[`<span class="chip chip--ac">AFN ${a.code} ${esc(a.name)}</span>`];
+  if(f)meta.push(`<span class="chip">${f.no} ${esc(f.name)}</span>`);
+  meta.push(`<span class="chip chip--ghost">${f?f.dir:a.dir}</span>`);
+  $("#parHead").innerHTML=`<div class="par-t1">${meta.join("")}</div>
+    <div class="par-t2">${f?esc(f.name)+" — 数据单元字段按下行方向渲染；上行字段以只读方式标注。":esc(a.sem)}</div>`;
+
+  /* 数据单元字段 */
+  let fldCard;
+  if(!f){
+    fldCard=card(ICON_FLD,"数据单元字段","—",
+      `<div class="empty" style="height:120px"><p>请先在 Fn 列中选择一条具体命令</p></div>`,true,"fld");
+  }else if(!f.fields.length){
+    fldCard=card(ICON_FLD,"数据单元字段","无数据单元",
+      `<div class="empty" style="height:110px"><p>该命令<strong style="color:var(--tx-2)">无数据单元</strong><br>帧内仅含 AFN + DT 标识，无需填写参数</p></div>`,true,"fld");
+  }else{
+    const rows=f.fields.map((x,i)=>`<tr>
+      <td class="c-n"><div class="nm">${esc(x.n)}</div><div class="ds">${esc(x.d)}</div>
+        ${x.c==='bits'?`<div class="bits"><span class="bit"><i>D0</i> 命令状态</span><span class="bit"><i>D1~D7</i> 信道1~7</span><span class="bit"><i>D8~D31</i> 信道8~31</span></div>`:''}</td>
+      <td class="c-f"><span class="fmt">${esc(x.f)}</span></td>
+      <td class="c-b"><span class="byt">${esc(String(x.b))}</span></td>
+      <td class="c-v">${fldInput(x,i)}</td></tr>`).join("");
+    fldCard=card(ICON_FLD,"数据单元字段",`${f.fields.length} 项`,
+      `<table class="ft"><thead><tr><th class="c-n">字段名称 / 语义</th><th class="c-f">格式</th><th class="c-b">字节</th><th class="c-v">取值</th></tr></thead><tbody>${rows}</tbody></table>`,true,"fld");
+  }
+
+  /* 信息域 R */
+  const rCard=card(ICON_R,"信息域 R · 下行 6 字节","默认全 0",`
+    <table class="ft"><thead><tr><th class="c-n">位域</th><th class="c-f">位</th><th class="c-b">—</th><th class="c-v">取值 / 说明</th></tr></thead><tbody>
+      <tr><td><div class="nm">中继级别</div><div class="ds">0~15，0 = 无中继</div></td><td class="c-f"><span class="fmt">D7~D4</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><input class="in" value="0" style="max-width:72px"></td></tr>
+      <tr><td><div class="nm">冲突检测</div><div class="ds">0 不检测 / 1 要检测</div></td><td class="c-f"><span class="fmt">D3</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><select class="in" style="max-width:120px"><option>0 不检测</option><option>1 要检测</option></select></td></tr>
+      <tr><td><div class="nm">通信模块标识</div><div class="ds">0 对主节点 / 1 对从节点</div></td><td class="c-f"><span class="fmt">D2</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><select class="in" style="max-width:150px"><option>0 对主节点操作</option><option>1 对从节点操作</option></select></td></tr>
+      <tr><td><div class="nm">附属节点标识</div><div class="ds">0 无附加节点 / 1 有附加节点</div></td><td class="c-f"><span class="fmt">D1</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><select class="in" style="max-width:150px"><option>0 无附加节点</option><option>1 有附加节点</option></select></td></tr>
+      <tr><td><div class="nm">路由标识</div><div class="ds">0 带路由 / 1 旁路模式</div></td><td class="c-f"><span class="fmt">D0</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><select class="in" style="max-width:150px"><option>0 带路由（路由模式）</option><option>1 不带路由（旁路）</option></select></td></tr>
+      <tr><td><div class="nm">纠错编码标识</div><div class="ds">0 未编码 / 1 RS 编码</div></td><td class="c-f"><span class="fmt">D7~D4</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><select class="in" style="max-width:130px"><option>0 未编码</option><option>1 RS 编码</option></select></td></tr>
+      <tr><td><div class="nm">信道标识</div><div class="ds">0~15，0 = 不分信道</div></td><td class="c-f"><span class="fmt">D3~D0</span></td><td class="c-b"><span class="byt">·</span></td><td class="c-v"><input class="in" value="0" style="max-width:80px"></td></tr>
+      <tr><td><div class="nm">预计应答字节数</div><div class="ds">0~255，0 = 默认时间</div></td><td class="c-f"><span class="fmt">BIN</span></td><td class="c-b"><span class="byt">1</span></td><td class="c-v"><input class="in" value="0" style="max-width:80px"></td></tr>
+      <tr><td><div class="nm">速率单位标识 + 通信速率</div><div class="ds">D15 单位（0 bit/s / 1 kbit/s）+ D14~D0 速率，0 = 默认速率</div></td><td class="c-f"><span class="fmt">BS</span></td><td class="c-b"><span class="byt">2</span></td><td class="c-v"><input class="in" placeholder="00 00" style="max-width:110px"></td></tr>
+      <tr><td><div class="nm">报文序列号</div><div class="ds">0~255 循环，用于请求/应答配对</div></td><td class="c-f"><span class="fmt">BIN</span></td><td class="c-b"><span class="byt">1</span></td><td class="c-v"><input class="in" value="1" style="max-width:80px"></td></tr>
+    </tbody></table>`,false,"r");
+
+  /* 地址域 A */
+  const aCard=card(ICON_A,"地址域 A · 源 A1 / 目的 A3","模块标识=0 时省略",`
+    <table class="ft"><thead><tr><th class="c-n">字段</th><th class="c-f">格式</th><th class="c-b">字节</th><th class="c-v">取值</th></tr></thead><tbody>
+      <tr><td><div class="nm">源地址 A1</div><div class="ds">下行 = 主节点 MAC；上行 = 从节点 MAC</div></td><td class="c-f"><span class="fmt">BCD</span></td><td class="c-b"><span class="byt">6</span></td><td class="c-v"><input class="in" placeholder="01 00 00 00 00 00"></td></tr>
+      <tr><td><div class="nm">中继地址 A2</div><div class="ds">6 × 中继级别，无中继时省略</div></td><td class="c-f"><span class="fmt">BCD</span></td><td class="c-b"><span class="byt">6n</span></td><td class="c-v"><input class="in" placeholder="无中继" disabled style="opacity:.45"></td></tr>
+      <tr><td><div class="nm">目的地址 A3</div><div class="ds">广播时固定 999999999999H</div></td><td class="c-f"><span class="fmt">BCD</span></td><td class="c-b"><span class="byt">6</span></td><td class="c-v"><input class="in" placeholder="99 99 99 99 99 99"></td></tr>
+    </tbody></table>`,false,"a");
+
+  /* 帧预览 */
+  const seg=(cls,txt,tip)=>`<span class="hx ${cls}" title="${tip}">${txt}</span>`;
+  const fprev=(f&&f.fields.length)
+    ? ["01","00","00","00","00","00"].map(b=>seg("s-DU",b,"数据单元"))
+    : [];
+  const userLen=6+1+2+fprev.length;
+  const L=(userLen.toString(16).padStart(4,"0").match(/../g)||["00","00"]);
+  const hex=[
+    seg("s-68","68","起始符 68H"),
+    seg("s-L",L[1],"长度 L 低字节"),seg("s-L",L[0],"长度 L 高字节"),
+    seg("s-C","00","控制域 C"),
+    ...[0,0,0,0,0,0].map((_,i)=>seg("s-R","00","信息域 R 第 "+(i+1)+" 字节")),
+    seg("s-AFN",a.code.replace("H",""),"应用功能码 AFN = "+a.code),
+    seg("s-DT","01","DT1 信息类元"),seg("s-DT","00","DT2 信息类组"),
+    ...fprev,
+    seg("s-CS","CS","校验和 = C + 用户数据算术和"),
+    seg("s-16","16","结束符 16H")
+  ].join(" ");
+  const hCard=card(ICON_HEX,"帧预览 · 68H|L|C|R|A|AFN|DT|数据单元|CS|16H",`L = ${userLen} 字节`,`
+    <div class="hexwrap"><div class="hex">${hex}</div>
+      <div class="hexlg">
+        <span><i style="background:#e879a8"></i>68H / L / 16H</span>
+        <span><i style="background:#f0b429"></i>C 控制域 · CS 校验</span>
+        <span><i style="background:#9aabbb"></i>R 信息域</span>
+        <span><i style="background:#2dd4bf"></i>A 地址域</span>
+        <span><i style="background:#22d3ee"></i>AFN</span>
+        <span><i style="background:#a78bfa"></i>DT 数据单元标识</span>
+        <span><i style="background:#e8f0f7"></i>数据单元</span>
+      </div></div>`,true,"hex");
+
+  /* 语义解释 */
+  const sCard=card(ICON_SEM,"语义解释","这条报文在业务上做了什么",`
+    <div style="font-size:12.5px;line-height:1.75;color:var(--tx-2)">
+      <p><strong style="color:var(--ac);font-weight:500">AFN ${a.code}</strong> — ${esc(a.name)}。${esc(a.sem)}</p>
+      ${f?`<p style="margin-top:9px"><strong style="color:var(--ac);font-weight:500">${f.no}</strong> — ${esc(f.name)}。方向：<span class="chip chip--ghost">${f.dir}</span>
+        ${f.fields.length?`本帧携带 <span class="mono" style="color:var(--am)">${f.fields.length}</span> 个数据单元字段。`:`本命令<strong style="color:var(--tx-1)">无数据单元</strong>，仅通过 AFN + DT 标识表达意图。`}</p>`:''}
+      <p style="margin-top:9px;color:var(--tx-3);font-size:11.5px">字段定义来源：<span class="mono">03_QGDW10376.2_全帧类型.md</span></p>
+    </div>`,true,"sem");
+
+  $("#parBody").innerHTML=[sCard,fldCard,rCard,aCard,hCard].join("");
+  $("#frameMeta").textContent=`L=${userLen} 字节 · 帧长 ${userLen+6} 字节 · CS 待算`;
+  bindCards();
+}
+
+function bindCards(){
+  $$(".card-h").forEach(h=>h.addEventListener("click",e=>{
+    if(e.target.closest(".tag"))return;
+    h.parentElement.classList.toggle("open");
+    h.parentElement.classList.toggle("closed");
+  }));
+}
+
+/* 收发记录 */
+function renderLog(filter="all"){
+  const rows=LOG.filter(r=>filter==="all"||r.d===filter);
+  $("#cTx").textContent=LOG.filter(r=>r.d==="tx").length;
+  $("#cRx").textContent=LOG.filter(r=>r.d==="rx").length;
+  if(!rows.length){$("#trBody").innerHTML=`<div class="empty" style="height:120px"><p>无匹配记录</p></div>`;return;}
+  $("#trBody").innerHTML=rows.map((r,i)=>`
+    <div class="tx-row" data-r="${i}">
+      <button class="tx-main">
+        <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="tm">${r.t}</span>
+        <span class="dir ${r.d}">${r.d==="tx"?"TX":"RX"}</span>
+        <span class="afn-tag">${r.afn}</span>
+        <span class="fn-tag">${r.fn}</span>
+        <span class="sum">${esc(r.sum)}</span>
+        <span class="raw mono">${esc(r.raw)}</span>
+        <span class="len">${r.raw.split(" ").length}B</span>
+      </button>
+      <div class="tx-det"><div><div class="det-in">
+        <div class="sem-banner">
+          <span class="k">AFN</span><span class="v"><em>${r.afn}</em> ${esc(afnName(r.afn))}</span>
+          <span class="k" style="margin-left:6px">FN</span><span class="v"><em>${r.fn}</em> ${esc(fnName(r.afn,r.fn))}</span>
+          <span class="sp"></span>
+          <span class="chip ${r.st==="err"?"chip--am":"chip--"+r.d}">${r.d==="tx"?"发送":"接收"}${r.st==="err"?" · 否认":""}</span>
+        </div>
+        <div class="det-grid">
+          <div class="det-box">
+            <h5>原始报文 · 逐段着色</h5>
+            <div class="bd"><div class="hexwrap sm"><div class="hex sm">${colorHex(r.raw)}</div></div></div>
+          </div>
+          <div class="det-box">
+            <h5>语义解释</h5>
+            <div class="bd"><p style="font-size:12.5px;line-height:1.75;color:var(--tx-2)">${esc(r.sem)}</p></div>
+          </div>
+        </div>
+        ${r.fields&&r.fields.length?`<div class="det-box">
+          <h5>字段级解析 · ${r.fields.length} 项</h5>
+          <div class="bd"><table class="ft"><thead><tr><th class="c-n">字段</th><th class="c-f">格式</th><th class="c-v">原始值</th><th class="c-v">解释</th></tr></thead><tbody>
+          ${r.fields.map(f=>`<tr><td class="c-n"><div class="nm">${esc(f[0])}</div></td><td class="c-f"><span class="fmt">${esc(f[1])}</span></td>
+            <td class="c-v"><span class="mono" style="color:var(--am);font-size:11.5px">${esc(f[2])}</span></td>
+            <td class="c-v"><span style="font-size:11.5px;color:var(--tx-2)">${esc(f[3])}</span></td></tr>`).join("")}
+          </tbody></table></div></div>`:''}
+        ${r.ack?`<div class="det-box" style="border-color:rgba(52,211,153,.25)">
+          <h5 style="background:rgba(52,211,153,.08);color:var(--ok-c)">应答回执 · ${r.ack.t}</h5>
+          <div class="bd">
+            <div class="hexwrap sm"><div class="hex sm">${colorHex(r.ack.raw)}</div></div>
+            <p style="margin-top:8px;font-size:12px;color:${r.ack.st==="err"?"var(--err-c)":"var(--ok-c)"}">${esc(r.ack.txt)}</p>
+          </div></div>`:''}
+      </div></div></div></div>`).join("");
+  $$(".tx-main").forEach(b=>b.addEventListener("click",()=>b.parentElement.classList.toggle("open")));
+}
+function afnName(c){const a=AFN.find(x=>x.code===c);return a?a.name:"—"}
+function fnName(c,fn){const a=AFN.find(x=>x.code===c);if(!a)return"—";const f=a.fns.find(x=>x.no===fn);return f?f.name:"—"}
+function colorHex(raw){
+  const p=raw.trim().split(/\s+/);
+  if(p.length<8)return p.map(x=>`<span class="hx s-DU">${x}</span>`).join(" ");
+  const c=new Array(p.length).fill("s-DU");
+  c[0]="s-68";c[p.length-1]="s-16";c[p.length-2]="s-CS";c[1]="s-L";c[2]="s-L";c[3]="s-C";
+  for(let i=4;i<Math.min(10,p.length-2);i++)c[i]="s-R";
+  if(p.length>10){c[10]="s-AFN";if(p.length>11)c[11]="s-DT";if(p.length>12)c[12]="s-DT";}
+  return p.map((x,i)=>`<span class="hx ${c[i]}" title="偏移 ${i}">${x}</span>`).join(" ");
+}
+
+/* 交互 */
+$("#sbToggle").addEventListener("click",()=>$("#app").classList.toggle("collapsed"));
+$("#grpRespH").addEventListener("click",()=>{
+  const g=$("#grpResp");g.classList.toggle("open");
+  $("#grpRespH").setAttribute("aria-expanded",g.classList.contains("open"));
+});
+$("#colToggle").addEventListener("click",()=>$("#work").classList.toggle("c1-off"));
+$("#trH").addEventListener("click",e=>{
+  if(e.target.closest(".seg")||e.target.closest(".tr-act")||e.target.closest(".tag"))return;
+  $("#traffic").classList.toggle("fold");
+});
+$("#segF").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  $$("#segF button").forEach(x=>x.classList.remove("on"));b.classList.add("on");
+  renderLog(b.dataset.f);
+});
+$("#annoH").addEventListener("click",e=>{
+  if(e.target.closest("#annoHl"))return;
+  $("#anno").classList.toggle("open");
+});
+$("#annoHl").addEventListener("click",e=>{
+  e.stopPropagation();document.body.classList.toggle("anno-on");
+  $("#annoHl").textContent=document.body.classList.contains("anno-on")?"取消高亮":"高亮区域";
+});
+$("#annoBtn").addEventListener("click",()=>$("#anno").classList.toggle("open"));
+$("#annoList").innerHTML=ANNOS.map(a=>`<li><b>${a[0]}</b><span><s></s>${esc(a[1])}</span></li>`).join("");
+
+/* 初始态 */
+renderLog();
+selectAFN(5);                                  /* 默认落在 AFN 05H 控制命令 */
+$$(".afn-item")[5].classList.add("open","sel");
+$$(".fn-item")[0].click();
+</script>
+</body>
+</html>

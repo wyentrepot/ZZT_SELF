@@ -354,3 +354,89 @@ def test_workbench_injects_one_registry_into_listener_and_module_services(tmp_pa
 
     assert app.state.serial_resource_registry is module_service.registry
     assert module_service.registry is listener_service.registry
+
+
+# ---------- reqs/0010 P1：协议字典端点与页面 ----------
+
+def test_dict_list(client):
+    r = client.get("/api/dict")
+    assert r.status_code == 200
+    dicts = {d["id"]: d for d in r.json()}
+    assert set(dicts) == {"oad", "di", "afn-fn", "rules"}
+    assert dicts["oad"]["count"] > 0
+    assert dicts["di"]["count"] > 0
+    assert dicts["afn-fn"]["count"] >= 14
+    assert dicts["afn-fn"]["fn_count"] >= 70
+    assert dicts["rules"]["count"] > 0
+
+
+def test_dict_oad_search(client):
+    r = client.get("/api/dict/oad", params={"q": "电压"})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert items and any("电压" in i["name"] for i in items)
+
+
+def test_dict_di_afn_shapes(client):
+    di = client.get("/api/dict/di").json()
+    assert di["count"] >= 100
+    sample = di["items"][0]
+    assert {"key", "name", "data_type"} <= set(sample)
+    afn = client.get("/api/dict/afn-fn").json()
+    assert any(a["code"] == "11H" for a in afn["items"])
+    assert afn["note"]  # 参考字典声明（构帧以 adapter_10376 为准）
+
+
+def test_dict_rules(client):
+    r = client.get("/api/dict/rules")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] > 0
+    assert all("entries" in f for f in body["files"])
+
+
+def test_trace_dict_pages_no_cache(client):
+    # 新页面同样走 NoCacheHTMLStaticFiles，且 JS 带 ?v= 版本参数
+    for path, js in [
+        ("/static/pages/trace/trace.html", "trace.js?v=trace-v1"),
+        ("/static/pages/dict/dict.html", "dict.js?v=dict-v1"),
+    ]:
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.headers.get("cache-control") == "no-cache", path
+        assert js in r.text, path
+
+
+def test_workbench_nav_registers_new_pages(client):
+    r = client.get("/static/app.js")
+    assert r.status_code == 200
+    assert '"/static/pages/trace/trace.html"' in r.text
+    assert '"/static/pages/dict/dict.html"' in r.text
+    assert '{ name: "辅助", pages: ["trace", "dict", "scenario"] }' in r.text
+
+
+# ---------- reqs/0010 P3：场景激励任务端点 ----------
+
+def test_scenario_task_endpoint(client):
+    # minute_collect 的任务文件真实存在
+    r = client.get("/api/scenarios/minute_collect/task")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body.get("steps"), list) and body["steps"]
+
+
+def test_scenario_task_missing_file(client):
+    # 存量数据问题：join_anhui 引用的 tasks/join_anhui.json 不在仓库——端点须明确 404 而非 500
+    r = client.get("/api/scenarios/join_anhui/task")
+    assert r.status_code == 404
+    assert "缺失" in r.json()["detail"]
+
+
+# ---------- reqs/0010 P2/P4：导航注册新页 ----------
+
+def test_nav_registers_scenario_simcon(client):
+    r = client.get("/static/app.js")
+    assert r.status_code == 200
+    assert '"/static/pages/simcon/simcon.html"' in r.text
+    assert '"/static/pages/scenario/scenario.html"' in r.text
+    assert '{ name: "设备", pages: ["serial-profile", "module", "listener", "simcon"] }' in r.text

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>侦听台工作台 · UI 设计稿总览</title>
+<style>
+/* ============ Design Tokens（与 sim-concentrator-ui.html 同源） ============ */
+:root{
+  --bg-0:#090c10; --bg-1:#0e1319; --bg-2:#131a22; --bg-3:#18212b; --bg-4:#1e2833;
+  --line-1:#1f2935; --line-2:#2a3644; --line-3:#3a4a5c;
+  --tx-1:#e8f0f7; --tx-2:#9aabbb; --tx-3:#65798c; --tx-4:#465768;
+  --ac:#22d3ee; --ac-dim:#0e7490; --ac-soft:rgba(34,211,238,.12);
+  --am:#f0b429; --am-soft:rgba(240,180,41,.12); --mg:#e879a8;
+  --tx-c:#f0b429; --rx-c:#2dd4bf; --ok-c:#34d399; --warn-c:#fbbf24; --err-c:#f87171;
+  --r-s:5px; --r-m:8px; --r-l:12px; --sp:4px;
+  --ff:"HarmonyOS Sans SC","PingFang SC","Source Han Sans SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --fm:"JetBrains Mono","Cascadia Mono","Sarasa Mono SC","Consolas",ui-monospace,monospace;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--ff);font-size:13px;line-height:1.6;color:var(--tx-1);
+  background:
+    radial-gradient(1200px 700px at 12% -10%, #12212c 0%, transparent 60%),
+    radial-gradient(900px 600px at 100% 110%, #17202b 0%, transparent 55%),
+    var(--bg-0);
+  overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:var(--line-3);background-clip:content-box}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select{font:inherit;color:inherit}
+.mono{font-family:var(--fm);font-variant-ligatures:none}
+
+/* ============ 通用组件 ============ */
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-s);
+  font-size:11px;font-weight:500;letter-spacing:.02em;background:var(--bg-3);color:var(--tx-2);border:1px solid var(--line-1)}
+.chip--ac{background:var(--ac-soft);color:var(--ac);border-color:rgba(34,211,238,.25)}
+.chip--am{background:var(--am-soft);color:var(--am);border-color:rgba(240,180,41,.25)}
+.chip--tx{background:rgba(240,180,41,.12);color:var(--tx-c);border-color:rgba(240,180,41,.28)}
+.chip--rx{background:rgba(45,212,191,.12);color:var(--rx-c);border-color:rgba(45,212,191,.28)}
+.chip--ok{background:rgba(52,211,153,.12);color:var(--ok-c);border-color:rgba(52,211,153,.28)}
+.chip--err{background:rgba(248,113,113,.12);color:var(--err-c);border-color:rgba(248,113,113,.3)}
+.chip--mg{background:rgba(232,121,168,.12);color:var(--mg);border-color:rgba(232,121,168,.3)}
+.chip--ghost{background:transparent;color:var(--tx-3)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 13px;
+  border-radius:var(--r-m);border:1px solid var(--line-2);background:var(--bg-3);color:var(--tx-2);
+  font-size:12.5px;font-weight:500;transition:all .14s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--bg-4);color:var(--tx-1);border-color:var(--line-3)}
+.btn--primary{background:linear-gradient(180deg,#22d3ee,#0ea5c4);color:#04222b;border-color:#0e9ab5;font-weight:500}
+.btn--sm{height:26px;padding:0 10px;font-size:12px}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--tx-3)}
+.btn--ghost:hover{background:var(--bg-3);color:var(--tx-1)}
+a.btn{text-decoration:none}
+.fld{width:100%;height:30px;padding:0 9px;border-radius:var(--r-m);background:var(--bg-1);
+  border:1px solid var(--line-2);color:var(--tx-1);font-size:12.5px;transition:all .14s var(--ease)}
+.fld:hover{border-color:var(--line-3)}
+.fld:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+select.fld{appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%2365798c' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 9px center;padding-right:26px}
+
+/* ============ 骨架 ============ */
+.app{display:grid;grid-template-columns:var(--sb-w,232px) 1fr;height:100vh}
+.app.collapsed{--sb-w:56px}
+.sb{display:flex;flex-direction:column;min-width:0;background:var(--bg-1);
+  border-right:1px solid var(--line-1);position:relative;z-index:5}
+.sb-top{display:flex;align-items:center;gap:10px;height:50px;padding:0 10px 0 13px;flex:none;
+  border-bottom:1px solid var(--line-1)}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;overflow:hidden}
+.brand-mark{width:26px;height:26px;flex:none;border-radius:7px;
+  background:linear-gradient(140deg,#22d3ee,#0e7490);display:grid;place-items:center}
+.brand-mark svg{width:15px;height:15px}
+.brand-txt{min-width:0}
+.brand-txt b{display:block;font-size:13px;font-weight:500;letter-spacing:.02em;white-space:nowrap}
+.brand-txt span{display:block;font-size:10.5px;color:var(--tx-3);white-space:nowrap}
+.collapsed .brand-txt{opacity:0;pointer-events:none}
+.collapsed .sb-top{justify-content:center;padding:0}
+.sb-toggle{flex:none;width:28px;height:28px;border-radius:var(--r-m);display:grid;place-items:center;
+  color:var(--tx-3);transition:all .14s var(--ease)}
+.sb-toggle:hover{background:var(--bg-3);color:var(--tx-1)}
+.collapsed .sb-toggle{transform:rotate(180deg)}
+.sb-nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px 8px 16px}
+.nav-label{font-size:10px;letter-spacing:.12em;color:var(--tx-4);padding:12px 8px 5px;white-space:nowrap}
+.collapsed .nav-label{opacity:0;height:14px;padding:8px 0 0;text-align:center;overflow:hidden}
+.collapsed .nav-label::after{content:"";display:block;height:1px;background:var(--line-1);margin:6px 8px 0}
+.nav-item{display:flex;align-items:center;gap:10px;height:34px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-2);font-size:13px;cursor:pointer;position:relative;width:100%;text-align:left;text-decoration:none;
+  transition:background .14s var(--ease),color .14s var(--ease)}
+.nav-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.nav-item.on{background:linear-gradient(90deg,var(--ac-soft),transparent 92%);color:var(--ac)}
+.nav-item.on::before{content:"";position:absolute;left:-8px;top:8px;bottom:8px;width:2.5px;
+  border-radius:0 3px 3px 0;background:var(--ac)}
+.nav-item svg{width:16px;height:16px;flex:none}
+.nav-item .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-item .cnt{font-size:10.5px;color:var(--tx-4);font-family:var(--fm)}
+.collapsed .nav-item{justify-content:center;padding:0}
+.collapsed .nav-item .t,.collapsed .nav-item .cnt{display:none}
+.collapsed .nav-item.on::before{left:0}
+.collapsed .nav-item::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;
+  transform:translateY(-50%);background:var(--bg-4);border:1px solid var(--line-2);color:var(--tx-1);
+  padding:5px 9px;border-radius:var(--r-s);font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s var(--ease);z-index:40}
+.collapsed .nav-item:hover::after{opacity:1}
+.grp{margin-top:2px}
+.grp-h{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.grp-h:hover{background:var(--bg-2);color:var(--tx-2)}
+.grp-h .car{width:13px;height:13px;flex:none;transition:transform .18s var(--ease);opacity:.7}
+.grp.open .grp-h .car{transform:rotate(90deg)}
+.grp-h .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .2s var(--ease)}
+.grp.open .grp-b{grid-template-rows:1fr}
+.grp-b>div{overflow:hidden;min-height:0}
+.grp-b .inner{padding:2px 0 4px 0}
+.collapsed .grp-h{justify-content:center;padding:0}
+.collapsed .grp-h .t,.collapsed .grp-h .car{display:none}
+.collapsed .grp-b{display:none}
+.sub-item{display:flex;align-items:center;gap:8px;height:29px;padding:0 9px 0 20px;border-radius:var(--r-m);
+  color:var(--tx-3);font-size:12.5px;cursor:pointer;transition:all .14s var(--ease);width:100%;text-align:left}
+.sub-item:hover{background:var(--bg-2);color:var(--tx-1)}
+.sub-item.on{color:var(--ac);background:var(--ac-soft)}
+.sub-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live{width:5px;height:5px;border-radius:50%;flex:none}
+.sb-foot{flex:none;padding:9px;border-top:1px solid var(--line-1);display:grid;gap:7px}
+.com-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);padding:8px 9px}
+.com-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--tx-3)}
+.com-row+.com-row{margin-top:5px}
+.com-row b{font-family:var(--fm);color:var(--tx-2);font-size:11.5px;font-weight:400}
+.collapsed .sb-foot{padding:9px 7px}
+.collapsed .com-card{display:none}
+.collapsed .sb-foot .btn span{display:none}
+.collapsed .sb-foot .btn{width:100%}
+
+/* ---------- 主区（文档滚动页） ---------- */
+.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.top{display:flex;align-items:center;gap:12px;height:50px;padding:0 16px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1)}
+.crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx-3);min-width:0}
+.crumb b{color:var(--tx-1);font-weight:500;font-size:14px}
+.crumb .sep{color:var(--tx-4)}
+.scroll{flex:1;overflow-y:auto;min-height:0;padding:26px 30px 60px;display:grid;gap:26px;max-width:1180px;width:100%;margin:0 auto}
+.hero{display:grid;gap:10px}
+.hero h1{font-size:22px;font-weight:600;letter-spacing:.01em}
+.hero p{font-size:13px;color:var(--tx-2);line-height:1.8;max-width:860px}
+.hero p b{color:var(--tx-1);font-weight:500}
+.hero .keys{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+h2.sec-t{font-size:15px;font-weight:600;letter-spacing:.02em;display:flex;align-items:center;gap:9px;margin-bottom:2px}
+h2.sec-t::after{content:"";flex:1;height:1px;background:var(--line-1)}
+.sec-desc{font-size:12px;color:var(--tx-3);margin-bottom:4px}
+
+/* 页面卡片 */
+.pg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.pg-card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-l);padding:15px 16px;
+  display:grid;gap:8px;text-decoration:none;color:inherit;transition:all .16s var(--ease);position:relative;overflow:hidden}
+.pg-card:hover{border-color:rgba(34,211,238,.4);transform:translateY(-2px);box-shadow:0 8px 28px rgba(0,0,0,.4)}
+.pg-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--pc,var(--ac));opacity:.85}
+.pg-card .r1{display:flex;align-items:center;gap:9px}
+.pg-card .r1 b{font-size:14.5px;font-weight:600}
+.pg-card .r1 .chip{margin-left:auto}
+.pg-card .ds{font-size:12px;color:var(--tx-3);line-height:1.7}
+.pg-card .meta{display:flex;gap:5px;flex-wrap:wrap}
+
+/* 色板 */
+.tok-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.tok{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-m);overflow:hidden}
+.tok .sw{height:44px}
+.tok .bd{padding:7px 10px;display:grid;gap:1px}
+.tok .bd b{font-size:11.5px;font-family:var(--fm);color:var(--tx-1);font-weight:500}
+.tok .bd span{font-size:10px;color:var(--tx-4);font-family:var(--fm)}
+.tok-row{display:flex;gap:10px;flex-wrap:wrap}
+
+/* 组件样例 */
+.demo-grid{display:grid;gap:14px}
+.demo-box{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-l);padding:16px;display:grid;gap:12px}
+.demo-box h4{font-size:10.5px;font-weight:400;letter-spacing:.1em;color:var(--tx-4)}
+.demo-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.state-band{display:flex;gap:0;border-radius:var(--r-m);overflow:hidden;border:1px solid var(--line-1)}
+.state-band div{flex:1;text-align:center;padding:7px 4px;font-size:10.5px;font-family:var(--fm);color:#04222b;font-weight:600}
+.hexwrap{background:var(--bg-0);border:1px solid var(--line-1);border-radius:var(--r-m);padding:11px 12px}
+.hex{font-family:var(--fm);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all}
+.hx{padding:1px 3px;border-radius:3px}
+.s-68,.s-16,.s-L{color:var(--mg)}.s-C{color:var(--am)}.s-R{color:var(--tx-2)}.s-A{color:var(--rx-c)}
+.s-AFN{color:var(--ac);font-weight:500}.s-DT{color:#a78bfa}.s-DU{color:var(--tx-1)}.s-CS{color:var(--am)}
+
+/* 契约表 */
+.ct{width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-2);
+  border:1px solid var(--line-1);border-radius:var(--r-l);overflow:hidden}
+.ct th{text-align:left;font-weight:400;font-size:10.5px;letter-spacing:.08em;color:var(--tx-4);
+  padding:9px 12px;border-bottom:1px solid var(--line-1);background:var(--bg-3)}
+.ct td{padding:9px 12px;border-bottom:1px solid rgba(31,41,53,.55);vertical-align:top}
+.ct tr:last-child td{border-bottom:none}
+.ct .mono{font-size:11px;color:var(--ac)}
+.ct .nm{color:var(--tx-1);font-weight:500;white-space:nowrap}
+.ft-mono{font-family:var(--fm)}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+<!-- ════════════ 侧栏 ════════════ -->
+<aside class="sb">
+  <div class="sb-top">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#04222b" stroke-width="2.2" stroke-linecap="round"><path d="M3 12h3l2-6 3 14 3-11 2 5h5"/></svg></span>
+      <span class="brand-txt"><b>侦听台工作台</b><span>Listener Workbench</span></span>
+    </div>
+    <button class="sb-toggle" id="sbToggle" title="收敛 / 展开侧栏" aria-label="收敛或展开侧栏">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+  </div>
+
+  <nav class="sb-nav">
+    <div class="nav-label">主功能</div>
+    <a class="nav-item" href="listener-ui.html" data-tip="侦听台">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span class="t">侦听台</span>
+      <span class="cnt">53.6万</span>
+    </a>
+    <a class="nav-item" href="sim-concentrator-ui.html" data-tip="模拟集中器">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7.5h.01M7 17h.01"/></svg>
+      <span class="t">模拟集中器</span>
+      <span class="cnt">15</span>
+    </a>
+
+    <div class="grp open" id="grpResp">
+      <button class="grp-h" id="grpRespH" aria-expanded="true">
+        <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <span class="t">内置应答</span>
+        <span class="dot" style="color:var(--ok-c)"></span>
+      </button>
+      <div class="grp-b"><div><div class="inner">
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 00H 确认/否认</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 03H 查询应答</span></button>
+        <button class="sub-item"><span class="live" style="background:#465768"></span><span class="t">AFN 06H 主动上报</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 10H 路由应答</span></button>
+        <button class="sub-item"><span class="live" style="background:#34d399"></span><span class="t">AFN 14H 抄读协同</span></button>
+        <button class="sub-item"><span class="live" style="background:#fbbf24"></span><span class="t">超时兜底否认</span></button>
+      </div></div></div>
+    </div>
+
+    <div class="nav-label">辅助</div>
+    <a class="nav-item" href="trace-ui.html" data-tip="报文追踪">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+      <span class="t">报文追踪</span>
+      <span class="cnt">4</span>
+    </a>
+    <a class="nav-item" href="dict-ui.html" data-tip="协议字典">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h9a3 3 0 013 3v13a2.5 2.5 0 00-2.5-2.5H4z"/><path d="M20 4h-1a3 3 0 00-3 3v13a2.5 2.5 0 012.5-2.5H20z"/></svg>
+      <span class="t">协议字典</span>
+    </a>
+    <a class="nav-item" href="scenario-ui.html" data-tip="场景脚本">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+      <span class="t">场景脚本</span>
+      <span class="cnt">4</span>
+    </a>
+  </nav>
+
+  <div class="sb-foot">
+    <div class="com-card">
+      <div class="com-row"><span class="dot" style="color:var(--ac)"></span>设计稿集 · <b>6</b> 页</div>
+      <div class="com-row"><span class="dot" style="color:var(--am)"></span>标注合计 · <b>61</b> 项</div>
+    </div>
+    <button class="btn btn--sm" style="width:100%"><span>串口设置</span></button>
+  </div>
+</aside>
+
+<!-- ════════════ 主区 ════════════ -->
+<main class="main">
+  <header class="top">
+    <div class="crumb"><b>UI 设计稿总览</b><span class="sep">/</span><span>docs/ui · 静态高保真原型</span></div>
+  </header>
+
+  <div class="scroll">
+
+    <!-- Hero -->
+    <section class="hero">
+      <h1>侦听台工作台 · UI 设计</h1>
+      <p>一套六页的静态高保真设计稿，覆盖工作台全部页面：<b>侦听台</b>与<b>模拟集中器</b>为同级主功能，
+         <b>报文追踪 / 协议字典 / 场景脚本</b>为辅助功能。设计语言为深色工业风——三级背景纵深、工业青主色、
+         琥珀次色、品红点缀；每页右下角有<b>可折叠的功能标注浮层</b>，逐条解释设计要点与数据来源。
+         所有 mock 数据均对齐仓库真实资产（ADR-9 追踪 schema、oad/di 字典、scenarios JSON），可直接作为实现验收基准。</p>
+      <div class="keys">
+        <span class="chip chip--ac">深色工业风</span><span class="chip">三列级联工作区</span>
+        <span class="chip">等宽字体承载协议数据</span><span class="chip">逐段着色 hex</span>
+        <span class="chip chip--am">标注驱动的可审阅设计稿</span><span class="chip chip--ghost">数据契约对齐真实仓库</span>
+      </div>
+    </section>
+
+    <!-- 页面地图 -->
+    <section>
+      <h2 class="sec-t">页面地图</h2>
+      <p class="sec-desc">侧栏结构固定：主功能并列于上、内置应答分组可收起、辅助功能于下；以下每张卡片可点击进入对应设计稿。</p>
+      <div class="pg-grid">
+        <a class="pg-card" href="listener-ui.html" style="--pc:var(--tx-c)">
+          <div class="r1"><b>侦听台</b><span class="chip chip--tx">主功能</span></div>
+          <div class="ds">国网 HPLC 双模空口帧：数据源三入口（日志导入 / 串口实时采集 / 单帧调试）+ 帧索引 + 深度解析，feature_hint 一键送追踪。</div>
+          <div class="meta"><span class="chip chip--ghost">12 项标注</span><span class="chip chip--ghost">四视图复用三列</span></div>
+        </a>
+        <a class="pg-card" href="sim-concentrator-ui.html" style="--pc:var(--ac)">
+          <div class="r1"><b>模拟集中器</b><span class="chip chip--ac">主功能</span></div>
+          <div class="ds">1376.2 下发：AFN → Fn → 字段参数三列级联，帧预览逐段着色，底部收发记录就地展开解析与确认/否认回执。</div>
+          <div class="meta"><span class="chip chip--ghost">12 项标注</span><span class="chip chip--ghost">15 类 AFN · 70+ Fn</span></div>
+        </a>
+        <a class="pg-card" href="trace-ui.html" style="--pc:var(--rx-c)">
+          <div class="r1"><b>报文追踪</b><span class="chip chip--rx">辅助 · 新增</span></div>
+          <div class="ds">通信流追踪（ADR-9）：S1→S2a→S2b→S3 三段证据链，按表地址对账，flow/round/campaign 三层粒度，回放与 Live 同引擎。</div>
+          <div class="meta"><span class="chip chip--ghost">12 项标注</span><span class="chip chip--ghost">后端已交付 G1-G4</span></div>
+        </a>
+        <a class="pg-card" href="dict-ui.html" style="--pc:var(--mg)">
+          <div class="r1"><b>协议字典</b><span class="chip chip--mg">辅助 · 新增</span></div>
+          <div class="ds">四本共享字典：698.45 OAD（66）/ 645-2007 DI（167）/ 1376.2 Fn（73 双向模板）/ 事件规则；纠错与实证注记显性化。</div>
+          <div class="meta"><span class="chip chip--ghost">8 项标注</span><span class="chip chip--ghost">simple JSON 键=契约</span></div>
+        </a>
+        <a class="pg-card" href="scenario-ui.html" style="--pc:var(--am)">
+          <div class="r1"><b>场景脚本</b><span class="chip chip--am">辅助 · 新增</span></div>
+          <div class="ds">声明式验证场景：expected_flow 事件步 + 语义化激励步骤（ADR-5）+ 内置应答/监控规则；执行历史 inconclusive 独立配色。</div>
+          <div class="meta"><span class="chip chip--ghost">9 项标注</span><span class="chip chip--ghost">4 场景校验通过</span></div>
+        </a>
+        <a class="pg-card" href="index.html" style="--pc:var(--tx-3);pointer-events:none;opacity:.55">
+          <div class="r1"><b>设计总览</b><span class="chip chip--ghost">本页</span></div>
+          <div class="ds">设计 token、组件样例、状态色带、页面地图与数据契约来源——实现前先读这页。</div>
+          <div class="meta"><span class="chip chip--ghost">设计系统基线</span></div>
+        </a>
+      </div>
+    </section>
+
+    <!-- 色彩令牌 -->
+    <section>
+      <h2 class="sec-t">色彩令牌</h2>
+      <p class="sec-desc">背景三级递进营造纵深（禁用纯黑/纯灰平铺）；主色工业青用于选择态与链接，琥珀用于发送/警示，品红仅作点缀（帧边界、代理关系）。</p>
+      <div class="tok-grid">
+        <div class="tok"><div class="sw" style="background:#090c10"></div><div class="bd"><b>--bg-0</b><span>#090c10 最深层</span></div></div>
+        <div class="tok"><div class="sw" style="background:#0e1319"></div><div class="bd"><b>--bg-1</b><span>列/面板底</span></div></div>
+        <div class="tok"><div class="sw" style="background:#131a22"></div><div class="bd"><b>--bg-2</b><span>卡片/表头</span></div></div>
+        <div class="tok"><div class="sw" style="background:#18212b"></div><div class="bd"><b>--bg-3</b><span>卡头/控件</span></div></div>
+        <div class="tok"><div class="sw" style="background:#1e2833"></div><div class="bd"><b>--bg-4</b><span>hover 高层</span></div></div>
+        <div class="tok"><div class="sw" style="background:#22d3ee"></div><div class="bd"><b>--ac</b><span>主色 · 工业青</span></div></div>
+        <div class="tok"><div class="sw" style="background:#f0b429"></div><div class="bd"><b>--am / --tx-c</b><span>琥珀 · 发送/警示</span></div></div>
+        <div class="tok"><div class="sw" style="background:#e879a8"></div><div class="bd"><b>--mg</b><span>品红 · 点缀</span></div></div>
+        <div class="tok"><div class="sw" style="background:#2dd4bf"></div><div class="bd"><b>--rx-c</b><span>接收 · 青</span></div></div>
+        <div class="tok"><div class="sw" style="background:#34d399"></div><div class="bd"><b>--ok-c</b><span>成功</span></div></div>
+        <div class="tok"><div class="sw" style="background:#fbbf24"></div><div class="bd"><b>--warn-c</b><span>警示 / inconclusive</span></div></div>
+        <div class="tok"><div class="sw" style="background:#f87171"></div><div class="bd"><b>--err-c</b><span>失败 / 坏帧</span></div></div>
+      </div>
+    </section>
+
+    <!-- 字体与组件 -->
+    <section>
+      <h2 class="sec-t">字体 · 组件样例</h2>
+      <p class="sec-desc">界面中文用 HarmonyOS Sans / PingFang / 雅黑；一切协议数据（hex、键、序号、地址）一律等宽字体 JetBrains Mono / Consolas。</p>
+      <div class="demo-grid">
+        <div class="demo-box">
+          <h4>CHIP 标签 · 状态语义色</h4>
+          <div class="demo-row">
+            <span class="chip">默认</span><span class="chip chip--ac">选中 / AFN</span>
+            <span class="chip chip--tx">发送 TX</span><span class="chip chip--rx">接收 RX</span>
+            <span class="chip chip--ok">全链通过</span><span class="chip chip--am">推断 / 警示</span>
+            <span class="chip chip--err">失败 / 坏帧</span><span class="chip chip--mg">否认 / 代理</span>
+            <span class="chip chip--ghost">幽灵</span>
+          </div>
+          <h4>按钮</h4>
+          <div class="demo-row">
+            <button class="btn btn--primary">下发</button>
+            <button class="btn">普通</button>
+            <button class="btn btn--sm">小按钮</button>
+            <button class="btn btn--ghost">幽灵</button>
+          </div>
+          <h4>输入框</h4>
+          <div class="demo-row" style="max-width:560px">
+            <input class="fld" value="080000000000" style="font-family:var(--fm)">
+            <select class="fld" style="width:150px"><option>Profile · anhui</option></select>
+          </div>
+        </div>
+        <div class="demo-box">
+          <h4>追踪状态机色带 · armed → sent → acked → responded → confirmed</h4>
+          <div class="state-band">
+            <div style="background:#465768;color:var(--tx-1)">armed</div>
+            <div style="background:#f0b429">sent</div>
+            <div style="background:#fbbf24">acked</div>
+            <div style="background:#22d3ee">responded</div>
+            <div style="background:#34d399">confirmed</div>
+          </div>
+          <h4>hex 逐段着色 · 68H|L|C|R|A|AFN|DT|数据|CS|16H（模拟集中器 / 侦听台 / 场景页同规则）</h4>
+          <div class="hexwrap"><div class="hex">
+            <span class="hx s-68">68</span> <span class="hx s-L">11</span> <span class="hx s-L">00</span> <span class="hx s-C">00</span>
+            <span class="hx s-R">00 00 00 00 00 00</span> <span class="hx s-A">01 00 00 00 00 00</span>
+            <span class="hx s-AFN">11</span> <span class="hx s-DT">01</span> <span class="hx s-DT">00</span>
+            <span class="hx s-DU">01 08 00 00 00 00 00 03</span> <span class="hx s-CS">1E</span> <span class="hx s-16">16</span>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 数据契约 -->
+    <section>
+      <h2 class="sec-t">数据契约来源 · 实现即按此对齐</h2>
+      <p class="sec-desc">设计稿不是凭空画的：每个页面的字段与状态都对应仓库里已交付的后端资产，实现时直接对接口。</p>
+      <table class="ct">
+        <thead><tr><th style="width:120px">页面</th><th style="width:320px">数据资产</th><th>契约要点</th></tr></thead>
+        <tbody>
+          <tr><td class="nm">侦听台</td>
+            <td><span class="mono">apps/listener</span> · frames 表物化列<br><span class="mono">/api/listener/*</span></td>
+            <td>msg_seq（APP_RAW[8:10] 真序号）、meter_addrs、ack_peer、app_port/app_id 等增列直接驱动列表筛选与深度解析；坏帧隔离计数。</td></tr>
+          <tr><td class="nm">模拟集中器</td>
+            <td><span class="mono">libs/sim_concentrator</span> · frame_codec / scenario_codec<br><span class="mono">adapter_10376 73 Fn</span></td>
+            <td>AFN→Fn→字段参数树内嵌于设计稿（源自 03_QGDW10376.2 蒸馏）；构帧模板解析+构帧双向，验收清单 119 帧已通过。</td></tr>
+          <tr><td class="nm">报文追踪</td>
+            <td><span class="mono">reqs/0009-listener-flow-trace</span> · ADR-9<br><span class="mono">/api/listener/traces</span></td>
+            <td>输出 schema：summary 七项计数、rounds→targets 三段证据（frame_id 可钻取）、proxy_graph 副产物；POST /api/ai/v1/listener/traces 202+wait、幂等 422。</td></tr>
+          <tr><td class="nm">协议字典</td>
+            <td><span class="mono">adapter_698/metadata/oad.json</span>（66）<br><span class="mono">adapter_645/metadata/di.json</span>（167）</td>
+            <td>simple JSON 键=事实契约；desc 承载协议依据/真机实证/纠错注记；改字典即改契约，需同步 adapter 与 UI。</td></tr>
+          <tr><td class="nm">场景脚本</td>
+            <td><span class="mono">apps/workbench/scenarios/*.json</span><br><span class="mono">orchestration</span> · <span class="mono">/api/run</span></td>
+            <td>场景=expected_flow+stimulus+monitor 三绑定；send 语义化（ADR-5）只写 afn/fn+业务参数；inconclusive 独立呈现不伪装结论。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 设计规则 -->
+    <section>
+      <h2 class="sec-t">实现红线 · 五条</h2>
+      <div class="demo-grid">
+        <div class="demo-box" style="grid-template-columns:1fr">
+          <div style="display:grid;gap:9px;font-size:12.5px;color:var(--tx-2);line-height:1.7">
+            <div><b style="color:var(--ac)">1 · 三列级联是骨架</b> — 主功能页（侦听台/模拟集中器/追踪/字典/场景）一律三列：清单列 → 明细列 → 详情列，宽度只许微调不许换布局。</div>
+            <div><b style="color:var(--ac)">2 · 协议数据必须等宽</b> — hex、OAD/DI 键、BCD 地址、报文序号、时间戳一律 <span class="mono">--fm</span> 等宽字体，禁止比例字体混排。</div>
+            <div><b style="color:var(--ac)">3 · 状态只用语义色</b> — 成功/警示/失败/不可判定只准用 --ok/--warn/--err；inconclusive 用琥珀，绝不复用绿或红。</div>
+            <div><b style="color:var(--ac)">4 · 空态要有引导</b> — 未选择时给级联路径提示（如“AFN 列 → Fn 列 → 字段参数”），禁止白板。</div>
+            <div><b style="color:var(--ac)">5 · 可折叠就要可展开</b> — 侧栏、底部记录、卡片组全部支持收展，动画 0.2s <span class="mono">cubic-bezier(.4,0,.2,1)</span>，尊重 prefers-reduced-motion。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+</div>
+
+<script>
+$("#sbToggle").addEventListener("click",()=>$("#app").classList.toggle("collapsed"));
+$("#grpRespH").addEventListener("click",()=>{
+  const g=$("#grpResp");g.classList.toggle("open");
+  $("#grpRespH").setAttribute("aria-expanded",g.classList.contains("open"));
+});
+</script>
+</body>
+</html>

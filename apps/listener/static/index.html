@@ -33,7 +33,9 @@
 
     <nav class="view-tabs" role="tablist" aria-label="视图切换">
       <button class="view-tab active" type="button" role="tab"
-        data-view="frames" aria-selected="true">帧浏览</button>
+        data-view="frames-pro" aria-selected="true">新版帧浏览</button>
+      <button class="view-tab" type="button" role="tab"
+        data-view="frames" aria-selected="false">帧浏览（经典）</button>
       <button class="view-tab" type="button" role="tab"
         data-view="minute" aria-selected="false">分钟采集分析</button>
       <button class="view-tab" type="button" role="tab"
@@ -42,7 +44,101 @@
         data-view="network-assessment" aria-selected="false">网络承载评估</button>
     </nav>
 
-    <section id="frames-view" class="operation-panel loader-panel" aria-label="日志操作区">
+    <!-- 新版帧浏览（reqs/0010 P2）：三列布局 + feature_hint + 报文追踪联动 -->
+    <section id="frames-pro-view" aria-label="新版帧浏览" style="display:flex;flex-direction:column;height:100%;min-height:0">
+      <style>
+        #frames-pro-view{--pbg0:#090c10;--pbg1:#0e1319;--pbg2:#131a22;--pbg3:#18212b;--pbg4:#1e2833;
+          --pline1:#1f2935;--pline2:#2a3644;--pline3:#3a4a5c;
+          --ptx1:#e8f0f7;--ptx2:#9aabbb;--ptx3:#65798c;--ptx4:#465768;
+          --pac:#22d3ee;--pac-soft:rgba(34,211,238,.12);--pam:#f0b429;--pam-soft:rgba(240,180,41,.12);
+          --pok:#34d399;--perr:#f87171;--pr-s:5px;--pr-m:8px;--pr-l:12px;
+          --pff:"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+          --pfm:"JetBrains Mono","Cascadia Mono","Consolas",ui-monospace,monospace}
+        #frames-pro-view .pro-work{flex:1;display:grid;grid-template-columns:250px minmax(300px,360px) 1fr;min-height:0}
+        #frames-pro-view .pro-col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--pbg1);border-left:1px solid var(--pline1)}
+        #frames-pro-view .pro-col:first-child{border-left:none}
+        #frames-pro-view .pro-sec{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
+          border-bottom:1px solid var(--pline1);background:var(--pbg2);font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--ptx2)}
+        #frames-pro-view .pro-sec .sp{margin-left:auto}
+        #frames-pro-view .pro-body{flex:1;overflow-y:auto;min-height:0}
+        #frames-pro-view .pro-empty{display:grid;place-items:center;height:100%;padding:32px 20px;text-align:center;color:var(--ptx4);font-size:12.5px;line-height:1.8}
+        #frames-pro-view .pro-hint{font-size:11px;color:var(--ptx4)}
+        #frames-pro-view .pro-chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;
+          font-size:11px;font-weight:500;background:var(--pbg3);color:var(--ptx2);border:1px solid var(--pline1)}
+        #frames-pro-view .pro-chip--ac{background:var(--pac-soft);color:var(--pac);border-color:rgba(34,211,238,.25)}
+        #frames-pro-view .pro-chip--am{background:var(--pam-soft);color:var(--pam);border-color:rgba(240,180,41,.25)}
+        #frames-pro-view .pro-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:26px;padding:0 10px;
+          border-radius:8px;border:1px solid var(--pline2);background:var(--pbg3);color:var(--ptx2);font-size:12px;
+          font-family:var(--pff);font-weight:500;cursor:pointer;text-decoration:none;transition:all .14s cubic-bezier(.4,0,.2,1)}
+        #frames-pro-view .pro-btn:hover{background:var(--pbg4);color:var(--ptx1);border-color:var(--pline3)}
+        #frames-pro-view .pro-btn--primary{background:linear-gradient(180deg,#22d3ee,#0ea5c4);color:#04222b;border-color:#0e9ab5}
+        #frames-pro-view .pro-filter{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--pline1)}
+        #frames-pro-view .pro-input{height:26px;padding:0 8px;border-radius:8px;background:var(--pbg1);
+          border:1px solid var(--pline2);color:var(--ptx1);font-size:12px;font-family:var(--pff)}
+        #frames-pro-view .pro-input:focus{outline:none;border-color:var(--pac);box-shadow:0 0 0 3px var(--pac-soft)}
+        #frames-pro-view .pro-fr{border-bottom:1px solid rgba(31,41,53,.6);cursor:pointer;position:relative;transition:background .14s}
+        #frames-pro-view .pro-fr:hover{background:var(--pbg2)}
+        #frames-pro-view .pro-fr.sel{background:linear-gradient(90deg,var(--pac-soft),transparent)}
+        #frames-pro-view .pro-fr.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--pac)}
+        #frames-pro-view .pro-fr-in{padding:7px 11px;display:grid;gap:3px}
+        #frames-pro-view .pro-fr-r{display:flex;align-items:center;gap:7px}
+        #frames-pro-view .pro-fr-t{font-family:var(--pfm);font-size:11px;color:var(--ptx4);flex:none}
+        #frames-pro-view .pro-fr-n{flex:1;min-width:0;font-size:12px;color:var(--ptx1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        #frames-pro-view .pro-fr-l{font-family:var(--pfm);font-size:10.5px;color:var(--ptx4);flex:none}
+        #frames-pro-view .pro-kv{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 16px}
+        #frames-pro-view .pro-kv .k{font-size:10.5px;color:var(--ptx4)}
+        #frames-pro-view .pro-kv .v{font-family:var(--pfm);font-size:11.5px;color:var(--ptx2);word-break:break-all}
+        #frames-pro-view .pro-card{background:var(--pbg2);border:1px solid var(--pline1);border-radius:12px;overflow:hidden}
+        #frames-pro-view .pro-card-h{display:flex;align-items:center;gap:9px;padding:9px 13px;background:var(--pbg3);
+          border-bottom:1px solid var(--pline1);font-size:12.5px;font-weight:500;color:var(--ptx1)}
+        #frames-pro-view .pro-card-h .sp{margin-left:auto;font-size:11px;color:var(--ptx4);font-weight:400}
+        #frames-pro-view .pro-card-in{padding:13px}
+        #frames-pro-view .pro-hex{background:var(--pbg0);border:1px solid var(--pline1);border-radius:8px;padding:10px 12px;
+          font-family:var(--pfm);font-size:11.5px;line-height:1.9;letter-spacing:.03em;word-break:break-all;color:var(--ptx2);max-height:200px;overflow:auto}
+        #frames-pro-view .pro-hintcard{border-color:rgba(240,180,41,.35)}
+        #frames-pro-view .pro-hintcard .pro-card-h{background:rgba(240,180,41,.08);color:var(--pam)}
+        #frames-pro-view .pro-json{font-family:var(--pfm);font-size:11px;line-height:1.7;color:var(--ptx2);white-space:pre-wrap;word-break:break-all;
+          background:var(--pbg0);border:1px solid var(--pline1);border-radius:8px;padding:10px 12px;max-height:220px;overflow:auto}
+        #frames-pro-view .pro-pgn{display:flex;align-items:center;gap:8px;padding:7px 12px;border-top:1px solid var(--pline1);
+          background:var(--pbg2);font-size:11px;color:var(--ptx4);font-family:var(--pfm)}
+        #frames-pro-view .pro-pgn button{color:var(--ptx3);width:26px;height:22px;border-radius:4px;border:1px solid var(--pline1);background:var(--pbg2);cursor:pointer}
+        #frames-pro-view .pro-pgn button:hover{color:var(--ptx1);border-color:var(--pline3)}
+      </style>
+      <div class="pro-work">
+        <div class="pro-col">
+          <div class="pro-sec">筛选<span class="sp pro-hint" id="proTotal"></span></div>
+          <div class="pro-filter" style="flex-direction:column;align-items:stretch;gap:6px">
+            <input class="pro-input" id="proQuery" placeholder="frm_type / 摘要关键字">
+            <input class="pro-input" id="proNid" placeholder="NID 筛选（可留空）">
+          </div>
+          <div class="pro-sec" style="border-top:1px solid var(--pline1)">数据入口<span class="sp pro-hint">串口采集 / 日志导入在「经典视图」01 区</span></div>
+          <div class="pro-body" style="padding:10px;display:grid;gap:8px;align-content:start">
+            <div style="font-size:11.5px;color:var(--ptx3);line-height:1.8">
+              新版视图聚焦 <b style="color:var(--ptx1)">帧索引 → 深度解析 → 追踪联动</b>。<br>
+              导入日志、串口实时采集、单帧调试入口在「帧浏览（经典）」标签的数据源面板，两者共用同一索引库。
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="pro-btn" id="proReload">刷新索引</button>
+              <a class="pro-btn" href="/#trace" target="_top">打开报文追踪 →</a>
+            </div>
+          </div>
+        </div>
+        <div class="pro-col">
+          <div class="pro-sec">帧索引<span class="sp pro-hint" id="proPage"></span></div>
+          <div class="pro-body" id="proList"><div class="pro-empty">加载中…</div></div>
+          <div class="pro-pgn"><span id="proPageInfo">—</span><span style="margin-left:auto"></span>
+            <button id="proPrev">‹</button><button id="proNext">›</button></div>
+        </div>
+        <div class="pro-col">
+          <div class="pro-sec">深度解析 · 单帧<span class="sp pro-hint">feature_hint 可一键送报文追踪</span></div>
+          <div class="pro-body" id="proDetail" style="padding:14px 16px;display:grid;gap:14px;align-content:start">
+            <div class="pro-empty">从中间列选择一帧</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="frames-view" class="operation-panel loader-panel" aria-label="日志操作区" hidden>
       <button id="loader-toggle" class="loader-toggle" type="button"
         aria-expanded="false" aria-controls="loader-body"
         title="展开 / 收起日志加载面板">
@@ -168,7 +264,7 @@
       </div>
     </section>
 
-    <section id="frames-data" class="data-section">
+    <section id="frames-data" class="data-section" hidden>
       <div class="list-panel">
         <div class="panel-toolbar">
           <div>
@@ -497,6 +593,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=loader-collapse"></script>
+  <script src="/static/app.js?v=frames-pro"></script>
+  <script src="/static/frames-pro.js?v=frames-pro-v1" defer></script>
 </body>
 </html>

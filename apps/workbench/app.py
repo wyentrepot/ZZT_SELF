@@ -328,6 +328,10 @@ def create_workbench_app(
     # ---- 4. 编排路由 ----
     app.include_router(orchestration_router)
 
+    # ---- 4.5 协议字典只读端点（reqs/0010 P1）----
+    from .dict_api import router as dict_router
+    app.include_router(dict_router)
+
     # ---- 4. 静态外壳（页签式 SPA）----
     _wb_static = _workbench_static_dir()
     if _wb_static.exists():

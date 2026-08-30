@@ -196,3 +196,25 @@ class TestVerifyJournal:
         session = client.get("/api/simcon/session").json()
         ids = [item["session_id"] for item in session["sessions"]]
         assert body["session_id"] in ids
+
+
+class TestBuildEndpoint:
+    """语义化构帧预览（reqs/0010 P4）：只算不发。"""
+
+    def test_build_11h_f1_add_node(self, tmp_path):
+        client = TestClient(create_simcon_app(journal_dir=tmp_path))
+        r = client.post("/api/simcon/build", json={
+            "afn": 0x11, "fn": 1,
+            "params": {"action": "add", "addr": "080000000000", "protocol": 3},
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["length"] > 10
+        assert body["hex"].startswith("68 ")
+        assert body["hex"].endswith("16")
+
+    def test_build_missing_params_422(self, tmp_path):
+        client = TestClient(create_simcon_app(journal_dir=tmp_path))
+        r = client.post("/api/simcon/build", json={"afn": 0x11, "fn": 1, "params": {}})
+        assert r.status_code == 422
+        assert "构帧失败" in r.json()["detail"]

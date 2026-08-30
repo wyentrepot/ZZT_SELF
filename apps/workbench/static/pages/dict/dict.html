@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协议字典 · 共享协议资产</title>
+<style>
+/* ===== 设计基线：docs/ui/index.html（工业深色，与设计稿同源 token）===== */
+:root{
+  --bg-0:#090c10; --bg-1:#0e1319; --bg-2:#131a22; --bg-3:#18212b; --bg-4:#1e2833;
+  --line-1:#1f2935; --line-2:#2a3644; --line-3:#3a4a5c;
+  --tx-1:#e8f0f7; --tx-2:#9aabbb; --tx-3:#65798c; --tx-4:#465768;
+  --ac:#22d3ee; --ac-soft:rgba(34,211,238,.12);
+  --am:#f0b429; --am-soft:rgba(240,180,41,.12); --mg:#e879a8;
+  --r-s:5px; --r-m:8px; --r-l:12px;
+  --ff:"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --fm:"JetBrains Mono","Cascadia Mono","Consolas",ui-monospace,monospace;
+  --ease:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--ff);font-size:13px;line-height:1.6;color:var(--tx-1);background:var(--bg-0);overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select{font:inherit;color:inherit}
+.mono{font-family:var(--fm);font-variant-ligatures:none}
+.banner{display:none;align-items:center;gap:9px;padding:8px 16px;background:rgba(248,113,113,.1);
+  border-bottom:1px solid rgba(248,113,113,.3);color:var(--err-c);font-size:12.5px}
+.banner.show{display:flex}
+.app{display:flex;flex-direction:column;height:100vh}
+.top{display:flex;align-items:center;gap:10px;height:50px;padding:0 16px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-1)}
+.crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx-3);white-space:nowrap}
+.crumb b{color:var(--tx-1);font-weight:500;font-size:14px}
+.top .sp{margin-left:auto}
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-s);
+  font-size:11px;font-weight:500;background:var(--bg-3);color:var(--tx-2);border:1px solid var(--line-1)}
+.chip--ac{background:var(--ac-soft);color:var(--ac);border-color:rgba(34,211,238,.25)}
+.chip--am{background:var(--am-soft);color:var(--am);border-color:rgba(240,180,41,.25)}
+.chip--ghost{background:transparent;color:var(--tx-3)}
+.hint{font-size:11px;color:var(--tx-4)}
+.fld{width:100%;height:30px;padding:0 9px;border-radius:var(--r-m);background:var(--bg-1);
+  border:1px solid var(--line-2);color:var(--tx-1);font-size:12.5px;transition:all .14s var(--ease)}
+.fld:hover{border-color:var(--line-3)}
+.fld:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+.work{flex:1;display:grid;grid-template-columns:250px minmax(300px,360px) 1fr;min-height:0}
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg-1)}
+.col+.col{border-left:1px solid var(--line-1)}
+.sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
+  border-bottom:1px solid var(--line-1);background:var(--bg-2)}
+.sec-h h3{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--tx-2)}
+.sec-h .sp{margin-left:auto}
+.col-body{flex:1;overflow-y:auto;min-height:0}
+.empty{display:grid;place-items:center;height:100%;padding:32px 20px;text-align:center;color:var(--tx-4)}
+.empty p{font-size:12.5px;line-height:1.8}
+/* 列1 字典卡 */
+.src-sec{padding:10px;display:grid;gap:8px}
+.dct-card{display:block;width:100%;text-align:left;background:var(--bg-2);border:1px solid var(--line-1);
+  border-radius:var(--r-m);padding:10px 11px;display:grid;gap:4px;transition:all .14s var(--ease);position:relative}
+.dct-card:hover{border-color:var(--line-3);background:var(--bg-3)}
+.dct-card.on{border-color:rgba(34,211,238,.35);background:linear-gradient(180deg,var(--ac-soft),var(--bg-2))}
+.dct-card.on::before{content:"";position:absolute;left:-1px;top:10px;bottom:10px;width:2.5px;border-radius:2px;background:var(--ac)}
+.dct-r{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--tx-1);font-weight:500}
+.dct-r .mono{margin-left:auto;font-size:10.5px;color:var(--tx-4);font-weight:400}
+.dct-s{font-size:10.5px;color:var(--tx-4);line-height:1.55}
+.dct-s code{font-family:var(--fm);font-size:10px;color:var(--tx-3)}
+/* 列2 条目 */
+.en-filter{padding:8px 10px;border-bottom:1px solid var(--line-1)}
+.en-item{border-bottom:1px solid rgba(31,41,53,.6);cursor:pointer;position:relative;transition:background .14s var(--ease)}
+.en-item:hover{background:var(--bg-2)}
+.en-item.sel{background:linear-gradient(90deg,var(--ac-soft),transparent)}
+.en-item.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--ac)}
+.en-in{padding:7px 11px;display:grid;gap:3px}
+.en-r{display:flex;align-items:center;gap:7px}
+.en-key{font-family:var(--fm);font-size:11.5px;color:var(--ac);flex:none;min-width:60px}
+.en-nm{flex:1;min-width:0;font-size:12px;color:var(--tx-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.en-s{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--tx-4);overflow:hidden;white-space:nowrap}
+.en-s .ds{overflow:hidden;text-overflow:ellipsis}
+.note-dot{width:6px;height:6px;border-radius:50%;background:var(--am);flex:none}
+.sub-count{font-size:10px;color:var(--tx-4);font-family:var(--fm);flex:none}
+/* 列3 详情 */
+.par-head{padding:12px 16px;border-bottom:1px solid var(--line-1);background:var(--bg-2);flex:none}
+.par-t1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.par-t1 b{font-size:15px;font-weight:500}
+.par-t1 b.mono{font-family:var(--fm);color:var(--ac)}
+.par-t2{margin-top:7px;font-size:12px;color:var(--tx-3);line-height:1.6;word-break:break-all}
+.par-body{flex:1;overflow-y:auto;padding:14px 16px 20px;display:grid;gap:14px;align-content:start}
+.card{background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-l);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:9px;padding:9px 13px;background:var(--bg-3);
+  border-bottom:1px solid var(--line-1);font-size:12.5px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--tx-4);font-weight:400}
+.card-in{padding:13px}
+.ft{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.ft th{text-align:left;font-weight:400;font-size:10.5px;letter-spacing:.08em;color:var(--tx-4);
+  padding:0 8px 7px;border-bottom:1px solid var(--line-1)}
+.ft td{padding:7px 8px;border-bottom:1px solid rgba(31,41,53,.55);vertical-align:top}
+.ft tr:last-child td{border-bottom:none}
+.ft .nm{color:var(--tx-1);font-size:12px}
+.ft .mono{font-family:var(--fm);font-size:11px;color:var(--am);word-break:break-all}
+.fixcard{border-color:rgba(240,180,41,.35)}
+.fixcard .card-h{background:rgba(240,180,41,.08);color:var(--am)}
+.jsonwrap{background:var(--bg-0);border:1px solid var(--line-1);border-radius:var(--r-m);padding:11px 12px;
+  font-family:var(--fm);font-size:11.5px;line-height:1.8;color:var(--tx-2);white-space:pre-wrap;word-break:break-all;max-height:320px;overflow:auto}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="banner" id="banner"></div>
+  <header class="top">
+    <div class="crumb"><b>协议字典</b><span style="color:var(--tx-4)">/</span><span>共享协议资产 · simple JSON 键即事实契约</span></div>
+    <div class="sp"></div>
+    <span class="hint">数据直读仓库 metadata 文件，改文件即改字典</span>
+  </header>
+  <section class="work">
+    <div class="col">
+      <div class="sec-h"><h3>字典</h3><span class="sp"></span><span class="hint" id="dctCnt"></span></div>
+      <div class="col-body"><div class="src-sec" id="dctList"><div class="empty"><p>加载中…</p></div></div></div>
+    </div>
+    <div class="col">
+      <div class="sec-h"><h3 id="enTitle">条目</h3><span class="sp"></span><span class="hint">琥珀点 = desc 含纠错/实证注记</span></div>
+      <div class="en-filter"><input class="fld" id="q" placeholder="搜索名称 / 键 / 描述…"></div>
+      <div class="col-body" id="enList"><div class="empty"><p>加载中…</p></div></div>
+    </div>
+    <div class="col">
+      <div class="sec-h"><h3>条目详情</h3><span class="sp"></span><span class="hint"></span></div>
+      <div class="par-head" id="parHead"><div class="par-t2" style="padding:0">从左侧选择一个条目。</div></div>
+      <div class="col-body" id="parBody"><div class="empty"><p>未选择条目</p></div></div>
+    </div>
+  </section>
+</div>
+<script src="dict.js?v=dict-v1"></script>
+</body>
+</html>

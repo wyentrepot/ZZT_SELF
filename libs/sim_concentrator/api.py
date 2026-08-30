@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from sim_concentrator.journal import SessionManager
 from sim_concentrator.runner import execute_task, run_single_step
 from sim_concentrator.responder import Responder
-from sim_concentrator.scenario_codec import load_profile
+from sim_concentrator.scenario_codec import build_send, load_profile
 from shared.serial_mapping import SerialPortCatalog
 from shared.serial_resources import SerialResourceRegistry
 from sim_concentrator.serial_io import (
@@ -102,6 +102,16 @@ class StepRequest(BaseModel):
     recv_only: bool = False
     enable_responder: bool = True
     name: Optional[str] = None
+
+
+class BuildRequest(BaseModel):
+    """语义化构帧预览请求：只经 scenario_codec 计算帧字节，不触串口。"""
+    afn: Any
+    fn: Any
+    params: Dict[str, Any] = {}
+    direction: str = "down"
+    profile: Optional[str] = None
+    seq: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +401,20 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"单步执行失败：{exc}") from exc
+
+    @app.post(f"{prefix}/build")
+    async def build_frame(request: BuildRequest):
+        """语义化构帧预览（reqs/0010 P4）：scenario_codec 只算不发，供 UI 帧预览。"""
+        try:
+            profile = load_profile(request.profile or "anhui")
+            data = build_send(
+                {"afn": request.afn, "fn": request.fn, "direction": request.direction,
+                 "params": request.params},
+                profile, seq=request.seq or 1,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"构帧失败：{exc}") from exc
+        return {"hex": data.hex(" ").upper(), "length": len(data)}
 
     @app.get(f"{prefix}/frames")
     async def frames(

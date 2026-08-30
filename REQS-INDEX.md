@@ -16,6 +16,7 @@
 | 0007 | 架构规范解耦重构（parser facade、编排 ports、模型 canonical/DTO） | 大需求 | ✅ G1-G4 已验收（CCO 烧录验证完成） | master | 2026-08-28 |
 | 0008 | 模拟集中器帧日志持久化 + AI 控制面 simcon 接口（verify/step/frames，ADR-8） | 小需求 | ✅ 已完成 | master | 2026-08-29 |
 | 0009 | 侦听台通信流追踪（发送→响应→接收三段证据链，flow/round/campaign，回放+live，ADR-9） | 大需求 | ✅ 已完成（G1-G4 验收，全量捕获人工核对通过） | master | 2026-08-29 |
+| 0010 | 工作台 UI 落地（docs/ui 六页设计稿 → 真实页面；P1 追踪+字典、P2 侦听台、P3 场景脚本、P4 模拟集中器均已交付；P5 主题统一挂起待决策） | 大需求 | 🚧 P1-P4 已完成（待 commit + 真机验收） | master | 2026-08-30 |
 
 ## 使用说明
 

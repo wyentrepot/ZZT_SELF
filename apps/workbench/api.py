@@ -49,6 +49,29 @@ async def get_scenario(scenario_id: str):
     return s
 
 
+@router.get("/scenarios/{scenario_id}/task")
+async def get_scenario_task(scenario_id: str):
+    """返回场景激励任务的原始 JSON（stimulus.task_file，reqs/0010 P3）。"""
+    import json as _json
+
+    from .orchestration.scenarios import SCENARIOS_DIR
+    s = load_scenario(scenario_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"场景不存在：{scenario_id}")
+    task_file = (s.get("stimulus") or {}).get("task_file")
+    if not task_file:
+        raise HTTPException(status_code=404, detail=f"场景 {scenario_id} 未声明激励任务文件")
+    path = (SCENARIOS_DIR / task_file).resolve()
+    if not str(path).startswith(str(SCENARIOS_DIR.resolve())):
+        raise HTTPException(status_code=422, detail="task_file 越出场景目录")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"任务文件缺失：{task_file}")
+    try:
+        return _json.loads(path.read_text(encoding="utf-8"))
+    except (_json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=500, detail=f"任务文件读取失败：{exc}") from exc
+
+
 @router.post("/run")
 async def create_run(run_input: RunRequest):
     """创建并异步执行一个验证批次（全链路：烧录→监控→激励→比对→反馈→报告）。
