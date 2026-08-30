@@ -1,0 +1,404 @@
+/* ============================================================
+   Design Tokens v2 —— primitive / semantic / component 三层体系
+   REQS-0012 工作台主题系统重构
+
+   分层铁律：
+     L1 primitive  原始色板，不表达语义，禁止被组件直接引用
+     L2 semantic   语义角色，随主题切换改变指向
+     L3 component  组件槽位，业务组件只准用这层
+   引用方向只允许 L3 → L2 → L1，越层引用即为回归。
+
+   主题机制：html[data-theme="midnight"|"daylight"]
+     - 主题定义留在 CSS（D1 决策）：JS 只切换属性，不产生颜色值，
+       JS 异常时主题仍有兜底 —— midnight 语义层同时挂在 :root 上。
+     - 选择器一律写 html[data-theme=...] 带标签限定：
+       .theme-dot 按钮使用 data-theme-key 携带候选主题名，
+       裸写 [data-theme=...] 会误命中那些按钮。
+
+   主色：#06b6d4 蔚蓝科技风（REQS-0012 D1 已拍板，两套主题共用）
+   ============================================================ */
+
+/* ============================================================
+   L0 · 基础设施层：非颜色 token + 主题注册表（不随主题变）
+   ============================================================ */
+:root {
+  /* ---- 主题注册表（单一数据源）----
+     新增/删除一套主题只需改这里 + 下方一个 html[data-theme=...] 块。
+     JS 解析本属性生成切换按钮，不再有 JS THEMES / HTML .theme-dot 两份副本。
+     编码：<key>|<中文名>|<图标> 以逗号分隔。 */
+  --theme-registry: "midnight|墨夜深色|🌙,daylight|晴昼浅色|☀️";
+
+  /* ---- Spacing（4px 基准网格）---- */
+  --sp-0:    0;       --sp-px:   1px;
+  --sp-0-5:  0.125rem;  --sp-1:    0.25rem;
+  --sp-1-5:  0.375rem;  --sp-2:    0.5rem;
+  --sp-2-5:  0.625rem;  --sp-3:    0.75rem;
+  --sp-3-5:  0.875rem;  --sp-4:    1rem;
+  --sp-5:    1.25rem;   --sp-6:    1.5rem;
+  --sp-7:    1.75rem;   --sp-8:    2rem;
+  --sp-10:   2.5rem;    --sp-12:   3rem;
+  --sp-16:   4rem;
+
+  /* ---- Typography Scale ---- */
+  --fs-xs:    0.6875rem;  --fs-sm:    0.75rem;
+  --fs-base:  0.8125rem;  --fs-md:    0.875rem;
+  --fs-lg:    0.9375rem;  --fs-xl:    1rem;
+  --fs-2xl:   1.125rem;   --fs-3xl:   1.25rem;
+
+  /* ---- Font Weights ---- */
+  --fw-normal: 400;  --fw-medium: 500;
+  --fw-semibold: 600; --fw-bold: 700; --fw-black: 900;
+
+  /* ---- Line Heights ---- */
+  --lh-none: 1; --lh-tight: 1.25; --lh-snug: 1.375;
+  --lh-normal: 1.5; --lh-relax: 1.625;
+
+  /* ---- Border Radius ---- */
+  --radius-sm: 0.25rem; --radius-md: 0.5rem;
+  --radius-lg: 0.75rem; --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* ---- Shadows ---- */
+  --sh-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --sh-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+  --sh-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+
+  /* ---- Duration / Transition ---- */
+  --dur-75: 75ms; --dur-100: 100ms; --dur-150: 150ms;
+  --dur-200: 200ms; --dur-300: 300ms; --dur-500: 500ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ---- Pre / Code ---- */
+  --pre-font: Consolas, "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+
+  /* ---- Font Families（统一三方言：B 系 --ff / C 系 Inter / A 系系统栈）----
+     C 系原用 Inter 打头，属通用字体且非本项目设计基线，统一到 B 系已落地的
+     「中文优先」栈：西文由 HarmonyOS Sans SC 的拉丁部分承接，中文为 PingFang/雅黑。 */
+  --font-sans: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+   L1 · Primitive —— 原始色板
+   纯色值，无语义。禁止被 L3 组件层直接引用。
+   ============================================================ */
+:root {
+  /* 中性阶梯（带蓝调，与蔚蓝主色同源） */
+  --p-slate-950: #05080f;
+  --p-slate-900: #0a1628;
+  --p-slate-850: #0d1a30;
+  --p-slate-800: #0f1f3d;
+  --p-slate-750: #152a4a;
+  --p-slate-700: #1d2c3b;
+  --p-slate-600: #2a3d50;
+  --p-slate-500: #536678;
+  --p-slate-400: #7e91a4;
+  --p-slate-300: #8296ad;
+  --p-slate-200: #94a3b8;
+  --p-slate-150: #a8b6c8;
+  --p-slate-100: #e8f0f7;
+  --p-slate-50:  #f4f6f9;
+  --p-slate-0:   #ffffff;
+
+  /* 主色 · 蔚蓝（REQS-0012 D1 拍板 #06b6d4） */
+  --p-cyan-600: #0891b2;
+  --p-cyan-500: #06b6d4;
+  --p-cyan-400: #22d3ee;
+  --p-cyan-300: #67e8f9;
+  --p-cyan-700: #0e7490;
+  --p-cyan-ink: #04202e;   /* 主色填充上的反色字，两主题通用 */
+
+  /* 功能色 · 收发方向（语义锁定，不参与品牌主色统一） */
+  --p-teal-500: #2dd4bf;   /* 接收 RX */
+  --p-teal-700: #0f766e;
+  --p-amber-500: #f0b429;  /* 发送 TX */
+  --p-amber-700: #b45309;
+
+  /* 状态色 */
+  --p-green-500: #10b981;  --p-green-700: #15803d;
+  --p-orange-500: #f59e0b; --p-orange-700: #b45309;
+  --p-red-500: #ef4444;    --p-red-700: #b91c1c;
+  --p-blue-500: #5a94ff;   --p-blue-700: #1d4ed8;
+  /* inconclusive 独立紫色相（REQS-0011 §4.6 铁律）：深 #a371f7 / 浅 #7c3aed */
+  --p-purple-500: #a371f7; --p-purple-700: #7c3aed;
+
+  /* 洋红：仅 B 系 --mg 在用（simcon 指令类型标记），尚无稳定语义，待业务确认后收敛 */
+  --p-pink-500: #e879a8; --p-pink-700: #be3455;
+}
+
+/* ============================================================
+   L2 · Semantic —— 语义角色
+   midnight 同时挂在 :root 上，作为 JS 失效时的兜底（D1 决策）。
+   daylight 以 html[data-theme=...] 更高特异性覆盖。
+   ============================================================ */
+
+/* ---------- 主题一：墨夜深色 midnight（默认） ---------- */
+:root,
+html[data-theme="midnight"] {
+  color-scheme: dark;
+
+  /* 背景层级（5 级实心 + 2 级半透明叠加）
+     级数取自 B 系 bg-0..4 的实际使用深度，A/C 系的三级不够用。 */
+  --color-bg-canvas:   var(--p-slate-900);
+  --color-bg-surface:  var(--p-slate-800);
+  --color-bg-raised:   var(--p-slate-750);
+  --color-bg-elevated: #1b3555;
+  --color-bg-overlay:  #22406a;
+  --color-bg-input:    var(--p-slate-850);
+  --color-bg-hover:    rgb(255 255 255 / 0.05);
+  --color-bg-active:   rgb(255 255 255 / 0.10);
+
+  /* 文字四档阶梯 —— 全部实测 ≥4.5:1（canvas/surface/input/raised 四种底色）
+     default 12.48+ · muted 6.97+ · subtle 5.60+ · dim 4.73+
+     修正记录：旧 --fg-dim #64748b 仅 3.44 FAIL、--tx-4 仅 2.36 FAIL、
+     --faint 仅 3.04/3.17 FAIL，本版全部提亮至达标。 */
+  --color-fg-default:  var(--p-slate-100);  /* 15.75:1 */
+  --color-fg-muted:    var(--p-slate-150);  /*  8.80:1 */
+  --color-fg-subtle:   var(--p-slate-200);  /*  7.07:1 */
+  --color-fg-dim:      var(--p-slate-300);  /*  5.97:1 */
+  --color-fg-inverse:  var(--p-slate-950);
+
+  /* 描边 */
+  --color-border-default:  rgb(255 255 255 / 0.07);
+  --color-border-strong:   rgb(255 255 255 / 0.14);
+  --color-border-emphasis: rgb(255 255 255 / 0.24);
+  --color-border-focus:    var(--p-cyan-500);
+
+  /* 主色：填充/描边用 --color-accent；作为文字/图标时用 -emphasis（更亮，10.03:1） */
+  --color-accent:          var(--p-cyan-500);
+  --color-accent-hover:    var(--p-cyan-400);
+  --color-accent-active:   var(--p-cyan-600);
+  --color-accent-emphasis: var(--p-cyan-400);
+  --color-accent-fg:       var(--p-cyan-ink);
+  --color-accent-soft:     color-mix(in srgb, var(--p-cyan-500) 14%, transparent);
+
+  /* 收发方向（功能色，禁并入主色）
+     青绿 = 接收 RX，琥珀 = 发送 TX。
+     来源：simcon.html 的 --rx-c/--tx-c 与 module-serial.html 的 .rx/.tx 一致，
+     侦听台无方向色映射 —— 三方无分歧，见 REQS-0012 人工确认记录。 */
+  --color-dir-rx:      var(--p-teal-500);
+  --color-dir-rx-soft: color-mix(in srgb, var(--p-teal-500) 14%, transparent);
+  --color-dir-tx:      var(--p-amber-500);
+  --color-dir-tx-soft: color-mix(in srgb, var(--p-amber-500) 14%, transparent);
+
+  /* 状态 */
+  --color-status-pass:         var(--p-green-500);
+  --color-status-pass-bg:      color-mix(in srgb, var(--p-green-500) 15%, transparent);
+  --color-status-pass-border:  color-mix(in srgb, var(--p-green-500) 35%, transparent);
+  --color-status-warn:         var(--p-orange-500);
+  --color-status-warn-bg:      color-mix(in srgb, var(--p-orange-500) 15%, transparent);
+  --color-status-warn-border:  color-mix(in srgb, var(--p-orange-500) 35%, transparent);
+  --color-status-fail:         var(--p-red-500);
+  --color-status-fail-bg:      color-mix(in srgb, var(--p-red-500) 15%, transparent);
+  --color-status-fail-border:  color-mix(in srgb, var(--p-red-500) 35%, transparent);
+  --color-status-info:         var(--p-blue-500);
+  --color-status-info-bg:      color-mix(in srgb, var(--p-blue-500) 15%, transparent);
+  --color-status-info-border:  color-mix(in srgb, var(--p-blue-500) 35%, transparent);
+  --color-status-special:      var(--p-pink-500);
+  /* inconclusive：证据缺失（≠失败），独立紫色相，不得复用 warn 琥珀 */
+  --color-status-inconclusive:        var(--p-purple-500);
+  --color-status-inconclusive-bg:     color-mix(in srgb, var(--p-purple-500) 15%, transparent);
+  --color-status-inconclusive-border: color-mix(in srgb, var(--p-purple-500) 35%, transparent);
+}
+
+/* ---------- 主题二：晴昼浅色 daylight ---------- */
+html[data-theme="daylight"] {
+  color-scheme: light;
+
+  --color-bg-canvas:   var(--p-slate-50);
+  --color-bg-surface:  var(--p-slate-0);
+  --color-bg-raised:   #eef2f7;
+  --color-bg-elevated: #e6ecf4;
+  --color-bg-overlay:  #dbe4ef;
+  --color-bg-input:    var(--p-slate-0);
+  --color-bg-hover:    rgb(15 23 42 / 0.05);
+  --color-bg-active:   rgb(15 23 42 / 0.09);
+
+  /* 文字四档 —— 全部实测 ≥4.85:1 */
+  --color-fg-default:  #0f172a;  /* 15.88:1 */
+  --color-fg-muted:    #334155;  /*  9.21:1 */
+  --color-fg-subtle:   #475569;  /*  6.74:1 */
+  --color-fg-dim:      #5a6b80;  /*  4.85:1 */
+  --color-fg-inverse:  var(--p-slate-0);
+
+  --color-border-default:  rgb(15 23 42 / 0.10);
+  --color-border-strong:   rgb(15 23 42 / 0.20);
+  --color-border-emphasis: rgb(15 23 42 / 0.30);
+  --color-border-focus:    var(--p-cyan-700);
+
+  /* 填充仍用拍板主色 #06b6d4，反色字用深墨（7.5:1）；
+     作为文字/图标时改用更深的 -emphasis（5.36:1）—— 浅底上 #06b6d4 仅 2.24:1 不可用。 */
+  --color-accent:          var(--p-cyan-500);
+  --color-accent-hover:    var(--p-cyan-600);
+  --color-accent-active:   var(--p-cyan-700);
+  --color-accent-emphasis: var(--p-cyan-700);
+  --color-accent-fg:       var(--p-cyan-ink);
+  --color-accent-soft:     color-mix(in srgb, var(--p-cyan-500) 12%, transparent);
+
+  --color-dir-rx:      var(--p-teal-700);
+  --color-dir-rx-soft: color-mix(in srgb, var(--p-teal-700) 12%, transparent);
+  --color-dir-tx:      var(--p-amber-700);
+  --color-dir-tx-soft: color-mix(in srgb, var(--p-amber-700) 12%, transparent);
+
+  --color-status-pass:         var(--p-green-700);
+  --color-status-warn:         var(--p-orange-700);
+  --color-status-fail:         var(--p-red-700);
+  --color-status-info:         var(--p-blue-700);
+  --color-status-special:      var(--p-pink-700);
+  --color-status-inconclusive: var(--p-purple-700);
+  --color-status-pass-bg:      color-mix(in srgb, var(--p-green-700) 12%, transparent);
+  --color-status-pass-border:  color-mix(in srgb, var(--p-green-700) 30%, transparent);
+  --color-status-warn-bg:      color-mix(in srgb, var(--p-orange-700) 12%, transparent);
+  --color-status-warn-border:  color-mix(in srgb, var(--p-orange-700) 30%, transparent);
+  --color-status-fail-bg:      color-mix(in srgb, var(--p-red-700) 12%, transparent);
+  --color-status-fail-border:  color-mix(in srgb, var(--p-red-700) 30%, transparent);
+  --color-status-info-bg:      color-mix(in srgb, var(--p-blue-700) 12%, transparent);
+  --color-status-info-border:  color-mix(in srgb, var(--p-blue-700) 30%, transparent);
+  --color-status-inconclusive-bg:     color-mix(in srgb, var(--p-purple-700) 12%, transparent);
+  --color-status-inconclusive-border: color-mix(in srgb, var(--p-purple-700) 30%, transparent);
+}
+
+/* ============================================================
+   L3 · Component —— 组件槽位
+   业务组件只准引用本层。改"主按钮的蓝"只需动这里，不影响链接/图标的蓝。
+   ============================================================ */
+:root,
+html[data-theme] {
+  /* 头部 */
+  --header-bg:        var(--color-bg-surface);
+  --header-border:    var(--color-border-default);
+  --header-padding:   var(--sp-2-5) var(--sp-4);
+  --header-gap:       var(--sp-6);
+  --header-brand-gap: var(--sp-2-5);
+
+  /* Logo */
+  --logo-size:   34px;
+  --logo-radius: var(--radius-md);
+  --logo-bg:     linear-gradient(135deg, var(--color-accent), var(--color-accent-active));
+  --logo-color:  var(--color-accent-fg);
+
+  /* 标题 */
+  --title-fs: var(--fs-lg);
+  --title-fw: var(--fw-bold);
+  --sub-fs:   var(--fs-xs);
+  --sub-color: var(--color-fg-dim);
+
+  --section-title-fs:     var(--fs-md);
+  --section-title-fw:     var(--fw-semibold);
+  --section-title-color:  var(--color-accent-emphasis);
+  --section-title-mb:     var(--sp-3);
+
+  /* 页签 */
+  --tab-padding:   var(--sp-2) var(--sp-4);
+  --tab-gap:       var(--sp-1);
+  --tab-radius:    var(--radius-md) var(--radius-md) 0 0;
+  --tab-fs:        var(--fs-base);
+  --tab-fg:        var(--color-fg-dim);
+  --tab-fg-hover:  var(--color-fg-default);
+  --tab-fg-active: var(--color-accent-emphasis);
+  --tab-bg-active: transparent;
+  --tab-border-active: var(--color-border-strong);
+
+  /* 卡片 */
+  --card-bg:      var(--color-bg-surface);
+  --card-border:  var(--color-border-default);
+  --card-radius:  var(--radius-lg);
+  --card-padding: var(--sp-4);
+  --card-gap:     var(--sp-4);
+  --card-shadow:  var(--sh-md);
+
+  /* 按钮 */
+  --btn-padding:        var(--sp-2) var(--sp-3);
+  --btn-radius:         var(--radius-md);
+  --btn-fs:             var(--fs-base);
+  --btn-fw:             var(--fw-normal);
+  --btn-bg:             var(--color-bg-input);
+  --btn-border:         var(--color-border-default);
+  --btn-fg:             var(--color-fg-default);
+  --btn-hover-bg:       var(--color-bg-hover);
+  --btn-hover-border:   var(--color-accent);
+  --btn-primary-bg:     var(--color-accent);
+  --btn-primary-fg:     var(--color-accent-fg);
+  --btn-primary-fw:     var(--fw-bold);
+  --btn-primary-hover:  var(--color-accent-hover);
+
+  /* 输入框 */
+  --input-bg:      var(--color-bg-input);
+  --input-border:  var(--color-border-default);
+  --input-fg:      var(--color-fg-default);
+  --input-padding: var(--sp-2) var(--sp-3);
+  --input-radius:  var(--radius-md);
+  --input-fs:      var(--fs-base);
+  --input-focus:   var(--color-border-focus);
+
+  /* 徽章 */
+  --badge-padding: var(--sp-0-5) var(--sp-2-5);
+  --badge-radius:  var(--radius-full);
+  --badge-fs:      var(--fs-sm);
+  --badge-fw:      var(--fw-bold);
+
+  /* 表格 */
+  --table-header-bg:    var(--color-bg-input);
+  --table-header-fg:    var(--color-fg-dim);
+  --table-header-fs:    var(--fs-sm);
+  --table-cell-padding: var(--sp-1-5) var(--sp-2-5);
+  --table-cell-fs:      var(--fs-sm);
+  --table-border:       var(--color-border-default);
+  --table-row-hover:    var(--color-bg-hover);
+
+  /* 代码块 */
+  --pre-bg:      var(--color-bg-input);
+  --pre-border:  var(--color-border-default);
+  --pre-radius:  var(--radius-md);
+  --pre-padding: var(--sp-3);
+  --pre-fs:      var(--fs-sm);
+
+  /* iframe 背景：实心化。transparent 会让子页在父页背景上再叠一层，
+     形成「背景套背景」的视觉噪音（P0 成果，此处保留）。 */
+  --frame-bg: var(--color-bg-canvas);
+
+  /* 玻璃面（历史 token，保留兼容：styles.css / maintenance / serial-profile / preview 仍在用）
+     注：重玻璃拟态已按 REQS-0011 收敛为半透明面 + 轻模糊，不再是主视觉手法。 */
+  --glass-bg:         color-mix(in srgb, var(--color-bg-surface) 78%, transparent);
+  --glass-bg-strong:  color-mix(in srgb, var(--color-bg-surface) 88%, transparent);
+  --glass-border:     var(--color-border-default);
+  --glass-border-light: var(--color-border-strong);
+  --glass-blur:       8px;
+}
+
+/* ============================================================
+   Utility Classes —— 状态徽章
+   ============================================================ */
+.badge {
+  display: inline-block;
+  padding: var(--badge-padding);
+  border-radius: var(--badge-radius);
+  font-size: var(--badge-fs);
+  font-weight: var(--badge-fw);
+  line-height: var(--lh-none);
+}
+.badge.pass {
+  background: var(--color-status-pass-bg);
+  color: var(--color-status-pass);
+  border: 1px solid var(--color-status-pass-border);
+}
+.badge.fail {
+  background: var(--color-status-fail-bg);
+  color: var(--color-status-fail);
+  border: 1px solid var(--color-status-fail-border);
+}
+.badge.run {
+  background: var(--color-status-warn-bg);
+  color: var(--color-status-warn);
+  border: 1px solid var(--color-status-warn-border);
+}
+/* inconclusive：独立紫色相（REQS-0011 §4.6 铁律）。
+   原先复用 warn 琥珀 + opacity:0.85 区分 —— 同色相仅靠透明度，实际不可辨。 */
+.badge.inconclusive {
+  background: var(--color-status-inconclusive-bg);
+  color: var(--color-status-inconclusive);
+  border: 1px solid var(--color-status-inconclusive-border);
+}
