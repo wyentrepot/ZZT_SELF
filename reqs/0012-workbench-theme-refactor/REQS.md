@@ -54,7 +54,7 @@ B/C 方言的变量定义在裸 `:root` 上，无 `.theme-*` 覆盖规则，因�
 **P1/P2（后续）：**
 5. 建成 primitive / semantic / component 三层，组件层不得直接引用 primitive。
 6. 全部 9 个页面通过主题覆盖率断言：切换 `data-theme` 后 body 背景色发生变化。
-7. 对比度实测 0 FAIL（当前 4 FAIL + 2 WARN）。
+7. 对比度实测 0 FAIL（P1 `contrast-v2.py` token 门禁已为 50 组 / 0 FAIL；P2 仍须对接入后的页面回归验证）。
 8. 新增一套主题只需改 1 处（当前需改 3 处：CSS 选择器 / JS `THEMES` / HTML `.theme-dot`）。
 
 ## 5. 非目标

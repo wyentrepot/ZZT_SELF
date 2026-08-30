@@ -63,7 +63,7 @@
 - [x] 对比度修正：`--tx-4` 2.36 → ≥4.5（`b355fc2`）
 - [x] 对比度修正：`--faint` 3.04 / 3.17 → ≥4.5（`b355fc2`）
 - [x] `styles.css` 的 7 处魔数收编进 spacing / font-size token（`2cf7e20`）
-- [x] 对比度回归：`python contrast.py` 应为 0 FAIL（`f72e93e`；门禁 50 组 / FAIL 0）
+- [x] 对比度回归：`python contrast-v2.py` 门禁 50 组 / FAIL 0（`f72e93e`；GBK 控制台回归由 `47e758c` 覆盖）
 
 > P1 状态：✅ 已完成（2026-08-30）。7 个逐步提交为 `b355fc2`、`54ba9df`、`873d543`、`48185bd`、`2cf7e20`、`c6505a6`、`f72e93e`。
 
