@@ -67,46 +67,109 @@
 
 > P1 状态：✅ 已完成（2026-08-30）。7 个逐步提交为 `b355fc2`、`54ba9df`、`873d543`、`48185bd`、`2cf7e20`、`c6505a6`、`f72e93e`。
 
-## 阶段 3 · P2 全面接入（~2-3 天，高风险，逐页灰度）
+## 阶段 3 · P2 全面接入（~2-3 天，高风险，逐页灰度；🚧 进行中）
 
-- [ ] 接入 · 外壳 `index.html` + `styles.css`
-- [ ] 接入 · 验证工作台 `workbench.html`
-- [ ] 接入 · 串口配置 `serial-profile.html`
-- [ ] 接入 · 工作台状态 `maintenance.html`
-- [ ] 接入 · 报文追踪 `trace.html`（B 系）
-- [ ] 接入 · 协议字典 `dict.html`（B 系）
-- [ ] 接入 · 场景脚本 `scenario.html`（B 系）
-- [ ] 接入 · 模拟集中器 `simcon.html`（B 系）
-- [ ] 接入 · 模块日志 `module-serial.html`（C 系，**高风险**）
-- [ ] 接入 · 侦听台 `listener/index.html`（C 系，**最高风险**，最后做）
-- [ ] 🚨 **人工确认 · 青绿语义收发方向**（禁止脚本批量统一）
-      — P5 结论：模块日志页 青绿=接收 / 琥珀=发送，与侦听台**相反**。
-      统一错会把发送帧显示成接收帧，属**功能性错误**。详见 `REFACTOR-PLAN.md` §7.2
-- [ ] 🚨 **人工确认 · 近黑文字色**（`y < 0.03` 者单独映射到 `--accent-fg`，勿归入 `--fg-faint`）
-- [ ] 清理 Palette C：`module-serial.html` 内联 `var(--x, #兜底)` 的失效兜底值
-- [ ] 主题注册改为单一数据源（消除 CSS / JS `THEMES` / HTML `.theme-dot` 三处同步）
-- [ ] 建主题覆盖率断言：切换 `data-theme` 后 body 背景色应变化
-- [ ] 9 页断言全绿 + commit
+- [x] 接入 · 外壳 `index.html` + `styles.css`（`af9e2a9`）
+- [x] 接入 · 验证工作台 `workbench.html`（`af9e2a9`）
+- [x] 接入 · 串口配置 `serial-profile.html`（`0c5094b`）
+- [x] 接入 · 工作台状态 `maintenance.html`（`5706922`）
+- [x] 接入 · 报文追踪 `trace.html`（B 系）（`6bc0eb7`）
+- [x] 接入 · 协议字典 `dict.html`（B 系）（`c248cd6`）
+- [x] 接入 · 场景脚本 `scenario.html`（B 系）（`cde81ce`）
+- [x] 接入 · 模拟集中器 `simcon.html`（B 系）（`d815650`）
+- [x] 接入 · 模块日志 `module-serial.html`（C 系，**高风险**）（`af3f5a8`）
+- [x] 接入 · 侦听台 `listener/index.html`（C 系，**最高风险**，最后做）（`2559b9f` 嵌入版 / `e95fc2c` 独立版）
+- [x] **P5 语义收发方向已拍板**（不再设置人工语义门禁）
+      — RX=青绿（`--color-dir-rx`），TX=琥珀（`--color-dir-tx`）；各生产页面按同一语义执行。
+- [x] 🚨 ~~人工确认 · 近黑文字色~~ —— 用户 2026-08-30 拍板：**文字色不重要，能看就行**，不单设人工门禁
+- [x] 清理 Palette C：失效兜底值 `var(--x, #兜底)` 全仓扫描已归零（2026-08-30 复核）
+- [x] 主题注册改为单一数据源 —— `tokens-v2.css` 的 `--theme-registry`，JS/HTML 均改读它（`0318e7f`）
+- [x] 建主题覆盖率断言：切换 `data-theme` 后 body 背景色应变化（`0318e7f`）
+- [x] 10 页断言全绿 + commit —— 门禁 `10 个生产页面 / 0 issues`（另有 1 项 color-mix 需人工确认）
 
-## 阶段 4 · P3 收敛（~2 天，并入 REQS-0010 P5）
+### 阶段 3 补充说明
 
-- [ ] 主题收敛为 2 套：墨夜深色（默认）+ 晴昼浅色
-- [ ] 晴昼浅色主题覆盖 semantic 层
-- [ ] 支持 `prefers-color-scheme` 自动跟随
-- [ ] 逐页把方言名替换为标准语义名
-- [ ] 删除 `compat-dialects.css`
-- [ ] 删除旧 `tokens.css`
-- [ ] 与 REQS-0010 P5 合并收口
+- **simcon 的 5 条 TX issue 系门禁误报**，已查实并处理：
+  `.tx-row` 实为 **traffic row**（收发共用的行容器），`simcon.js:277` 对每帧无条件赋值、
+  不判方向；方向由行内徽章 `.dir.tx` / `.dir.rx` 承载，二者早已正确引用方向 token。
+  若按误报字面塞入 `--color-dir-tx`，会把所有 RX 行也刷成发送色 = 方向误标。
+  处理：容器改名 `.tr-row` / `.tr-main` / `.tr-det`，与同文件 `.traffic` / `.tr-h` /
+  `.tr-body` 命名族对齐。**规则体一字未动，视觉零变化。**
+
+> 阶段 3 状态：✅ 已完成（2026-08-30）。
+
+## 阶段 4 · P3 收敛（~2 天，并入 REQS-0010 P5；✅ 2026-08-30 已完成）
+
+- [x] 主题收敛为 2 套：墨夜深色（默认 `midnight`）+ 晴昼浅色（`daylight`）
+      —— `--theme-registry: "midnight|墨夜深色|🌙,daylight|晴昼浅色|☀️"`
+- [x] 晴昼浅色主题覆盖 semantic 层（`tokens-v2.css:208`）
+- [x] 支持 `prefers-color-scheme` 自动跟随 —— **11 个页面**（10 生产 + 独立版侦听台）
+      head 脚本均已带 `matchMedia` 分支，无本地偏好时按系统深浅自动选主题
+- [x] 逐页把方言名替换为标准语义名 —— B 系 / C 系方言变量全仓残留**归零**
+- [x] 删除 `compat-dialects.css`（`33d87f4`）—— 零引用死文件，删除条件已满足
+- [x] ~~删除旧 `tokens.css`~~ —— 用户 2026-08-30 拍板：**保留文件**。
+      理由：`check_assets.py:29` 与 `test_app.py:295` 仍将其列为关键资产，
+      删除须同步改这两个 Python 清单，收益不抵风险
+- [ ] 与 REQS-0010 P5 合并收口 —— 跨需求，挂起等 P5（关联 D3）
 
 ## 阻塞项
 
 | # | 事项 | 阻塞了 |
 |---|------|--------|
 | D1 | 统一主色 | ✅ 已拍板为蔚蓝科技风 `#06b6d4`，P1 已按此为锚完成 |
-| D2 | P0 目视验收 | ✅ 2026-08-30 用户验收通过，P1 已完成；P2 仍待人工语义门禁 |
+| D2 | P0 目视验收 | ✅ 2026-08-30 用户验收通过，P1 已完成；P2/P3 按当前计划推进 |
 
 ## 2026-08-30 对账记录
 
 - P0 目视验收：用户已批准。
-- 生产静态校验：10 页，0 issues；`preview/` 为本地忽略的独立样板，不计入生产页面。
-- 对比度门禁：50 组 / 0 FAIL（观察区弱对比项留待 P2 人工决策）。
+- P0 历史记录：生产静态校验 10 页，0 issues；`preview/` 为本地忽略的独立样板，不计入生产页面。
+- 当前 P2 覆盖率门禁：待 9 个子页面完成接入后复验；当前仍有遗留变量、旧样式引入与 raw color issues，不能据此宣布 P2/P3 完成。
+- 对比度门禁（P1 历史记录）：50 组 / 0 FAIL（观察区弱对比项留待 P2 处理）。
+- P5 语义结论：RX=青绿（`--color-dir-rx`），TX=琥珀（`--color-dir-tx`）；不再保留人工语义门禁。
+
+## 2026-08-30 收口对账（P2 / P3 完成）
+
+**门禁**：`10 个生产页面 / 0 issues`，exit 0。另有 1 项需人工确认：
+`pages/module-serial` 的 body 光晕层含 `color-mix()`，无法静态求值；底色层已判定
+随主题变化（midnight `#0a1628` / daylight `#f4f6f9`）。
+
+**对比度回归**：`contrast-v2.py` **50 组 / FAIL 0**（观察区 24 组 / ⚠ 7，不计入门禁）。
+P2 近千行改动未破坏可达性。
+
+### 发现并修掉的真实 bug
+
+1. **侦听台嵌入版防闪跳脚本已与体系脱节**：白名单是 4 套废弃主题名
+   （`theme-deepblue` / `theme-emerald` / `theme-charcoal` / `theme-indigo`）+
+   `className` 机制。新存的 `midnight` / `daylight` 进不了白名单 → 防闪跳形同虚设；
+   旧值反而会挂上一个新体系根本不读的垃圾 class。已改为 registry 驱动 +
+   `data-theme` 属性 + `prefers-color-scheme` 跟随。
+2. **simcon `.tx-row` 命名歧义**：实为 traffic row（收发共用），导致门禁误报 5 条，
+   且字面误导后来人。已改名 `.tr-row` 族，与同文件 `.traffic` / `.tr-h` / `.tr-body` 对齐。
+
+### 提交清单
+
+| commit | 内容 |
+|--------|------|
+| `af9e2a9` | 外壳（index / styles / workbench）接入 |
+| `6bc0eb7` `c248cd6` `cde81ce` | trace / dict / scenario（B 系） |
+| `0c5094b` `5706922` | serial-profile / maintenance |
+| `af3f5a8` | module-serial（C 系） |
+| `d815650` | simcon 接入 + traffic row 改名 |
+| `33d87f4` | 删除 compat-dialects.css |
+| `2559b9f` `e95fc2c` | 侦听台嵌入版 / 独立版接入 |
+| `0318e7f` | 门禁脚本与测试纳入版本控制 |
+
+### 遗留（不阻塞，待定夺）
+
+| # | 事项 | 说明 |
+|---|------|------|
+| L1 | 侦听台 `app.js` 内 16 处硬编码色 | canvas 趋势图与两处内联状态色在晴昼浅色下不跟随主题（深色底 + 亮线观感不佳）。修法是 JS 读 `getComputedStyle` 取 token 值再喂给 canvas，属 JS 逻辑改动，已越过本次「只改 CSS/HTML」红线 |
+| L2 | `rating-degraded` / `legend-dot.pending` 用 `--color-dir-tx` | 语义上属「健康度 / 待定状态」，严格该用 `--color-status-warn`。当前保与 module-serial 的视觉一致（同为琥珀）。改 3 行（1222 / 1228 / 1285），但会与 module-serial 产生视觉差异，建议两页一起改 |
+| L3 | `simcon.html:133` `.s-A` 用 `--color-dir-rx` | 是十六进制报文**地址域**的语法高亮色，非收发方向。系 P2 忠实 1:1 迁移（原 `--rx-c`），非新引入错误。宜新增语法色 token，超出本次范围 |
+| L4 | `apps/listener/test_ui_layout.py` 3 条失败 | 已用 HEAD 版本双向验证为**改造前既有**，与本次无关：① 要 `class="operation-panel"`，实际 `operation-panel loader-panel`；② 要 `?v=serial-v2`，实际 `?v=frames-pro`；③ 要 `height: calc(100vh`，而 styles.css 中 0 次。属测试与实现脱节 |
+| L5 | `_tmp_theme_audit/` `_tmp_frontend_audit/` 未被 .gitignore 覆盖 | `.gitignore` 只有 `tmp/`，匹配不到 `_tmp_` 前缀。属临时审计产物，会污染 `git status`。改 .gitignore 是全仓共享配置，未擅自改 |
+
+### 工程提醒
+
+本仓 CSS 为 **CRLF**。用脚本做多行精确匹配（模板字符串）会全部失配，必须先统一
+`\r\n → \n`，写回前再转回。本次侦听台迁移在此坑上返工过一轮。
