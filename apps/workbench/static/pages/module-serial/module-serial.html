@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>模块日志 / 烧录串口</title>
   <link rel="stylesheet" href="/static/pages/module-serial/styles.css?v=module-serial-v3">
+  <!-- P0-4 防主题闪跳：子页面在 iframe 中独立渲染，父页 CSS 变量不会渗透进来，
+       必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。
+       color-scheme: dark 已在 styles.css 的 :root 中声明，此处不重复。 -->
+  <script>
+    try {
+      var _t = localStorage.getItem("wb-theme");
+      var _valid = ["theme-deepblue", "theme-emerald", "theme-charcoal", "theme-indigo"];
+      if (_t && _valid.indexOf(_t) > -1) document.documentElement.className = _t;
+    } catch (e) {}
+  </script>
   <style>
     /* 覆盖全局 body min-width 限制，允许窗口缩小时自适应 */
     body { min-width: unset; }
