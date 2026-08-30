@@ -6,9 +6,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { height: 100%; }
 
-/* ---- Body（渐变背景由主题变量控制）---- */
+/* ---- Body（纯色：REQS-0011 §2 已拍板「去掉渐变与重玻璃拟态」）---- */
 body {
-  background: var(--bg-gradient);
+  background: var(--bg-page);
   color: var(--fg-default);
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
   display: flex;
