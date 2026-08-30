@@ -91,7 +91,7 @@ body {
 /* ---- Theme Switcher ---- */
 .wb-themes {
   display: flex;
-  gap: 4px;
+  gap: var(--sp-1);
   margin-left: auto;
   padding-left: var(--sp-3);
   border-left: 1px solid var(--glass-border);
@@ -103,7 +103,7 @@ body {
   border: 1px solid transparent;
   background: transparent;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1;
   display: flex;
   align-items: center;
@@ -184,12 +184,12 @@ body {
   padding: var(--header-padding);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 .wb-nav-group-title {
   font-size: var(--sub-fs);
   color: var(--sub-color);
-  margin: 0 0 4px 0;
+  margin: 0 0 var(--sp-1) 0;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -199,7 +199,7 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-0-5);
 }
 .wb-nav-item {
   width: 100%;
@@ -245,9 +245,9 @@ body {
   background: transparent;
   color: var(--tab-fg);
   border-radius: var(--tab-radius);
-  padding: 6px 10px;
+  padding: var(--sp-1-5) var(--sp-2-5);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--fs-xl);
   line-height: 1;
 }
 
