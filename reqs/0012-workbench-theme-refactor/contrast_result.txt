@@ -1,0 +1,27 @@
+方言                    组合                               对比度  判定   
+------------------------------------------------------------------------
+A 工作台 tokens.css      正文 fg-default / bg-page       14.71:1  PASS 
+A 工作台 tokens.css      次级 fg-muted / bg-surface       6.38:1  PASS 
+A 工作台 tokens.css      弱化 fg-dim / bg-surface         3.44:1  FAIL 
+A 工作台 tokens.css      弱化 fg-dim / bg-input           3.65:1  WARN 
+A 工作台 tokens.css      表头 fg-dim / bg-input           3.65:1  WARN 
+A 工作台 tokens.css      accent 青 / bg-page             7.47:1  PASS 
+A 工作台 tokens.css      accent-fg 深字 / accent 底        7.47:1  PASS 
+A 工作台 tokens.css      st-pass / bg-page              7.15:1  PASS 
+A 工作台 tokens.css      st-warn / bg-page              8.44:1  PASS 
+A 工作台 tokens.css      st-fail / bg-page              4.82:1  PASS 
+
+B 设计稿 trace/dict      正文 tx-1 / bg-0                17.02:1  PASS 
+B 设计稿 trace/dict      正文 tx-1 / bg-1                16.20:1  PASS 
+B 设计稿 trace/dict      次级 tx-2 / bg-1                 7.92:1  PASS 
+B 设计稿 trace/dict      弱化 tx-3 / bg-1                 4.15:1  WARN 
+B 设计稿 trace/dict      最弱 tx-4 / bg-2                 2.36:1  FAIL 
+B 设计稿 trace/dict      ac 青 / bg-1                   10.32:1  PASS 
+
+C 侦听台 module-serial   正文 ink / panel                15.69:1  PASS 
+C 侦听台 module-serial   次级 muted / panel               5.57:1  PASS 
+C 侦听台 module-serial   弱化 faint / panel               3.04:1  FAIL 
+C 侦听台 module-serial   弱化 faint / canvas-2            3.17:1  FAIL 
+C 侦听台 module-serial   cyan / panel                  10.92:1  PASS 
+------------------------------------------------------------------------
+合计 21 组，其中 4 组未达 WCAG AA（4.5:1）

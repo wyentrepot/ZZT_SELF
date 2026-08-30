@@ -84,7 +84,7 @@
   PASS    5.64:1  状态 info #1d4ed8 / elevated #e6ecf4  (--color-status-info on --color-bg-elevated)
   PASS    4.79:1  状态 inconclusive #7c3aed / elevated #e6ecf4  (--color-status-inconclusive on --color-bg-elevated)
 
-附录 · 旧方言遗留问题（未计入门禁，P2 页面接入 compat-dialects.css 后消除）
+附录 · 旧方言遗留问题（已随 P2 方言变量归零而消除；过渡用的 compat-dialects.css 别名层已于 P3 删除，此处为历史记录）
 --------------------------------------------------------------------------------
   [遗留] A 系 --fg-dim #64748b / surface 3.44  →  tokens-v2 --color-fg-dim 已提亮，别名映射后消除
   [遗留] B 系 --tx-4 #465768 / bg-2 2.36  →  compat 层 --tx-4 → --color-fg-dim，接入后消除
