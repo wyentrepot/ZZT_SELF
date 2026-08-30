@@ -4,28 +4,41 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>工作台状态</title>
-<link rel="stylesheet" href="/static/tokens.css">
+<link rel="stylesheet" href="/static/tokens-v2.css">
 <!-- P0-4 防主题闪跳：子页面在 iframe 中独立渲染，父页 CSS 变量不会渗透进来，
      必须自行在首屏前应用已保存主题，否则会先闪一下默认深蓝。 -->
 <script>
-  try {
-    var _t = localStorage.getItem("wb-theme");
-    var _valid = ["theme-deepblue", "theme-emerald", "theme-charcoal", "theme-indigo"];
-    if (_t && _valid.indexOf(_t) > -1) document.documentElement.className = _t;
-  } catch (e) {}
+  (function () {
+    try {
+      var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+      var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+        return s.split("|")[0].trim();
+      }).filter(Boolean);
+      var _saved = localStorage.getItem("wb-theme");
+      var _t;
+      if (_saved && _keys.indexOf(_saved) > -1) {
+        _t = _saved;
+      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+                 && _keys.indexOf("daylight") > -1) {
+        _t = "daylight";
+      } else {
+        _t = _keys[0] || "midnight";
+      }
+      document.documentElement.dataset.theme = _t;
+    } catch (e) {}
+  })();
 </script>
 <style>
-:root { color-scheme: dark; }
 body {
-  background: var(--bg-page);
-  color: var(--fg-default);
-  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  background: var(--color-bg-canvas);
+  color: var(--color-fg-default);
+  font-family: var(--font-sans);
   padding: var(--sp-5);
   line-height: var(--lh-relax);
   min-height: 100vh;
 }
 h1 { font-size: var(--fs-2xl); margin-bottom: var(--sp-1-5); }
-.sub { color: var(--fg-dim); font-size: var(--fs-sm); margin-bottom: var(--sp-5); }
+.sub { color: var(--color-fg-dim); font-size: var(--fs-sm); margin-bottom: var(--sp-5); }
 .card {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
@@ -38,8 +51,8 @@ h1 { font-size: var(--fs-2xl); margin-bottom: var(--sp-1-5); }
 }
 .card h2 { font-size: var(--section-title-fs); margin-bottom: var(--section-title-mb); color: var(--section-title-color); }
 dl { margin: 0; display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; }
-dt { color: var(--fg-dim); }
-dd { margin: 0; font-family: ui-monospace, Consolas, monospace; }
+dt { color: var(--color-fg-dim); }
+dd { margin: 0; font-family: var(--font-mono); }
 </style>
 </head>
 <body>
@@ -58,23 +71,43 @@ dd { margin: 0; font-family: ui-monospace, Consolas, monospace; }
 
 <div class="card">
   <h2>主题</h2>
-  <p>右上角主题色板（🌊 🌿 ✦ 🔮）可切换全局主题；此处为当前主题说明。</p>
-  <p id="currentTheme">当前主题：<span id="themeName">深蓝科技</span></p>
+  <p id="themeDescription">主题说明读取工作台主题注册表。</p>
+  <p id="currentTheme">当前主题：<span id="themeName">读取中…</span></p>
 </div>
 
 <script>
 (function () {
   "use strict";
-  var themeNames = {
-    "theme-deepblue": "深蓝科技",
-    "theme-emerald": "暗色翡翠",
-    "theme-charcoal": "炭黑灰金",
-    "theme-indigo": "靛蓝玻璃"
-  };
+  function readThemeRegistry() {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    return raw.replace(/["']/g, "").split(",").map(function (entry) {
+      var parts = entry.split("|");
+      return {
+        key: (parts[0] || "").trim(),
+        label: (parts[1] || "").trim(),
+        icon: (parts[2] || "").trim()
+      };
+    }).filter(function (theme) { return theme.key; });
+  }
   function refresh() {
-    var cls = document.documentElement.className;
+    var themes = readThemeRegistry();
+    var theme = document.documentElement.dataset.theme;
+    var active = null;
+    for (var i = 0; i < themes.length; i += 1) {
+      if (themes[i].key === theme) {
+        active = themes[i];
+        break;
+      }
+    }
+    var display = active ? ((active.icon ? active.icon + " " : "") + active.label) : "未注册主题";
     var nameEl = document.getElementById("themeName");
-    if (nameEl) nameEl.textContent = themeNames[cls] || "深蓝科技";
+    if (nameEl) nameEl.textContent = display;
+    var descriptionEl = document.getElementById("themeDescription");
+    if (descriptionEl) {
+      descriptionEl.textContent = active
+        ? "当前主题来自工作台主题注册表：" + display
+        : "当前主题不在工作台主题注册表中。";
+    }
     fetch("/api/platform-version")
       .then(function (r) { return r.json(); })
       .then(function (info) {
@@ -84,12 +117,24 @@ dd { margin: 0; font-family: ui-monospace, Consolas, monospace; }
       })
       .catch(function () {});
   }
-  window.addEventListener("wb-theme-change", function (e) {
+  function applyThemeMessage(e) {
     if (e.data && e.data.type === "wb-theme-change") {
-      document.documentElement.className = e.data.theme;
-      refresh();
+      var themes = readThemeRegistry();
+      var accepted = false;
+      for (var i = 0; i < themes.length; i += 1) {
+        if (themes[i].key === e.data.theme) {
+          accepted = true;
+          break;
+        }
+      }
+      if (accepted) {
+        document.documentElement.dataset.theme = e.data.theme;
+        refresh();
+      }
     }
-  });
+  }
+  window.addEventListener("message", applyThemeMessage);
+  window.addEventListener("wb-theme-change", applyThemeMessage);
   refresh();
 })();
 </script>
