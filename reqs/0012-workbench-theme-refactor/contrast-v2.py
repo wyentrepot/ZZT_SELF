@@ -222,7 +222,9 @@ def main():
                  f"    （观察区 {obs_total} 组 / ⚠ {obs_warns}，见上表）")
 
     text = "\n".join(lines)
-    print(text)
+    encoding = sys.stdout.encoding or "utf-8"
+    safe_text = text.encode(encoding, errors="replace").decode(encoding)
+    print(safe_text)
     out = os.path.join(HERE, "contrast-v2-result.txt")
     with open(out, "w", encoding="utf-8") as f:
         f.write(text + "\n")
