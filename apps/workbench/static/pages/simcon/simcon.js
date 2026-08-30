@@ -264,6 +264,7 @@
     api("/api/simcon/frames?limit=200" + (dir ? "&direction=" + dir : "") + (state.lastSeq ? "&after_seq=" + state.lastSeq : ""))
       .then(function (data) {
         var frames = data.entries || [];
+        var body = $("#trBody");
         if (data.counts) {
           $("#cTx").textContent = data.counts.tx || 0;
           $("#cRx").textContent = data.counts.rx || 0;
@@ -274,7 +275,6 @@
           return;
         }
         state.lastSeq = frames[frames.length - 1].seq || state.lastSeq;
-        var body = $("#trBody");
         var empty = body.querySelector(".empty");
         if (empty) empty.remove();
         frames.reverse().forEach(function (f) {
