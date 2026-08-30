@@ -4,14 +4,16 @@ description: Control real hardware (HPLC meter-reading workbench) over HTTP as a
 argument-hint: "[what to do, e.g. 向 cco 发送一串字符]"
 metadata:
   author: reasonix
-  version: "1.3.0"
+  version: "1.4.0"
   applies-to: D:/2-侦听台改造
 ---
 
 # AI 控制面使用 Skill（ai-control-plane）
 
 让 AI 通过 HTTP 操作真机（HPLC 侦听台改造工作台）的完整 playbook。
-底层事实以 `docs/16-AI操作指南.md` 与代码为准；本文是**执行步骤**，实测于 2026-08-20，2026-08-29 对齐当前实现（cursor_range 观察、regex/sequence 匹配器、帧过滤参数、串口映射 JSON）。
+底层事实以 `docs/16-AI操作指南.md` 与代码为准；本文是**执行步骤**，实测于 2026-08-20，
+2026-08-29 对齐当前实现（cursor_range 观察、regex/sequence 匹配器、帧过滤参数），
+2026-08-31 对齐 simcon 无固定映射自动选串口，并补构帧预览/协议字典/编排 REST 辅助面（v1.4.0）。
 
 ## 适用场景
 
@@ -69,7 +71,7 @@ curl -X POST http://127.0.0.1:8790/api/ai/v1/module-sessions/ensure \
   -d '{"module":"cco","mapping_id":"cco-main"}'
 ```
 
-- **优先用 `mapping_id`**（`cco-main`/`sta-main`，见 `config/serial_ports.json`），波特率等串口参数自动按映射配置走。也可直接 `port`，但本机实际接线会变（当前配置：cco-main=COM9、sta-main=COM8、listener=COM4、simcon=COM19），**别硬编码 COM 号**。
+- **优先用 `mapping_id`**（`cco-main`/`sta-main`，见 `config/serial_ports.json`），波特率等串口参数自动按映射配置走。也可直接 `port`，但本机实际接线会变（实际 COM 号以 `config/serial_ports.json` 为准），**别硬编码 COM 号**。
 - 返回 `session_id`（形如 `ms-xxxx`），state=running 表示串口已开。
 - 409 = 串口被占用（前端或另一会话占着），等释放或改口。
 
@@ -207,7 +209,8 @@ curl http://127.0.0.1:8790/api/ai/v1/listener/traces -H "Authorization: Bearer <
 
 ## 第八步：模拟集中器——验证任务 / 单步下发 / 帧日志
 
-模拟集中器（simcon，串口映射 `simcon`=COM19/9600/E）的 AI 接口在
+模拟集中器（simcon，**无固定串口映射**：verify/step/open 不传 `port` 时自动选择可用串口
+——排除侦听台/模块日志已映射端口，缺省 9600/E/8/1，显式 `port` 可覆盖）的 AI 接口在
 `/api/ai/v1/simcon/*`，resource 固定 `simcon`；每次收发的 1376.2 帧都会进
 **会话帧日志**并持久化到 `data/logs/simcon/sc-*.jsonl`。
 
@@ -249,7 +252,38 @@ curl "http://127.0.0.1:8790/api/ai/v1/simcon/frames?updown=up&afn=06" -H "Author
 
 - 过滤：`direction`(tx/rx)、`updown`(up/down)、`afn`、`fn`、`kind`(step_send/manual_send/auto_reply)、
   `run_id`、`session_id`、`after_seq`+`limit`(≤500) 游标翻页；每帧含 `frame_hex`/`parsed` 解析结果。
+- 响应信封：**`{session_id, entries[], next_after_seq, matched_total, has_more, counts{tx,rx,uplink}}`**
+  —— 帧列表在 `entries` 键（不是 `frames`，前端曾因此卡"加载中"），翻页传 `after_seq=next_after_seq`。
 - `GET /simcon/session` 查会话信息；`POST /simcon/open`、`POST /simcon/close` 显式管理（close 释放串口，日志保留）。
+
+## 辅助面：构帧预览 / 应答规则 / 协议字典 / 编排 REST（无鉴权，8790 直调）
+
+这些端点在 `/api/simcon`、`/api/dict`、`/api` 命名空间，**不经 /api/ai/v1、无需 Bearer**
+（局域网可达，见 ADR-28），适合轻量查询与预检；涉及串口操作与证据链的仍走 `/api/ai/v1`。
+
+```bash
+# 语义构帧预览：只经 scenario_codec 算字节不触串口，下发前预检报文（422=构帧失败）
+curl -X POST http://127.0.0.1:8790/api/simcon/build -H "Content-Type: application/json" \
+  -d '{"afn":"06","fn":"F230","params":{},"direction":"down","profile":"anhui","seq":1}'
+
+# simcon 当前生效应答规则（内置+覆盖）
+curl http://127.0.0.1:8790/api/simcon/responders
+
+# 协议字典：698 OAD / 645 DI / 1376.2 AFN-Fn / loghooks 事件规则（?q= 模糊过滤）
+curl http://127.0.0.1:8790/api/dict
+curl "http://127.0.0.1:8790/api/dict/afn-fn?q=F230"
+# observation 的 loghook_rule.rule_id 从这查：
+curl "http://127.0.0.1:8790/api/dict/rules?q=<事件名>"
+
+# 验证编排 REST：不经控制面直接驱动全链路（无 token / 无 operation / 无审计）
+curl http://127.0.0.1:8790/api/scenarios
+curl -X POST http://127.0.0.1:8790/api/run -H "Content-Type: application/json" -d '<RunRequest>'
+# → 立即返回 run 视图（status=running）→ 轮询 GET /api/run/<run_id> 到终态
+#   passed/failed/cancelled/error/inconclusive → GET /api/run/<id>/report；取消 POST /api/run/<id>/cancel
+```
+
+- 取舍：要**授权审计/证据链/幂等**走 `/api/ai/v1`；只是**直接跑场景拿报告**走 `/api/run`。
+- RunRequest 字段见 `apps/workbench/orchestration/dto.py`。
 
 ## 推荐调用顺序（AI 侧 checklist）
 
@@ -263,6 +297,7 @@ curl "http://127.0.0.1:8790/api/ai/v1/simcon/frames?updown=up&afn=06" -H "Author
    帧详情 `feature_hint` 直接作特征草稿。
 8. 模拟集中器侧：`POST /simcon/verify` 跑用例 / `POST /simcon/step` 单步 → `GET /simcon/frames` 查帧。
 9. 收尾：`stop` 会话、`listener/stop`、`POST /simcon/close`，释放串口。
+10. （可选）辅助面：`POST /api/simcon/build` 预检构帧、`/api/dict/*` 查协议语义与 loghook 规则 id、`/api/run` 直接跑场景（见上节）。
 
 ## 与前端的关系（重要）
 
@@ -284,6 +319,7 @@ curl "http://127.0.0.1:8790/api/ai/v1/simcon/frames?updown=up&afn=06" -H "Author
 ## 参考
 
 - 完整说明：`docs/16-AI操作指南.md`
+- 接口契约总表：`docs/api-contract.md`（全部路由/参数/状态码）；功能清单：`docs/features.md`
 - 实现：`apps/workbench/ai_api.py`、`ai_operations.py`、`ai_auth.py`、`ai_store.py`
 - 一键密钥：`tools/scripts/一键生成AI密钥.bat`
 - 决策：DECISIONS.md ADR-28（开放 0.0.0.0 局域网监听）
