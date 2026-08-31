@@ -190,6 +190,9 @@
     state.resp = resp;
     state.curSnapshot = null;
     var grid = $("#respGrid");
+    // 06H 主动上报：显示「上报历史」按钮，实时上报走收发记录 + resp 契约
+    var isReport = state.afnList[state.curAfn] && state.afnList[state.curAfn].code === "06H";
+    $("#btnEvents").style.display = isReport ? "inline-flex" : "none";
     if (!resp) { grid.style.display = "none"; return; }
     grid.style.display = "flex";
     var lst = resp.list;
@@ -203,8 +206,8 @@
     $("#btnQuery").style.display = isList ? "inline-flex" : "none";
     $("#rgStart").style.display = isList ? "inline-flex" : "none";
     $("#rgCount").style.display = isList ? "inline-flex" : "none";
-    $("#respMeta").textContent = (lst ? "总数量 → 自动遍历" : "标量响应");
-    $("#respGridBody").innerHTML = '<div class="empty" style="height:100px"><p>查询后响应记录将显示在这里</p></div>';
+    $("#respMeta").textContent = isReport ? "主动上报 · 已落库" : (lst ? "总数量 → 自动遍历" : "标量响应");
+    $("#respGridBody").innerHTML = '<div class="empty" style="height:100px"><p>' + (isReport ? "上报帧到达后自动解析，点「上报历史」回查库" : "查询后响应记录将显示在这里") + "</p></div>";
   }
 
   // 位域字段的解释器：把 BS/BIN 位字段转可读文本（仅做展示增强）
@@ -296,6 +299,38 @@
     querySnapshotsByAfnFn();
     banner("快照列表已刷新到「响应表格」标题栏");
   });
+  $("#btnEvents").addEventListener("click", loadEvents);
+
+  /* ================= REQS-0013：06H 上报历史回查 ================= */
+  function loadEvents() {
+    api("/api/simcon/store/events?limit=50").then(function (d) {
+      var items = d.items || [];
+      renderEvents(items);
+    }).catch(function (err) { banner("上报历史读取失败：" + err.message); });
+  }
+
+  function renderEvents(items) {
+    var body = $("#respGridBody");
+    if (!items.length) {
+      body.innerHTML = '<div class="empty" style="height:100px"><p>暂无上报记录（库为空）</p></div>';
+      return;
+    }
+    var html = '<table class="rtab"><thead><tr><th>时间</th><th>AFN/Fn</th><th>事件类型</th><th>摘要</th></tr></thead><tbody>';
+    items.forEach(function (e) {
+      var pl = {};
+      try { pl = JSON.parse(e.payload_json || "{}"); } catch (err) {}
+      var n = (pl.head && pl.head["上报从节点的数量n"]) != null ? pl.head["上报从节点的数量n"] : "";
+      var recs = pl.records || [];
+      var summary = recs.length ? ("记录 × " + recs.length + (n !== "" ? " / 总数 " + n : "")) : (n !== "" ? "数量 " + n : "—");
+      html += "<tr><td>" + esc((e.ts || "").replace("T", " ").slice(0, 16)) + "</td>" +
+        "<td class='mono'>" + esc(e.afn) + " " + esc(e.fn) + "</td>" +
+        "<td>" + esc(e.event_type || "—") + "</td><td>" + esc(summary) + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    body.innerHTML = html;
+    $("#respMeta").textContent = "上报历史 × " + items.length + "（持久层）";
+  }
+
   $("#segMode").addEventListener("click", function (e) {
     var btn = e.target.closest("button");
     if (!btn) return;

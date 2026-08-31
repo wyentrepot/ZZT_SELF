@@ -1,6 +1,10 @@
 {
  "source": "docs/ui/sim-concentrator-ui.html（源自 03_QGDW10376.2_全帧类型.md 蒸馏）",
  "note": "参考字典：字段表供 UI 展示与检索；构帧/解析以 adapter_10376 代码模板为准，不一致时以代码+真机帧裁决。",
+ "v2": {
+  "contract": "req/resp/list/pageMode/persist（REQS-0013）",
+  "note": "req=下行请求字段；resp=上行响应建模；list=分页契约(total/count/reqStart/reqCount/record/pageMax)；pageMode: none|manual|auto|both；persist=true 上报入库。fields 保留为 req.fields 的兼容别名。变长字段 b='len_ref:<字段名>'；嵌套记录 f='list_ref:<数量字段名>'。依据 03_QGDW10376.2_全帧类型.md。"
+ },
  "afn": [
   {
    "code": "00H",
@@ -333,7 +337,39 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "厂商代码",
+        "f": "ASCII",
+        "b": 2,
+        "d": "厂商代码",
+        "c": "num"
+       },
+       {
+        "n": "芯片代码",
+        "f": "ASCII",
+        "b": 2,
+        "d": "芯片代码",
+        "c": "num"
+       },
+       {
+        "n": "版本日期",
+        "f": "BCD",
+        "b": 3,
+        "d": "日/月/年（BCD，低字节在前）",
+        "c": "num"
+       },
+       {
+        "n": "版本",
+        "f": "BCD",
+        "b": 2,
+        "d": "版本号（BCD）",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F2",
@@ -344,7 +380,18 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "噪声强度",
+        "f": "BIN",
+        "b": 1,
+        "d": "D3~D0 噪声强度(0~15)，D7~D4 备用",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F3",
@@ -443,7 +490,18 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "主节点地址",
+        "f": "BCD",
+        "b": 6,
+        "d": "主节点 MAC 地址",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F5",
@@ -454,7 +512,25 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "状态字",
+        "f": "BS",
+        "b": 2,
+        "d": "D7~D6 周期抄表模式 / D5~D4 主节点信道特征 / D3~D0 速率数量n / D15~D12 备用 / D11~D8 信道数量",
+        "c": "num"
+       },
+       {
+        "n": "通信速率",
+        "f": "BIN",
+        "b": 2,
+        "d": "D15 速率单位(0 bps/1 kbps) + D14~D0 通信速率",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F6",
@@ -482,7 +558,18 @@
        }
       ]
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "干扰状态",
+        "f": "BIN",
+        "b": 1,
+        "d": "0 无干扰 / 1 有干扰",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F7",
@@ -493,7 +580,18 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "最大超时时间",
+        "f": "BIN",
+        "b": 1,
+        "d": "从节点监控最大超时时间，单位 s",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F8",
@@ -504,7 +602,25 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "无线信道组",
+        "f": "BIN",
+        "b": 1,
+        "d": "无线信道组",
+        "c": "num"
+       },
+       {
+        "n": "无线主节点发射功率",
+        "f": "BIN",
+        "b": 1,
+        "d": "00最高/01次高/02次低/03最低",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F9",
@@ -586,7 +702,39 @@
        }
       ]
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "广播通信延迟时间",
+        "f": "BIN",
+        "b": 2,
+        "d": "广播通信延迟时间",
+        "c": "num"
+       },
+       {
+        "n": "通信协议类型",
+        "f": "BIN",
+        "b": 1,
+        "d": "00透明/01 645-1997/02 645-2007",
+        "c": "num"
+       },
+       {
+        "n": "报文长度L",
+        "f": "BIN",
+        "b": 1,
+        "d": "报文内容字节数",
+        "c": "num"
+       },
+       {
+        "n": "报文内容",
+        "f": "BIN",
+        "b": "len_ref:报文长度L",
+        "d": "需计算通信下行延时的报文内容",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F10",
@@ -597,7 +745,95 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "本地通信模式字",
+        "f": "BS",
+        "b": 6,
+        "d": "通信方式/路由管理方式/从节点信息模式/周期抄表模式等",
+        "c": "num"
+       },
+       {
+        "n": "从节点监控最大超时时间",
+        "f": "BIN",
+        "b": 1,
+        "d": "单位 s",
+        "c": "num"
+       },
+       {
+        "n": "广播命令最大超时时间",
+        "f": "BIN",
+        "b": 2,
+        "d": "单位 s",
+        "c": "num"
+       },
+       {
+        "n": "最大支持的报文长度",
+        "f": "BIN",
+        "b": 2,
+        "d": "单位 B",
+        "c": "num"
+       },
+       {
+        "n": "文件传输最大单包长度",
+        "f": "BIN",
+        "b": 2,
+        "d": "单位 B",
+        "c": "num"
+       },
+       {
+        "n": "升级操作等待时间",
+        "f": "BIN",
+        "b": 1,
+        "d": "单位 s",
+        "c": "num"
+       },
+       {
+        "n": "主节点地址",
+        "f": "BIN",
+        "b": 6,
+        "d": "主节点地址（HEX）",
+        "c": "num"
+       },
+       {
+        "n": "支持的最大从节点数量",
+        "f": "BIN",
+        "b": 2,
+        "d": "容量",
+        "c": "num"
+       },
+       {
+        "n": "当前从节点数量",
+        "f": "BIN",
+        "b": 2,
+        "d": "实际",
+        "c": "num"
+       },
+       {
+        "n": "协议发布日期",
+        "f": "BCD",
+        "b": 3,
+        "d": "YYMMDD",
+        "c": "num"
+       },
+       {
+        "n": "协议最后备案日期",
+        "f": "BCD",
+        "b": 3,
+        "d": "YYMMDD",
+        "c": "num"
+       },
+       {
+        "n": "厂商代码及版本信息",
+        "f": "BIN",
+        "b": 9,
+        "d": "厂商代码及版本",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F11",
@@ -623,7 +859,25 @@
        }
       ]
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "AFN功能码",
+        "f": "BIN",
+        "b": 1,
+        "d": "AFN 功能码（请求回显）",
+        "c": "num"
+       },
+       {
+        "n": "数据单元支持位图",
+        "f": "BIN",
+        "b": 32,
+        "d": "256 位：D0=F1 … D254=F255，0不支持/1支持",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F12",
@@ -634,7 +888,39 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "模块厂商代码",
+        "f": "ASCII",
+        "b": 2,
+        "d": "模块厂商代码",
+        "c": "num"
+       },
+       {
+        "n": "模块ID号长度",
+        "f": "BIN",
+        "b": 1,
+        "d": "ID 号字节数 M",
+        "c": "num"
+       },
+       {
+        "n": "模块ID号格式",
+        "f": "BIN",
+        "b": 1,
+        "d": "00组合/01BCD/02BIN/03ASCII",
+        "c": "num"
+       },
+       {
+        "n": "模块ID号",
+        "f": "BIN",
+        "b": "len_ref:模块ID号长度",
+        "d": "模块 ID 号，M≤50",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F16",
@@ -645,7 +931,18 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "宽带载波频段",
+        "f": "BIN",
+        "b": 1,
+        "d": "0=1.953~11.96MHz/1=2.441~5.615MHz/2=0.781~2.930MHz/3=1.758~2.930MHz",
+        "c": "num"
+       }
+      ]
+     }
     },
     {
      "no": "F100",
@@ -656,7 +953,18 @@
      "req": {
       "fields": []
      },
-     "pageMode": "none"
+     "pageMode": "none",
+     "resp": {
+      "fields": [
+       {
+        "n": "场强门限",
+        "f": "BIN",
+        "b": 1,
+        "d": "取值 50~120，默认 96",
+        "c": "num"
+       }
+      ]
+     }
     }
    ]
   },
@@ -3515,9 +3823,5 @@
     }
    ]
   }
- ],
- "v2": {
-  "contract": "req/resp/list/pageMode/persist（REQS-0013）",
-  "note": "req=下行请求字段；resp=上行响应建模；list=分页契约(total/count/reqStart/reqCount/record/pageMax)；pageMode: none|manual|auto|both；persist=true 上报入库。fields 保留为 req.fields 的兼容别名。变长字段 b='len_ref:<字段名>'；嵌套记录 f='list_ref:<数量字段名>'。依据 03_QGDW10376.2_全帧类型.md。"
- }
+ ]
 }

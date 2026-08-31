@@ -2,13 +2,16 @@
 """1376.2 收发数据库（REQS-0013 P0-3）：单文件 sqlite。
 
 分层（用户 2026-08-31 拍板）：
-  持久层（只追加，长期保留）
+  持久层（只追加）
     report_event       06H F1/F3/F4/F5 上报事件
     report_meter_data  06H F2 抄读数据
     frame_log          所有 1376.2 收发帧（证据链，业务行经 frame_id 回溯）
   临时层（快照制，可清理）
     query_snapshot     一次查询/自动遍历 = 一个快照
     query_snapshot_item 快照明细行（记录字段按 AFN/Fn 映射）
+
+上报数据保留策略（用户 2026-09-01 拍板）：06H 上报按天保存（day 列），
+滚动保留最近 5 天——第 6 天写入时自动清掉第 1 天（最旧一天），循环往复。
 
 所有业务行携带 frame_id → frame_log，保证"表格每一行可回溯原始帧"。
 写操作线程安全（单连接 + WAL + 行锁）。异常不抛，失败记录到 last_error。
@@ -19,9 +22,11 @@ import json
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
+
+_REPORT_RETAIN_DAYS = 5  # 06H 上报滚动保留天数
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS frame_log (
@@ -47,6 +52,7 @@ CREATE TABLE IF NOT EXISTS report_event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     frame_id INTEGER,
     ts TEXT NOT NULL,
+    day TEXT NOT NULL DEFAULT '',      -- YYYY-MM-DD，按天保存
     afn TEXT NOT NULL,
     fn TEXT NOT NULL,
     event_type TEXT,                 -- F1从节点信息/F3工况变动/F4设备类型/F5事件
@@ -54,11 +60,13 @@ CREATE TABLE IF NOT EXISTS report_event (
     FOREIGN KEY (frame_id) REFERENCES frame_log(id)
 );
 CREATE INDEX IF NOT EXISTS idx_report_event_fn ON report_event(afn, fn, ts);
+CREATE INDEX IF NOT EXISTS idx_report_event_day ON report_event(day);
 
 CREATE TABLE IF NOT EXISTS report_meter_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     frame_id INTEGER,
     ts TEXT NOT NULL,
+    day TEXT NOT NULL DEFAULT '',      -- YYYY-MM-DD，按天保存
     seq_no TEXT,
     proto_type TEXT,
     uplink_sec TEXT,
@@ -67,6 +75,7 @@ CREATE TABLE IF NOT EXISTS report_meter_data (
     FOREIGN KEY (frame_id) REFERENCES frame_log(id)
 );
 CREATE INDEX IF NOT EXISTS idx_report_meter_data_ts ON report_meter_data(ts);
+CREATE INDEX IF NOT EXISTS idx_report_meter_data_day ON report_meter_data(day);
 
 CREATE TABLE IF NOT EXISTS query_snapshot (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,9 +128,34 @@ class ListenerStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
+            self._migrate_daily_columns()
             self._conn.commit()
         except Exception as e:  # pragma: no cover
             self.last_error = str(e)
+
+    def _migrate_daily_columns(self) -> None:
+        """旧库补 day 列（按天保存滚动清理）。幂等：列已存在则跳过。"""
+        for table in ("frame_log", "report_event", "report_meter_data"):
+            cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if "day" not in cols:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN day TEXT NOT NULL DEFAULT ''")
+
+    @staticmethod
+    def _today() -> str:
+        return date.today().isoformat()
+
+    def _prune_reports(self) -> None:
+        """滚动清理：删除早于保留窗口（最近 5 天）的旧日数据（含 frame_log 证据链）。
+
+        保留窗口 = 今天 + 前 4 天（共 5 天）；第 6 天写入时，第 1 天（最旧一天）
+        被清掉。空 day（历史遗留/异常）视为过时一并清理。三张表同按 day 窗口清理，
+        业务行与证据帧同步过期。
+        """
+        cutoff = (date.today() - timedelta(days=_REPORT_RETAIN_DAYS - 1)).isoformat()
+        for table in ("report_event", "report_meter_data", "frame_log"):
+            self._conn.execute(
+                f"DELETE FROM {table} WHERE day = '' OR day < ?", (cutoff,),
+            )
 
     # ------------------------------------------------------------------ 帧
     def add_frame(self, entry: dict) -> Optional[int]:
@@ -130,8 +164,8 @@ class ListenerStore:
             with self._lock:
                 cur = self._conn.execute(
                     "INSERT INTO frame_log(session_id, seq, ts, ts_epoch, dir, kind, "
-                    "run_id, afn, fn, updown, frame_hex, parsed) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "run_id, afn, fn, updown, frame_hex, parsed, day) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         entry.get("session_id", ""), entry.get("seq", 0),
                         entry.get("ts", datetime.now().isoformat(timespec="milliseconds")),
@@ -140,8 +174,10 @@ class ListenerStore:
                         entry.get("fn"), entry.get("updown"), entry.get("frame_hex", ""),
                         json.dumps(entry.get("parsed"), ensure_ascii=False, default=str)
                         if entry.get("parsed") else None,
+                        self._today(),
                     ),
                 )
+                self._prune_reports()  # frame_log 证据链同样滚动保留 5 天
                 self._conn.commit()
                 return cur.lastrowid
         except Exception as e:  # pragma: no cover
@@ -154,11 +190,13 @@ class ListenerStore:
         try:
             with self._lock:
                 cur = self._conn.execute(
-                    "INSERT INTO report_event(frame_id, ts, afn, fn, event_type, payload_json) "
-                    "VALUES(?,?,?,?,?,?)",
+                    "INSERT INTO report_event(frame_id, ts, day, afn, fn, event_type, payload_json) "
+                    "VALUES(?,?,?,?,?,?,?)",
                     (frame_id, datetime.now().isoformat(timespec="milliseconds"),
-                     afn, fn, event_type, json.dumps(payload, ensure_ascii=False, default=str)),
+                     self._today(), afn, fn, event_type,
+                     json.dumps(payload, ensure_ascii=False, default=str)),
                 )
+                self._prune_reports()  # 滚动保留最近 5 天
                 self._conn.commit()
                 return cur.lastrowid
         except Exception as e:  # pragma: no cover
@@ -169,14 +207,16 @@ class ListenerStore:
         try:
             with self._lock:
                 cur = self._conn.execute(
-                    "INSERT INTO report_meter_data(frame_id, ts, seq_no, proto_type, "
-                    "uplink_sec, payload_hex, payload_json) VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO report_meter_data(frame_id, ts, day, seq_no, proto_type, "
+                    "uplink_sec, payload_hex, payload_json) VALUES(?,?,?,?,?,?,?,?)",
                     (frame_id, datetime.now().isoformat(timespec="milliseconds"),
+                     self._today(),
                      str(payload.get("从节点序号", "")), str(payload.get("通信协议类型", "")),
                      str(payload.get("当前报文本地通信上行时长", "")),
                      payload.get("报文内容__hex", ""),
                      json.dumps(payload, ensure_ascii=False, default=str)),
                 )
+                self._prune_reports()  # 滚动保留最近 5 天
                 self._conn.commit()
                 return cur.lastrowid
         except Exception as e:  # pragma: no cover
@@ -263,6 +303,16 @@ class ListenerStore:
 
     def list_report_events(self, *, limit: int = 50) -> list[dict]:
         return self.query("SELECT * FROM report_event ORDER BY id DESC LIMIT ?", (int(limit),))
+
+    def report_days(self) -> list[dict]:
+        """上报数据按天统计（供「上报历史」按天分组展示）。"""
+        rows = self.query(
+            "SELECT day, COUNT(*) AS cnt FROM report_event GROUP BY day ORDER BY day DESC")
+        meter = {r["day"]: r["cnt"] for r in self.query(
+            "SELECT day, COUNT(*) AS cnt FROM report_meter_data GROUP BY day")}
+        for r in rows:
+            r["meter"] = meter.get(r["day"], 0)
+        return rows
 
     def close(self) -> None:
         try:

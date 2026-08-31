@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G1 展示 · 10H F21 网络拓扑响应表格</title>
+<style>
+:root{
+  --font-sans:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"Cascadia Code","Consolas","JetBrains Mono",monospace;
+  --color-bg-canvas:#0b1220;
+  --color-bg-surface:#0f172a;
+  --color-bg-raised:#111a2e;
+  --color-bg-elevated:#16213a;
+  --color-bg-hover:#1a2744;
+  --color-fg-default:#e6edf3;
+  --color-fg-muted:#9aa7b8;
+  --color-fg-subtle:#8b98ab;
+  --color-fg-dim:#64748b;
+  --color-border-default:#1e2a42;
+  --color-border-strong:#2a3a5c;
+  --color-border-emphasis:#3b4d75;
+  --color-accent:#06b6d4;
+  --color-accent-soft:rgba(6,182,212,.14);
+  --color-accent-active:#0891b2;
+  --color-accent-fg:#06121a;
+  --color-status-pass:#2dd4a7;
+  --color-status-warn:#fbbf24;
+  --color-status-fail:#f87171;
+  --color-status-inconclusive:#a371f7;
+  --color-dir-tx:#fbbf24;
+  --color-dir-tx-soft:rgba(251,191,36,.14);
+  --color-dir-rx:#06b6d4;
+  --color-dir-rx-soft:rgba(6,182,212,.14);
+  --radius-sm:6px;--radius-md:8px;--radius-lg:12px;
+  --ease-in-out:cubic-bezier(.4,0,.2,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--color-fg-default);background:var(--color-bg-canvas)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--color-border-strong);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+.mono{font-family:var(--font-mono);font-variant-ligatures:none}
+.app{display:flex;height:100vh}
+/* AFN 列 */
+.col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--color-bg-surface)}
+.col+.col{border-left:1px solid var(--color-border-default)}
+.sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-raised)}
+.sec-h h3{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--color-fg-muted)}
+.col-body{flex:1;overflow-y:auto;min-height:0}
+.afn-h{display:flex;align-items:center;gap:9px;width:100%;padding:9px 11px;text-align:left;cursor:pointer;transition:background .14s;position:relative}
+.afn-h:hover{background:var(--color-bg-raised)}
+.afn-item.sel .afn-h{background:linear-gradient(90deg,var(--color-accent-soft),transparent)}
+.afn-item.sel .afn-h::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-accent)}
+.afn-code{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--color-accent);flex:none;min-width:34px;padding:1px 5px;border-radius:4px;background:var(--color-bg-elevated);text-align:center}
+.afn-name{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Fn 列 */
+.fn-item{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px 12px;text-align:left;cursor:pointer;border-bottom:1px solid var(--color-border-default);position:relative}
+.fn-item.on{background:linear-gradient(90deg,var(--color-accent-soft),transparent)}
+.fn-item.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-accent)}
+.fn-no{font-family:var(--font-mono);font-size:11.5px;color:var(--color-fg-subtle);flex:none;min-width:34px}
+.fn-item.on .fn-no{color:var(--color-accent)}
+.fn-nm{flex:1;font-size:12.5px;color:var(--color-fg-muted)}
+.fn-item.on .fn-nm{color:var(--color-fg-default)}
+/* 参数与响应列 */
+.par-head{padding:12px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-raised);flex:none}
+.par-t1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.par-t1 b{font-size:15px;font-weight:500}
+.par-t2{margin-top:7px;font-size:12px;color:var(--color-fg-subtle);line-height:1.6}
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--radius-sm);font-size:11px;font-weight:500;background:var(--color-bg-elevated);color:var(--color-fg-muted);border:1px solid var(--color-border-default)}
+.chip--rx{background:var(--color-dir-rx-soft);color:var(--color-dir-rx);border-color:var(--color-dir-rx)}
+/* 响应表格区 */
+.resp-grid{flex:none;display:flex;flex-direction:column;border-top:1px solid var(--color-border-strong);background:var(--color-bg-surface)}
+.resp-grid-h{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;flex:none;background:var(--color-bg-raised);border-bottom:1px solid var(--color-border-default)}
+.resp-grid-h .ttl{font-size:12.5px;font-weight:500;white-space:nowrap}
+.resp-grid-h .sp{margin-left:auto}
+.seg{display:flex;background:var(--color-bg-surface);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);padding:2px;gap:2px}
+.seg button{height:22px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--color-fg-subtle);cursor:pointer}
+.seg button.on{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.fld{height:26px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-bg-surface);border:1px solid var(--color-border-strong);color:var(--color-fg-default);font-size:12px}
+.btn{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);background:var(--color-bg-elevated);color:var(--color-fg-muted);font-size:12px;cursor:pointer}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--color-fg-subtle)}
+.resp-grid-body{overflow:auto;min-height:0;max-height:46vh}
+.resp-scalar{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:12px}
+.kv{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:8px 11px}
+.kv .k{font-size:10.5px;color:var(--color-fg-dim)}
+.kv .v{font-size:14px;font-family:var(--font-mono);color:var(--color-accent);font-weight:500}
+.rtab{width:100%;border-collapse:collapse;font-size:11.5px;font-family:var(--font-mono)}
+.rtab th{position:sticky;top:0;background:var(--color-bg-elevated);text-align:left;font-weight:500;font-size:10.5px;letter-spacing:.05em;color:var(--color-fg-muted);padding:6px 8px;border-bottom:1px solid var(--color-border-default);white-space:nowrap}
+.rtab td{padding:5px 8px;border-bottom:1px solid var(--color-border-default);color:var(--color-fg-default);white-space:nowrap}
+.rtab tr:hover td{background:var(--color-bg-raised)}
+.rtab .num{text-align:right;color:var(--color-fg-dim)}
+.role{font-weight:500}
+.role.sta{color:#60a5fa}
+.role.pco{color:#a371f7}
+.role.cco{color:var(--color-accent)}
+.hint{font-size:11px;color:var(--color-fg-dim)}
+.paging-note{margin:12px;padding:11px 13px;border:1px dashed var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-bg-raised);font-size:12px;color:var(--color-fg-subtle);line-height:1.8}
+.paging-note b{color:var(--color-accent)}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- AFN 列 -->
+  <div class="col" style="width:200px">
+    <div class="sec-h"><h3>AFN 应用功能码</h3></div>
+    <div class="col-body" id="afnCol"></div>
+  </div>
+  <!-- Fn 列 -->
+  <div class="col" style="width:210px">
+    <div class="sec-h"><h3>Fn 命令</h3></div>
+    <div class="col-body" id="fnCol"></div>
+  </div>
+  <!-- 参数 + 响应 -->
+  <div class="col" style="flex:1">
+    <div class="par-head">
+      <div class="par-t1"><b class="mono" style="color:var(--color-accent)">10H F21</b><b>查询网络拓扑信息</b><span class="chip chip--rx">上行响应</span></div>
+      <div class="par-t2">下行：节点起始序号(2B) + 节点数量(1B)；上行：总数量 + 起始序号 + 本次数量 + 记录(地址6+TEI2+代理2+节点信息1)</div>
+    </div>
+    <div class="resp-grid">
+      <div class="resp-grid-h">
+        <span class="ttl">响应表格</span>
+        <span class="chip" id="respMeta">总数量 4 → 自动遍历</span>
+        <span class="sp"></span>
+        <div class="seg" id="segMode">
+          <button data-m="manual">指定范围</button>
+          <button data-m="auto" class="on">自动全量</button>
+        </div>
+        <input class="fld" placeholder="起始序号" style="width:74px" value="0">
+        <input class="fld" placeholder="条数" style="width:52px" value="16">
+        <button class="btn" id="btnQuery">查询</button>
+        <button class="btn btn--ghost">快照</button>
+      </div>
+      <div class="resp-grid-body" id="respGridBody"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+
+  // 模拟 AFN 列表（真实 16 类，仅展示必要）
+  var AFN_LIST = [
+    { code: "00H", name: "确认/否认" }, { code: "01H", name: "初始化" }, { code: "02H", name: "数据转发" },
+    { code: "03H", name: "查询数据" }, { code: "04H", name: "链路接口检测" }, { code: "05H", name: "控制命令" },
+    { code: "06H", name: "主动上报" }, { code: "10H", name: "路由查询" }, { code: "11H", name: "路由设置" },
+    { code: "12H", name: "路由控制" }, { code: "13H", name: "路由数据转发" }, { code: "14H", name: "路由数据抄读" },
+    { code: "15H", name: "文件传输" }, { code: "F1H", name: "并发抄表" }
+  ];
+  var FN_LIST_10H = [
+    { no: "F1", name: "从节点数量" }, { no: "F2", name: "从节点信息" }, { no: "F3", name: "上一级中继路由信息" },
+    { no: "F4", name: "路由运行状态" }, { no: "F5", name: "未抄读成功的从节点信息" }, { no: "F6", name: "主动注册的从节点信息" },
+    { no: "F7", name: "查询从节点 ID 号信息" }, { no: "F9", name: "查询 HPLC 网络规模" }, { no: "F21", name: "查询网络拓扑信息" },
+    { no: "F31", name: "查询相线信息" }, { no: "F40", name: "流水线查询 ID 信息" }, { no: "F100", name: "查询无线网络规模" },
+    { no: "F101", name: "微功率无线从节点信息" }, { no: "F104", name: "升级后模块版本（待补）" }, { no: "F111", name: "查询网络信息" },
+    { no: "F112", name: "查询宽带载波芯片信息" }
+  ];
+
+  // F21 示例响应数据（真实契约字段）
+  var F21_HEAD = { "节点总数量": 4, "节点起始序号": 0, "本次应答的节点数量n": 4 };
+  var F21_RECORDS = [
+    { "节点地址": "000000000001", "节点标识TEI": 0,   "代理节点标识": "FFFF", "节点信息": 0x40 },  // CCO 层级0
+    { "节点地址": "010203040501", "节点标识TEI": 1,   "代理节点标识": "0000", "节点信息": 0x20 },  // PCO 层级0
+    { "节点地址": "010203040502", "节点标识TEI": 2,   "代理节点标识": "0001", "节点信息": 0x01 },  // STA 层级1
+    { "节点地址": "010203040503", "节点标识TEI": 3,   "代理节点标识": "0001", "节点信息": 0x12 }   // 层级2 角色PCO(0x2)
+  ];
+
+  function roleText(v) {
+    var role = (v >> 4) & 0x0F, level = v & 0x0F;
+    var r = { 0x1: "STA 末梢", 0x2: "PCO 代理", 0x4: "CCO 主节点" }[role] || ("0x" + role.toString(16));
+    var cls = { 0x1: "sta", 0x2: "pco", 0x4: "cco" }[role] || "";
+    return '<span class="role ' + cls + '">' + esc(r) + '</span> <span class="hint">L' + level + "</span>";
+  }
+
+  function render() {
+    document.getElementById("afnCol").innerHTML = AFN_LIST.map(function (a) {
+      return '<div class="afn-item' + (a.code === "10H" ? " sel" : "") + '"><div class="afn-h"><span class="afn-code">' + a.code + '</span><span class="afn-name">' + esc(a.name) + "</span></div></div>";
+    }).join("");
+    document.getElementById("fnCol").innerHTML = FN_LIST_10H.map(function (f) {
+      return '<div class="fn-item' + (f.no === "F21" ? " on" : "") + '"><span class="fn-no">' + f.no + '</span><span class="fn-nm">' + esc(f.name) + "</span></div>";
+    }).join("");
+
+    // 头部标量
+    var headHtml = '<div class="resp-scalar">' +
+      '<div class="kv"><div class="k">节点总数量</div><div class="v">4</div></div>' +
+      '<div class="kv"><div class="k">节点起始序号</div><div class="v">0</div></div>' +
+      '<div class="kv"><div class="k">本次应答节点数量</div><div class="v">4</div></div>' +
+      "</div>";
+    // 表格
+    var t = '<table class="rtab"><thead><tr><th>#</th><th>节点地址</th><th>节点标识 TEI</th><th>代理节点标识</th><th>节点角色 / 层级</th></tr></thead><tbody>';
+    F21_RECORDS.forEach(function (r, i) {
+      t += "<tr><td class='num'>" + (i + 1) + "</td><td>" + esc(r["节点地址"]) + "</td><td>" + esc(String(r["节点标识TEI"])) + "</td><td>" + esc(r["代理节点标识"]) + "</td><td>" + roleText(r["节点信息"]) + "</td></tr>";
+    });
+    t += "</tbody></table>";
+    t += '<div class="paging-note">' +
+      '分页契约：<b>节点总数量</b>驱动自动全量遍历 —— 首帧查 <b>1–16</b>，若总数 &gt; 16 则自动续查 <b>17–32</b>，直至取满。<br>' +
+      '本例总数 4 ≤ 16，单帧取完。若总数 32，则两帧完成（1–16 + 17–32），逐帧写入快照。<br>' +
+      '「指定范围」模式：手动填起始序号 + 条数，只发一帧。「自动全量」：按总数量循环下发。</div>';
+    document.getElementById("respGridBody").innerHTML = headHtml + t;
+  }
+
+  document.getElementById("segMode").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    Array.prototype.forEach.call(document.querySelectorAll("#segMode button"), function (x) { x.classList.remove("on"); });
+    b.classList.add("on");
+  });
+  document.getElementById("btnQuery").addEventListener("click", function () {
+    document.getElementById("respMeta").textContent = "总数量 4 → 已查询（单帧取完）";
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
