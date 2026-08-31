@@ -145,6 +145,26 @@
     $("#parHead").innerHTML = '<div class="par-t1"><b style="font-family:var(--font-mono);color:var(--color-accent)">' + esc(a.code + " " + f.no) + "</b><b>" + esc(f.name) + "</b>" +
       "<span class='chip chip--" + (f.dir === "下行" ? "tx" : "rx") + "'>" + esc(f.dir || "—") + "</span></div>" +
       '<div class="par-t2">' + esc(f.sem || f.d || a.sem || "") + "</div>";
+
+    // REQS-0016：上行 Fn 只读化——主动上报/应答无需下发，从收发库读取记录
+    if (f.dir === "上行") {
+      $("#btnSend").style.display = "none";
+      var isReport = a.code === "06H";
+      $("#parBody").innerHTML =
+        '<div class="card"><div class="card-h">上行报文<span class="hint">' + (isReport ? "主动上报" : "应答") + "</span></div>" +
+        '<div class="card-in"><span class="hint">' +
+        (isReport
+          ? "该命令为主动上报（上行），由模块/路由主动推送，无需下发；数据从收发库读取。" +
+            "点「上报历史」回查持久化记录，实时帧见下方「收发记录」。"
+          : "该命令为上行应答，由对端主动回送，无需下发；数据从收发库（frame_log）读取。") +
+        "</span></div></div>";
+      $("#frameMeta").textContent = "—";
+      setupRespGrid(f);
+      if (isReport) loadEvents();
+      return;
+    }
+    $("#btnSend").style.display = "";
+
     var fields = ((f.req && f.req.fields) || f.fields || []);
     var formable = fields.filter(function (x) { return x.key !== null && x.key !== undefined; });
 
