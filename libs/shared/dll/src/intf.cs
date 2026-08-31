@@ -9,7 +9,6 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Security.Cryptography;
 using System.Text;
-using System.Web.Script.Serialization;
 //using static System.Windows.Forms.VisualStyles.VisualStyleElement.ListView;
 //using System.Windows.Forms;
 
@@ -200,7 +199,7 @@ namespace NW
                 {
                     desc.Detail = "实际帧长度小于帧长度";
                 }
-                jsonDesc = new JavaScriptSerializer().Serialize(desc);
+                jsonDesc = JsonCompat.Serialize(desc);
                 return;
             }
 
@@ -227,7 +226,7 @@ namespace NW
                   {
                       desc_gw.Detail = "实际帧长度小于帧长度";
                   }
-                  jsonDesc = new JavaScriptSerializer().Serialize(desc_gw);
+                  jsonDesc = JsonCompat.Serialize(desc_gw);
                   return;
               }*/
             
@@ -268,7 +267,7 @@ namespace NW
             if (std_ver == 0)
             {
                 desc.FrmType = "国网";
-                jsonDesc = new JavaScriptSerializer().Serialize(desc);
+                jsonDesc = JsonCompat.Serialize(desc);
                 // return;
             }
 
@@ -728,7 +727,7 @@ namespace NW
             }
             //desc.SNID = (fch[0] >>4) & 0x0F;
             desc.SNID = comFunc.ByteArryToHexStr_3(fch, 1, 3).PadLeft(8, '0');
-            jsonDesc = new JavaScriptSerializer().Serialize(desc);
+            jsonDesc = JsonCompat.Serialize(desc);
         }
        
         /// <summary>
@@ -749,7 +748,7 @@ namespace NW
             if (res < 0 && res_gw < 0)  //帧错误
             {
                 desc.Error = "帧错误:" + res.ToString();
-                jsonDesc = new JavaScriptSerializer().Serialize(desc);
+                jsonDesc = JsonCompat.Serialize(desc);
                 return;
             }
 
@@ -794,7 +793,7 @@ namespace NW
             /*byte std_ver = (byte)((fch[12] >> 4) & 0x0F);
             if (std_ver == 0)
             {
-                jsonDesc = new JavaScriptSerializer().Serialize(desc);
+                jsonDesc = JsonCompat.Serialize(desc);
                 return;
             }*/
 
@@ -1043,7 +1042,7 @@ namespace NW
                     break;
             }
 
-           jsonDesc = new JavaScriptSerializer().Serialize(desc);
+           jsonDesc = JsonCompat.Serialize(desc);
         }
 
         /// <summary>
@@ -1087,7 +1086,7 @@ namespace NW
                     break;
             }
 
-            jsonDesc = new JavaScriptSerializer().Serialize(Fch);
+            jsonDesc = JsonCompat.Serialize(Fch);
         }
 
 
@@ -1113,7 +1112,7 @@ namespace NW
             }
 
 
-            jsonDesc = new JavaScriptSerializer().Serialize(sof_pld);
+            jsonDesc = JsonCompat.Serialize(sof_pld);
         }
 
 
@@ -1126,7 +1125,7 @@ namespace NW
             
             beacon_pld bcn = Parse.bcn_payload(packet, length, ref simple_flag, ref csma_union, ref detail);
 
-            jsonDesc = new JavaScriptSerializer().Serialize(bcn);
+            jsonDesc = JsonCompat.Serialize(bcn);
         }
 
        

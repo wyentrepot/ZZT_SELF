@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from shared import infra
 from shared.dotnet_parser import DotNetHplcParser
+from shared.dotnet_parser import default_dll_relative_path
 from shared.parser_service import FrameValidationError, ParserService
 from listener.index_registry import ListenerIndexRegistry
 from listener.log_service import LogFileService
@@ -62,10 +63,10 @@ def _repo_root() -> Path:
 
 
 def _default_dll() -> Path:
-    """解析 DLL 默认路径：frozen 下数据打进 _MEIPASS，否则在 libs/shared/dll/ 下。"""
+    """解析 DLL 默认路径：Windows 为 net48，WSL/Linux 为 net8.0。"""
     if _is_frozen():
-        return _base_dir() / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
-    return (_repo_root() / "libs" / "shared" / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll").resolve()
+        return _base_dir() / "dll" / default_dll_relative_path()
+    return (_repo_root() / "libs" / "shared" / "dll" / default_dll_relative_path()).resolve()
 
 
 BASE_DIR = _base_dir()
@@ -75,18 +76,16 @@ DEFAULT_SERIAL_PORT = "COM19"
 
 
 def _build_parser_service():
-    """构造解析服务；DLL 缺失/环境不兼容（如 WSL）时降级为 None。
+    """构造解析服务；DLL 缺失或 CLR 环境不兼容时降级为 None。
 
-    - 非 Windows（WSL/Linux/macOS）：.NET Framework 解析链不可用，直接降级。
-      不能在此处 import clr：pythonnet + 系统旧版 mono 会触发原生 SIGABRT
-      崩溃（try/except 无法捕获），导致整个 uvicorn 进程被杀。
+    - Windows：继续使用 net48 解析库和 Python.NET 默认运行时。
+    - WSL/Linux：使用 net8.0 解析库，Python.NET 在 import clr 前选择 CoreCLR。
+      仍会先探测运行时，避免旧版 Mono 在导入阶段造成原生进程崩溃。
     - Windows 下 DLL 缺失/加载失败：捕获异常返回 None。
 
     降级后仅 DLL 相关路由（/api/parse、/api/version 的解析部分）不可用，
     串口实时采集与日志索引功能照常工作（帧仍入库，只是不做深度解析）。
     """
-    if sys.platform != "win32":
-        return None
     try:
         return ParserService(DotNetHplcParser(DEFAULT_DLL))
     except Exception:

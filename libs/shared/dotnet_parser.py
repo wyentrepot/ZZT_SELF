@@ -1,11 +1,19 @@
 from pathlib import Path
+import sys
 
-from shared.dotnet_runtime import require_dotnet_runtime
+from shared.dotnet_runtime import configure_pythonnet_runtime
+
+
+def default_dll_relative_path() -> Path:
+    """Return the platform-specific parser artifact path under dll."""
+    if sys.platform == "win32":
+        return Path("bin") / "Debug" / "GwHPLCAnalysis.dll"
+    return Path("bin") / "Debug" / "net8.0" / "GwHPLCAnalysis.dll"
 
 
 def default_dll_path() -> Path:
-    """默认解析 DLL：随 shared 包内 dll/bin/Debug 定位（打包环境由调用方覆盖）。"""
-    return Path(__file__).resolve().parent / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+    """默认解析 DLL：Windows 使用 net48，WSL/Linux 使用 net8.0。"""
+    return Path(__file__).resolve().parent / "dll" / default_dll_relative_path()
 
 
 class DotNetHplcParser:
@@ -16,7 +24,7 @@ class DotNetHplcParser:
 
         # Never import pythonnet before checking the native runtime.  An
         # unsupported Mono can abort the whole Python process during import.
-        require_dotnet_runtime()
+        configure_pythonnet_runtime()
         import clr
 
         clr.AddReference(str(resolved))

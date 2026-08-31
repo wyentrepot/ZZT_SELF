@@ -37,9 +37,6 @@
     <UseWinFormsOutOfProcDesigner>True</UseWinFormsOutOfProcDesigner>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
-      <HintPath>..\packages\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
-    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Web.Extensions" />
@@ -54,6 +51,7 @@
     <Compile Include="src\comFunc.cs" />
     <Compile Include="src\snifferFrame.cs" />
     <Compile Include="src\inrfDesc.cs" />
+    <Compile Include="src\JsonCompat.cs" />
     <Compile Include="src\hplcFrame.cs" />
     <Compile Include="src\intf.cs" />
   </ItemGroup>
@@ -61,7 +59,6 @@
     <WCFMetadata Include="Connected Services\" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

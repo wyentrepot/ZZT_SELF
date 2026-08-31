@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'GwHPLCAnalysis.Net8'">
+    <BaseIntermediateOutputPath>obj/net8/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>obj/net8/</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>

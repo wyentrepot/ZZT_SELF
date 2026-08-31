@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>GwHPLCAnalysis</AssemblyName>
+    <RootNamespace>TestDll</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <DefineConstants>TRACE;DEBUG;NWSM</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Properties/AssemblyInfo.cs" />
+    <Compile Include="src/comFunc.cs" />
+    <Compile Include="src/snifferFrame.cs" />
+    <Compile Include="src/inrfDesc.cs" />
+    <Compile Include="src/JsonCompat.cs" />
+    <Compile Include="src/hplcFrame.cs" />
+    <Compile Include="src/intf.cs" />
+  </ItemGroup>
+</Project>

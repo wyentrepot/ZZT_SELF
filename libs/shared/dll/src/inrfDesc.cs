@@ -3,7 +3,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+#if NET8_0_OR_GREATER
+using System.Text.Json.Serialization;
+#else
 using System.Web.Script.Serialization;
+#endif
 
 
 /// <summary>
@@ -52,7 +56,11 @@ namespace DllDesc
     {
         public FrmHdrInfo_gw Info2;
         public string Error;
+#if NET8_0_OR_GREATER
+        [JsonIgnore] //保持 net48 ScriptIgnore 的输出契约
+#else
         [ScriptIgnore] //忽略某一行的显示
+#endif
         public FrmHdrInfo Info;
         public Object FCH;
         public Object MPDU;

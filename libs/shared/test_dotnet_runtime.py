@@ -1,3 +1,6 @@
+import sys
+import types
+
 from shared import dotnet_runtime
 
 
@@ -27,3 +30,31 @@ def test_probe_accepts_a_dotnet_runtime_without_loading_pythonnet(monkeypatch):
 
     assert result.supported is True
     assert result.reason == "dotnet runtime available at /usr/bin/dotnet"
+
+
+def test_configure_pythonnet_uses_coreclr_on_linux_before_clr_import(monkeypatch):
+    calls = []
+    fake_pythonnet = types.SimpleNamespace(load=lambda runtime: calls.append(runtime))
+    monkeypatch.setattr(
+        dotnet_runtime,
+        "probe_dotnet_runtime",
+        lambda: dotnet_runtime.RuntimeProbe(True, "available"),
+    )
+    monkeypatch.setattr(dotnet_runtime.sys, "platform", "linux")
+    monkeypatch.setitem(sys.modules, "pythonnet", fake_pythonnet)
+
+    dotnet_runtime.configure_pythonnet_runtime()
+
+    assert calls == ["coreclr"]
+
+
+def test_configure_pythonnet_keeps_windows_default_runtime(monkeypatch):
+    monkeypatch.setattr(
+        dotnet_runtime,
+        "probe_dotnet_runtime",
+        lambda: dotnet_runtime.RuntimeProbe(True, "available"),
+    )
+    monkeypatch.setattr(dotnet_runtime.sys, "platform", "win32")
+    monkeypatch.delitem(sys.modules, "pythonnet", raising=False)
+
+    dotnet_runtime.configure_pythonnet_runtime()

@@ -45,6 +45,31 @@ def test_non_frozen_default_dll_is_repo_dll():
     assert app_module._default_dll() == REPO_ROOT / "libs" / "shared" / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
 
 
+def test_non_frozen_default_dll_uses_net8_artifact_on_linux(monkeypatch):
+    monkeypatch.setattr(app_module.sys, "platform", "linux")
+
+    assert app_module._default_dll() == (
+        REPO_ROOT
+        / "libs"
+        / "shared"
+        / "dll"
+        / "bin"
+        / "Debug"
+        / "net8.0"
+        / "GwHPLCAnalysis.dll"
+    )
+
+
+def test_build_parser_service_attempts_linux_initialization(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(app_module.sys, "platform", "linux")
+    monkeypatch.setattr(app_module, "DEFAULT_DLL", Path("/repo/GwHPLCAnalysis.dll"))
+    monkeypatch.setattr(app_module, "DotNetHplcParser", lambda dll_path: sentinel)
+    monkeypatch.setattr(app_module, "ParserService", lambda parser: ("service", parser))
+
+    assert app_module._build_parser_service() == ("service", sentinel)
+
+
 def test_frozen_base_dir_is_meipass(frozen_environment):
     internal_dir, _ = frozen_environment
     assert app_module._base_dir() == internal_dir

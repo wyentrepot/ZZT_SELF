@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from listener.app import DEFAULT_DLL
+from shared import dotnet_parser
 from shared.dotnet_parser import DotNetHplcParser
 from shared.dotnet_runtime import probe_dotnet_runtime
 from shared.test_fixtures import GW_FRAME_HEX
@@ -22,6 +23,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DLL_REL = "libs/shared/dll/bin/Debug/GwHPLCAnalysis.dll"
 TEST_FILE = hplc_test_data_root() / "测试文本.txt"
 LISTENER_TEST_DATA = Path("apps/listener/test_data/gw_log_sample.txt")
+
+
+def test_default_dll_path_uses_net8_artifact_on_linux(monkeypatch):
+    monkeypatch.setattr(dotnet_parser.sys, "platform", "linux")
+
+    assert dotnet_parser.default_dll_path().as_posix().endswith(
+        "dll/bin/Debug/net8.0/GwHPLCAnalysis.dll"
+    )
+
+
+def test_default_dll_path_keeps_net48_artifact_on_windows(monkeypatch):
+    monkeypatch.setattr(dotnet_parser.sys, "platform", "win32")
+
+    assert dotnet_parser.default_dll_path().as_posix().endswith(
+        "dll/bin/Debug/GwHPLCAnalysis.dll"
+    )
 
 
 class DotNetHplcParserIntegrationTests(unittest.TestCase):

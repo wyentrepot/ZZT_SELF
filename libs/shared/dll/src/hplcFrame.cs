@@ -1,15 +1,15 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Data.OleDb;
-using System.Diagnostics.Eventing.Reader;
 using System.Globalization;
 using System.Linq;
-using System.Runtime.InteropServices.Expando;
-using System.Runtime.Remoting.Channels;
 using System.Security.Cryptography;
 using System.Threading;
+#if NET8_0_OR_GREATER
+using System.Text.Json.Serialization;
+#else
 using System.Web.Script.Serialization;
+#endif
 //using System.Windows.Forms;
 using static NW.TimeSlotClass;
 //using static System.Windows.Forms.AxHost;
@@ -1348,17 +1348,33 @@ namespace NW
     public class sof_pld_c
     {
         //#if NWSM
-        [ScriptIgnore] 
+#if NET8_0_OR_GREATER
+        [JsonIgnore]
+#else
+        [ScriptIgnore]
+#endif
         public mac_hdr_single_t MAC单跳帧头;
         public mac_hdr_single_t_gw 国网MAC单跳帧头;
         public Object 单跳帧;
         //#endif
+#if NET8_0_OR_GREATER
+        [JsonIgnore]
+#else
         [ScriptIgnore]
+#endif
         public mac_hdr_s_t MAC短帧头;
+#if NET8_0_OR_GREATER
+        [JsonIgnore]
+#else
         [ScriptIgnore]
+#endif
         public mac_hdr_l_t MAC长帧头;
         public nwk_mng_c MME;
+#if NET8_0_OR_GREATER
+        [JsonIgnore]
+#else
         [ScriptIgnore]
+#endif
         public aps_mng_c 应用层;
         public mac_hdr_gw GW标准帧;
         public aps_mng_c_gw GW应用层;
