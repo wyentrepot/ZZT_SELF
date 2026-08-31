@@ -799,53 +799,29 @@
     "scale": 2,
     "desc": "645-2007 附录A.2 电能量（DI=00040000，生成）"
   },
-  "02010000": {
+  "02010100": {
     "name": "A相电压",
     "data_type": "bcd_compact",
     "length": 2,
     "unit": "V",
     "scale": 1,
-    "desc": "A相电压"
+    "desc": "A相电压（645-2007 变量类，DI1=01 电压）"
   },
-  "02020000": {
+  "02020100": {
     "name": "B相电压",
     "data_type": "bcd_compact",
     "length": 2,
     "unit": "V",
     "scale": 1,
-    "desc": "B相电压"
+    "desc": "B相电压（645-2007 变量类，DI1=01 电压）"
   },
-  "02030000": {
+  "02030100": {
     "name": "C相电压",
     "data_type": "bcd_compact",
     "length": 2,
     "unit": "V",
     "scale": 1,
-    "desc": "C相电压"
-  },
-  "02010100": {
-    "name": "A相电流",
-    "data_type": "bcd_compact",
-    "length": 3,
-    "unit": "A",
-    "scale": 3,
-    "desc": "A相电流"
-  },
-  "02020100": {
-    "name": "B相电流",
-    "data_type": "bcd_compact",
-    "length": 3,
-    "unit": "A",
-    "scale": 3,
-    "desc": "B相电流"
-  },
-  "02030100": {
-    "name": "C相电流",
-    "data_type": "bcd_compact",
-    "length": 3,
-    "unit": "A",
-    "scale": 3,
-    "desc": "C相电流"
+    "desc": "C相电压（645-2007 变量类，DI1=01 电压）"
   },
   "00000000": {
     "name": "(当前)组合有功总电能",
@@ -1464,5 +1440,29 @@
       }
     ],
     "desc": "645-2007 附录A.2 最大需量及发生时间（DI=010A0000，生成）"
+  },
+  "02010200": {
+    "name": "A相电流",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "A相电流（645-2007 变量类，DI1=02 电流）"
+  },
+  "02020200": {
+    "name": "B相电流",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "B相电流（645-2007 变量类，DI1=02 电流）"
+  },
+  "02030200": {
+    "name": "C相电流",
+    "data_type": "bcd_compact",
+    "length": 3,
+    "unit": "A",
+    "scale": 3,
+    "desc": "C相电流（645-2007 变量类，DI1=02 电流）"
   }
 }

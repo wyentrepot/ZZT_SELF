@@ -633,6 +633,23 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                     add(f"被拒节点{i + 1}设备类型",
                         f"0x{content[base + 6]:02X}", f"{content[base + 6]:02X}")
             add("报文内容", content.hex(), content.hex(), "事件报文内容")
+        elif fn == 230 and len(data) >= 10:
+            # 安徽分钟级采集扩展 F230 主动上报
+            # 结构：任务号(1B) + 从节点地址(6B BCD) + 通信协议类型(1B)
+            #       + 采集时间(6B BCD 秒分时日月年) + 报文长度(2B 小端) + 报文内容(变长)
+            add("任务号", f"{data[0]}", f"{data[0]:02X}")
+            add("从节点地址", _bcd_to_str(data[1:7]), data[1:7].hex())
+            add("通信协议类型", _proto_name(data[7]), f"{data[7]:02X}")
+            if len(data) >= 13:
+                sec, minute, hour, day, month, year = data[8:14]
+                time_str = f"20{year:02X}年{month:02X}月{day:02X}日 {hour:02X}:{minute:02X}:{sec:02X}"
+                add("采集时间", time_str, data[8:14].hex(), "BCD 秒分时日月年")
+            if len(data) >= 16:
+                plen = le16(data[14:16])
+                content = data[16:16 + plen]
+                add("报文长度", f"{plen}B", data[14:16].hex(), "BIN 2B 小端")
+                add("报文内容", content.hex(), content.hex(),
+                    "内嵌 645/698 报文（嵌套帧见下）")
     # AFN=10H 路由查询
     elif afn == 0x10:
         if fn == 1 and len(data) >= 4:
