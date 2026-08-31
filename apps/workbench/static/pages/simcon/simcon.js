@@ -20,18 +20,6 @@
     snapshots: [], curSnapshot: null,
   };
 
-  /* 常用 Fn 的参数模板（业务键名对齐 scenario_codec / adapter_10376 模板） */
-  var PARAM_TPL = {
-    "11H-F1": { action: "add", addr: "080000000000", protocol: 3 },
-    "11H-F2": { addr: "080000000000" },
-    "11H-F231": { task_no: 1, action: "enable", protocol: 3, cycle_min: 1,
-      items: [{ meter_type: 0, item: "20000201", reply_len: 1 }] },
-    "11H-F100": { network_scale: 64 },
-    "05H-F1": { addr: "000000000001" },
-    "03H-F3": { start: 0, count: 16 },
-    "03H-F11": { afn: "11" },
-  };
-
   function banner(msg) {
     var el = $("#banner");
     if (!msg) { el.classList.remove("show"); el.textContent = ""; return; }

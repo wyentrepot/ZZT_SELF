@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REQS-0015 展示 · 参数区表单化</title>
+<style>
+:root{
+  --font-sans:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  --font-mono:"Cascadia Code","Consolas","JetBrains Mono",monospace;
+  --color-bg-canvas:#0b1220;--color-bg-surface:#0f172a;--color-bg-raised:#111a2e;
+  --color-bg-elevated:#16213a;--color-bg-hover:#1a2744;
+  --color-fg-default:#e6edf3;--color-fg-muted:#9aa7b8;--color-fg-subtle:#8b98ab;--color-fg-dim:#64748b;
+  --color-border-default:#1e2a42;--color-border-strong:#2a3a5c;--color-border-emphasis:#3b4d75;
+  --color-accent:#06b6d4;--color-accent-soft:rgba(6,182,212,.14);--color-accent-active:#0891b2;--color-accent-fg:#06121a;
+  --color-dir-tx:#fbbf24;--color-dir-tx-soft:rgba(251,191,36,.14);--color-dir-rx:#06b6d4;--color-dir-rx-soft:rgba(6,182,212,.14);
+  --radius-sm:6px;--radius-md:8px;--radius-lg:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--color-fg-default);background:var(--color-bg-canvas);padding:24px}
+h1{font-size:17px;font-weight:600;margin-bottom:4px}
+.sub{font-size:12.5px;color:var(--color-fg-subtle);margin-bottom:20px}
+.mono{font-family:var(--font-mono)}
+.wrap{display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1080px}
+.panel{background:var(--color-bg-surface);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden}
+.panel-h{display:flex;align-items:center;gap:9px;padding:10px 14px;background:var(--color-bg-raised);border-bottom:1px solid var(--color-border-default)}
+.panel-h b{font-size:13px;font-weight:600}
+.panel-h .code{font-family:var(--font-mono);font-size:12px;color:var(--color-accent);background:var(--color-bg-elevated);padding:1px 6px;border-radius:4px}
+.chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--radius-sm);font-size:10.5px;font-weight:500;background:var(--color-dir-tx-soft);color:var(--color-dir-tx);border:1px solid var(--color-dir-tx)}
+.panel-body{padding:14px}
+.card{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:12px}
+.card:last-child{margin-bottom:0}
+.card-h{display:flex;align-items:center;gap:9px;padding:8px 13px;background:var(--color-bg-elevated);border-bottom:1px solid var(--color-border-default);font-size:12px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--color-fg-dim);font-weight:400}
+.card-in{padding:13px}
+.hint{font-size:12px;color:var(--color-fg-dim)}
+/* 表单 */
+.ff-grid{display:flex;flex-direction:column;gap:11px}
+.ff-row{display:flex;flex-direction:column;gap:4px}
+.ff-label{font-size:12px;font-weight:500}
+.ff-ctrl{display:flex;align-items:center;gap:8px}
+.fld{flex:1;height:30px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-bg-surface);
+  border:1px solid var(--color-border-strong);color:var(--color-fg-default);font-size:12.5px}
+.fld:focus{outline:none;border-color:var(--color-accent);box-shadow:0 0 0 3px var(--color-accent-soft)}
+.ff-unit{flex:none;font-size:11.5px;font-family:var(--font-mono);color:var(--color-fg-muted);background:var(--color-bg-elevated);
+  border:1px solid var(--color-border-default);border-radius:5px;padding:3px 8px;min-width:34px;text-align:center}
+.ff-desc{font-size:11px;color:var(--color-fg-dim)}
+.hexwrap{background:var(--color-bg-canvas);border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:11px 12px}
+.hex{font-family:var(--font-mono);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all;color:var(--color-fg-subtle)}
+</style>
+</head>
+<body>
+<h1>REQS-0015 · 参数区表单化</h1>
+<div class="sub">有字段 Fn 直接渲染带单位的输入框；无数据单元 Fn 隐藏业务参数栏。</div>
+
+<div class="wrap">
+  <!-- 左：无数据单元 -->
+  <div class="panel">
+    <div class="panel-h"><span class="code">01H F1</span><b>硬件初始化（复位）</b><span class="chip">下行</span></div>
+    <div class="panel-body">
+      <div class="card">
+        <div class="card-h">下发</div>
+        <div class="card-in"><span class="hint">该命令无数据单元，直接下发即可。</span></div>
+      </div>
+      <div class="card">
+        <div class="card-h">帧预览 <span class="hint">只算不发</span></div>
+        <div class="card-in"><div class="hexwrap"><div class="hex">68 0F 00 43 00 00 00 00 00 00 01 01 00 45 16</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右：有字段表单 -->
+  <div class="panel">
+    <div class="panel-h"><span class="code">03H F6</span><b>主节点干扰状态</b><span class="chip">下行</span></div>
+    <div class="panel-body">
+      <div class="card">
+        <div class="card-h">业务参数 <span class="hint">构帧自动完成</span></div>
+        <div class="card-in">
+          <div class="ff-grid">
+            <div class="ff-row">
+              <div class="ff-label">持续时间</div>
+              <div class="ff-ctrl"><input class="fld" value="5" placeholder="BIN × 1B"><span class="ff-unit">min</span></div>
+              <div class="ff-desc">干扰检测持续时间</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h">帧预览 <span class="hint">只算不发</span></div>
+        <div class="card-in"><div class="hexwrap"><div class="hex">68 0A 00 43 00 00 00 00 00 00 03 20 00 05 CS 16</div></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap" style="margin-top:20px">
+  <!-- 更多表单示例 -->
+  <div class="panel">
+    <div class="panel-h"><span class="code">05H F4</span><b>设置从节点监控最大超时时间</b><span class="chip">下行</span></div>
+    <div class="panel-body">
+      <div class="card">
+        <div class="card-h">业务参数</div>
+        <div class="card-in">
+          <div class="ff-grid">
+            <div class="ff-row">
+              <div class="ff-label">最大超时时间</div>
+              <div class="ff-ctrl"><input class="fld" value="90" placeholder="BIN × 1B"><span class="ff-unit">s</span></div>
+              <div class="ff-desc">超过该时间判定从节点监控失败</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-h"><span class="code">05H F5</span><b>设置无线通信参数</b><span class="chip">下行</span></div>
+    <div class="panel-body">
+      <div class="card">
+        <div class="card-h">业务参数</div>
+        <div class="card-in">
+          <div class="ff-grid">
+            <div class="ff-row">
+              <div class="ff-label">无线信道组</div>
+              <div class="ff-ctrl"><input class="fld" value="0" placeholder="BIN × 1B"></div>
+              <div class="ff-desc">0~63 对应信道组</div>
+            </div>
+            <div class="ff-row">
+              <div class="ff-label">无线主节点发射功率</div>
+              <div class="ff-ctrl"><input class="fld" value="0" placeholder="BIN × 1B"></div>
+              <div class="ff-desc">00 最高 / 01 次高 / 02 次低 / 03 最低</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
