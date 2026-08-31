@@ -466,7 +466,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         items = store.list_snapshots(afn=afn or None, fn=fn or None, limit=limit)
         return {"items": items}
 
-    @app.get(f"{prefix}/store/snapshots/{snapshot_id}")
+    @app.get(prefix + "/store/snapshots/{snapshot_id}")
     async def store_snapshot_items(snapshot_id: int):
         """某快照的明细行。"""
         store = getattr(app.state, "simcon_store", None)
