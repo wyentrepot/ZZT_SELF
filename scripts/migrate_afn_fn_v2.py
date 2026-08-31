@@ -478,6 +478,74 @@ def _resolve_ref(inject: dict, key: str, seen: set | None = None) -> dict:
     return out
 
 
+# ---------------------------------------------------------------------------
+# 下行请求字段 → 业务键名映射（供 UI 表单化渲染，键名对齐 adapter_10376 构帧模板）
+# None = 长度/数量等自动计算字段，前端跳过不显示输入框。
+# 特殊键：_time=日期时间（BCD 6B）；nodes/meters/relays/subs=地址列表；
+#         payload/data/content=hex 报文内容。
+# ---------------------------------------------------------------------------
+FIELD_KEYS: dict[str, list] = {
+    "02H-F1": ["protocol", None, "payload"],
+    "03H-F3": ["start", "count"],
+    "03H-F6": ["duration"],
+    "03H-F9": ["protocol", None, "payload"],
+    "03H-F11": ["afn"],
+    "04H-F1": ["duration"],
+    "04H-F3": ["rate", "addr", "protocol", None, "payload"],
+    "05H-F1": ["addr"],
+    "05H-F2": ["enable"],
+    "05H-F3": ["ctrl", None, "payload"],
+    "05H-F4": ["timeout"],
+    "05H-F5": ["channel", "power"],
+    "05H-F6": ["enable"],
+    "05H-F16": ["band"],
+    "05H-F100": ["threshold"],
+    "05H-F101": ["_time"],
+    "05H-F200": ["enable"],
+    "10H-F2": ["start", "count"],
+    "10H-F3": ["addr"],
+    "10H-F5": ["start", "count"],
+    "10H-F6": ["start", "count"],
+    "10H-F7": ["start", "count"],
+    "11H-F1": ["nodes", None, None],
+    "11H-F2": ["meters", None],
+    "11H-F3": ["addr", None, "relays"],
+    "11H-F4": ["mode", "rate"],
+    "11H-F5": ["_time", "duration", "retry", "slices"],
+    "11H-F100": ["scale"],
+    "13H-F1": ["protocol", "delay_flag", None, "subs", None, "payload"],
+    "14H-F1": ["flag", "delay_flag", None, "payload", None, "subs"],
+    "14H-F2": ["_time"],
+    "14H-F3": [None, "payload"],
+    "14H-F4": ["type", "item", "content"],
+    "15H-F1": ["file_id", "attr", "cmd", "total_segs", "seg_id", None, "data"],
+}
+
+
+def _apply_field_keys(afn_list: list) -> int:
+    """给下行请求字段补 key（业务键名），供 UI 表单化。幂等：重复运行覆盖。"""
+    applied = 0
+    for afn in afn_list:
+        code = afn["code"]
+        for fn in afn["fns"]:
+            key = f"{code}-{fn['no']}"
+            keys = FIELD_KEYS.get(key)
+            if not keys:
+                continue
+            fields = fn.get("req", {}).get("fields") or []
+            if not fields:
+                continue
+            for i, fl in enumerate(fields):
+                if i < len(keys):
+                    k = keys[i]
+                    if k is None:
+                        fl["key"] = None  # 自动计算字段
+                    else:
+                        fl["key"] = k
+            applied += 1
+    return applied
+
+
 def migrate(dry_run: bool = False) -> int:
     data = json.loads(io.open(META, encoding="utf-8").read())
     meta_block = {k: v for k, v in data.items() if k != "afn"}
@@ -510,17 +578,19 @@ def migrate(dry_run: bool = False) -> int:
     if not dry_run:
         out = dict(meta_block)
         out["afn"] = afn_list
+        key_applied = _apply_field_keys(afn_list)
         out["v2"] = {
             "contract": "req/resp/list/pageMode/persist（REQS-0013）",
             "note": "req=下行请求字段；resp=上行响应建模；list=分页契约(total/count/reqStart/reqCount/record/pageMax)；"
                     "pageMode: none|manual|auto|both；persist=true 上报入库。fields 保留为 req.fields 的兼容别名。"
-                    "变长字段 b='len_ref:<字段名>'；嵌套记录 f='list_ref:<数量字段名>'。依据 03_QGDW10376.2_全帧类型.md。",
+                    "变长字段 b='len_ref:<字段名>'；嵌套记录 f='list_ref:<数量字段名>'。"
+                    "req.fields[i].key=业务键名（对齐 adapter_10376 构帧模板；None=自动计算字段）。依据 03_QGDW10376.2_全帧类型.md。",
         }
         io.open(META, "w", encoding="utf-8").write(
             json.dumps(out, ensure_ascii=False, indent=1) + "\n")
 
     print(f"[migrate] req 迁移 {stats['req_migrated']} 个 Fn；resp 注入 {stats['resp_injected']} 个 Fn"
-          f"（dry_run={dry_run}）")
+          f"；key 映射 {len(FIELD_KEYS)} 项（dry_run={dry_run}）")
     injected = sorted(k for k in INJECT)
     print(f"[migrate] 注入清单（{len(injected)} 项）: {', '.join(injected)}")
     return 0

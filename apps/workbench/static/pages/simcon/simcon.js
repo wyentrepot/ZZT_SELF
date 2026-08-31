@@ -157,28 +157,61 @@
     $("#parHead").innerHTML = '<div class="par-t1"><b style="font-family:var(--font-mono);color:var(--color-accent)">' + esc(a.code + " " + f.no) + "</b><b>" + esc(f.name) + "</b>" +
       "<span class='chip chip--" + (f.dir === "下行" ? "tx" : "rx") + "'>" + esc(f.dir || "—") + "</span></div>" +
       '<div class="par-t2">' + esc(f.sem || f.d || a.sem || "") + "</div>";
-    var key = a.code + "-" + f.no;
-    var tpl = PARAM_TPL[key];
-    var fieldRows = (f.fields || []).map(function (x) {
-      return "<tr><td><div class='nm'>" + esc(x.n) + "</div><div class='ds'>" + esc(x.d || "") + "</div></td>" +
-        "<td><span class='fmt'>" + esc(x.f || "—") + "</span></td>" +
-        "<td><span class='fmt'>" + esc(String(x.b == null ? "—" : x.b)) + "</span></td></tr>";
+    var fields = ((f.req && f.req.fields) || f.fields || []);
+    var formable = fields.filter(function (x) { return x.key !== null && x.key !== undefined; });
+
+    // 无数据单元（无字段 或 全为自动计算字段）：隐藏业务参数栏，直接下发
+    if (!formable.length) {
+      $("#parBody").innerHTML =
+        '<div class="card"><div class="card-h">下发</div><div class="card-in">' +
+        '<span class="hint">该命令无数据单元，直接下发即可。</span></div></div>' +
+        '<div class="card" style="margin-top:14px"><div class="card-h">帧预览 · 68H|L|C|R|A|AFN|DT|数据|CS|16H<span class="hint">只算不发</span></div>' +
+        '<div class="card-in"><div class="hexwrap"><div class="hex" id="prevHex">点击「刷新预览」或下发后自动构建</div></div></div></div>';
+      buildPreview();
+      setupRespGrid(f);
+      return;
+    }
+
+    // 有字段：渲染表单输入框
+    var rows = fields.map(function (x, i) {
+      if (x.key === null || x.key === undefined) return "";
+      var unit = (typeof x.o === "string" && x.o) ? x.o : "";
+      var label = esc(x.n);
+      var desc = x.d ? '<div class="ff-desc">' + esc(x.d) + "</div>" : "";
+      var ctrl = "";
+      if (x.c === "select" && Array.isArray(x.o)) {
+        var opts = x.o.map(function (o) {
+          var v = Array.isArray(o) ? o[0] : o;
+          var t = Array.isArray(o) ? o[1] : o;
+          return '<option value="' + esc(v) + '">' + esc(t) + "</option>";
+        }).join("");
+        ctrl = '<select class="fld ff-in" data-k="' + esc(x.key) + '" data-t="' + esc(x.c || "") + '">' + opts + "</select>";
+      } else if (x.key === "_time") {
+        ctrl = '<input class="fld ff-in" type="datetime-local" step="1" data-k="_time" data-t="time">';
+      } else if (x.key === "payload" || x.key === "data" || x.key === "content") {
+        ctrl = '<textarea class="fld ff-in ff-hex" rows="2" spellcheck="false" data-k="' + esc(x.key) + '" data-t="hex" placeholder="hex 报文"></textarea>';
+      } else if (x.key === "nodes" || x.key === "meters" || x.key === "relays" || x.key === "subs") {
+        ctrl = '<input class="fld ff-in" data-k="' + esc(x.key) + '" data-t="list" placeholder="地址列表（逗号分隔）">';
+      } else if (x.key === "addr" || x.c === "bcd") {
+        ctrl = '<input class="fld ff-in mono" data-k="' + esc(x.key) + '" data-t="addr" placeholder="12 位地址">';
+      } else {
+        ctrl = '<input class="fld ff-in" data-k="' + esc(x.key) + '" data-t="' + esc(x.c || "text") + '" placeholder="' + esc(x.f || "") + (x.b ? " × " + x.b + "B" : "") + '">';
+      }
+      var unitSuffix = unit ? '<span class="ff-unit">' + esc(unit) + "</span>" : "";
+      return '<div class="ff-row"><div class="ff-label">' + label + "</div>" +
+        '<div class="ff-ctrl">' + ctrl + unitSuffix + "</div>" + desc + "</div>";
     }).join("");
+
     $("#parBody").innerHTML =
-      '<div class="card"><div class="card-h">send 业务参数（JSON）<span class="hint">' +
-      (tpl ? "已填常用模板" : "按 adapter_10376 模板填写") + "</span></div>" +
-      '<div class="card-in"><textarea class="params-ta" id="paramsTa" spellcheck="false">' +
-      esc(JSON.stringify(tpl || {}, null, 2)) + "</textarea>" +
-      '<div class="hint" style="margin-top:7px">业务键名以 scenario_codec / adapter_10376 模板为准；构帧报错信息会指出缺失参数。</div></div></div>' +
-      (fieldRows
-        ? '<div class="card" style="margin-top:14px"><div class="card-h">数据单元字段参考<span class="hint">来自协议字典</span></div>' +
-          '<div class="card-in"><table class="ft"><thead><tr><th style="width:52%">字段 / 语义</th><th style="width:20%">格式</th><th>字节</th></tr></thead><tbody>' +
-          fieldRows + "</tbody></table></div></div>"
-        : '<div class="card" style="margin-top:14px"><div class="card-h">数据单元字段</div><div class="card-in"><span class="hint">' +
-          (f.todo ? "字段待补：该 Fn 尚无字段表，参数键名请对照 adapter_10376 代码。" : "该命令无数据单元，直接下发即可。") + "</span></div></div>") +
+      '<div class="card"><div class="card-h">业务参数<span class="hint">构帧自动完成</span></div>' +
+      '<div class="card-in"><div class="ff-grid">' + rows + "</div></div></div>" +
       '<div class="card" style="margin-top:14px"><div class="card-h">帧预览 · 68H|L|C|R|A|AFN|DT|数据|CS|16H<span class="hint">只算不发</span></div>' +
       '<div class="card-in"><div class="hexwrap"><div class="hex" id="prevHex">点击「刷新预览」或修改参数后自动构建</div></div></div></div>';
-    $("#paramsTa").addEventListener("input", debounceBuild);
+
+    Array.prototype.forEach.call(document.querySelectorAll("#parBody .ff-in"), function (el) {
+      el.addEventListener("input", debounceBuild);
+      el.addEventListener("change", debounceBuild);
+    });
     buildPreview();
     setupRespGrid(f);
   }
@@ -284,13 +317,12 @@
     if (!f || !f.resp || !f.resp.list) return;
     var start = parseInt($("#rgStart").value || "0", 10) || 0;
     var count = parseInt($("#rgCount").value || "16", 10) || 16;
-    // 下行参数模板：起始序号 + 数量
-    var params = {};
-    var lst = f.resp.list;
-    params[start] = start;  // 占位，实际键名由 adapter 模板决定，这里仅触发下发
-    // 直接构造业务参数（对齐 adapter_10376 模板键名）
-    var body = { start: start, count: count };
-    $("#paramsTa").value = JSON.stringify(body, null, 2);
+    // 把范围写入表单的 start/count 字段（若有），供下发
+    var startEl = document.querySelector('#parBody .ff-in[data-k="start"]');
+    var countEl = document.querySelector('#parBody .ff-in[data-k="count"]');
+    if (startEl) startEl.value = start;
+    if (countEl) countEl.value = count;
+    buildPreview();
     banner("已填查询参数（起始=" + start + "，条数=" + count + "），点「下发」发送");
   }
 
@@ -345,14 +377,47 @@
   function currentSend() {
     var a = state.afnList[state.curAfn];
     var f = a.fns[state.curFn];
-    var params = {};
-    try { params = JSON.parse($("#paramsTa").value || "{}"); }
-    catch (e) { throw new Error("参数 JSON 非法：" + e.message); }
+    var params = collectFormParams();
     return {
       afn: parseInt(a.code, 16),
       fn: parseInt(String(f.no).replace(/^F/i, ""), 10),
       params: params,
     };
+  }
+
+  /* 从表单字段（data-k）组装业务参数；数值字段转数字，时间拆 BCD 六元组 */
+  function collectFormParams() {
+    var params = {};
+    var els = document.querySelectorAll("#parBody .ff-in");
+    els.forEach(function (el) {
+      var k = el.dataset.k;
+      var t = el.dataset.t;
+      var v = el.value;
+      if (v === "" || v == null) return;
+      if (t === "_time" || t === "time") {
+        // datetime-local → 秒分时日月年（BCD 六元组，adapter _time6_bytes 消费）
+        if (v) {
+          var d = new Date(v);
+          params.sec = d.getSeconds(); params.min = d.getMinutes();
+          params.hour = d.getHours(); params.day = d.getDate();
+          params.month = d.getMonth() + 1; params.year = (d.getFullYear() % 100);
+        }
+        return;
+      }
+      if (t === "list") {
+        // 地址列表：逗号/空白分隔，输出数组（adapter nodes/meters/relays/subs 消费）
+        params[k] = v.split(/[,，\s]+/).filter(Boolean);
+        return;
+      }
+      if (t === "num" || t === "bcd" || t === "addr") {
+        var num = v.trim();
+        if (/^-?\d+$/.test(num)) { params[k] = parseInt(num, 10); return; }
+        params[k] = num;
+        return;
+      }
+      params[k] = v;
+    });
+    return params;
   }
 
   function buildPreview() {
