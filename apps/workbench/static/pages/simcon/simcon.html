@@ -180,6 +180,23 @@ select.fld{appearance:none;cursor:pointer;
 .resp-strip{flex:none;display:flex;align-items:flex-start;gap:8px;padding:8px 14px;background:var(--color-bg-raised);
   border-top:1px solid var(--color-border-strong);overflow-x:auto;min-height:36px;flex-wrap:wrap}
 .resp-strip .lbl{font-size:10.5px;color:var(--color-fg-dim);letter-spacing:.06em;flex:none;padding-top:2px}
+/* REQS-0013 响应表格区 */
+.resp-grid{flex:none;display:flex;flex-direction:column;border-top:1px solid var(--color-border-strong);background:var(--color-bg-surface);max-height:46%;min-height:180px}
+.resp-grid-h{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;flex:none;background:var(--color-bg-raised);border-bottom:1px solid var(--color-border-default)}
+.resp-grid-h .ttl{font-size:12.5px;font-weight:500;letter-spacing:.02em;white-space:nowrap}
+.resp-grid-h .sp{margin-left:auto}
+.resp-grid-h .fld{height:26px;font-size:12px}
+.resp-grid-body{flex:1;overflow:auto;min-height:0}
+.rtab{width:100%;border-collapse:collapse;font-size:11.5px;font-family:var(--font-mono)}
+.rtab th{position:sticky;top:0;background:var(--color-bg-elevated);text-align:left;font-weight:500;font-size:10.5px;letter-spacing:.05em;color:var(--color-fg-muted);padding:6px 8px;border-bottom:1px solid var(--color-border-default);white-space:nowrap}
+.rtab td{padding:5px 8px;border-bottom:1px solid var(--color-border-default);color:var(--color-fg-default);white-space:nowrap}
+.rtab tr:hover td{background:var(--color-bg-raised)}
+.rtab .num{text-align:right}
+.resp-scalar{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;padding:12px}
+.resp-scalar .kv{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:8px 11px}
+.resp-scalar .k{font-size:10.5px;color:var(--color-fg-dim)}
+.resp-scalar .v{font-size:14px;font-family:var(--font-mono);color:var(--color-accent);font-weight:500}
+
 </style>
 </head>
 <body>
@@ -210,6 +227,23 @@ select.fld{appearance:none;cursor:pointer;
       <div class="sec-h"><h3>参数与下发</h3><span class="sp"></span><span class="hint">send 只写业务参数，构帧自动完成</span></div>
       <div class="par-head" id="parHead"><div class="par-t2" style="padding:0">从左侧选择 AFN → Fn。</div></div>
       <div class="col-body" id="parBody"><div class="empty"><p>未选择命令</p></div></div>
+      <!-- REQS-0013：响应表格区（分页型 Fn 才显示） -->
+      <div class="resp-grid" id="respGrid" style="display:none">
+        <div class="resp-grid-h">
+          <span class="ttl">响应表格</span>
+          <span class="chip chip--ghost" id="respMeta">—</span>
+          <span class="sp"></span>
+          <div class="seg" id="segMode">
+            <button data-m="manual">指定范围</button>
+            <button data-m="auto" class="on">自动全量</button>
+          </div>
+          <input class="fld" id="rgStart" placeholder="起始序号" style="width:74px" value="0">
+          <input class="fld" id="rgCount" placeholder="条数" style="width:52px" value="16">
+          <button class="btn btn--sm" id="btnQuery">查询</button>
+          <button class="btn btn--sm btn--ghost" id="btnSnapshot">快照</button>
+        </div>
+        <div class="resp-grid-body" id="respGridBody"><div class="empty" style="height:100px"><p>查询后响应记录将显示在这里</p></div></div>
+      </div>
       <div class="par-foot">
         <button class="btn btn--sm btn--ghost" id="btnBuild">刷新预览</button>
         <span class="sp"></span>

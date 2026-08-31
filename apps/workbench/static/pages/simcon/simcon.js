@@ -16,6 +16,8 @@
   var state = {
     afnList: [], curAfn: -1, curFn: -1,
     filter: "", lastSeq: 0, pollTimer: null, statusTimer: null, sending: false,
+    resp: null, mode: "auto",           // REQS-0013：当前 Fn 响应契约 + 查询模式
+    snapshots: [], curSnapshot: null,
   };
 
   /* 常用 Fn 的参数模板（业务键名对齐 scenario_codec / adapter_10376 模板） */
@@ -178,7 +180,129 @@
       '<div class="card-in"><div class="hexwrap"><div class="hex" id="prevHex">点击「刷新预览」或修改参数后自动构建</div></div></div></div>';
     $("#paramsTa").addEventListener("input", debounceBuild);
     buildPreview();
+    setupRespGrid(f);
   }
+
+  /* ================= REQS-0013：响应表格区 ================= */
+
+  function setupRespGrid(f) {
+    var resp = (f && f.resp) || null;
+    state.resp = resp;
+    state.curSnapshot = null;
+    var grid = $("#respGrid");
+    if (!resp) { grid.style.display = "none"; return; }
+    grid.style.display = "flex";
+    var lst = resp.list;
+    var isList = !!(lst && lst.record && lst.record.length);
+    var pm = f.pageMode || "none";
+    // 分页双模式切换：列表型才显示模式按钮与查询参数
+    var segMode = $("#segMode");
+    segMode.style.display = (pm === "both" || pm === "manual" || pm === "auto") ? "flex" : "none";
+    if (pm === "auto") state.mode = "auto";
+    if (pm === "manual") state.mode = "manual";
+    $("#btnQuery").style.display = isList ? "inline-flex" : "none";
+    $("#rgStart").style.display = isList ? "inline-flex" : "none";
+    $("#rgCount").style.display = isList ? "inline-flex" : "none";
+    $("#respMeta").textContent = (lst ? "总数量 → 自动遍历" : "标量响应");
+    $("#respGridBody").innerHTML = '<div class="empty" style="height:100px"><p>查询后响应记录将显示在这里</p></div>';
+  }
+
+  // 位域字段的解释器：把 BS/BIN 位字段转可读文本（仅做展示增强）
+  function fmtCell(field, val, row, key) {
+    if (val == null) return "—";
+    if (typeof val === "object") { // BS 位域 → 显示 hex
+      return val.hex || String(val);
+    }
+    // 地址类（BIN 6B 大整数）→ 优先展示 hex；BCD 已是字符串
+    var hex = row && row[key + "__hex"];
+    var isAddr = /地址|节点地址/.test(field.n) && /BIN/.test(field.f || "");
+    if (isAddr && hex) return hex;
+    return String(val);
+  }
+
+  function renderRespTable(respData) {
+    var body = $("#respGridBody");
+    var resp = state.resp;
+    if (!resp) return;
+    var head = respData.head || {};
+    var records = respData.records || [];
+    var lst = resp.list;
+    var html = "";
+    // 头部标量（总数/本次数量/起始序号）
+    var headKvs = [];
+    (resp.fields || []).forEach(function (f) {
+      var k = f.n, v = head[k];
+      if (v != null) headKvs.push('<div class="kv"><div class="k">' + esc(f.n) + "</div><div class='v'>" + esc(fmtCell(f, v, head, k)) + "</div></div>");
+    });
+    if (headKvs.length) html += '<div class="resp-scalar">' + headKvs.join("") + "</div>";
+    if (lst && lst.record && lst.record.length) {
+      var cols = lst.record.filter(function (f) { return !String(f.b || "").startsWith("len_ref") || f.f === "BIN" ? true : false; });
+      // 列：排除 list_ref 嵌套（扁平展示主字段）
+      cols = lst.record.filter(function (f) { return !String(f.f || "").startsWith("list_ref:"); });
+      html += '<table class="rtab"><thead><tr><th>#</th>' + cols.map(function (f) {
+        return "<th>" + esc(f.n) + "</th>";
+      }).join("") + "</tr></thead><tbody>";
+      records.forEach(function (r, i) {
+        html += "<tr><td class='num'>" + (r._seq_index != null ? r._seq_index + 1 : i + 1) + "</td>" + cols.map(function (f) {
+          return "<td>" + esc(fmtCell(f, r[f.n], r, f.n)) + "</td>";
+        }).join("") + "</tr>";
+      });
+      html += "</tbody></table>";
+      if (!records.length) html += '<div class="empty" style="height:80px"><p>本帧无记录</p></div>';
+    } else if (!headKvs.length) {
+      html = '<div class="empty" style="height:80px"><p>无结构化响应</p></div>';
+    }
+    body.innerHTML = html;
+  }
+
+  function loadSnapshots() {
+    api("/api/simcon/store/snapshots?limit=20").then(function (d) {
+      state.snapshots = d.items || [];
+      renderSnapshotList();
+    }).catch(function () { state.snapshots = []; });
+  }
+
+  function renderSnapshotList() {
+    var items = state.snapshots;
+    $("#respMeta").textContent = items.length ? ("快照 × " + items.length + "（点快照回看）") : "快照 0";
+  }
+
+  function querySnapshotsByAfnFn() {
+    var a = state.afnList[state.curAfn];
+    var f = a.fns[state.curFn];
+    api("/api/simcon/store/snapshots?afn=" + encodeURIComponent(a.code) + "&fn=" + encodeURIComponent(f.no) + "&limit=5")
+      .then(function (d) { state.snapshots = d.items || []; renderSnapshotList(); })
+      .catch(function () {});
+  }
+
+  function doQuery() {
+    var a = state.afnList[state.curAfn];
+    var f = a.fns[state.curFn];
+    if (!f || !f.resp || !f.resp.list) return;
+    var start = parseInt($("#rgStart").value || "0", 10) || 0;
+    var count = parseInt($("#rgCount").value || "16", 10) || 16;
+    // 下行参数模板：起始序号 + 数量
+    var params = {};
+    var lst = f.resp.list;
+    params[start] = start;  // 占位，实际键名由 adapter 模板决定，这里仅触发下发
+    // 直接构造业务参数（对齐 adapter_10376 模板键名）
+    var body = { start: start, count: count };
+    $("#paramsTa").value = JSON.stringify(body, null, 2);
+    banner("已填查询参数（起始=" + start + "，条数=" + count + "），点「下发」发送");
+  }
+
+  $("#btnQuery").addEventListener("click", doQuery);
+  $("#btnSnapshot").addEventListener("click", function () {
+    querySnapshotsByAfnFn();
+    banner("快照列表已刷新到「响应表格」标题栏");
+  });
+  $("#segMode").addEventListener("click", function (e) {
+    var btn = e.target.closest("button");
+    if (!btn) return;
+    Array.prototype.forEach.call(document.querySelectorAll("#segMode button"), function (x) { x.classList.remove("on"); });
+    btn.classList.add("on");
+    state.mode = btn.dataset.m;
+  });
 
   var debounceTimer = null;
   function debounceBuild() { clearTimeout(debounceTimer); debounceTimer = setTimeout(buildPreview, 500); }
@@ -290,6 +414,10 @@
             (f.updown ? '<div class="hint" style="margin-top:6px">CCO 主动上报（updown=' + esc(f.updown) + "）</div>" : "") + "</div>";
           row.querySelector(".tr-main").addEventListener("click", function () { row.classList.toggle("open"); });
           body.insertBefore(row, body.firstChild);
+          // REQS-0013：上行响应帧 → 刷新响应表格（匹配当前选中 Fn）
+          if (f.dir === "rx" && f.updown === "up" && f.resp && state.resp && f.afn === (state.afnList[state.curAfn] || {}).code && f.fn === (state.afnList[state.curAfn] || {}).fns[state.curFn].no) {
+            renderRespTable(f.resp);
+          }
         });
         while (body.children.length > 300) body.removeChild(body.lastChild);
       }).catch(function () { /* 会话未建立时静默，状态条已提示 */ });

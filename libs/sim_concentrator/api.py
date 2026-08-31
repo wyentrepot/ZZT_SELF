@@ -132,8 +132,16 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     app.state.serial_port_catalog = catalog
     app.state.serial_resource_registry = resource_registry or SerialResourceRegistry()
     _holder = {"io": None, "lock": threading.Lock()}
+    # REQS-0013：1376.2 收发库（单文件 sqlite），会话帧同步落库；缺失时降级为纯帧日志。
+    _store = None
+    try:
+        from sim_concentrator.store import ListenerStore
+        _store = ListenerStore()
+    except Exception:
+        _store = None
+    app.state.simcon_store = _store
     # 会话帧日志：open/verify 产生的会话都登记在此，供 /frames /session 查询
-    _sessions = SessionManager(log_dir=journal_dir)
+    _sessions = SessionManager(log_dir=journal_dir, store=_store)
     app.state.simcon_sessions = _sessions
     app.state.simcon_step_state = {"profile": None, "seq": 0, "lock": threading.Lock()}
 
@@ -447,6 +455,32 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             "current": current.info() if current is not None else None,
             "sessions": _sessions.list_info(),
         }
+
+    # ---- REQS-0013：1376.2 收发库查询（快照 + 上报事件） -------------------
+    @app.get(f"{prefix}/store/snapshots")
+    async def store_snapshots(afn: str = "", fn: str = "", limit: int = 20):
+        """查询结果快照列表（临时层）。"""
+        store = getattr(app.state, "simcon_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="收发库未启用")
+        items = store.list_snapshots(afn=afn or None, fn=fn or None, limit=limit)
+        return {"items": items}
+
+    @app.get(f"{prefix}/store/snapshots/{snapshot_id}")
+    async def store_snapshot_items(snapshot_id: int):
+        """某快照的明细行。"""
+        store = getattr(app.state, "simcon_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="收发库未启用")
+        return {"items": store.snapshot_items(int(snapshot_id))}
+
+    @app.get(f"{prefix}/store/events")
+    async def store_events(limit: int = 50):
+        """06H 主动上报事件（持久层）。"""
+        store = getattr(app.state, "simcon_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="收发库未启用")
+        return {"items": store.list_report_events(limit=limit)}
 
     return app
 

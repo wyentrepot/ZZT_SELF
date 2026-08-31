@@ -48,9 +48,17 @@ def default_log_dir() -> Path:
 
 
 def normalize_afn(value: Any) -> Optional[str]:
-    """afn 归一为两位大写十六进制串（6/"6"/"0x06"/"06" → "06"）。"""
+    """afn 归一为两位大写十六进制串（6/"6"/"0x06"/"06"/int 0x06 → "06"）。
+
+    注意：int 直接按数值转十六进制（0x10 → "10"），不当作 hex 字符串解析，
+    避免把已解码的 int 16 误读为字符串 "16" → 0x16。
+    """
     if value is None or isinstance(value, bool):
         return None
+    if isinstance(value, int):
+        if not 0 <= value <= 0xFF:
+            return None
+        return f"{value:02X}"
     try:
         text = str(value).strip().lower()
         if text.startswith("0x"):
@@ -112,7 +120,8 @@ class FrameJournal:
     """单会话帧日志：内存镜像 + JSONL 追加 + 过滤查询。"""
 
     def __init__(self, *, port: str, log_dir: Path | None = None,
-                 memory_limit: int = _MEMORY_LIMIT, session_id: str | None = None):
+                 memory_limit: int = _MEMORY_LIMIT, session_id: str | None = None,
+                 store: Any | None = None):
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         safe_port = _PORT_SANITIZE.sub("-", str(port or "COM"))
         self.session_id = session_id or f"sc-{stamp}-{safe_port}"
@@ -126,6 +135,8 @@ class FrameJournal:
         self._path: Path | None = None
         self._rel_path: str | None = None
         self._fh = None
+        # REQS-0013：可选 1376.2 收发库（ListenerStore），append 时同步落库
+        self.store = store
         if log_dir is not None:
             try:
                 log_dir = Path(log_dir)
@@ -197,6 +208,21 @@ class FrameJournal:
                 if self._fh is not None:
                     try:
                         self._fh.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+                    except Exception:
+                        pass
+                # REQS-0013：同步灌入 1376.2 收发库（失败不中断帧日志）
+                if self.store is not None:
+                    try:
+                        entry["session_id"] = self.session_id
+                        from sim_concentrator.sink import ingest_entry
+                        ingest_entry(self.store, entry)
+                    except Exception:
+                        pass
+                # REQS-0013：上行响应帧附契约驱动的记录解析（前端表格直接用）
+                if entry["dir"] == "rx" and entry.get("updown") == "up":
+                    try:
+                        from sim_concentrator.sink import enrich_response
+                        entry["resp"] = enrich_response(entry)
                     except Exception:
                         pass
                 return entry
@@ -298,16 +324,18 @@ class FrameJournal:
 class SessionManager:
     """会话保留表：当前会话 + 最近 N 个历史会话（供 verify 临时串口事后查询）。"""
 
-    def __init__(self, log_dir: Path | None = None, retain: int = _SESSION_RETAIN):
+    def __init__(self, log_dir: Path | None = None, retain: int = _SESSION_RETAIN,
+                 store: Any | None = None):
         self._log_dir = log_dir if log_dir is not None else default_log_dir()
         self._retain = max(1, int(retain))
         self._sessions: "dict[str, FrameJournal]" = {}
         self._current: FrameJournal | None = None
         self._lock = threading.RLock()
+        self._store = store
 
     def open_session(self, port: str) -> FrameJournal:
         """新建会话并置为当前（旧当前会话仅关闭文件，保留在历史里可查）。"""
-        journal = FrameJournal(port=port, log_dir=self._log_dir)
+        journal = FrameJournal(port=port, log_dir=self._log_dir, store=self._store)
         with self._lock:
             if self._current is not None:
                 self._current.close_file()
