@@ -79,3 +79,13 @@ Windows 侧运行根（已核实其文件头为明文，主工作区文件头为
 - **影响**：新增 `apps/parser_service`、`libs/shared/remote_parser.py`；
   `apps/listener/app.py` 解析门面与 `/api/version`；`config/`；AI 操作指南与 RUNBOOK。
 - **被取代**：无（新需求）。
+
+### 变更 2 ｜ 2026-09-01 ｜ 实施
+- **改成什么**：解析服务默认绑定 `0.0.0.0:8700`（`HPLC_PARSE_HOST` 可覆盖）。
+- **为什么**：实机验证本机 WSL2（nat 模式）**localhost 转发不可达** Windows 侧
+  127.0.0.1 服务（Connection refused），仅 Windows→WSL 方向可用；绑定 0.0.0.0 后
+  WSL 可经宿主地址访问，但本机 Windows 防火墙默认拦截（除 3389 外的入站）。
+  阻塞点：需要防火墙放行 8700（管理员）或切换 mirrored 网络模式（重启 WSL），
+  或改走 Windows→WSL 反向通道（无需管理员/重启）。
+- **影响**：`apps/parser_service/run.py`；部署说明（RUNBOOK 待补）。
+- **被取代**：变更 1 中"绑定 127.0.0.1"的默认值。
