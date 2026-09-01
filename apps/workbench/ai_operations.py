@@ -1452,8 +1452,13 @@ class AIControlService:
                 operation = self._refresh_flash_operation(operation_id)
             elif operation["kind"] == "listener_trace":
                 pass  # 追踪线程异步落终态，waiting 态无需刷新
-            else:
+            elif operation["kind"] == "observation":
                 operation = self._refresh_observation(operation_id)
+            # 其余 kind（simcon_verify/simcon_step/module_send 等）由各自后台
+            # 线程异步落终态，waiting 态仅原样返回，不做 observation 刷新，
+            # 避免误把非观察操作当 module_log 观察刷新（payload 无 window）
+            # 而抛 KeyError 并把错误写回 operation（此前导致 simcon_verify
+            # 查询即被误判为 error 'window'）。
         return operation
 
     def wait_operation(self, operation_id: str, timeout_seconds: int = 30) -> dict:
