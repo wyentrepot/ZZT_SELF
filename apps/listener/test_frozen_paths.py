@@ -61,13 +61,18 @@ def test_non_frozen_default_dll_uses_net8_artifact_on_linux(monkeypatch):
 
 
 def test_build_parser_service_attempts_linux_initialization(monkeypatch):
-    sentinel = object()
+    class _Service:
+        pass
+
+    service = _Service()
     monkeypatch.setattr(app_module.sys, "platform", "linux")
     monkeypatch.setattr(app_module, "DEFAULT_DLL", Path("/repo/GwHPLCAnalysis.dll"))
-    monkeypatch.setattr(app_module, "DotNetHplcParser", lambda dll_path: sentinel)
-    monkeypatch.setattr(app_module, "ParserService", lambda parser: ("service", parser))
+    monkeypatch.setattr(app_module, "DotNetHplcParser", lambda dll_path: service)
+    monkeypatch.setattr(app_module, "ParserService", lambda parser: service)
 
-    assert app_module._build_parser_service() == ("service", sentinel)
+    result = app_module._build_parser_service()
+    assert result is service
+    assert result.parse_backend == "local"
 
 
 def test_frozen_base_dir_is_meipass(frozen_environment):

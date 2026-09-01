@@ -4,7 +4,7 @@ description: Control real hardware (HPLC meter-reading workbench) over HTTP as a
 argument-hint: "[task, e.g. 监控cco日志直到出现XX / 向sta发送... / 烧录固件 / 跑验证用例]"
 metadata:
   author: reasonix
-  version: "2.0.0"
+  version: "2.1.0"
   applies-to: D:/2-侦听台改造
 ---
 
@@ -13,6 +13,8 @@ metadata:
 驱动真机工作台（8790）的 HTTP 控制面。**按任务走最小路径：先查下表，只读对应的那一个
 reference，用完即止——不要执行全流程。**（v2.0.0 起按需加载：本文件只做路由，
 八步细节在各 references/*.md；完整手册 `docs/16-AI操作指南.md`。）
+**例外**：下表「离线数据排查 / 漏点定位」是组合场景，允许一次读
+`offline-analysis.md` + `cco-log.md` + `listener.md` 三个 reference（多端交叉验证需要）。
 
 ## 任务 → 最小路径速查
 
@@ -23,6 +25,7 @@ reference，用完即止——不要执行全流程。**（v2.0.0 起按需加�
 | 烧录固件 | `flash-operations` → `wait` | references/module-serial.md |
 | 验证用例 / 单步 / 查帧 | `simcon/verify·step` → `frames` | references/simcon.md |
 | 查已解析帧 / 追踪一轮业务 | `listener/indexes…/frames`、`listener/traces` | references/listener.md |
+| 离线数据排查 / 漏点定位 | **API 优先**：`listener/minute-periods` + `simcon/store/events|snapshots`；原始日志/CCO grep 才离线直查（组合场景，读 3 个） | references/offline-analysis.md（+ cco-log.md + listener.md） |
 | 跑场景全链路 | `POST /api/run` → 轮询 → report | references/helpers.md |
 | 查协议语义 / 构帧预检 | `/api/dict`、`/api/simcon/build` | references/helpers.md |
 | 拿 token / 管授权 | `admin/grants`（**人来做**） | references/auth.md |
@@ -37,6 +40,9 @@ reference，用完即止——不要执行全流程。**（v2.0.0 起按需加�
   `GET /api/ai/v1/operations/{id}/wait?timeout_seconds≤30` 轮询到终态。
 - 错误码：401 token 缺失/失效；403 越权/固件目录外/非本机发授权；404 资源不存在；
   **409 资源冲突（串口占用/会话冲突）不是故障**；422 参数非法；503 后端不可用/未配置。
+- 侦听台深度解析三档 `parse_backend`（local/remote/none，REQS-0019）：`none` 时帧仍可查
+  但无深度字段，先起 Windows 解析网关（桌面 `wsl环境部署.bat` → [4]，或
+  `powershell -File uart-map.ps1 -Action start-gateway`；详见 references/listener.md）。
 
 ## 红线（行为边界）
 
