@@ -43,8 +43,9 @@
 ## P5 — 文档与收口
 
 - [x] RUNBOOK：Windows 部署 `.build_plain` + WSL 联调 + 常见故障（本目录 RUNBOOK.md）
-- [ ] AI 操作指南补「解析后端 local/remote/none」说明
-- [ ] 回归（apps/listener、libs/shared）+ REQS-INDEX 状态更新
+- [x] AI 操作指南补「解析后端 local/remote/none」说明（docs/16-AI操作指南.md + 全局技能
+      ai-control-plane v2.1.0：SKILL.md 通用约定 + references/listener.md 解析后端节）
+- [x] 回归（apps/listener、libs/shared）+ REQS-INDEX 状态更新
 
 ## 验收门
 
