@@ -112,3 +112,15 @@
    无地址域广播配置，或任务号 1-15 配置需带地址域/先建档案。
 7. **simcon step 默认 profile 陷阱**：`profile` 缺省强制 `anhui`（带地址域），
    需显式传 `noaddr` profile 才能构无地址域帧；step_state 会缓存 profile。
+
+## 2026-09-02 00:00+ — 侦听台波特率修正（用户指正）
+
+- **用户指正：侦听台(COM24)实际波特率是 115200**，非 config 原 9600/E。
+- 修正：`config/serial_ports.json` listener 改为 `115200/N/8/1`；
+  以 `listener/ensure baudrate=115200` 重启侦听台会话。
+- **结果立竿见影**：frame_count 62→118 持续增长，日志实时写盘；
+  捕获内容为 **HPLC 载波通信帧**（`FF02FFxx` 起始，MAC 层 7E 信封内的
+  HPLC 报文，含 CCO↔STA 链路数据）。
+- 结论：侦听台挂在 **CCO↔STA 的 HPLC 链路侧**（115200），
+  **不是** 集中器↔CCO 的 485 总线（那侧才是 9600 的 1376.2 帧）。
+  侦听台看不到集中器下发的 1376.2 帧属预期——链路不同。

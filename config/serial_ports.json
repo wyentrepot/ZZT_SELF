@@ -21,8 +21,8 @@
       "label": "侦听台",
       "usage": "listener",
       "module": "",
-      "baudrate": 9600,
-      "parity": "E",
+      "baudrate": 115200,
+      "parity": "N",
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true
