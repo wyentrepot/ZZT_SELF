@@ -805,6 +805,28 @@ class AIControlService:
                          result="succeeded")
         return result
 
+    # REQS-0018：1376.2 收发库只读查询（薄包装，复用 simcon 访问器；缺库 → 503）。
+    def simcon_store_events(self, *, limit: int = 50) -> dict:
+        return self._require_simcon().store_events(limit=limit)
+
+    def simcon_store_snapshots(self, *, afn: str | None = None, fn: str | None = None,
+                               limit: int = 20) -> dict:
+        return self._require_simcon().store_snapshots(afn=afn, fn=fn, limit=limit)
+
+    def simcon_store_snapshot_items(self, snapshot_id: int) -> dict:
+        return self._require_simcon().store_snapshot_items(snapshot_id)
+
+    # REQS-0018：分钟采集分析分桶（复用页面同款方法，口径零分叉；非法入参 ValueError → 422）。
+    def minute_periods(self, *, task_no: int, period_minutes: int | None = None,
+                       cco_tei: str = "001", nid: str = "", start_time: str = "",
+                       end_time: str = "") -> dict:
+        service = self._listener_log_or_error()
+        periods = service.list_task_minute_periods(
+            task_no=task_no, period_minutes=period_minutes,
+            cco_tei=cco_tei, nid=nid, start_time=start_time, end_time=end_time,
+        )
+        return {"periods": periods}
+
     def idempotent_operation(self, client_request_id: str) -> dict | None:
         return self.store.by_client_request_id(client_request_id)
 

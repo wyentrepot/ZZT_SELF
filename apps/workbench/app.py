@@ -71,13 +71,27 @@ class SimconAIService:
     统一译成 SessionBusy（AI 路由映射 409），其余异常原样上抛。
     """
 
-    def __init__(self, *, run_verify, run_step, frames, session, open_session, close_io):
+    def __init__(self, *, run_verify, run_step, frames, session, open_session, close_io,
+                 store_snapshots=None, store_snapshot_items=None, store_events=None):
         self._run_verify = run_verify
         self._run_step = run_step
         self._frames = frames
         self._session = session
         self._open_session = open_session
         self._close_io = close_io
+        self._store_snapshots = store_snapshots
+        self._store_snapshot_items = store_snapshot_items
+        self._store_events = store_events
+
+    def _store_call(self, accessor, *args, **kwargs) -> dict:
+        """1376.2 收发库只读查询统一出口：缺访问器/库未启用 → SourceUnavailable(503)。"""
+        from .ai_operations import SourceUnavailable
+        if accessor is None:
+            raise SourceUnavailable("1376.2 收发库未启用（未装配）")
+        try:
+            return accessor(*args, **kwargs)
+        except LookupError as exc:
+            raise SourceUnavailable(str(exc)) from exc
 
     def verify(self, task: dict) -> dict:
         return self._run_verify(task)
@@ -105,6 +119,16 @@ class SimconAIService:
 
     def session(self) -> dict:
         return self._session()
+
+    def store_snapshots(self, *, afn: str | None = None, fn: str | None = None,
+                        limit: int = 20) -> dict:
+        return self._store_call(self._store_snapshots, afn=afn, fn=fn, limit=limit)
+
+    def store_snapshot_items(self, snapshot_id: int) -> dict:
+        return self._store_call(self._store_snapshot_items, snapshot_id)
+
+    def store_events(self, *, limit: int = 50) -> dict:
+        return self._store_call(self._store_events, limit=limit)
 
 
 class _PrefixProxy:
@@ -271,6 +295,12 @@ def create_workbench_app(
         for name in ("simcon_run_verify", "simcon_run_step", "simcon_frames",
                      "simcon_session", "simcon_open", "simcon_close_io")
     }
+    # REQS-0018：1376.2 收发库只读查询访问器（与核心访问器解耦——库缺失不影响 verify/frames）。
+    _simcon_store_accessors = {
+        name: getattr(_ml_sub.state, name, None)
+        for name in ("simcon_store_snapshots", "simcon_store_snapshot_items",
+                     "simcon_store_events")
+    }
     simcon_service = SimconAIService(
         run_verify=_simcon_accessors["simcon_run_verify"],
         run_step=_simcon_accessors["simcon_run_step"],
@@ -278,6 +308,9 @@ def create_workbench_app(
         session=_simcon_accessors["simcon_session"],
         open_session=_simcon_accessors["simcon_open"],
         close_io=_simcon_accessors["simcon_close_io"],
+        store_snapshots=_simcon_store_accessors["simcon_store_snapshots"],
+        store_snapshot_items=_simcon_store_accessors["simcon_store_snapshot_items"],
+        store_events=_simcon_store_accessors["simcon_store_events"],
     ) if all(_simcon_accessors.values()) else None
     app.state.ai_control_service = ai_control_service or AIControlService(
         module_service=getattr(app.state, "module_serial_service", None),

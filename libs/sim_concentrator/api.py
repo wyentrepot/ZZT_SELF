@@ -334,12 +334,31 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             "session_id": journal.session_id if journal is not None else None,
         }
 
+    # REQS-0018：1376.2 收发库只读查询访问器（供 AI 控制面经进程内注入，不经 HTTP 回调）。
+    def _simcon_store_or_raise():
+        if _store is None:
+            raise LookupError("1376.2 收发库未启用（初始化失败或依赖缺失）")
+        return _store
+
+    def simcon_store_snapshots(*, afn: str | None = None, fn: str | None = None,
+                               limit: int = 20) -> dict:
+        return {"items": _simcon_store_or_raise().list_snapshots(afn=afn, fn=fn, limit=limit)}
+
+    def simcon_store_snapshot_items(snapshot_id: int) -> dict:
+        return {"items": _simcon_store_or_raise().snapshot_items(int(snapshot_id))}
+
+    def simcon_store_events(*, limit: int = 50) -> dict:
+        return {"items": _simcon_store_or_raise().list_report_events(limit=limit)}
+
     # P4+：把执行核心提升到 state，供统一工作台/AI 控制面进程内注入（不经 HTTP 回调）。
     app.state.simcon_run_verify = _run_verify_task
     app.state.simcon_run_step = _run_step_task
     app.state.simcon_frames = simcon_frames
     app.state.simcon_session = simcon_session
     app.state.simcon_open = simcon_open
+    app.state.simcon_store_snapshots = simcon_store_snapshots
+    app.state.simcon_store_snapshot_items = simcon_store_snapshot_items
+    app.state.simcon_store_events = simcon_store_events
 
     @app.get(f"{prefix}/status")
     async def status():

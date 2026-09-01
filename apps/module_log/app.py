@@ -90,7 +90,9 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
     app.state.simcon_close_io = getattr(_simcon_sub.state, "simcon_close_io", None)
     # 帧日志/AI 单步执行核心：同模式提升，供 workbench AI 控制面进程内注入。
     for _name in ("simcon_run_verify", "simcon_run_step", "simcon_frames",
-                  "simcon_session", "simcon_open"):
+                  "simcon_session", "simcon_open",
+                  "simcon_store_snapshots", "simcon_store_snapshot_items",
+                  "simcon_store_events"):
         setattr(app.state, _name, getattr(_simcon_sub.state, _name, None))
 
     @app.get("/module-serial")

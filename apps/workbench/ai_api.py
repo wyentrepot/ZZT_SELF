@@ -376,6 +376,28 @@ def create_ai_router(
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    # REQS-0018：分钟采集分析分桶（复用页面同款方法，权威口径），scope=evidence:read。
+    @router.get("/listener/minute-periods")
+    def listener_minute_periods(
+        task_no: int = Query(..., description="采集任务号"),
+        cco_tei: str = Query("001", max_length=8),
+        period_minutes: int | None = Query(None, ge=1, le=1440),
+        nid: str = Query("", max_length=16),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+        authorization: str | None = Header(None),
+    ):
+        grant_from_header(authorization, "evidence:read", control.listener_resource())
+        try:
+            return control.minute_periods(
+                task_no=task_no, period_minutes=period_minutes, cco_tei=cco_tei,
+                nid=nid, start_time=start_time, end_time=end_time,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     # -- 模拟集中器（simcon）：验证任务 / 单步下发 / 会话帧日志 -----------------
     @router.post("/simcon/verify", status_code=202)
     def simcon_verify(request: dict[str, Any], authorization: str | None = Header(None)):
@@ -438,6 +460,43 @@ def create_ai_router(
             })
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # REQS-0018：1376.2 收发库只读查询（06H 上报历史 / 查询快照），scope=simcon:read。
+    @router.get("/simcon/store/events")
+    def simcon_store_events(
+        limit: int = Query(50, ge=1, le=500),
+        authorization: str | None = Header(None),
+    ):
+        grant_from_header(authorization, "simcon:read", "simcon")
+        try:
+            return control.simcon_store_events(limit=limit)
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/simcon/store/snapshots")
+    def simcon_store_snapshots(
+        afn: str = Query("", max_length=8),
+        fn: str = Query("", max_length=8),
+        limit: int = Query(20, ge=1, le=200),
+        authorization: str | None = Header(None),
+    ):
+        grant_from_header(authorization, "simcon:read", "simcon")
+        try:
+            return control.simcon_store_snapshots(
+                afn=afn or None, fn=fn or None, limit=limit)
+        except SourceUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.get("/simcon/store/snapshots/{snapshot_id}")
+    def simcon_store_snapshot_items(
+        snapshot_id: int,
+        authorization: str | None = Header(None),
+    ):
+        grant_from_header(authorization, "simcon:read", "simcon")
+        try:
+            return control.simcon_store_snapshot_items(snapshot_id)
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
