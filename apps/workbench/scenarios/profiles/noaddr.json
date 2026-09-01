@@ -1,0 +1,8 @@
+{
+  "id": "noaddr",
+  "name": "无地址域本地协议 profile（CCO 本地帧）",
+  "comm_mode": 3,
+  "seq_auto": true,
+  "task_range": { "min": 1, "max": 15 },
+  "sta_archives": []
+}
