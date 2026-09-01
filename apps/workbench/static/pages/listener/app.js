@@ -1311,10 +1311,11 @@ async function loadSerialPorts(preferredPort) {
     items.forEach((item) => {
       const option = document.createElement("option");
       option.value = item.device;
-      // 双标注：有 COM 映射显示 'COM4 (/dev/ttyUSB0)'，否则原样
-      option.textContent = item.com
+      // 显示角色标签（如 “CCO 日志口 · COM8”）；有 COM 映射则双标注
+      const roleTag = item.role_label ? `${item.role_label} · ` : "";
+      option.textContent = roleTag + (item.com
         ? `${item.com} (${item.device})`
-        : item.device;
+        : item.device);
       elements.serialPort.append(option);
     });
     // 当前选择仍在枚举结果中则保留，否则自动选第一个实际存在的串口
@@ -1562,9 +1563,11 @@ async function loadIndexedDetailFromLocation() {
 
 async function restoreSerialSession() {
   const status = await refreshSerialStatus();
-  await loadSerialPorts(status && status.port ? status.port : "");
-
+  // 仅在串口实际运行/启动中才用后端端口强制恢复选择；未运行时保留用户
+  // 当前选择，避免默认端口（如 COM4）在每次刷新时被强选。
   const active = status && (status.state === "running" || status.state === "starting");
+  await loadSerialPorts(active && status.port ? status.port : "");
+
   if (!active) return status;
 
   const serialRadio = document.querySelector('input[name="data-source"][value="serial"]');

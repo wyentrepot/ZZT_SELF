@@ -193,7 +193,9 @@
         const option = document.createElement("option");
         option.value = item.device;
         option.disabled = item.online === false || item.enabled === false;
-        const prefix = item.label ? item.label + " · " : "";
+        // 优先运行时角色标签（role_label），兼容旧 label 字段
+        const tag = item.role_label || item.label || "";
+        const prefix = tag ? tag + " · " : "";
         const suffix = item.online === false ? "（离线）" : "";
         option.textContent = prefix + item.device + suffix;
         select.appendChild(option);

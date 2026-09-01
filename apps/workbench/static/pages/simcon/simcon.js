@@ -44,10 +44,18 @@
   function loadPorts() {
     api("/api/simcon/ports").then(function (data) {
       var sel = $("#portSel");
-      var ports = data.ports || [];
-      sel.innerHTML = ports.length
-        ? ports.map(function (p) { return "<option>" + esc(p) + "</option>"; }).join("")
+      var details = data.port_details || [];
+      // 用 port_details 渲染：显示角色标签（如 “CCO 日志口 · COM8”）
+      var opts = details.length
+        ? details.map(function (item) {
+            var tag = item.role_label || item.label || "";
+            var text = tag ? tag + " · " : "";
+            text += item.device;
+            if (item.online === false) text += "（离线）";
+            return '<option value="' + esc(item.device) + '">' + esc(text) + "</option>";
+          }).join("")
         : "<option value=''>无可用串口</option>";
+      sel.innerHTML = opts;
       if (data.mapping_error) banner("串口映射提示：" + data.mapping_error);
     }).catch(function (err) { banner(err.message); });
     refreshStatus();
