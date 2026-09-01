@@ -117,6 +117,77 @@ function Show-Status {
     }
 }
 
+function Invoke-WslCommand {
+    param([string]$Command)
+    & wsl.exe -d $script:WslDist -e bash -lc $Command 2>&1
+    return $LASTEXITCODE
+}
+
+function Map-To-Wsl {
+    Write-Host "[1/3] 开始映射串口到 WSL ..." -ForegroundColor Green
+
+    # 1. attach 所有串口设备
+    $devices = Get-SerialDevices
+    $targets = @($devices | Where-Object { $_.State -eq 'Shared' })
+    if ($targets.Count -eq 0) {
+        Write-Host "没有可映射的串口（可能已全部 Attached 或未共享）。" -ForegroundColor Yellow
+    } else {
+        foreach ($d in $targets) {
+            Write-Host "  挂载 $($d.BusId)  $($d.Name) ..." -ForegroundColor Gray
+            $busidVal = $d.BusId
+            $attachOut = & cmd /c "`"$script:UsbipdPath`" attach --wsl=$script:WslDist --busid=$busidVal 2>&1"
+            $attachOut | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  [警告] $($d.BusId) 挂载失败" -ForegroundColor Yellow
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    # 2. WSL 内加载 USB 串口驱动
+    Write-Host "[2/3] WSL 内加载串口驱动 (ch341/cp210x/cdc_acm) ..." -ForegroundColor Green
+    $modResult = Invoke-WslCommand "modprobe ch341 2>/dev/null; modprobe cp210x 2>/dev/null; modprobe cdc_acm 2>/dev/null; modprobe ftdi_sio 2>/dev/null; modprobe pl2303 2>/dev/null; sleep 2; ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null"
+    Write-Host "  驱动加载完成，WSL 设备：" -ForegroundColor Gray
+    foreach ($line in $modResult) {
+        if ($line -match 'tty') {
+            Write-Host "    $line" -ForegroundColor Green
+        }
+    }
+
+    # 3. 检查 WSL 内是否出现设备
+    Write-Host "[3/3] 验证映射结果 ..." -ForegroundColor Green
+    $check = Invoke-WslCommand "ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null; echo ---; lsusb 2>/dev/null"
+    $wslDev = @($check | Where-Object { $_ -match '/dev/tty' })
+    if ($wslDev.Count -gt 0) {
+        Write-Host "  WSL 已检测到串口设备:" -ForegroundColor Green
+        foreach ($d in $wslDev) { Write-Host "    $d" -ForegroundColor Green }
+        Write-Host "  [成功] 串口已映射到 WSL（如 /dev/ttyUSB0、/dev/ttyUSB1 ...）" -ForegroundColor Green
+    } else {
+        Write-Host "  [警告] WSL 未检测到 tty 设备，请检查 usbipd 防火墙与 WSL 驱动" -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Host "  提示：在 WSL 中使用串口的软件请访问 /dev/ttyUSB*，" -ForegroundColor DarkGray
+    Write-Host "        Windows 侧对应 COM 将不可用（被独占）。" -ForegroundColor DarkGray
+}
+
+function Restore-FromWsl {
+    Write-Host "开始释放串口回 Windows ..." -ForegroundColor Green
+    $devices = Get-SerialDevices
+    $targets = @($devices | Where-Object { $_.State -eq 'Attached' })
+    if ($targets.Count -eq 0) {
+        Write-Host "当前没有 Attached 状态的串口。" -ForegroundColor Yellow
+    } else {
+        foreach ($d in $targets) {
+            Write-Host "  释放 $($d.BusId)  $($d.Name) ..." -ForegroundColor Gray
+            $busidVal = $d.BusId
+            $detachOut = & cmd /c "`"$script:UsbipdPath`" detach --busid=$busidVal 2>&1"
+            $detachOut | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        }
+        Start-Sleep -Seconds 2
+    }
+    Write-Host "已完成释放，串口应回到 Windows 可用状态。" -ForegroundColor Green
+}
+
 # ===================== 解析网关（REQS-0019）=====================
 
 function Get-ParseProcess {
