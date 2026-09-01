@@ -355,6 +355,22 @@ def create_workbench_app(
             "listener_mounted": getattr(app.state, "listener_mounted", False),
         }
 
+    @app.post("/api/shutdown")
+    async def shutdown_service():
+        """关闭服务：触发 uvicorn graceful 停机，进程退出、不再后台驻留。"""
+        # uvicorn.run() 安装了 SIGINT/SIGTERM 处理器；向自身发信号即触发 graceful 关闭。
+        import os
+        import signal
+
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception:  # pragma: no cover - 兜底尝试 SIGINT
+            try:
+                os.kill(os.getpid(), signal.SIGINT)
+            except Exception:
+                return {"ok": False, "detail": "无法请求关闭"}
+        return {"ok": True, "detail": "服务关闭中"}
+
     return app
 
 

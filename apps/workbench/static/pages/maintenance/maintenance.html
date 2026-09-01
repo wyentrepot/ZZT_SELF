@@ -75,6 +75,13 @@ dd { margin: 0; font-family: var(--font-mono); }
   <p id="currentTheme">当前主题：<span id="themeName">读取中…</span></p>
 </div>
 
+<div class="card">
+  <h2>服务控制</h2>
+  <p>关闭后一体式工作台将退出，不再后台运行服务。</p>
+  <button id="shutdownBtn" type="button">关闭服务</button>
+  <span id="shutdownMsg" style="margin-left: var(--sp-3);"></span>
+</div>
+
 <script>
 (function () {
   "use strict";
@@ -135,6 +142,31 @@ dd { margin: 0; font-family: var(--font-mono); }
   }
   window.addEventListener("message", applyThemeMessage);
   window.addEventListener("wb-theme-change", applyThemeMessage);
+
+  // 服务控制：关闭一体式工作台后端服务
+  var shutdownBtn = document.getElementById("shutdownBtn");
+  if (shutdownBtn) {
+    shutdownBtn.addEventListener("click", function () {
+      var msg = document.getElementById("shutdownMsg");
+      shutdownBtn.disabled = true;
+      if (msg) msg.textContent = "正在关闭…";
+      fetch("/api/shutdown", { method: "POST" })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (res) {
+          if (res && res.ok) {
+            if (msg) msg.textContent = "已请求关闭，页面即将不可访问。";
+          } else {
+            shutdownBtn.disabled = false;
+            if (msg) msg.textContent = "关闭失败：" + ((res && res.detail) || "未知错误");
+          }
+        })
+        .catch(function () {
+          shutdownBtn.disabled = false;
+          if (msg) msg.textContent = "关闭失败：无法连接服务";
+        });
+    });
+  }
+
   refresh();
 })();
 </script>
