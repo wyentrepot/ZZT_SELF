@@ -106,6 +106,37 @@ h1 { font-size: var(--fs-2xl); margin-bottom: var(--sp-1-5); }
 .result { margin-top: 8px; font-size: var(--fs-sm); }
 .result.ok { color: var(--color-status-pass); }
 .result.fail { color: var(--color-status-fail); }
+/* ---- 串口角色标签区块 ---- */
+.tag-section {
+  margin-bottom: var(--sp-5);
+  border: 1px dashed var(--card-border);
+  border-radius: var(--card-radius);
+  padding: var(--card-padding);
+  background: var(--card-bg);
+}
+.tag-section h2 {
+  font-size: var(--section-title-fs);
+  margin: 0 0 var(--sp-2);
+  color: var(--section-title-color);
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+}
+.tag-section .tag-sub { color: var(--color-fg-dim); font-size: var(--fs-xs); font-weight: normal; }
+.tag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.tag-item { display: flex; align-items: center; gap: 10px; }
+.tag-item .tag-role { min-width: 96px; font-size: var(--fs-sm); color: var(--color-fg-default); font-weight: 600; }
+.tag-item select {
+  flex: 1; box-sizing: border-box;
+  border: 1px solid var(--input-border); border-radius: var(--input-radius);
+  background: var(--input-bg); color: var(--input-fg);
+  padding: var(--input-padding); font-size: var(--input-fs); font-family: inherit;
+}
+.tag-toolbar { display: flex; align-items: center; gap: 10px; }
+.tag-toolbar button {
+  border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--btn-fg);
+  border-radius: var(--btn-radius); padding: var(--btn-padding); cursor: pointer;
+  font-size: var(--btn-fs); font-family: inherit;
+}
+.tag-toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 </head>
 <body data-api-base="/api">
@@ -120,6 +151,18 @@ h1 { font-size: var(--fs-2xl); margin-bottom: var(--sp-1-5); }
   <button type="button" id="btnRefresh">刷新状态</button>
   <span id="saveHint" style="color:var(--color-fg-dim);font-size:var(--fs-sm);align-self:center;"></span>
 </div>
+
+<!-- 串口角色标签：运行时可保存的角色↔COM 绑定，纯展示不占串口 -->
+<section class="tag-section">
+  <h2>串口角色标签 <span class="tag-sub">为各页面端口列表标注角色（如 “COM8 · CCO 日志口”），不改变串口占用</span></h2>
+  <div class="tag-grid" id="tagGrid">
+    <!-- 由 serial-profile.js 渲染 -->
+  </div>
+  <div class="tag-toolbar">
+    <button type="button" id="btnTagSave">保存标签</button>
+    <span id="tagHint" style="color:var(--color-fg-dim);font-size:var(--fs-sm);align-self:center;"></span>
+  </div>
+</section>
 
 <div class="slot-grid" id="slotGrid">
   <!-- 四槽卡片由 serial-profile.js 渲染 -->

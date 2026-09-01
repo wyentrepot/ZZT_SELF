@@ -169,10 +169,16 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             detail for detail in list_serial_port_details(catalog)
             if detail.get("usage") in ("", "simcon")
         ]
-        return sorted(details, key=lambda detail: (
+        details = sorted(details, key=lambda detail: (
             0 if detail.get("mapping_id") == "simcon" else 1,
             str(detail.get("device", "")),
         ))
+        try:
+            from shared.serial_tags import SerialTagStore
+
+            return SerialTagStore().merge_port_details(details)
+        except Exception:  # noqa: BLE001 - 标签层故障不影响串口枚举
+            return details
 
     def _io() -> Optional[SerialIO]:
         with _holder["lock"]:

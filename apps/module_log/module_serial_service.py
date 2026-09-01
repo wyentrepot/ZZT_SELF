@@ -552,8 +552,14 @@ class ModuleSerialService:
             return []
 
     def list_available_port_details(self) -> list:
-        """返回真实设备与统一映射合并后的端口详情。"""
-        return self._port_catalog.merge_system_ports(self._system_ports())
+        """返回真实设备与统一映射合并后的端口详情（含运行时角色标签）。"""
+        merged = self._port_catalog.merge_system_ports(self._system_ports())
+        try:
+            from shared.serial_tags import SerialTagStore
+
+            return SerialTagStore().merge_port_details(merged)
+        except Exception:  # noqa: BLE001 - 标签层故障不影响串口枚举
+            return merged
 
     def list_available_ports(self) -> List[str]:
         """兼容旧 API：仅返回当前在线的实际设备名。"""

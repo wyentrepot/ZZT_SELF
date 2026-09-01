@@ -424,7 +424,13 @@ class SerialCaptureService:
             return []
         catalog = getattr(self, "_port_catalog", None)
         if catalog is not None:
-            return catalog.merge_system_ports(system_ports, platform_name=os.name)
+            merged = catalog.merge_system_ports(system_ports, platform_name=os.name)
+            try:
+                from shared.serial_tags import SerialTagStore
+
+                return SerialTagStore().merge_port_details(merged)
+            except Exception:  # noqa: BLE001 - 标签层故障不影响串口枚举
+                return merged
 
         # 兼容旧的直接 __new__ 测试和独立调用：未装配 catalog 时保留原展示行为。
         if os.name != "nt":

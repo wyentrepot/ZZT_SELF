@@ -325,6 +325,24 @@ def create_workbench_app(
         applier=app.state.serial_profile_applier,
     ))
 
+    # ---- 3.6 串口角色标签（P6b）：GET/PUT 运行时标签，纯展示不占串口 ----
+    from .serial_tags_api import create_serial_tags_router as _create_serial_tags_router
+    from shared.serial_tags import SerialTagStore as _TagStore
+
+    _tag_store = _TagStore(runtime_dir=_prof_dir())
+    _port_provider = getattr(
+        getattr(app.state, "module_serial_service", None),
+        "list_available_port_details", None,
+    )
+    app.state.serial_tags_store = _tag_store
+    # 启动即读取上次保存的角色标签（不自动开串口；后续各页面端口枚举每次都会
+    # 重新读取本文件，标签变更即时生效，无需重启）。
+    _tag_store.load()
+    app.include_router(_create_serial_tags_router(
+        store=_tag_store,
+        port_details_provider=_port_provider,
+    ))
+
     # ---- 4. 编排路由 ----
     app.include_router(orchestration_router)
 

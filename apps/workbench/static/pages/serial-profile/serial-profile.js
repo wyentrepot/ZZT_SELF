@@ -22,6 +22,15 @@
   var summaryEl = document.getElementById("errorSummary");
   var hintEl = document.getElementById("saveHint");
 
+  // ---- 串口角色标签（P6b）----
+  var tagGridEl = document.getElementById("tagGrid");
+  var tagHintEl = document.getElementById("tagHint");
+  var tagBtn = document.getElementById("btnTagSave");
+  var tagRoles = [];   // [{role, label}]
+  var tagTags = {};    // {role: com}
+  var tagPorts = [];   // 当前在线端口（含标签）
+  var tagBusy = false;
+
   function $(id) { return document.getElementById(id); }
 
   async function request(url, options) {
@@ -325,6 +334,97 @@
     });
   }
 
+  // ---------- 串口角色标签（P6b）----------
+  async function loadTags() {
+    var data = await request(api("/serial-tags"));
+    tagRoles = data.roles ? Object.keys(data.roles).map(function (r) {
+      return { role: r, label: data.roles[r] };
+    }) : [];
+    tagTags = data.tags || {};
+    tagPorts = data.port_details || [];
+    renderTags();
+    return data;
+  }
+
+  function renderTags() {
+    if (!tagGridEl) return;
+    tagGridEl.innerHTML = "";
+    // 端口选项：在线真实端口 + 离线映射项，去重，附描述
+    var portOptions = [];
+    var seenPort = new Set();
+    tagPorts.forEach(function (p) {
+      var device = p.device || "";
+      if (!device || seenPort.has(device)) return;
+      seenPort.add(device);
+      var existing = p.role_label ? "（" + p.role_label + "）" : "";
+      var offline = p.online === false ? "（离线）" : "";
+      portOptions.push({ value: device, text: device + (existing ? " " + existing : "") + (offline ? " " + offline : "") });
+    });
+    // 已绑定但当前未枚举到的 COM 也保留选项（避免保存后丢失绑定）
+    Object.keys(tagTags).forEach(function (role) {
+      var com = tagTags[role];
+      if (com && !seenPort.has(com)) {
+        seenPort.add(com);
+        portOptions.push({ value: com, text: com + "（已绑定，当前未枚举）" });
+      }
+    });
+
+    tagRoles.forEach(function (def) {
+      var row = document.createElement("div");
+      row.className = "tag-item";
+
+      var roleEl = document.createElement("span");
+      roleEl.className = "tag-role";
+      roleEl.textContent = def.label;
+      row.appendChild(roleEl);
+
+      var sel = document.createElement("select");
+      sel.dataset.role = def.role;
+      var optNone = document.createElement("option");
+      optNone.value = "";
+      optNone.textContent = "（未绑定）";
+      sel.appendChild(optNone);
+      portOptions.forEach(function (opt) {
+        var o = document.createElement("option");
+        o.value = opt.value;
+        o.textContent = opt.text;
+        if (opt.value === (tagTags[def.role] || "")) o.selected = true;
+        sel.appendChild(o);
+      });
+      row.appendChild(sel);
+      tagGridEl.appendChild(row);
+    });
+  }
+
+  function collectTags() {
+    var out = {};
+    if (!tagGridEl) return out;
+    tagGridEl.querySelectorAll("select[data-role]").forEach(function (sel) {
+      out[sel.dataset.role] = sel.value || "";
+    });
+    return out;
+  }
+
+  async function doTagSave() {
+    if (tagBusy) return;
+    tagBusy = true;
+    if (tagBtn) tagBtn.disabled = true;
+    try {
+      var body = await request(api("/serial-tags"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: collectTags() }),
+      });
+      tagTags = body.tags || {};
+      if (tagHintEl) tagHintEl.textContent = "标签已保存 ✓（各页面端口列表将显示角色）";
+    } catch (err) {
+      if (tagHintEl) tagHintEl.textContent = "标签保存失败：" + err.message;
+    } finally {
+      tagBusy = false;
+      if (tagBtn) tagBtn.disabled = false;
+    }
+  }
+
   // ---------- 绑定 ----------
   var saveBtn = $("btnSave");
   var applyBtn = $("btnApply");
@@ -332,11 +432,12 @@
   if (saveBtn) saveBtn.addEventListener("click", doSave);
   if (applyBtn) applyBtn.addEventListener("click", doApply);
   if (refreshBtn) refreshBtn.addEventListener("click", doRefresh);
+  if (tagBtn) tagBtn.addEventListener("click", doTagSave);
 
   // 初始加载
   (async function init() {
     try {
-      await Promise.all([loadProfiles(), loadPorts()]);
+      await Promise.all([loadProfiles(), loadPorts(), loadTags()]);
       renderSlots();
     } catch (err) {
       showSummary("加载失败：" + err.message);
