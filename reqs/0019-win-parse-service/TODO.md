@@ -9,25 +9,25 @@
 
 ## P1 — 共享远程解析客户端（WSL 侧 libs）
 
-- [ ] `libs/shared/remote_parser.py`：`RemoteHplcParser` 实现 `DllParser` 协议
+- [x] `libs/shared/remote_parser.py`：`RemoteHplcParser` 实现 `DllParser` 协议
       （parse_simple / parse_full 单请求缓存、version、`/health` 探测）
-- [ ] 配置读取：`HPLC_REMOTE_PARSE_URL` 环境变量 + `config/remote_parse.json` 兜底
-- [ ] 单测：httpx MockTransport 假服务（raw simple/full）、422/503 映射、缓存命中、
+- [x] 配置读取：`HPLC_REMOTE_PARSE_URL` 环境变量 + `config/remote_parse.json` 兜底
+- [x] 单测：httpx MockTransport 假服务（raw simple/full）、422/503 映射、缓存命中、
       `/health` 探测失败语义
 
 ## P2 — Windows 解析服务（apps/parser_service）
 
-- [ ] `app.py`：FastAPI 纯解析（`DotNetHplcParser` net48 + `normalize_hex_frame` + 串行锁，
+- [x] `app.py`：FastAPI 纯解析（`DotNetHplcParser` net48 + `normalize_hex_frame` + 串行锁，
       不做 enrich）；`/health`、`/api/version`、`/api/parse`
-- [ ] `run.py`（uvicorn 8700，127.0.0.1）+ `requirements.txt`
+- [x] `run.py`（uvicorn 8700，127.0.0.1）+ `requirements.txt`
       + `启动解析服务.bat`（`.build_plain` 明文区启动、校验 DLL、首次建 venv）
-- [ ] 单测：TestClient + fake parser（协议类）；422/503 映射；version/health
+- [x] 单测：TestClient + fake parser（协议类）；422/503 映射；version/health
 
 ## P3 — WSL 侦听台门面三档降级
 
-- [ ] `apps/listener/app.py`：`_build_parser_service` 本地 → 远程 → None；
+- [x] `apps/listener/app.py`：`_build_parser_service` 本地 → 远程 → None；
       `/api/version` 增加 `parse_backend`（local/remote/none）
-- [ ] 单测：三档降级矩阵 + `parse_backend` 字段 + 503 语义
+- [x] 单测：三档降级矩阵 + `parse_backend` 字段 + 503 语义
 
 ## P4 — Windows 部署与联调（真机）
 

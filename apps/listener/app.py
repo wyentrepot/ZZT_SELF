@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from shared import infra
+from shared import remote_parser
 from shared.dotnet_parser import DotNetHplcParser
 from shared.dotnet_parser import default_dll_relative_path
 from shared.parser_service import FrameValidationError, ParserService
@@ -76,20 +77,36 @@ DEFAULT_SERIAL_PORT = "COM19"
 
 
 def _build_parser_service():
-    """构造解析服务；DLL 缺失或 CLR 环境不兼容时降级为 None。
+    """解析门面三档降级：本地 net8.0 DLL → 远程 Windows 服务 → None。
 
-    - Windows：继续使用 net48 解析库和 Python.NET 默认运行时。
-    - WSL/Linux：使用 net8.0 解析库，Python.NET 在 import clr 前选择 CoreCLR。
-      仍会先探测运行时，避免旧版 Mono 在导入阶段造成原生进程崩溃。
-    - Windows 下 DLL 缺失/加载失败：捕获异常返回 None。
+    - 档 1：本地 net8.0 DLL 存在且运行时可加载 → ``parse_backend=local``。
+    - 档 2：无本地 DLL，但配置了 ``HPLC_REMOTE_PARSE_URL`` /
+      ``config/remote_parse.json`` 且远程服务可达（``/api/version`` 探测成功，
+      表示服务在线且 DLL 已加载）→ ``parse_backend=remote``。
+    - 档 3：均不可用 → None（采集/日志/证据照常，深度解析 503）。
 
     降级后仅 DLL 相关路由（/api/parse、/api/version 的解析部分）不可用，
     串口实时采集与日志索引功能照常工作（帧仍入库，只是不做深度解析）。
     """
     try:
-        return ParserService(DotNetHplcParser(DEFAULT_DLL))
+        service = ParserService(DotNetHplcParser(DEFAULT_DLL))
+        service.parse_backend = "local"
+        return service
     except Exception:
-        return None
+        pass
+
+    remote_url = remote_parser.resolve_remote_parse_url()
+    if remote_url:
+        remote = remote_parser.RemoteHplcParser(remote_url)
+        try:
+            remote.version()  # 探测：服务可达 + DLL 已加载
+            service = ParserService(remote)
+            service.parse_backend = "remote"
+            service._remote_parser = remote  # 持有引用，防止被回收
+            return service
+        except Exception:
+            remote.close()
+    return None
 
 
 def _list_serial_devices():
@@ -221,11 +238,13 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         }
         if service is None:
             base["dll_available"] = False
+            base["parse_backend"] = "none"
             base["name"] = "侦听台"
             base["version"] = "0.1.0"
             base["date"] = ""
             return base
         base["dll_available"] = True
+        base["parse_backend"] = getattr(service, "parse_backend", "local")
         base.update(service.version())
         return base
 
@@ -234,12 +253,16 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         if service is None:
             raise HTTPException(
                 status_code=503,
-                detail="协议解析库不可用（当前环境未提供 GwHPLCAnalysis.dll，串口采集不受影响）",
+                detail="协议解析库不可用（当前环境未提供 GwHPLCAnalysis.dll 且未配置远程解析服务，串口采集不受影响）",
             )
         try:
             return service.parse(request.hex)
         except FrameValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except remote_parser.RemoteParseError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"远程解析服务不可用：{exc}"
+            ) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"DLL 解析失败：{exc}") from exc
 
