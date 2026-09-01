@@ -37,6 +37,8 @@
       golden 帧远程与 net48 直解 **simple/full 完全一致**
 - [x] 降级验证：停服务 → `parse_backend=none`、`/api/parse` 503，侦听台存活
 - [x] 网络打通：Windows 防火墙放行 8700（用户管理员执行），WSL 经 `172.25.0.1:8700` 访问
+- [x] 部署脚本：桌面 `wsl环境部署.bat` + `tools/scripts/uart-map.ps1`（菜单含
+      串口映射 1/2/3 + 解析网关 4 启动 / 5 停止；支持 `-Action start-gateway|stop-gateway|status`）
 
 ## P5 — 文档与收口
 

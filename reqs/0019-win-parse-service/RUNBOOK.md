@@ -16,6 +16,9 @@ Windows .build_plain ── apps/parser_service（FastAPI，net48 DLL，0.0.0.0:
 
 ## 一、Windows 侧部署（在 `.build_plain` 明文区，规避 E-SafeNet）
 
+0. **一键部署脚本**（推荐）：桌面 `wsl环境部署.bat`（源：`tools/scripts/`）——
+   菜单含串口映射(1/2/3) 与 **解析网关(4 启动 / 5 停止)**；也支持非交互
+   `powershell -File uart-map.ps1 -Action start-gateway|stop-gateway|status`。
 1. **同步代码**：`.build_plain` 是本仓库的明文 git 工作树。
    - 更新：`git fetch origin && git checkout -f -B codex/0019-win-parse-service origin/codex/0019-win-parse-service`
    - ⚠️ 必须用 **WSL 侧 git** 执行（WSL 写出的文件为明文）；用 Windows `git.exe` 会把文件写回 E-SafeNet 密文。
