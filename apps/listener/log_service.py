@@ -857,6 +857,12 @@ class LogFileService:
                     expected_by_window.setdefault(start, {})[mac] = config
                     start += period_ms
 
+        # manual 模式（无任务配置）下无法给出应报集合，但可用该任务所有窗口
+        # 出现过的 STA 并集作为参照，提示本窗口相对历史节点缺了谁。
+        reference_stas = set()
+        for start in reports_by_window:
+            reference_stas.update(item["mac"] for item in reports_by_window[start])
+
         periods = []
         for start in sorted(set(reports_by_window) | set(expected_by_window)):
             reports = reports_by_window.get(start, [])
@@ -876,7 +882,10 @@ class LogFileService:
                 + [config["period_minutes"] for config in expected.values()]
             ) or effective_period or 1
             window_ms = window_minutes * 60_000
-            missing = sorted(set(expected) - received)
+            if source == "configured":
+                missing = sorted(set(expected) - received)
+            else:
+                missing = sorted(reference_stas - received)
             periods.append({
                 "period_start": start,
                 "period_end": start + window_ms,
@@ -889,7 +898,8 @@ class LogFileService:
                 "received_sta_count": len(received),
                 "deduped_app_count": len(deduped_items),
                 "expected_count": len(expected) if source == "configured" else None,
-                "missing_stas": missing if source == "configured" else [],
+                "missing_stas": missing,
+                "reference_sta_count": len(reference_stas) if source == "manual" else None,
                 "freeze_ok_count": sum(item["freeze_ok"] for item in deduped_items),
                 "freeze_error_count": sum(not item["freeze_ok"] for item in deduped_items),
                 "reports": reports,

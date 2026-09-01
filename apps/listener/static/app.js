@@ -1256,7 +1256,9 @@ function renderMinuteReportDetails(period) {
   const { dataCount, duplicateCount, noDataCount } = summarizeMinuteReports(
     period.reports || []
   );
-  title.textContent = `周期 ${period.description} · 实报 ${period.report_count} 帧 · 应报 ${period.expected_count ?? "未知"} · 缺报 ${(period.missing_stas || []).join("、") || "无"} · ${dataCount} 帧有数据 / ${noDataCount} 帧无数据 / ${duplicateCount} 帧重复上报`;
+  const dedupStaCount = new Set((period.reports || []).map((r) => r.mac || r.source_mac)).size;
+  const dupHint = duplicateCount > 0 ? `（其中 ${duplicateCount} 帧为重复上报，去重后仅 ${dedupStaCount} 个 STA 有数据）` : "";
+  title.textContent = `周期 ${period.description} · 实报 ${period.report_count} 帧 · 应报 ${period.expected_count ?? "未知"} · 缺报 ${(period.missing_stas || []).join("、") || (period.expected_count === null ? `未知（实际去重后 ${dedupStaCount} 个 STA）` : "无")} · ${dataCount} 帧有数据 / ${noDataCount} 帧无数据 / ${duplicateCount} 帧重复上报${dupHint}`;
   box.append(title);
   (period.reports || []).forEach((report) => {
     const item = document.createElement("details");
