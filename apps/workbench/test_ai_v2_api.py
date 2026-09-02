@@ -7,6 +7,7 @@ import pytest
 
 from workbench.ai_auth import AuthorizationStore
 from workbench.app import create_workbench_app
+from workbench.test_ai_operations import CapturingTraceService
 from workbench.test_ai_operations import FakeModuleService
 from workbench.test_ai_operations import FakeListenerLogService, FakeListenerService
 
@@ -428,3 +429,181 @@ def test_v2_underlying_simcon_operation_rejects_cancel():
     )
     with pytest.raises(SessionBusy, match="不能由观察任务取消接口中断"):
         control.cancel_operation(operation["operation_id"])
+
+
+# ---------------------------------------------------------------------------
+# REQS-0022 Phase 2：v2 listener evidence L1/L2/L3 分层投影
+# ---------------------------------------------------------------------------
+
+class _TraceBundle:
+    def __init__(self):
+        self.serial_service = FakeListenerService()
+        self.log_service = FakeListenerLogService()
+        self.trace_service = CapturingTraceService()
+
+
+def _trace_bundle_factory():
+    bundle = _TraceBundle()
+    app = FastAPI()
+    app.state.serial_service = bundle.serial_service
+    app.state.log_service = bundle.log_service
+    app.state.trace_service = bundle.trace_service
+    return app
+
+
+def _trace_investigation():
+    return {
+        "observations": [
+            {
+                "source": "listener",
+                "target": {"mapping_id": "listener-main", "index_id": "idx-listener-test"},
+                "window": {"mode": "time_range", "start": "10:00:00.000", "end": "10:05:00.000"},
+                "match": {
+                    "kind": "trace_query", "scope": "round",
+                    "feature": {"app_id": "0003", "msg_seq": "1EC2", "dst_tei": "087",
+                                "nid": "00947F69"},
+                    "directions": ["downlink", "uplink", "ack"],
+                },
+                "completion": {"match_count": 1},
+            },
+        ],
+        "client_request_id": "p2-trace-1",
+    }
+
+
+def _create_trace_job(client) -> str:
+    created = client.post("/api/ai/v2/investigations", json=_trace_investigation())
+    assert created.status_code == 202, created.text
+    return created.json()["job_id"]
+
+
+def test_v2_listener_evidence_is_layered_l1_no_raw_hex_l2_projections(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    app = create_workbench_app(module_log_factory=_module_factory,
+                               listener_factory=_trace_bundle_factory)
+    client = TestClient(app)
+    job_id = _create_trace_job(client)
+
+    l1 = client.get(f"/api/ai/v2/jobs/{job_id}/evidence", params={"level": "L1"})
+    l2 = client.get(f"/api/ai/v2/jobs/{job_id}/evidence", params={"level": "L2"})
+
+    assert l1.status_code == 200
+    assert l2.status_code == 200
+    # L1 不返回完整帧、不含 raw_hex，只给范围摘要
+    assert "raw_hex" not in l1.text
+    l1_body = l1.json()
+    l1_items = [item for item in l1_body["items"] if item["source"] == "listener"]
+    assert l1_items
+    l1_data = l1_items[0]["data"]
+    assert "frames" not in l1_data and "matches" not in l1_data
+    assert "flow_groups" in l1_data
+    assert "correlation_status" in l1_data
+    assert "frame_type_counts" in l1_data
+    assert "direction_counts" in l1_data
+    # L2 含截图同类字段（帧类型 / NID / 源目的 / 方向）与 ref
+    l2_body = l2.json()
+    l2_items = [item for item in l2_body["items"] if item["source"] == "listener"]
+    assert l2_items
+    data = l2_items[0]["data"]
+    frames = data.get("frames") or []
+    assert frames
+    assert {"frm_type", "nid", "src", "dst", "direction", "ref"} <= set(frames[0])
+    assert frames[0]["ref"] == "listener:idx-listener-test:1"
+
+
+def test_v2_listener_evidence_l3_accepts_job_refs_and_rejects_foreign(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    app = create_workbench_app(module_log_factory=_module_factory,
+                               listener_factory=_trace_bundle_factory)
+    client = TestClient(app)
+    job_id = _create_trace_job(client)
+
+    ok = client.get(
+        f"/api/ai/v2/jobs/{job_id}/evidence",
+        params={"level": "L3", "ref": "listener:idx-listener-test:1"},
+    )
+    foreign = client.get(
+        f"/api/ai/v2/jobs/{job_id}/evidence",
+        params={"level": "L3", "ref": "listener:idx-listener-other:1"},
+    )
+    malformed = client.get(
+        f"/api/ai/v2/jobs/{job_id}/evidence",
+        params={"level": "L3", "ref": "listener:not-a-frame"},
+    )
+
+    assert ok.status_code == 200
+    assert "raw_hex" in ok.text
+    assert foreign.status_code == 403
+    assert malformed.status_code == 422
+
+
+class _MinutePeriodsLogService(FakeListenerLogService):
+    def __init__(self):
+        super().__init__()
+        self.minute_calls = []
+
+    def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001",
+                                 nid="", start_time="", end_time=""):
+        self.minute_calls.append({
+            "task_no": task_no, "cco_tei": cco_tei, "nid": nid,
+            "start_time": start_time, "end_time": end_time,
+        })
+        return [{
+            "period_start": 0, "period_end": 900000, "report_count": 1,
+            "description": "10:15:00 - 10:30:00",
+            "reports": [{
+                "frame_id": 7, "log_time": "10:15:01.000",
+                "freeze_time": "10:14:00", "response_result": 0,
+                "source_mac": "mac-1", "source_tei": "001",
+                "report_count": 1, "data_length": 120,
+                "application_error": None, "application_raw": "AB12",
+                "data_status": "ok",
+            }],
+        }]
+
+
+def _minute_periods_bundle_factory():
+    class _Bundle:
+        def __init__(self):
+            self.serial_service = FakeListenerService()
+            self.log_service = _MinutePeriodsLogService()
+
+    bundle = _Bundle()
+    app = FastAPI()
+    app.state.serial_service = bundle.serial_service
+    app.state.log_service = bundle.log_service
+    return app
+
+
+def test_v2_listener_minute_periods_l2_exposes_freeze_time(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    app = create_workbench_app(module_log_factory=_module_factory,
+                               listener_factory=_minute_periods_bundle_factory)
+    client = TestClient(app)
+    created = client.post("/api/ai/v2/investigations", json={
+        "observations": [{
+            "source": "listener",
+            "target": {"mapping_id": "listener-main", "index_id": "idx-listener-test"},
+            "window": {"mode": "time_range", "start": "10:00:00.000", "end": "10:30:00.000"},
+            "match": {"kind": "minute_periods", "task_no": 1, "cco_tei": "001", "nid": "00947F69"},
+            "completion": {"match_count": 1},
+        }],
+        "client_request_id": "p2-minute-1",
+    })
+    assert created.status_code == 202, created.text
+    job_id = created.json()["job_id"]
+
+    l2 = client.get(f"/api/ai/v2/jobs/{job_id}/evidence", params={"level": "L2"})
+
+    assert l2.status_code == 200
+    items = [item for item in l2.json()["items"] if item["source"] == "listener"]
+    assert items
+    frames = items[0]["data"]["frames"]
+    assert frames
+    assert frames[0]["ref"] == "listener:idx-listener-test:7"
+    assert frames[0]["log_time"] == "10:15:01.000"
+    assert frames[0]["freeze_time"] == "10:14:00"
+    assert "response_result" in frames[0]

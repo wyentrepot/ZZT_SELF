@@ -21,6 +21,7 @@ from .ai_contracts import (
     ModuleActionRequest, VerificationRunRequest,
 )
 from .ai_capability_service import AICapabilityService
+from .ai_capability_service import EvidenceRefForbidden
 from .ai_operations import AIControlService
 from .ai_operations import InvalidObservation, SessionBusy, SourceUnavailable
 from .ai_store import IdempotencyConflict
@@ -272,14 +273,19 @@ def create_ai_v2_router(
     @router.get("/jobs/{job_id}/evidence", response_model=EvidenceView)
     def read_job_evidence(request: Request, job_id: str,
                           level: EvidenceLevel = Query(EvidenceLevel.L1),
+                          ref: list[str] = Query(default=[]),
                           authorization: str | None = Header(None)) -> EvidenceView:
         try:
             operation = control.store.get(capability_service._operation_id(job_id))
             resources = operation.get("payload", {}).get("resources") or []
             _context(request, authorization, "jobs.evidence.read", resources)
-            return capability_service.read_job_evidence(job_id, level=level)
+            return capability_service.read_job_evidence(job_id, level=level, refs=ref)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Job 不存在") from exc
+        except EvidenceRefForbidden as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (InvalidObservation, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.post("/jobs/{job_id}/cancel", response_model=JobEnvelope)
     def cancel_job(request: Request, job_id: str,

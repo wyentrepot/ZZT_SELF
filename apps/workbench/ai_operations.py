@@ -41,6 +41,10 @@ _TRACE_FEATURE_KEYS = frozenset({
     "app_id", "msg_seq", "frm_type", "dst_tei", "nid", "channel",
     "app_raw_contains", "raw_hex_contains",
 })
+# REQS-0022：minute_periods 匹配字段（复用 list_task_minute_periods，freeze_time 权威）
+_MINUTE_PERIODS_MATCH_KEYS = frozenset({
+    "kind", "task_no", "period_minutes", "cco_tei", "nid",
+})
 
 
 def _iso_now() -> str:
@@ -1331,9 +1335,11 @@ class AIControlService:
         """把回放报告投影成既有 listener observation 结果（稳定 index_id+frame_id 引用）。"""
         index_id = payload["index_id"]
         matches = []
+        total_frames = 0
         for round_report in report.get("rounds") or []:
             for flow in round_report.get("flows") or []:
                 for frame in flow.get("frames") or []:
+                    total_frames += 1
                     frame_id = int(frame.get("frame_id"))
                     matches.append({
                         "frame_key": {"index_id": index_id, "frame_id": frame_id},
@@ -1364,6 +1370,7 @@ class AIControlService:
             "condition_met": flows >= required,
             "index": {"index_id": index_id, "scope": (payload.get("match") or {}).get("scope")},
             "trace": {"mode": report.get("mode"), "summary": report.get("summary") or {}},
+            "total_frames": total_frames,
             "matches": matches,
             "snippet": matches[:10],
             "artifact_id": None,
@@ -1381,11 +1388,200 @@ class AIControlService:
             result["artifact_id"] = artifact["artifact_id"]
         return result
 
+    # -- REQS-0022：minute_periods 复用既有 list_task_minute_periods -------------
+
+    @staticmethod
+    def _normalise_minute_periods_match(match: dict) -> dict:
+        """minute_periods 匹配器：task_no/period_minutes/cco_tei/nid，无 scope/feature/directions。"""
+        if not isinstance(match, dict):
+            raise InvalidObservation("match 必须是对象")
+        task_no = match.get("task_no")
+        if isinstance(task_no, bool) or not isinstance(task_no, int) or task_no <= 0:
+            raise InvalidObservation("minute_periods 必须提供正整数 task_no")
+        period_minutes = match.get("period_minutes")
+        if period_minutes is not None and (
+            isinstance(period_minutes, bool) or not isinstance(period_minutes, int)
+            or not 1 <= period_minutes <= 1440
+        ):
+            raise InvalidObservation("minute_periods period_minutes 必须在 1 到 1440 之间")
+        cco_tei = str(match.get("cco_tei") or "001").upper()
+        if not regex.fullmatch(r"[0-9A-F]{3}", cco_tei):
+            raise InvalidObservation("minute_periods cco_tei 必须为三个十六进制字符")
+        nid = str(match.get("nid") or "")
+        extra = {str(key) for key in match} - _MINUTE_PERIODS_MATCH_KEYS
+        if extra:
+            raise InvalidObservation(
+                f"minute_periods 不支持字段：{', '.join(sorted(extra))}"
+            )
+        return {
+            "kind": "minute_periods",
+            "task_no": task_no,
+            "period_minutes": period_minutes,
+            "cco_tei": cco_tei,
+            "nid": nid,
+        }
+
+    @staticmethod
+    def _minute_periods_window(window: dict) -> tuple[str, str, str]:
+        """观察窗口 → list_task_minute_periods 的 start_time/end_time（仅历史时间窗）。"""
+        if not isinstance(window, dict) or not window:
+            return "", "", "none"
+        mode = str(window.get("mode") or "")
+        if not mode:
+            return "", "", "none"
+        if mode != "time_range":
+            raise InvalidObservation("minute_periods 仅支持 time_range 历史窗口")
+        start = str(window.get("start") or "")
+        end = str(window.get("end") or "")
+        if not start or not end:
+            raise InvalidObservation("minute_periods time_range 必须提供 start 和 end")
+        return start, end, "time_range"
+
+    def _create_listener_minute_periods_observation(self, request: dict, *, actor: str,
+                                                    client_request_id: str = "",
+                                                    replay_fingerprint: str = "") -> dict:
+        self._listener_log_or_error()
+        target = request.get("target") or {}
+        window = request.get("window") or {}
+        match = self._normalise_minute_periods_match(request.get("match") or {})
+        start_time, end_time, window_mode = self._minute_periods_window(window)
+        try:
+            index_id = self._listener_current_index_id(str(target.get("index_id") or ""))
+        except KeyError as exc:
+            raise InvalidObservation("listener index_id 不存在") from exc
+        completion = self._normalise_observation_completion(request.get("completion"))
+        resource = self.listener_resource(str(target.get("mapping_id") or ""))
+        payload = {
+            "source": "listener",
+            "target": {"mapping_id": resource, "capture": "current"},
+            "index_id": index_id,
+            "observation_kind": "minute_periods",
+            "window": {
+                "mode": window_mode,
+                "start": start_time if window_mode == "time_range" else None,
+                "end": end_time if window_mode == "time_range" else None,
+            },
+            "match": match,
+            "completion": completion,
+        }
+        fingerprint = self._observation_idempotency_fingerprint({
+            "semantic": {
+                "kind": "observation",
+                "source": "listener",
+                "observation_kind": "minute_periods",
+                "resource": {"mapping_id": resource, "index_id": index_id, "capture": "current"},
+                "match": match,
+                "window": payload["window"],
+                "completion": completion,
+            },
+            "request": self._observation_request_identity(request),
+        })
+        operation = self.store.create(
+            "observation", actor, payload, client_request_id=client_request_id,
+            idempotency_fingerprint=fingerprint,
+            idempotency_replay_fingerprint=replay_fingerprint,
+        )
+        if operation["state"] != "created":
+            return operation
+        self.store.audit(
+            actor=actor, action="listener.observation.create", resource=resource,
+            result="querying", operation_id=operation["operation_id"],
+        )
+        return self._run_minute_periods_observation(operation["operation_id"])
+
+    def _run_minute_periods_observation(self, operation_id: str) -> dict:
+        """执行 minute_periods：复用 list_task_minute_periods 并落终态。"""
+        operation = self.store.get(operation_id)
+        payload = operation["payload"]
+        try:
+            match = payload["match"]
+            periods = self._listener_log_or_error().list_task_minute_periods(
+                task_no=match["task_no"],
+                period_minutes=match.get("period_minutes"),
+                cco_tei=match.get("cco_tei", "001"),
+                nid=match.get("nid", ""),
+                start_time=(payload.get("window") or {}).get("start") or "",
+                end_time=(payload.get("window") or {}).get("end") or "",
+            )
+            result = self._minute_periods_result(payload, periods, operation_id)
+            required = max(int((payload.get("completion") or {}).get("match_count", 1)), 1)
+            total_reports = sum(len(period.get("reports") or []) for period in result["periods"])
+            state = "matched" if total_reports >= required else "succeeded"
+            completed = self.store.set_state(operation_id, state, result=result)
+            self.store.audit(
+                actor=operation["actor"],
+                action="listener.observation.match" if state == "matched" else "listener.observation.complete",
+                resource=payload["target"]["mapping_id"], result=state,
+                operation_id=operation_id,
+            )
+            return completed
+        except Exception as exc:
+            self.store.audit(
+                actor=operation["actor"], action="listener.observation.complete",
+                resource=payload["target"]["mapping_id"], result="error",
+                operation_id=operation_id,
+            )
+            return self.store.set_state(operation_id, "error", error=str(exc))
+
+    def _minute_periods_result(self, payload: dict, periods: list, operation_id: str = "") -> dict:
+        """把 list_task_minute_periods 的周期汇总投影成 observation 结果（frame_id → ref）。"""
+        index_id = payload["index_id"]
+        projected_periods = []
+        for period in periods or []:
+            reports = []
+            for report in period.get("reports") or []:
+                frame_id = int(report.get("frame_id"))
+                reports.append({
+                    "frame_id": frame_id,
+                    "frame_key": {"index_id": index_id, "frame_id": frame_id},
+                    "log_time": report.get("log_time"),
+                    "freeze_time": report.get("freeze_time"),
+                    "response_result": report.get("response_result"),
+                    "source_mac": report.get("source_mac"),
+                    "source_tei": report.get("source_tei"),
+                    "report_count": report.get("report_count"),
+                    "data_length": report.get("data_length"),
+                    "application_error": report.get("application_error"),
+                    "application_raw": report.get("application_raw"),
+                    "data_status": report.get("data_status"),
+                    "detail_url": (
+                        "/api/ai/v1/listener/indexes/" + index_id + "/frames/" + str(frame_id)
+                    ),
+                })
+            projected_periods.append({
+                "period_start": period.get("period_start"),
+                "period_end": period.get("period_end"),
+                "report_count": period.get("report_count"),
+                "description": period.get("description"),
+                "reports": reports,
+            })
+        result = {
+            "source": "listener",
+            "condition_met": sum(len(period.get("reports") or []) for period in projected_periods) >= 1,
+            "index": {"index_id": index_id},
+            "periods": projected_periods,
+            "artifact_id": None,
+        }
+        if operation_id:
+            artifact = self.store.register_artifact(
+                operation_id=operation_id,
+                resource=str(payload["target"].get("mapping_id") or "listener-main"),
+                kind="listener_minute_periods_result",
+                content=result,
+            )
+            result["artifact_id"] = artifact["artifact_id"]
+        return result
+
     def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "",
                                      replay_fingerprint: str = "") -> dict:
         self._listener_log_or_error()
         if str((request.get("match") or {}).get("kind") or "") == "trace_query":
             return self._create_listener_trace_query_observation(
+                request, actor=actor, client_request_id=client_request_id,
+                replay_fingerprint=replay_fingerprint,
+            )
+        if str((request.get("match") or {}).get("kind") or "") == "minute_periods":
+            return self._create_listener_minute_periods_observation(
                 request, actor=actor, client_request_id=client_request_id,
                 replay_fingerprint=replay_fingerprint,
             )

@@ -834,3 +834,99 @@ def test_listener_trace_query_is_idempotent_by_client_request_id():
 
     assert first["operation_id"] == replay["operation_id"]
     assert len(tracer.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# REQS-0022 Phase 2：minute_periods 复用既有 list_task_minute_periods
+# ---------------------------------------------------------------------------
+
+class _MinutePeriodsLogService(FakeListenerLogService):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def list_task_minute_periods(self, task_no, period_minutes=None, cco_tei="001",
+                                 nid="", start_time="", end_time=""):
+        self.calls.append({
+            "task_no": task_no, "period_minutes": period_minutes,
+            "cco_tei": cco_tei, "nid": nid, "start_time": start_time, "end_time": end_time,
+        })
+        return [{
+            "period_start": 0, "period_end": 900000, "report_count": 1,
+            "description": "10:15:00 - 10:30:00",
+            "reports": [{
+                "frame_id": 7, "log_time": "10:15:01.000",
+                "freeze_time": "10:14:00", "response_result": 0,
+                "source_mac": "mac-1", "source_tei": "001",
+                "report_count": 1, "data_length": 120,
+                "application_error": None, "application_raw": "AB12",
+                "data_status": "ok",
+            }],
+        }]
+
+
+def _minute_periods_request(**overrides):
+    request = {
+        "source": "listener",
+        "target": {"index_id": "idx-listener-test"},
+        "window": {"mode": "time_range", "start": "10:00:00.000", "end": "10:30:00.000"},
+        "match": {"kind": "minute_periods", "task_no": 1, "cco_tei": "001", "nid": "00947F69"},
+        "completion": {"match_count": 1},
+    }
+    request.update(overrides)
+    return request
+
+
+def test_listener_minute_periods_reuses_list_task_minute_periods():
+    log_service = _MinutePeriodsLogService()
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=log_service,
+    )
+
+    operation = service.create_observation(_minute_periods_request(), actor="ai:grant-test")
+
+    assert operation["state"] in ("matched", "succeeded")
+    assert len(log_service.calls) == 1
+    call = log_service.calls[0]
+    assert call["task_no"] == 1
+    assert call["cco_tei"] == "001"
+    assert call["nid"] == "00947F69"
+    assert call["start_time"] == "10:00:00.000"
+    assert call["end_time"] == "10:30:00.000"
+    result = operation["result"]
+    # 每个 report 的 frame_id 转成稳定 index_id + frame_id 引用
+    report = result["periods"][0]["reports"][0]
+    assert report["frame_key"] == {"index_id": "idx-listener-test", "frame_id": 7}
+    # L2 同时提供 log_time 与 freeze_time（freeze_time 是分钟归属权威字段）
+    assert report["log_time"] == "10:15:01.000"
+    assert report["freeze_time"] == "10:14:00"
+    assert report["response_result"] == 0
+    assert result["artifact_id"].startswith("art-")
+
+
+def test_listener_minute_periods_requires_valid_input():
+    log_service = _MinutePeriodsLogService()
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=log_service,
+    )
+    # 缺 task_no → 422
+    with pytest.raises(InvalidObservation, match="task_no"):
+        service.create_observation(
+            {"source": "listener", "match": {"kind": "minute_periods", "cco_tei": "001"}},
+            actor="ai:grant-test",
+        )
+    # 非法 cco_tei → 422
+    with pytest.raises(InvalidObservation, match="cco_tei"):
+        service.create_observation(
+            {"source": "listener", "match": {"kind": "minute_periods", "task_no": 1, "cco_tei": "XYZ"}},
+            actor="ai:grant-test",
+        )
+    # live 窗口不支持（分钟采集是历史闭合窗口）
+    with pytest.raises(InvalidObservation, match="time_range"):
+        service.create_observation(
+            _minute_periods_request(window={"mode": "live", "start": "now"}),
+            actor="ai:grant-test",
+        )
+    assert log_service.calls == []

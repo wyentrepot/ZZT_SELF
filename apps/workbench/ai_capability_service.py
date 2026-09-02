@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,6 +36,17 @@ from .ai_store import TERMINAL_STATES
 
 
 _JOB_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+
+# REQS-0022：证据分层上限与 L3 ref 约束
+_L1_MAX_BYTES = 3 * 1024
+_L2_MAX_BYTES = 16 * 1024
+_L2_MAX_ITEMS = 50
+_L3_MAX_REFS = 10
+_LISTENER_REF_RE = re.compile(r"^listener:(?P<index_id>[^:]+):(?P<frame_id>\d+)$")
+
+
+class EvidenceRefForbidden(ValueError):
+    """L3 引用越权：ref 不属于该 job（映射为 HTTP 403）。"""
 
 
 class AICapabilityService:
@@ -424,18 +436,59 @@ class AICapabilityService:
                                         correlation=correlation))
         return refs
 
-    def read_job_evidence(self, job_id: str, *, level: EvidenceLevel) -> EvidenceView:
+    def read_job_evidence(self, job_id: str, *, level: EvidenceLevel,
+                          refs: list[str] | tuple[str, ...] = ()) -> EvidenceView:
         operation = self.control.store.get(self._operation_id(job_id))
         envelope = self._envelope(operation)
         results = (operation.get("result") or {}).get("observations") or []
         if level == EvidenceLevel.L3:
+            items = self._l3_items(envelope, list(refs or []))
             return EvidenceView(job_id=job_id, level=level, summary=envelope.summary or "",
-                                 refs=envelope.evidence_refs)
+                                items=items, refs=envelope.evidence_refs)
         items = [self._evidence_item(item, level) for item in results]
-        if level == EvidenceLevel.L2:
-            items = self._bound_items(items)
+        if level == EvidenceLevel.L1:
+            items = self._bound_items_to(items, _L1_MAX_BYTES)
+        elif level == EvidenceLevel.L2:
+            items = self._bound_items_to(items, _L2_MAX_BYTES)
         return EvidenceView(job_id=job_id, level=level, summary=envelope.summary or "",
                             items=items, refs=envelope.evidence_refs)
+
+    def _l3_items(self, envelope: JobEnvelope, refs: list[str]) -> list[EvidenceItem]:
+        """L3：仅对本 job 已返回的 listener ref 回传完整帧 JSON（越权 403、格式错 422）。"""
+        if not refs:
+            return []
+        if len(refs) > _L3_MAX_REFS:
+            raise InvalidObservation(f"L3 每次最多 {_L3_MAX_REFS} 个 ref")
+        allowed = {
+            f"listener:{ref.index_id}:{ref.frame_id}"
+            for ref in envelope.evidence_refs
+            if ref.source == SourceKind.LISTENER and ref.index_id and ref.frame_id is not None
+        }
+        items: list[EvidenceItem] = []
+        for ref_text in refs:
+            matched = _LISTENER_REF_RE.fullmatch(str(ref_text or "").strip())
+            if matched is None:
+                raise InvalidObservation(f"L3 ref 格式错误：{ref_text}")
+            if str(ref_text or "").strip() not in allowed:
+                raise EvidenceRefForbidden(f"L3 ref 不属于该 job：{ref_text}")
+            index_id = matched.group("index_id")
+            frame_id = int(matched.group("frame_id"))
+            frame = self.control.listener_frame_detail(index_id, frame_id)
+            items.append(EvidenceItem(
+                source=SourceKind.LISTENER,
+                evidence_id=str(frame_id),
+                data=_strip_paths({
+                    "ref": f"listener:{index_id}:{frame_id}",
+                    "index_id": index_id,
+                    "frame_id": frame_id,
+                    "raw_hex": frame.get("raw_hex"),
+                    "summary": frame.get("summary"),
+                    "parse_error": frame.get("parse_error"),
+                    "analysis": frame.get("analysis"),
+                    "trace_link": "/api/ai/v1/listener/indexes/" + index_id + "/frames/" + str(frame_id),
+                }),
+            ))
+        return items
 
     @staticmethod
     def _evidence_item(item: dict, level: EvidenceLevel) -> EvidenceItem:
@@ -447,9 +500,7 @@ class AICapabilityService:
                     "snippet": (result.get("snippet") or [])[:50]}
             evidence_id = (result.get("log") or {}).get("artifact_id")
         elif source == SourceKind.LISTENER.value:
-            data = {"condition_met": result.get("condition_met"),
-                    "index": {"index_id": (result.get("index") or {}).get("index_id")},
-                    "matches": (result.get("matches") or [])[:50]}
+            data = _listener_evidence_projection(result, level)
             evidence_id = result.get("artifact_id")
         else:
             data = result if level == EvidenceLevel.L2 else {"available": True}
@@ -457,18 +508,172 @@ class AICapabilityService:
         return EvidenceItem(source=source, evidence_id=evidence_id, data=_strip_paths(data))
 
     @staticmethod
-    def _bound_items(items: list[EvidenceItem]) -> list[EvidenceItem]:
-        while len(json.dumps([item.model_dump() for item in items], ensure_ascii=False).encode("utf-8")) > 16 * 1024:
+    def _bound_items_to(items: list[EvidenceItem], max_bytes: int) -> list[EvidenceItem]:
+        """把证据投影压到字节上限内：优先裁剪末尾的可变列表字段。"""
+        def _size() -> int:
+            return len(json.dumps(
+                [item.model_dump() for item in items], ensure_ascii=False,
+            ).encode("utf-8"))
+
+        while _size() > max_bytes:
             if not items:
                 break
             last = items[-1]
-            if last.data.get("snippet"):
-                last.data["snippet"] = last.data["snippet"][:-1]
-            elif last.data.get("matches"):
-                last.data["matches"] = last.data["matches"][:-1]
-            else:
+            trimmed = False
+            for field in ("snippet", "matches", "frames", "refs"):
+                value = last.data.get(field)
+                if isinstance(value, list) and value:
+                    last.data[field] = value[:-1]
+                    trimmed = True
+                    break
+            if not trimmed:
                 items.pop()
-        return items[:50]
+        return items[:_L2_MAX_ITEMS]
+
+    @staticmethod
+    def _bound_items(items: list[EvidenceItem]) -> list[EvidenceItem]:
+        return AICapabilityService._bound_items_to(items, _L2_MAX_BYTES)
+
+
+def _listener_kind(result: dict) -> str:
+    """从 observation 结果判别 listener 观察类型（result 结构随 observation_kind 变化）。"""
+    if "periods" in result:
+        return "minute_periods"
+    if "trace" in result:
+        return "trace_query"
+    return "frame_query"
+
+
+def _correlation_status(summary: dict) -> str:
+    if any((summary.get(key) or 0) for key in ("no_ack", "no_response", "no_confirm")):
+        return "partial"
+    if (summary.get("bad_frames") or 0):
+        return "degraded"
+    return "complete"
+
+
+def _listener_evidence_projection(result: dict, level: EvidenceLevel) -> dict:
+    """REQS-0022：listener observation 结果 → L1 范围摘要 / L2 解析投影（不返回 raw_hex）。"""
+    index_id = (result.get("index") or {}).get("index_id")
+    kind = _listener_kind(result)
+    if level == EvidenceLevel.L1:
+        if kind == "minute_periods":
+            periods = result.get("periods") or []
+            refs = []
+            for period in periods:
+                for report in period.get("reports") or []:
+                    key = report.get("frame_key") or {}
+                    refs.append({"index_id": key.get("index_id") or index_id,
+                                 "frame_id": key.get("frame_id")})
+            return {
+                "index_id": index_id,
+                "period_count": len(periods),
+                "report_count": sum(len(period.get("reports") or []) for period in periods),
+                "parse_backend": "parsed",
+                "refs": refs[:50],
+            }
+        if kind == "trace_query":
+            summary = (result.get("trace") or {}).get("summary") or {}
+            matches = result.get("matches") or []
+            frame_type_counts: dict[Any, int] = {}
+            direction_counts: dict[Any, int] = {}
+            for match in matches:
+                ft = match.get("frm_type")
+                frame_type_counts[ft] = frame_type_counts.get(ft, 0) + 1
+                direction = match.get("direction")
+                direction_counts[direction] = direction_counts.get(direction, 0) + 1
+            return {
+                "index_id": index_id,
+                "scope": (result.get("index") or {}).get("scope"),
+                "total_frames": result.get("total_frames") or len(matches),
+                "flow_groups": int(summary.get("flows") or 0),
+                "frame_type_counts": frame_type_counts,
+                "direction_counts": direction_counts,
+                "correlation_status": _correlation_status(summary),
+                "parse_backend": "parsed",
+                "refs": [match.get("frame_key") for match in matches][:50],
+            }
+        # frame_query / parsed_frame
+        matches = result.get("matches") or []
+        frame_type_counts: dict[Any, int] = {}
+        for match in matches:
+            summary = match.get("summary") or {}
+            ft = summary.get("FrmType") or summary.get("帧类型")
+            frame_type_counts[ft] = frame_type_counts.get(ft, 0) + 1
+        return {
+            "index_id": index_id,
+            "total_frames": len(matches),
+            "flow_groups": 0,
+            "frame_type_counts": frame_type_counts,
+            "direction_counts": {},
+            "correlation_status": "unavailable",
+            "parse_backend": "parsed" if matches else "none",
+            "refs": [match.get("frame_key") for match in matches][:50],
+        }
+
+    # L2 解析投影
+    if kind == "minute_periods":
+        frames = []
+        for period in result.get("periods") or []:
+            for report in period.get("reports") or []:
+                key = report.get("frame_key") or {}
+                frame_id = key.get("frame_id")
+                ref_index_id = key.get("index_id") or index_id
+                frames.append({
+                    "index_id": ref_index_id,
+                    "frame_id": frame_id,
+                    "ref": f"listener:{ref_index_id}:{frame_id}",
+                    "log_time": report.get("log_time"),
+                    "freeze_time": report.get("freeze_time"),
+                    "response_result": report.get("response_result"),
+                    "source_mac": report.get("source_mac"),
+                    "source_tei": report.get("source_tei"),
+                    "report_count": report.get("report_count"),
+                    "data_length": report.get("data_length"),
+                    "application_error": report.get("application_error"),
+                })
+        return {"index_id": index_id, "frames": frames[:50]}
+    if kind == "trace_query":
+        frames = []
+        for match in result.get("matches") or []:
+            key = match.get("frame_key") or {}
+            frame_id = key.get("frame_id")
+            ref_index_id = key.get("index_id") or index_id
+            frames.append({
+                "index_id": ref_index_id,
+                "frame_id": frame_id,
+                "ref": f"listener:{ref_index_id}:{frame_id}",
+                "log_time": match.get("log_time"),
+                "direction": match.get("direction"),
+                "role": match.get("role"),
+                "frm_type": match.get("frm_type"),
+                "nid": match.get("nid"),
+                "src": match.get("src"),
+                "dst": match.get("dst"),
+                "ori_s": match.get("ori_s"),
+                "ch_type": match.get("ch_type"),
+                "app_id": match.get("app_id"),
+                "msg_seq": match.get("msg_seq"),
+                "flow_dir": match.get("flow_dir"),
+                "meter_addrs": match.get("meter_addrs"),
+                "detail_url": match.get("detail_url"),
+            })
+        return {"index_id": index_id, "frames": frames[:50]}
+    frames = []
+    for match in result.get("matches") or []:
+        key = match.get("frame_key") or {}
+        frame_id = key.get("frame_id")
+        ref_index_id = key.get("index_id") or index_id
+        summary = match.get("summary") or {}
+        frames.append({
+            "index_id": ref_index_id,
+            "frame_id": frame_id,
+            "ref": f"listener:{ref_index_id}:{frame_id}",
+            "log_time": match.get("log_time"),
+            "frm_type": summary.get("FrmType"),
+            "detail_url": match.get("detail_url"),
+        })
+    return {"index_id": index_id, "frames": frames[:50]}
 
 
 def _strip_paths(value: Any) -> Any:

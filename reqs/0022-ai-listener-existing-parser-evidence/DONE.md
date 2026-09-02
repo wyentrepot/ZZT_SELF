@@ -48,3 +48,27 @@
   - 测试：`apps/listener/test_trace_service.py` + `test_trace_api.py` **33 passed**；
     `apps/workbench/test_ai_operations.py` **31 passed**（含 4 个新 trace_query 测试）。
   - v1 回归：`test_ai_trace.py` + `test_ai_api.py` **31 passed**（既有 `/api/ai/v1/listener/traces` 行为不变）。
+
+- **Phase 2 Step 1–5（完成）**：`minute_periods` 适配 + 真正的 L1/L2/L3 分层证据。
+  - `apps/workbench/ai_operations.py`：
+    - 新增 `minute_periods` 分发与四个方法 `_normalise_minute_periods_match` /
+      `_minute_periods_window` / `_create_listener_minute_periods_observation` /
+      `_run_minute_periods_observation` / `_minute_periods_result`。
+    - `match.kind="minute_periods"` 只收 `task_no`/`period_minutes`/`cco_tei`/`nid`，
+      复用既有 `list_task_minute_periods`；窗口仅 `time_range`（live → 422）。
+      每个 report 的 `frame_id` 转 `frame_key`，L2 同时给出 `log_time` 与 `freeze_time`。
+    - `_trace_query_result` 增加 `total_frames`（回放报告全量帧数，供 L1 计数）。
+  - `apps/workbench/ai_capability_service.py`：
+    - `read_job_evidence(job_id, level, refs=())` 增加 `refs` 参数。
+    - L1：`_listener_evidence_projection` 出范围摘要（index_id/scope/total_frames/flow_groups/
+      frame_type_counts/direction_counts/correlation_status/parse_backend/refs），**不含完整帧与 raw_hex**，
+      压到 ≤3 KiB。
+    - L2：出解析投影（frm_type/nid/src/dst/direction/… + ref；minute 加 freeze_time/response_result），
+      ≤16 KiB 且 ≤50 条。
+    - L3：`_l3_items` 只对本 job 的 `listener:<index_id>:<frame_id>` ref 回传完整帧 JSON
+      （raw_hex/summary/parse_error/analysis/trace_link），越权 `EvidenceRefForbidden` → 403、
+      格式错 → 422、>10 个 → 422。
+  - `apps/workbench/ai_v2_api.py`：证据端点加 `ref` query 参数，映射 `EvidenceRefForbidden` → 403。
+  - 测试：`test_ai_operations.py` 33 passed（+2 minute_periods）、`test_ai_v2_api.py` 19 passed
+    （+3 evidence 分层/L3 越权/minute freeze_time）；全量 v2 回归 83 passed in 7.58s。
+  - 提交 `1c22360`（Phase 1）；Phase 2 scoped 提交待做。

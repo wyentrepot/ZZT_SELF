@@ -24,12 +24,12 @@
 
 ## Phase 2 — minute_reports 适配和真正的 L1/L2/L3
 
-- [ ] Step 1：写失败测试，验证 L1 不含 `raw_hex`、L2 含截图同类字段、L3 仅对已返回 ref 回传完整 JSON
-- [ ] Step 2：运行失败测试（预期 FAIL）
-- [ ] Step 3：增加 `minute_periods` observation，复用 `list_task_minute_periods`，每个 report 的 `frame_id` 作为 L2 ref
+- [x] Step 1：写失败测试，验证 L1 不含 `raw_hex`、L2 含截图同类字段、L3 仅对已返回 ref 回传完整 JSON
+- [x] Step 2：运行失败测试（预期 FAIL）
+- [x] Step 3：增加 `minute_periods` observation，复用 `list_task_minute_periods`，每个 report 的 `frame_id` 作为 L2 ref
   - L2 同时提供 `log_time` 与 `freeze_time`，并明确 `freeze_time` 是分钟归属的权威字段
-- [ ] Step 4：把 v2 listener evidence 改为分层投影（L1 ≤3 KiB / L2 ≤16 KiB 且 ≤50 条 / L3 最多 10 个同 job ref）
-- [ ] Step 5：跑 v2 回归（`test_ai_v2_api` / `test_ai_operations` / `test_ai_api` / `test_ai_trace`）
+- [x] Step 4：把 v2 listener evidence 改为分层投影（L1 ≤3 KiB / L2 ≤16 KiB 且 ≤50 条 / L3 最多 10 个同 job ref）
+- [x] Step 5：跑 v2 回归（`test_ai_v2_api` / `test_ai_operations` / `test_ai_api` / `test_ai_trace`）
 
 ## Phase 3 — 文档、能力发现与性能门
 
