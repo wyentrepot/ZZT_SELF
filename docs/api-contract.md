@@ -214,6 +214,63 @@ v2 的请求和响应使用命名 Pydantic schema；写任务携带 `client_requ
 `pass`；观察支持 `pass/fail/inconclusive/error`。历史日志必须保留 `index_id`；
 实时 `not_seen` 且无可信到达时间只能返回 `inconclusive`（`live_window_unverified`）。
 
+### 6.0.1 侦听台分层证据与既有解析复用（REQS-0022）
+
+侦听台默认解析已能表达「帧类型、NID、源→目的、信道、长度、状态」，通信流关联由
+既有 `TraceService` 负责，分钟采集由既有 `minute_reports` 负责。AI v2 **只做适配与
+投影**，不新建第二套搜索服务、不新增 `business_kind`、不改 `frames` / `minute_reports`
+表结构。
+
+`POST /api/ai/v2/investigations` 的 listener observation 支持两种 `match.kind`：
+
+| kind | 内部实现 | 说明 |
+| --- | --- | --- |
+| `trace_query` | 既有 `TraceService.run_replay` | 并发抄表、单表、00A1、0020、0008 一律走这条 |
+| `minute_periods` | 既有 `list_task_minute_periods` | 分钟采集；**禁止通过 raw HEX 猜测** |
+
+```json
+{
+  "source": "listener",
+  "target": {"index_id": "idx-20260630-a"},
+  "window": {"mode": "time_range", "start": "00:00:00.000", "end": "00:05:00.000"},
+  "match": {
+    "kind": "trace_query",
+    "scope": "round",
+    "feature": {
+      "app_id": "0003", "msg_seq": "1EC2", "frm_type": "终端主动并发抄表",
+      "dst_tei": "087", "nid": "00947F69", "channel": "载波",
+      "app_raw_contains": "123456789012", "raw_hex_contains": "123456789012"
+    },
+    "directions": ["downlink", "uplink", "ack"]
+  },
+  "completion": {"match_count": 1}
+}
+```
+
+- `directions` 只做 L2 展示与计数筛选；同一通信流默认**保留必要 ACK 和对端帧**。
+- `raw_hex_contains` 对整帧 `raw_hex` 验证，`app_raw_contains` 对已解析应用载荷验证。
+- 全帧 HEX 条件（`raw_hex_contains`）**仅作为**既有 `app_id`、NID、时间窗或帧 ID 窗口
+  收窄后的末端验证；删除空白后必须为偶数个十六进制字符、长度 2–512；
+  **没有任何收窄条件时返回 422**。
+
+`GET /api/ai/v2/jobs/{job_id}/evidence` 三级的 listener 投影：
+
+| 级别 | 内容 | 上限 |
+| --- | --- | --- |
+| L1 | `index_id`、时间窗、过滤器、总帧数、按帧类型/方向计数、通信流组数、`correlation_status`、解析后端、可下钻 refs；**不含完整帧** | 3 KiB |
+| L2 | `index_id`、`frame_id`、`log_time`、`FrmType`、NID、`SRC`、`DST`、`ORI_S`、`ChType`、`APP_ID`、`msg_seq`、`flow_dir`、`meter_addrs`、HEX 命中片段、分钟采集 `freeze_time` / `response_result`、ref | 16 KiB 且 ≤50 条 |
+| L3 | 仅对同一 job 的 `ref=listener:<index_id>:<frame_id>` 调用既有 `get_index_frame`，返回 `raw_hex`、`summary`、`parse_error`、`analysis` 和 trace 链接 | 每次 ≤10 个 ref；无关 ref 403、格式错 422 |
+
+铁律：
+
+- `sequence` 是日志采集序号，**不能作为协议关联键**；多中转关联只用同一 `index_id`
+  内的 `app_id + msg_seq + NID + 时间簇`。无 `msg_seq` 的帧标记
+  `correlation_status=unavailable`。
+- 分钟采集的业务归属**以 `freeze_time` 为准**，L2 同时给出 `log_time` 与 `freeze_time`。
+- `parse_backend=none` 时保留索引和原始帧查询，缺解析字段返回 `parse_unavailable`，
+  **不得把未解析帧归入并发抄表或分钟采集**。
+- 全部三级必须保持同一历史 `index_id`；跨 index 禁止关联。
+
 兼容分层与自动核对：
 
 | 层 | 路径 | 用途 |

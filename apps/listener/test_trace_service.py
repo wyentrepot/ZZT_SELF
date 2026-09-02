@@ -4,7 +4,9 @@ fixture 索引库 + 假帧（FakeParser 提供 DLL 摘要），绝不打开真�
 绝不写入 runtime 数据（0007 红线）。用例覆盖 flow/round/campaign 三粒度、
 广播轮缺席/否认/正常三分类、重传反证、0x0020 显式确认、坏帧口径与特征校验。
 """
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -503,3 +505,82 @@ def test_feature_validation_errors():
         })
     with pytest.raises(FeatureError):
         tracer.run_replay({"scope": "round", "feature": {"app_id": "0003", "msg_seq": "ZZZZ"}})
+
+
+# ---------------------------------------------------------------------------
+# REQS-0022 Phase 0：默认解析资格确认
+#
+# 目的：确认侦听台默认解析后端（GwHPLCAnalysis.dll）已经暴露并发抄表所需的
+# 全部字段，使 REQS-0022 无需新建第二套搜索服务或再分类一遍业务数据。
+# 这里只做「资格」确认，不是最终业务验收（最终验收见 Phase 4）。
+# ---------------------------------------------------------------------------
+
+_DLL_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "libs" / "shared" / "dll" / "bin" / "Debug" / "GwHPLCAnalysis.dll"
+)
+
+# 一帧真实的终端主动并发抄表帧（源自 测试文件/并发抄表-样本.txt）。
+# 内联以免资格测试依赖被 .gitignore 忽略的样本文件（176 字节 / 352 hex 字符）。
+RAW_0003 = (
+    "7E FF 02 FF 2E 6B 68 5F 67 05 99 03 1E 70 CB ED 00 FF 03 94 00 01 00 01 "
+    "69 7F 94 01 70 08 03 DC 13 79 40 00 1E 98 F7 10 00 87 00 0A BC AF 30 6F "
+    "88 FF 00 00 33 00 00 11 03 00 00 01 02 33 06 C2 1E 28 0A FE FE FE FE 68 "
+    "5D 00 43 05 16 35 68 00 00 70 10 7A 86 10 00 39 05 03 27 50 02 02 00 01 "
+    "20 21 02 00 1C 07 EA 06 1D 0A 2D 00 07 00 00 20 02 01 00 00 30 02 01 00 "
+    "00 40 02 01 00 00 50 02 01 00 00 60 02 01 00 00 70 02 01 00 00 80 02 01 "
+    "00 01 10 F0 D5 56 98 83 8E 08 15 8F 01 3B 87 D4 9A 8C D7 22 80 16 AD 57 "
+    "E6 9C 00 B7 5B 0E 25 7E"
+)
+
+_Q_FIELDS = ("FrmType", "SNID", "SRC", "DST", "ORI_S", "APP_ID", "APP_RAW")
+
+
+@pytest.fixture(scope="module")
+def parser():
+    """侦听台默认解析后端（真实 GwHPLCAnalysis.dll）。
+
+    DLL 缺失时 skip，绝不降级为「通过」——资格确认失败必须可见。
+    """
+    if not _DLL_PATH.exists():
+        pytest.skip(f"缺解析库：{_DLL_PATH}")
+    from shared.dotnet_parser import DotNetHplcParser
+    from shared.parser_service import ParserService
+    return ParserService(DotNetHplcParser(_DLL_PATH))
+
+
+@pytest.fixture(scope="module")
+def raw_0003():
+    return RAW_0003
+
+
+def test_default_summary_exposes_parallel_meter_reading_fields(parser, raw_0003):
+    """一帧并发抄表摘要必须含 FrmType、NID、源/目的、APP_ID 和 APP_RAW。"""
+    simple = parser.parse_summary(raw_0003)["simple"]
+    assert simple["APP_ID"] == "0003"
+    assert simple["FrmType"] == "终端主动并发抄表"
+    assert simple["SNID"]
+    assert simple["SRC"] and simple["DST"]
+    assert simple["APP_RAW"]
+
+
+def test_temp_index_qualification_report(tmp_path, parser, raw_0003):
+    """为原始样本建立只读临时索引的资格报告（**不是**最终业务验收）。
+
+    只记录 parser backend、字段是否存在和样本 SHA-256；不声明业务验收通过。
+    """
+    service = LogFileService(parser=parser, database_path=tmp_path / "qual.sqlite3")
+    service.append_frames([("1", "00:00:00.000", raw_0003)])
+    summary = service.get_frame(1)["summary"]
+
+    report = {
+        "parser_backend": "dotnet",
+        "sha256": hashlib.sha256(raw_0003.replace(" ", "").encode("ascii")).hexdigest(),
+        "fields": {key: bool(summary.get(key)) for key in _Q_FIELDS},
+        "trace_ready": service.trace_ready(),
+    }
+    assert len(report["sha256"]) == 64
+    assert report["trace_ready"] is True
+    assert all(report["fields"].values()), report["fields"]
+    # 资格报告只资格、不判业务：不得出现 verdict / pass 之类的结论字段
+    assert not {"verdict", "pass", "accepted"} & set(report)
