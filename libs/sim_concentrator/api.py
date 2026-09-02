@@ -198,6 +198,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
                     port_identity=resolved["port_identity"],
                     resource_registry=app.state.serial_resource_registry,
                     journal=journal,
+                    auto_responder=Responder(),
                 )
                 io.open()
                 _holder["io"] = io

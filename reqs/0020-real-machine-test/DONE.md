@@ -152,3 +152,30 @@
 - 档案总数=120，本次只采到 23 个（第 1 页 25 个里 21 有效 + 上报补充）。
   后续如需 30 个，需确认 CCO 档案翻页/全量读取方式（第 2 页未响应）。
 - 10min 周期完整一轮采集需等 10 分钟，服务后台持续运行中，无需 AI 值守。
+
+## 2026-09-02 08:50+ — 集中器常驻自动确认（06H-F230 → 00H-F1）（第 5 轮）
+
+### 问题（用户指正）
+集中器任何时刻收到模块主动上报（如 06H-F230）都应默认回 00H-F1 确认，
+与测试步骤/期待无关。原实现把 responder 只挂在 step/verify 执行窗口内，
+两笔 step 之间的空闲期 CCO 上报得不到确认 → CCO 持续缓存/重发
+（此前 rptlist_length:1024 暴涨、大量 frame duplicate、mclt data rejected）。
+
+### 修复
+- `libs/sim_concentrator/serial_io.py`：`SerialIO` 新增可选 `auto_responder`；
+  读线程 `_run` 收到完整帧后先 `auto_responder.reply_for(frame)`，命中即
+  `send_frame` 回包（00H-F1 等），与 step/测试解耦，任何时刻生效。
+- `libs/sim_concentrator/api.py`：会话级 `_open_io` 创建 SerialIO 时注入
+  `auto_responder=Responder()`（内置规则含 06H-F230 → 00H-F1、
+  06H-F3 → 00H-F1 等）。
+- 修复受 config 变更影响的过时测试 `test_serial_io.py`（COM24 已被映射为
+  listener，改用 COM_FAKE 保证"未映射"语义）。
+
+### 验证
+- 本地单测：`Responder().reply_for(06H-F230)` → `68 0f 00 43 00 00 00 00
+  00 01 00 01 00 45 16`（00H-F1 本地确认帧）PASS；`14H-F2` 无规则不应答
+  （协议正确）。
+- 实机：simcon 会话打开即注入常驻 responder；CCO 任务3 为 10min 周期，
+  06H-F230 出现时读线程自动回 00H-F1（tx 增长）。待 06H-F230 实机帧确认。
+- 既有失败（与本次改动无关）：`test_api_cli.py` 两个 simcon 固定映射断言
+  因 config 里 simcon 有 COM4 映射而过时，属 config 变更连带。
