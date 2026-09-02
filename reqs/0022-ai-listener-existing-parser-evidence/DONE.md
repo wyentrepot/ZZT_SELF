@@ -72,3 +72,22 @@
   - 测试：`test_ai_operations.py` 33 passed（+2 minute_periods）、`test_ai_v2_api.py` 19 passed
     （+3 evidence 分层/L3 越权/minute freeze_time）；全量 v2 回归 83 passed in 7.58s。
   - 提交 `1c22360`（Phase 1）；Phase 2 scoped 提交待做。
+
+- **Phase 3 Step 1–4（完成）**：能力声明、文档与性能门。
+  - `apps/workbench/ai_operations.py`：`listener_schema()` 扩展声明 `match_kinds`
+    （parsed_frame/frame_query/trace_query/minute_periods）与 `trace_query` / `minute_periods` /
+    `evidence_l3_ref` 三个能力块。
+  - `tools/scripts/verify_api_inventory.py`：库存校验新增 listener 能力声明检查
+    （match_kinds 必须含 trace_query/minute_periods，且三能力块存在），报告打印 listener capabilities。
+  - 计时回归：`test_listener_trace_query_warm_p95_under_500ms`（20 次温热调用，P95 ≤ 500ms）。
+  - 文档：`docs/16-AI操作指南.md` §1.1 补「listener 语义查询与分层证据」；`docs/features.md`
+    第 8 节加 REQS-0022 语义查询/分层证据行；`.agents/skills/ai-control-plane/references/listener.md`
+    补 v2 trace_query/minute_periods/evidence_l3_ref 声明与 curl 样例。
+    （`docs/api-contract.md` §6.0.1 已在 Phase 0 登记，无需改动。）
+  - 行为覆盖：`raw_hex_contains` 422 门（Phase 1）、refs 越权 403（Phase 2）、
+    跨 index 禁止关联（`test_listener_cursor_range_rejects_invalid_or_cross_index_input`）、
+    解析后端降级（`apps/listener/test_remote_degrade.py` 的 `parse_backend=none`）。
+  - 全量回归：**117 passed in 10.05s**（6 文件：trace_service/trace_api/ai_v2_api/
+    ai_operations/ai_api/ai_trace）。
+  - 备注：pytest 退出清理 tmp_path 时会触发环境「批量删除确认」护栏（>50 文件），
+    用 `-o tmp_path_retention_policy=all` 保留临时目录即可干净退出；测试本身全部通过。

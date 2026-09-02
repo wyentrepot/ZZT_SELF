@@ -1767,8 +1767,24 @@ class AIControlService:
     def listener_schema() -> dict:
         return {
             "frame_kinds": {"central_beacon": ["FrmType", "帧类型"]},
+            "match_kinds": ["parsed_frame", "frame_query", "trace_query", "minute_periods"],
             "selectors": ["first", "last", "all", "first_per_minute", "nth"],
             "where": {"path": "analysis.full.<field>", "op": ["eq"]},
+            # REQS-0022：AI v2 复用的三类 listener 能力
+            "trace_query": {
+                "scope": ["flow", "round", "campaign"],
+                "directions": ["downlink", "uplink", "ack"],
+                "feature": ["app_id", "msg_seq", "frm_type", "dst_tei", "nid",
+                            "channel", "app_raw_contains", "raw_hex_contains"],
+            },
+            "minute_periods": {
+                "fields": ["task_no", "period_minutes", "cco_tei", "nid"],
+                "window": "time_range",
+            },
+            "evidence_l3_ref": {
+                "format": "listener:<index_id>:<frame_id>",
+                "max_refs": 10,
+            },
         }
 
     def _refresh_observation(self, operation_id: str) -> dict:

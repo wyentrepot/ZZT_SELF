@@ -930,3 +930,25 @@ def test_listener_minute_periods_requires_valid_input():
             actor="ai:grant-test",
         )
     assert log_service.calls == []
+
+
+# ---------------------------------------------------------------------------
+# REQS-0022 Phase 3：trace_query 适配层计时回归（温热 P95 ≤ 500ms）
+# ---------------------------------------------------------------------------
+
+def test_listener_trace_query_warm_p95_under_500ms():
+    import time
+
+    tracer = CapturingTraceService()
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=FakeListenerLogService(),
+        trace_service=tracer,
+    )
+    durations = []
+    for _ in range(20):
+        start = time.perf_counter()
+        service.create_observation(_trace_query_request(), actor="ai:grant-test")
+        durations.append((time.perf_counter() - start) * 1000.0)
+    p95 = sorted(durations)[int(len(durations) * 0.95) - 1]
+    assert p95 <= 500.0, f"trace_query 适配层 P95 {p95:.1f}ms 超过 500ms"

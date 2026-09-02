@@ -213,6 +213,27 @@ def verify(openapi: dict[str, Any]) -> dict[str, Any]:
         capabilities = []
         errors.append("unable to import v2 capability mapping")
 
+    # REQS-0022：listener 能力声明必须覆盖三个语义能力（`/api/ai/v1/listener/schema`）。
+    listener_capabilities: dict[str, Any] | None = None
+    try:
+        from workbench.ai_operations import AIControlService
+
+        schema = AIControlService.listener_schema()
+        listener_capabilities = {
+            "match_kinds": sorted(schema.get("match_kinds") or []),
+            "trace_query": schema.get("trace_query") is not None,
+            "minute_periods": schema.get("minute_periods") is not None,
+            "evidence_l3_ref": schema.get("evidence_l3_ref") is not None,
+        }
+        for kind in ("trace_query", "minute_periods"):
+            if kind not in (schema.get("match_kinds") or []):
+                errors.append(f"listener schema missing match_kind: {kind}")
+        for ability in ("trace_query", "minute_periods", "evidence_l3_ref"):
+            if schema.get(ability) is None:
+                errors.append(f"listener schema missing capability: {ability}")
+    except ImportError:
+        errors.append("unable to import listener schema")
+
     return {
         "ok": not errors,
         "errors": errors,
@@ -224,6 +245,7 @@ def verify(openapi: dict[str, Any]) -> dict[str, Any]:
         "missing_named_schemas": missing_schemas,
         "v2_routes": v2_records,
         "ai_capabilities": capabilities,
+        "listener_capabilities": listener_capabilities,
         "compatibility_tiers": tier_counts,
         "routes": all_routes,
     }
@@ -239,6 +261,13 @@ def _print_report(result: dict[str, Any]) -> None:
         scopes = ", ".join(item["scopes"]) or "-"
         sources = ", ".join(item["sources"]) or "-"
         print(f"  {item['name']}: scopes=[{scopes}] sources=[{sources}]")
+    listener_capabilities = result.get("listener_capabilities")
+    if listener_capabilities:
+        kinds = ", ".join(listener_capabilities["match_kinds"]) or "-"
+        print(f"\nlistener capabilities: match_kinds=[{kinds}] "
+              f"trace_query={listener_capabilities['trace_query']} "
+              f"minute_periods={listener_capabilities['minute_periods']} "
+              f"evidence_l3_ref={listener_capabilities['evidence_l3_ref']}")
     print("\nCompatibility tiers:")
     for tier, count in sorted(result["compatibility_tiers"].items()):
         print(f"  {tier}: {count}")

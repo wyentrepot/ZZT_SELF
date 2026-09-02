@@ -86,6 +86,7 @@
 | 观察任务 | `POST observations`(202) | 5 种 matcher（literal/regex/loghook_rule/sequence/not_seen）× 3 种窗口（live/time_range/cursor_range）；先建观察再制造事件 |
 | 操作与证据 | `operations/{id}[/wait·/cancel]`、`artifacts/{id}[/content]` | wait 轮询到终态，artifact 即取证 |
 | 侦听台控制/查询 | `listener/ensure·stop`、`listener/schema`、`listener/indexes…`、`listener/traces…` | 通信流追踪 202 → operation → result.report |
+| 侦听台语义查询与分层证据（REQS-0022） | v2 `investigations` 的 `match.kind=trace_query`（复用 TraceService）/ `minute_periods`（复用 list_task_minute_periods）；`jobs/{id}/evidence?level=L1\|L2\|L3` | L1 摘要 ≤3KiB 无 raw_hex；L2 解析投影 ≤16KiB/50 条；L3 同 job `ref=listener:<index_id>:<frame_id>` 回传完整帧（越权 403/格式错 422） |
 | 模拟集中器 | `simcon/verify·step·frames·session·open·close` | resource 固定 simcon，帧列表 `entries` 键 |
 | 使用文档 | `.agents/skills/ai-control-plane/SKILL.md`（v2.0.0：路由器 + references 按需加载）+ `docs/16-AI操作指南.md` | 错误码语义 401/403/404/409/422/503 见技能主文件 |
 

@@ -33,10 +33,10 @@
 
 ## Phase 3 — 文档、能力发现与性能门
 
-- [ ] Step 1：在 capabilities 声明 `listener.trace_query`、`listener.minute_periods`、`listener.evidence_l3_ref`，写入 API 合同与 AI 操作指南
-- [ ] Step 2：写 API 库存测试，覆盖 `raw_hex_contains` 422 门、解析后端降级、跨 index 禁止关联、refs 越权
-- [ ] Step 3：对 `trace_query` 加计时回归（温热 `app_id + NID + 时间窗` P95 ≤ 500 ms）
-- [ ] Step 4：提交 scoped changes（allowlist 之外的既有脏文件不暂存）
+- [x] Step 1：在 capabilities 声明 `listener.trace_query`、`listener.minute_periods`、`listener.evidence_l3_ref`，写入 API 合同与 AI 操作指南
+- [x] Step 2：写 API 库存测试，覆盖 `raw_hex_contains` 422 门、解析后端降级、跨 index 禁止关联、refs 越权
+- [x] Step 3：对 `trace_query` 加计时回归（温热 `app_id + NID + 时间窗` P95 ≤ 500 ms）
+- [x] Step 4：提交 scoped changes（allowlist 之外的既有脏文件不暂存）
 
 ## Phase 4 — 用户确认后的最终样本验收
 
