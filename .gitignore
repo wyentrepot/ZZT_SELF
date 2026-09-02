@@ -371,6 +371,11 @@ data/logs/
 # workbench RunStore 运行时归档（runs.sqlite + 报告 JSON），不入库
 data/runs.sqlite
 data/reports/
+# 侦听台运行时帧索引库（data/listener_*.sqlite*），不入库
+# （REQS-0022：临时 SQLite 与 runtime 索引一律不进入 Git）
+data/listener_*.sqlite
+data/listener_*.sqlite-shm
+data/listener_*.sqlite-wal
 packages/
 __pycache__/
 *.pyc
