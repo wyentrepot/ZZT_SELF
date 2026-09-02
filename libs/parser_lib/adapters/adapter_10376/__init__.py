@@ -1082,12 +1082,16 @@ def _encode_11f231(params: dict) -> bytes:
           预计回复总长度(2B BIN 小端) 数据项标识(4B each) 回复长度(1B each)
     删除时数据项数量填 0，无后续字段；三组固定值始终写出。
     """
-    task_no = _u8(params.get("task_no", 0), "task_no", 1, 15)
     action_raw = params.get("action", "enable")
     action = {"enable": 1, "delete": 0, 1: 1, 0: 0}.get(
         action_raw if not isinstance(action_raw, int) else action_raw)
     if action is None:
         raise ValueError(f"action 非法: {action_raw!r}（应为 enable/delete 或 0/1）")
+    # 安徽方案：0xFF=全部任务，仅删除时允许（《安徽集中器交互报文》§10）
+    if action == 0 and int(params.get("task_no", 0)) == 0xFF:
+        task_no = 0xFF
+    else:
+        task_no = _u8(params.get("task_no", 0), "task_no", 1, 15)
     protocol = _u8(params.get("protocol", 2), "protocol", 2, 3)
     cycle = _u8(params.get("cycle_min", 0), "cycle_min", 0, 0xFF)
 

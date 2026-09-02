@@ -184,6 +184,22 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         with _holder["lock"]:
             return _holder["io"]
 
+    def _auto_ack_responder() -> Responder:
+        """常驻自动应答器：只对「模块主动上报」回确认（06H-F230 采集上报、
+        06H-F3 工况变动、03H-F10 运行模式 → 00H-F1），并压制查询类帧。
+
+        不开内置查询 echo 规则（10H/03H echo 会与 CCO 形成应答回环）；
+        查询/配置类帧的显式应答仍由 step 内的完整 responder 处理。
+        """
+        return Responder(override_rules=[
+            {"id": "autoack.06f230", "match": {"afn": 0x06, "fn": 230},
+             "reply": {"afn": 0x00, "fn": 1, "format": "local"}},
+            {"id": "autoack.06f3", "match": {"afn": 0x06, "fn": 3},
+             "reply": {"afn": 0x00, "fn": 1, "format": "local"}},
+            {"id": "autoack.03f10", "match": {"afn": 0x03, "fn": 10},
+             "reply": {"afn": 0x00, "fn": 1, "format": "local"}},
+        ], builtin=False)
+
     def _open_io(resolved: dict[str, Any]) -> SerialIO:
         with _holder["lock"]:
             io = _holder["io"]
@@ -198,6 +214,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
                     port_identity=resolved["port_identity"],
                     resource_registry=app.state.serial_resource_registry,
                     journal=journal,
+                    auto_responder=_auto_ack_responder(),
                 )
                 io.open()
                 _holder["io"] = io

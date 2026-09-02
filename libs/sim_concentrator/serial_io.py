@@ -194,7 +194,14 @@ class SerialIO:
                  bytesize: int = 8, parity: str = "N", stopbits: int = 1,
                  port_identity: dict[str, Any] | None = None,
                  resource_registry: SerialResourceRegistry | None = None,
-                 journal=None):
+                 journal=None,
+                 auto_responder=None):
+        """auto_responder：可选常驻应答器（Responder 实例）。
+
+        协议约定：集中器任何时刻收到模块主动上报帧都应回确认（如 06H-F230 →
+        00H-F1），与测试步骤/期待无关。该应答挂在读线程，收到完整帧即判定，
+        不依赖 step/verify 执行窗口。
+        """
         if not _SERIAL_AVAILABLE:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
         self.port = port
@@ -218,6 +225,7 @@ class SerialIO:
         # 历史帧记录：读线程收到的所有完整帧（供 expect_history / 主动上报验证）
         self._rx_history: list = []
         self._open = False
+        self._auto_responder = auto_responder
 
     # -- 生命周期 -------------------------------------------------------
     # 字符参数 → pyserial 常量映射
@@ -326,6 +334,16 @@ class SerialIO:
                         del self._rx_history[: len(self._rx_history) - 1000]
                 if frame is None:
                     break
+                # 常驻自动应答：任何时刻收到完整帧，若命中规则（如 06H-F230 →
+                # 00H-F1 确认）立即回包，与测试步骤/期待无关（协议默认行为）。
+                if self._auto_responder is not None:
+                    try:
+                        reply = self._auto_responder.reply_for(frame)
+                        if reply:
+                            self.send_frame(reply)
+                    except Exception:
+                        # 自动应答失败不影响读线程主链路
+                        pass
                 self._rx_queue.put(frame)
                 buf = buf[consumed:]
         # 退出前排空剩余（可选）

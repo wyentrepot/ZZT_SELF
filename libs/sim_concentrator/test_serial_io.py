@@ -153,11 +153,12 @@ def test_resolve_auto_select_raises_when_only_claimed_ports(monkeypatch):
 
 
 def test_resolve_serial_config_preserves_explicit_unmapped_port_override():
-    resolved = resolve_serial_config(port="COM24")
+    # 用不存在的端口名保证"未映射"语义（COM24 现已被 config 映射为 listener）
+    resolved = resolve_serial_config(port="COM_FAKE")
 
     assert resolved["mapping_id"] == ""
-    assert resolved["port"] == "COM24"
-    assert resolved["port_identity"]["device"] == "COM24"
+    assert resolved["port"] == "COM_FAKE"
+    assert resolved["port_identity"]["device"] == "COM_FAKE"
     assert resolved["baudrate"] == 115200
     assert resolved["parity"] == "N"
 

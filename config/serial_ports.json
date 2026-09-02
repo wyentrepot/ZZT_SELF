@@ -4,6 +4,7 @@
     {
       "id": "simcon",
       "windows_com": "COM4",
+      "linux_device": "/dev/ttyUSB0",
       "label": "模拟集中器",
       "usage": "simcon",
       "module": "",
@@ -16,11 +17,12 @@
     {
       "id": "listener",
       "windows_com": "COM24",
+      "linux_device": "/dev/ttyUSB1",
       "label": "侦听台",
       "usage": "listener",
       "module": "",
-      "baudrate": 9600,
-      "parity": "E",
+      "baudrate": 115200,
+      "parity": "N",
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true
@@ -28,9 +30,23 @@
     {
       "id": "cco-main",
       "windows_com": "COM9",
+      "linux_device": "/dev/ttyACM1",
       "label": "CCO 模块",
       "usage": "module_log",
       "module": "cco",
+      "baudrate": 115200,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true
+    },
+    {
+      "id": "sta-main",
+      "windows_com": "COM8",
+      "linux_device": "/dev/ttyACM0",
+      "label": "STA 模块",
+      "usage": "module_log",
+      "module": "sta",
       "baudrate": 115200,
       "parity": "N",
       "bytesize": 8,
