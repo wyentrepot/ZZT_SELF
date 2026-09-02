@@ -851,18 +851,23 @@ class _MinutePeriodsLogService(FakeListenerLogService):
             "task_no": task_no, "period_minutes": period_minutes,
             "cco_tei": cco_tei, "nid": nid, "start_time": start_time, "end_time": end_time,
         })
-        return [{
-            "period_start": 0, "period_end": 900000, "report_count": 1,
-            "description": "10:15:00 - 10:30:00",
-            "reports": [{
-                "frame_id": 7, "log_time": "10:15:01.000",
-                "freeze_time": "10:14:00", "response_result": 0,
-                "source_mac": "mac-1", "source_tei": "001",
-                "report_count": 1, "data_length": 120,
-                "application_error": None, "application_raw": "AB12",
-                "data_status": "ok",
+        # 真实 list_task_minute_periods 返回信封 dict（task_no/source/periods）
+        return {
+            "task_no": str(task_no), "source": "manual", "derived_period_minutes": None,
+            "periods": [{
+                "period_start": 0, "period_end": 900000, "report_count": 1,
+                "description": "10:15:00 - 10:30:00",
+                "reports": [{
+                    "frame_id": 7, "log_time": "10:15:01.000",
+                    "freeze_time": "10:14:00", "response_result": 0,
+                    "source_mac": "mac-1", "source_tei": "001",
+                    "report_count": 1, "data_length": 120,
+                    "application_error": None, "application_raw": "AB12",
+                    "data_status": "ok",
+                }],
             }],
-        }]
+            "unconfigured_report_count": 0, "unconfigured_reports": [],
+        }
 
 
 def _minute_periods_request(**overrides):

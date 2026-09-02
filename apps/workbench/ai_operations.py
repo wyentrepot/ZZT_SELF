@@ -1523,11 +1523,19 @@ class AIControlService:
             )
             return self.store.set_state(operation_id, "error", error=str(exc))
 
-    def _minute_periods_result(self, payload: dict, periods: list, operation_id: str = "") -> dict:
-        """把 list_task_minute_periods 的周期汇总投影成 observation 结果（frame_id → ref）。"""
+    def _minute_periods_result(self, payload: dict, periods: list | dict, operation_id: str = "") -> dict:
+        """把 list_task_minute_periods 的周期汇总投影成 observation 结果（frame_id → ref）。
+
+        兼容两种返回：既有 `list_task_minute_periods` 返回 `{"periods": [...]}` 信封，
+        测试桩/旧实现可能直接返回 `[...]` 列表。
+        """
         index_id = payload["index_id"]
+        if isinstance(periods, dict):
+            period_list = periods.get("periods") or []
+        else:
+            period_list = periods or []
         projected_periods = []
-        for period in periods or []:
+        for period in period_list:
             reports = []
             for report in period.get("reports") or []:
                 frame_id = int(report.get("frame_id"))

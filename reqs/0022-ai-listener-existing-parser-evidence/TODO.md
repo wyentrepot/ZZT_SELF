@@ -42,10 +42,10 @@
 
 > ⛔ 需**单独**的「开始 Phase 4」确认后才执行。
 
-- [ ] Step 1：在 `D:\2-侦听台改造\.tmp\reqs-0022-listener-sample` 为每个源文件建立独立临时索引，记录源 SHA-256 与 parser backend
-- [ ] Step 2：对实际存在的并发抄表调用 `trace_query`，验证 `APP_ID=0003`、NID、源/目的、上下行、指定 `APP_RAW`/全帧 HEX 命中和时间窗
-- [ ] Step 3：对模块快日志中实际存在的分钟采集调用 `minute_periods`，验证 L2 中 `freeze_time`、`response_result`、方向和 ref
-- [ ] Step 4：输出验收报告并执行全回归
+- [x] Step 1：在 `D:\2-侦听台改造\.tmp\reqs-0022-listener-sample` 为每个源文件建立独立临时索引，记录源 SHA-256 与 parser backend
+- [x] Step 2：对实际存在的并发抄表调用 `trace_query`，验证 `APP_ID=0003`、NID、源/目的、上下行、指定 `APP_RAW`/全帧 HEX 命中和时间窗
+- [x] Step 3：对模块快日志中实际存在的分钟采集调用 `minute_periods`，验证 L2 中 `freeze_time`、`response_result`、方向和 ref
+- [x] Step 4：输出验收报告并执行全回归
 
 ## 待确认 / 风险登记
 
