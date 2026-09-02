@@ -58,6 +58,24 @@ def _is_local_frame(raw: bytes) -> bool:
     return raw[3] != 0x68
 
 
+def _now_bcd_time(dt=None) -> bytes:
+    """当前时间 → 6 字节 BCD：秒 分 时 日 月 年（Q/GDW 10376.2 时间格式）。
+
+    供 14H-F2（路由请求集中器时钟）下行应答使用。
+    """
+    from datetime import datetime
+    now = dt or datetime.now()
+    year = now.year % 100
+    return bytes([
+        ((now.second // 10) << 4) | (now.second % 10),
+        ((now.minute // 10) << 4) | (now.minute % 10),
+        ((now.hour // 10) << 4) | (now.hour % 10),
+        ((now.day // 10) << 4) | (now.day % 10),
+        ((now.month // 10) << 4) | (now.month % 10),
+        ((year // 10) << 4) | (year % 10),
+    ])
+
+
 class ReplyRule:
     def __init__(self, rule: dict):
         self.id = rule.get("id", "reply.custom")
@@ -193,6 +211,9 @@ class Responder:
             elif ub == "copy_rtsa":
                 userdata = bytes.fromhex(
                     decoded.get("raw_hex", ""))[4:-2] if decoded.get("raw_hex") else b""
+            elif ub == "clock":
+                # 集中器当前时间：6B BCD 秒分时日月年（14H-F2 时钟应答）
+                userdata = _now_bcd_time()
             else:
                 userdata = r.get("userdata", b"")
         else:
@@ -267,5 +288,11 @@ _BUILTIN_RULES: List[dict] = [
         "match": {"afn": 0x02},
         "reply": {"afn": 0x02, "userdata_builder": "echo",
                   "desc": "数据转发类(02H) → 回 02H 并回显（示意）"},
+    },
+    {
+        "id": "builtin.14F2_clock",
+        "match": {"afn": 0x14, "fn": 2},
+        "reply": {"afn": 0x14, "fn": 2, "userdata_builder": "clock",
+                  "desc": "路由请求集中器时钟(14H-F2) → 回 14H-F2 集中器当前时间（6B BCD）"},
     },
 ]

@@ -34,6 +34,44 @@ class TestResponder:
         r = Responder()
         assert r.reply_for(_up_frame(afn=0xF1)) is None
 
+    def test_builtin_14F2_clock_reply(self):
+        # 14H-F2 路由请求集中器时钟：上行无数据单元 → 应答 14H-F2 + 6B BCD 时间
+        r = Responder()
+        reply = r.reply_for(_up_frame(afn=0x14, fn=2, seq=0x06))
+        assert reply is not None
+        d = decode_frame(reply)
+        assert d["fields"]["AFN"]["raw"] == 0x14
+        assert d["fields"]["FN"]["raw"] == 2
+        # 应用数据 = 6 字节 BCD 时间（秒分时日月年）
+        # raw_hex 为小写 hex；R(6B) + AFN + DT1 + DT2 后为时间数据
+        import re
+        hexstr = d["raw_hex"].replace(" ", "")
+        m = re.search(r"68[0-9a-f]{6}14(?:[0-9a-f]{2}){2}([0-9a-f]{12})16$", hexstr)
+        assert m, f"未找到时间数据: {hexstr}"
+        time_hex = m.group(1)
+        assert len(time_hex) == 12
+        assert int(time_hex[0:2], 16) <= 0x59  # 秒
+        assert int(time_hex[2:4], 16) <= 0x59  # 分
+        assert int(time_hex[4:6], 16) <= 0x23  # 时
+        # seq 沿用上行
+        info_field = d["fields"]["信息域R"]["raw"]
+        assert info_field.endswith("06")
+
+    def test_builtin_14F2_single_reply_not_confirm(self):
+        """14H-F2 主动应答：收到一帧上行只回 1 帧（14F2 应答帧），
+        不会额外回 00H 确认帧，也不会是确认帧+应答帧两帧。"""
+        r = Responder()
+        up = _up_frame(afn=0x14, fn=2, seq=0x08)
+        reply = r.reply_for(up)
+        assert reply is not None
+        # reply_for 对一帧上行只返回一帧（唯一应答），不会返回多帧列表
+        assert isinstance(reply, bytes)
+        d = decode_frame(reply)
+        # 应答必须是 14H-F2 本身（非 00H 确认帧）
+        assert d["fields"]["AFN"]["raw"] == 0x14
+        assert d["fields"]["FN"]["raw"] == 2
+        assert d["fields"]["AFN"]["raw"] != 0x00
+
     def test_override_rule_priority(self):
         # 覆盖规则：AFN=0x03 改为回确认
         override = [{
