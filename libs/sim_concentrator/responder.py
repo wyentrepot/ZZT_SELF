@@ -95,9 +95,11 @@ class ReplyRule:
 class Responder:
     """应答引擎：内置规则表 + 用例覆盖规则。"""
 
-    def __init__(self, override_rules: Optional[List[dict]] = None):
+    def __init__(self, override_rules: Optional[List[dict]] = None, builtin: bool = True):
+        """builtin=False：仅用 override 规则（用于常驻自动应答等需要精确控制
+        应答面的场景，排除内置查询 echo 规则以免对查询/主动查询帧引发应答回环）。"""
         self._overrides = [ReplyRule(r) for r in (override_rules or [])]
-        self._builtin = [ReplyRule(r) for r in _BUILTIN_RULES]
+        self._builtin = [ReplyRule(r) for r in _BUILTIN_RULES] if builtin else []
 
     def list_rules(self) -> List[dict]:
         """返回当前生效规则（覆盖 + 内置），供 API 展示。"""

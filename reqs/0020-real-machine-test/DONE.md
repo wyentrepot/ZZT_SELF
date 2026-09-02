@@ -188,3 +188,16 @@
   读线程应自动回 00H-F1（tx 增长），后台观察 job 记录中。
 - 修复生效判据：simcon 会话 tx 在**无任何 step** 时因 06H-F230 自动增长，
   且增长的 tx 帧为 00H-F1（AFN=00 FN=F1）。
+
+### 实机验证关键修正：内置 10H echo 规则引发应答回环（08:55 发现）
+- 常驻 auto_responder 最初用完整内置规则（Responder()），其中
+  `builtin.10xx_route`（10H → 10H echo）导致 CCO 上报 10H-F1 后 simcon
+  回 10H-F1 → CCO 再回……形成应答风暴（tx/rx 各 ~680 帧）。
+- **修复**：`Responder` 增加 `builtin=False` 模式；常驻 auto-ack 只用
+  「主动上报确认」规则集（06H-F230/06H-F3/03H-F10 → 00H-F1），
+  排除查询 echo 规则。查询/配置类帧的显式应答仍由 step 内完整 responder 处理。
+- 验证：`06H-F230→00H-F1` PASS；`10H-F1/10H-F230→None`（无回环）PASS。
+- 实机复验：重新打开 simcon 后，`10H-F230` 查询交互干净（tx=1 仅查询，
+  无 10H-F1 回环），CCO 应答任务3 在位。回环已消除。
+- 待验证：CCO 任务3（10min 周期）下次采集上报 06H-F230 时，simcon 自动
+  回 00H-F1（tx 增长且帧为 AFN=00/FN=F1）。
