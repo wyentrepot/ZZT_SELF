@@ -1,6 +1,6 @@
 # REQS-0022 — AI 侦听台已有解析复用与分层证据
 
-> 状态：🚧 Phase 0 进行中（基线登记 + 默认解析资格确认）
+> 状态：🚧 Phase 0–3 完成（Phase 4 真实样本验收待人工确认）
 >
 > 创建：2026-09-02
 >
@@ -120,10 +120,10 @@ v2 的 L1/L2 对 listener 没有语义分层，L3 只返回引用、不带完整
 
 | 阶段 | 交付 | 状态 | 退出条件 |
 | --- | --- | --- | --- |
-| Phase 0 | REQS-0022 基线 + 默认解析资格确认 | 🚧 进行中 | 三件套、`REQS-INDEX.md`、`docs/api-contract.md` 与资格测试通过 |
-| Phase 1 | 复用 `TraceService` 的 AI `trace_query` 适配 | ⏸ 待启动 | `raw_hex_contains` / 方向投影 / `run_replay` 接线；既有 v1 行为不变 |
-| Phase 2 | `minute_reports` 适配与真正的 L1/L2/L3 | ⏸ 待启动 | 三层投影、越权 403、格式错 422、旧 v2 investigation 不破坏 |
-| Phase 3 | 能力发现、文档与性能门 | ⏸ 待启动 | capabilities 声明、API 库存校验、P95 计时回归通过 |
+| Phase 0 | REQS-0022 基线 + 默认解析资格确认 | ✅ 完成 | 三件套、`REQS-INDEX.md`、`docs/api-contract.md` 与资格测试通过 |
+| Phase 1 | 复用 `TraceService` 的 AI `trace_query` 适配 | ✅ 完成 | `raw_hex_contains` / 方向投影 / `run_replay` 接线；既有 v1 行为不变 |
+| Phase 2 | `minute_reports` 适配与真正的 L1/L2/L3 | ✅ 完成 | 三层投影、越权 403、格式错 422、旧 v2 investigation 不破坏 |
+| Phase 3 | 能力发现、文档与性能门 | ✅ 完成 | capabilities 声明、API 库存校验、P95 计时回归通过 |
 | Phase 4 | 真实样本最终验收 | ⏸ 待人工确认 | 原始报文与模块快日志只读验收报告；缺项为 `coverage_missing` |
 
 **每个阶段完成后必须停下报告**（做了什么、未做什么、边界、验证证据），等待用户显式
