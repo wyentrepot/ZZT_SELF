@@ -1,10 +1,16 @@
 """AI control authorization and operation service tests."""
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from workbench.ai_auth import AuthorizationStore
-from workbench.ai_operations import AIControlService, InvalidObservation
+from workbench.ai_operations import (
+    AIControlService,
+    InvalidObservation,
+    SourceUnavailable,
+)
 
 
 class FakeModuleService:
@@ -623,3 +629,208 @@ def test_force_stop_listener_marks_active_listener_observations_source_stopped()
 
     assert stopped["listener"]["state"] == "idle"
     assert service.get_operation(operation["operation_id"])["state"] == "source_stopped"
+
+
+# ---------------------------------------------------------------------------
+# REQS-0022 Phase 1：trace_query 复用既有 TraceService
+# ---------------------------------------------------------------------------
+
+def _trace_report_fixture():
+    """最小回放报告 fixture：一条 confirmed 流（下行 + 上行两帧投影）。"""
+    return {
+        "trace_id": "tr-fixture", "mode": "replay", "scope": "round", "feature": {},
+        "summary": {"rounds": 1, "meters": 1, "full_chain": 1, "no_ack": 0,
+                    "no_response": 0, "denied": 0, "no_confirm": 0, "flows": 1,
+                    "bad_frames": 0},
+        "rounds": [{
+            "round_id": "rd-0000", "cluster_index": 0,
+            "start_t": "10:00:00.000", "end_t": "10:00:01.000",
+            "msg_seqs": ["0x1EC2"],
+            "flows": [{
+                "flow_key": "0003:1EC2", "app_id": "0003", "msg_seq": "0x1EC2",
+                "via_tei": "087", "stage": "confirmed",
+                "frames": [
+                    {"frame_id": 1, "log_time": "10:00:00.000", "direction": "downlink",
+                     "role": "sent", "frm_type": "终端主动并发抄表", "nid": "00947F69",
+                     "src": "001", "dst": "087", "ori_s": "001", "ch_type": None,
+                     "app_id": "0003", "msg_seq": "0x1EC2", "flow_dir": 0,
+                     "meter_addrs": ["000000000001"]},
+                    {"frame_id": 2, "log_time": "10:00:01.000", "direction": "uplink",
+                     "role": "response", "frm_type": "终端主动并发抄表", "nid": "00947F69",
+                     "src": "087", "dst": "001", "ori_s": "087", "ch_type": None,
+                     "app_id": "0003", "msg_seq": "0x1EC2", "flow_dir": 1,
+                     "meter_addrs": [{"addr": "000000000001", "denied": False}]},
+                ],
+            }],
+            "meter_table": [], "meters": {"targets": 1, "responded": 1, "denied": 0, "missing": 0},
+            "bad_frames": 0,
+        }],
+        "proxy_graph": [], "artifact_id": None,
+    }
+
+
+class CapturingTraceService:
+    """捕获 run_replay 入参的假追踪服务（只测 AI 适配层，不碰真实索引）。"""
+
+    def __init__(self, report=None):
+        self.calls = []
+        self.report = report if report is not None else _trace_report_fixture()
+
+    def run_replay(self, feature, index_id=None, mode="replay", directions=None):
+        self.calls.append({
+            "feature": copy.deepcopy(feature),
+            "index_id": index_id,
+            "mode": mode,
+            "directions": list(directions) if directions else None,
+        })
+        return copy.deepcopy(self.report)
+
+
+def _trace_query_request(**overrides):
+    request = {
+        "source": "listener",
+        "target": {"index_id": "idx-listener-test"},
+        "window": {"mode": "time_range", "start": "10:00:00.000", "end": "10:05:00.000"},
+        "match": {
+            "kind": "trace_query", "scope": "round",
+            "feature": {
+                "app_id": "0003", "msg_seq": "1EC2", "frm_type": "终端主动并发抄表",
+                "dst_tei": "087", "nid": "00947F69", "channel": "载波",
+                "app_raw_contains": "123456789012",
+            },
+            "directions": ["downlink", "uplink", "ack"],
+        },
+        "completion": {"match_count": 1},
+    }
+    request.update(overrides)
+    return request
+
+
+def test_listener_trace_query_passes_feature_verbatim_and_returns_refs():
+    tracer = CapturingTraceService()
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=FakeListenerLogService(),
+        trace_service=tracer,
+    )
+
+    operation = service.create_observation(_trace_query_request(), actor="ai:grant-test")
+
+    assert operation["state"] == "matched"
+    assert len(tracer.calls) == 1
+    call = tracer.calls[0]
+    assert call["feature"]["scope"] == "round"
+    # feature 字段原样透传给 TraceService
+    assert call["feature"]["feature"]["app_id"] == "0003"
+    assert call["feature"]["feature"]["msg_seq"] == "1EC2"
+    assert call["feature"]["feature"]["dst_tei"] == "087"
+    assert call["feature"]["feature"]["nid"] == "00947F69"
+    assert call["feature"]["feature"]["channel"] == "载波"
+    assert call["feature"]["feature"]["app_raw_contains"] == "123456789012"
+    # 观察窗口映射为 trace 特征窗口
+    assert call["feature"]["window"]["mode"] == "time_range"
+    assert call["feature"]["window"]["start_time"] == "10:00:00.000"
+    assert call["feature"]["window"]["end_time"] == "10:05:00.000"
+    assert call["index_id"] == "idx-listener-test"
+    assert call["directions"] == ["downlink", "uplink", "ack"]
+    # 报告中每个 frame_id 转成稳定 index_id + frame_id 引用
+    result = operation["result"]
+    assert [m["frame_key"] for m in result["matches"]] == [
+        {"index_id": "idx-listener-test", "frame_id": 1},
+        {"index_id": "idx-listener-test", "frame_id": 2},
+    ]
+    assert result["condition_met"] is True
+    assert result["trace"]["summary"]["flows"] == 1
+    assert result["artifact_id"].startswith("art-")
+
+
+def test_listener_trace_query_raw_hex_contains_requires_narrowing():
+    tracer = CapturingTraceService()
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=FakeListenerLogService(),
+        trace_service=tracer,
+    )
+
+    # 无 app_id、无 NID、无时间窗/帧 ID 窗口 → 422（收窄门）
+    with pytest.raises(InvalidObservation, match="收窄"):
+        service.create_observation({
+            "source": "listener",
+            "match": {"kind": "trace_query", "feature": {"raw_hex_contains": "1234"}},
+        }, actor="ai:grant-test")
+    assert tracer.calls == []
+
+    # 有 app_id 即视为已收窄，允许通过
+    allowed = service.create_observation({
+        "source": "listener",
+        "match": {"kind": "trace_query", "feature": {"app_id": "0003",
+                                                     "raw_hex_contains": "1234"}},
+    }, actor="ai:grant-test")
+    assert allowed["state"] in ("matched", "succeeded")
+    assert tracer.calls[-1]["feature"]["feature"]["raw_hex_contains"] == "1234"
+
+
+def test_listener_trace_query_requires_trace_service_and_valid_input():
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=FakeListenerLogService(),
+    )
+    # 无追踪服务 → 503
+    with pytest.raises(SourceUnavailable):
+        service.create_observation(_trace_query_request(), actor="ai:grant-test")
+
+    tracer = CapturingTraceService()
+    with_trace = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=FakeListenerLogService(),
+        trace_service=tracer,
+    )
+    # 非法 scope / 非法方向 / 非法 feature 字段 → 422
+    with pytest.raises(InvalidObservation, match="scope"):
+        with_trace.create_observation(
+            _trace_query_request(match={"kind": "trace_query", "scope": "batch",
+                                        "feature": {"app_id": "0003"}}),
+            actor="ai:grant-test",
+        )
+    with pytest.raises(InvalidObservation, match="directions"):
+        with_trace.create_observation(
+            _trace_query_request(match={"kind": "trace_query",
+                                        "feature": {"app_id": "0003"},
+                                        "directions": ["sideways"]}),
+            actor="ai:grant-test",
+        )
+    with pytest.raises(InvalidObservation, match="不支持字段"):
+        with_trace.create_observation(
+            _trace_query_request(match={"kind": "trace_query",
+                                        "feature": {"app_id": "0003", "business_kind": "x"}}),
+            actor="ai:grant-test",
+        )
+    # live 窗口不支持
+    with pytest.raises(InvalidObservation, match="time_range 或 cursor_range"):
+        with_trace.create_observation(
+            _trace_query_request(window={"mode": "live", "start": "now"}),
+            actor="ai:grant-test",
+        )
+    # 缺 app_id 交给 TraceService 特征校验（FeatureError → 422）
+    with pytest.raises(InvalidObservation, match="app_id"):
+        with_trace.create_observation(
+            _trace_query_request(match={"kind": "trace_query", "feature": {}}),
+            actor="ai:grant-test",
+        )
+
+
+def test_listener_trace_query_is_idempotent_by_client_request_id():
+    tracer = CapturingTraceService()
+    service = AIControlService(
+        listener_service=FakeListenerService(),
+        log_service=FakeListenerLogService(),
+        trace_service=tracer,
+    )
+    request = _trace_query_request()
+    request["client_request_id"] = "trace-query-1"
+
+    first = service.create_observation(request, actor="ai:grant-test", client_request_id="trace-query-1")
+    replay = service.create_observation(request, actor="ai:grant-test", client_request_id="trace-query-1")
+
+    assert first["operation_id"] == replay["operation_id"]
+    assert len(tracer.calls) == 1

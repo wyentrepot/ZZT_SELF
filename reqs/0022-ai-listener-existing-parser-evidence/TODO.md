@@ -13,14 +13,14 @@
 
 ## Phase 1 — 复用 TraceService 的 AI 查询适配
 
-- [ ] Step 1：写失败测试，验证 `trace_query` 把 `app_id`/`msg_seq`/NID/`dst_tei`/时间窗/信道/`APP_RAW` 原样传给 `TraceService`
-- [ ] Step 2：运行失败测试（预期 FAIL：不支持 `match.kind=trace_query`）
-- [ ] Step 3：在 `TraceService` 增加 `raw_hex_contains` 与方向投影
+- [x] Step 1：写失败测试，验证 `trace_query` 把 `app_id`/`msg_seq`/NID/`dst_tei`/时间窗/信道/`APP_RAW` 原样传给 `TraceService`
+- [x] Step 2：运行失败测试（预期 FAIL：不支持 `match.kind=trace_query`）
+- [x] Step 3：在 `TraceService` 增加 `raw_hex_contains` 与方向投影
   - `_ROW_SQL` 读取现有 `raw_hex`；**不改数据库 schema**
   - `directions` 仅筛选 L2 展示/统计，round/flow 仍保留必要 ACK 和对端帧
   - 全帧 HEX 条件缺 `app_id`、NID、时间窗或 cursor 范围时抛 `FeatureError`
-- [ ] Step 4：让 AI observation 的 `trace_query` 调用既有 `run_replay`，把每个 `frame_id` 转成稳定 `index_id + frame_id` 引用
-- [ ] Step 5：跑回归（`test_trace_service` / `test_trace_api` / `test_ai_operations`）
+- [x] Step 4：让 AI observation 的 `trace_query` 调用既有 `run_replay`，把每个 `frame_id` 转成稳定 `index_id + frame_id` 引用
+- [x] Step 5：跑回归（`test_trace_service` / `test_trace_api` / `test_ai_operations`）
 
 ## Phase 2 — minute_reports 适配和真正的 L1/L2/L3
 

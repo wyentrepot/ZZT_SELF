@@ -71,6 +71,18 @@ def test_replay_via_page_api(client):
     assert report["flow"]["ack"]["frame_id"] == 2
 
 
+def test_replay_report_includes_frame_direction_projection(client):
+    """REQS-0022：回放报告每条流带 frames 方向投影（新增字段，向后兼容）。"""
+    http, _, _ = client
+    r = http.post("/api/listener/traces", json={
+        "scope": "flow", "feature": {"app_id": "0003", "msg_seq": "1EC2"},
+    })
+    assert r.status_code == 200
+    projection = r.json()["flow"]["frames"]
+    assert {f["role"] for f in projection} == {"sent", "ack", "response"}
+    assert {f["direction"] for f in projection} == {"downlink", "uplink", "ack"}
+
+
 def test_replay_validation_422(client):
     http, _, _ = client
     r = http.post("/api/listener/traces", json={"scope": "flow", "feature": {"app_id": "0003"}})

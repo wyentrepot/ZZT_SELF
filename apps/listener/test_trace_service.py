@@ -508,6 +508,71 @@ def test_feature_validation_errors():
 
 
 # ---------------------------------------------------------------------------
+# REQS-0022 Phase 1：raw_hex_contains 末端验证 + flow frames 方向投影
+# ---------------------------------------------------------------------------
+
+def test_l2_raw_hex_contains_is_terminal_filter(tmp_path):
+    """raw_hex_contains 对整帧 raw_hex 做末端验证（有 app_id 收窄）。"""
+    frames = [
+        down645(0x3010, [ADDR_A], t="10:00:00.000"),
+        down645(0x3011, [ADDR_B], t="10:00:01.000"),
+    ]
+    service = build_index(tmp_path, frames)
+    # 下行帧 app 头 seq 字段小端：0x3010 → "103028"（seq + timeout）
+    report = TraceService(service).run_replay({
+        "scope": "round", "feature": {"app_id": "0003", "raw_hex_contains": "103028"},
+    })
+    seqs = [f["msg_seq"] for r in report["rounds"] for f in r["flows"]]
+    assert seqs == ["0x3010"]
+
+
+def test_raw_hex_contains_format_validation():
+    tracer = TraceService(None)
+    with pytest.raises(FeatureError):  # 奇数长度
+        tracer.run_replay({"scope": "round", "feature": {"app_id": "0003", "raw_hex_contains": "ABC"}})
+    with pytest.raises(FeatureError):  # 非 hex 字符
+        tracer.run_replay({"scope": "round", "feature": {"app_id": "0003", "raw_hex_contains": "ZZ"}})
+    with pytest.raises(FeatureError):  # 超长（>512）
+        tracer.run_replay({"scope": "round", "feature": {"app_id": "0003",
+                                                         "raw_hex_contains": "AB" * 257}})
+
+
+def test_flow_frames_projection_and_directions_filter(tmp_path):
+    """flow 报告带 frames 方向投影；directions 只筛投影，不动状态机证据。"""
+    frames = [
+        down645(0x1EC2, [ADDR_A], t="10:00:00.000"),
+        ("10:00:00.100", ack_raw_hex("087"), summary_ack()),
+        up645(0x1EC2, ADDR_A, t="10:00:01.000"),
+    ]
+    service = build_index(tmp_path, frames)
+    tracer = TraceService(service)
+
+    report = tracer.run_replay({
+        "scope": "flow", "feature": {"app_id": "0003", "msg_seq": "1EC2"},
+    })
+    projection = report["flow"]["frames"]
+    by_role = {f["role"]: f for f in projection}
+    assert set(by_role) == {"sent", "ack", "response"}
+    assert by_role["sent"]["direction"] == "downlink"
+    assert by_role["response"]["direction"] == "uplink"
+    assert by_role["ack"]["direction"] == "ack"
+    assert by_role["sent"]["frm_type"] == "终端主动并发抄表"
+    assert by_role["sent"]["src"] == "001" and by_role["sent"]["dst"] == "087"
+    assert by_role["response"]["meter_addrs"][0]["addr"] == DISPLAY_A
+    assert [f["frame_id"] for f in projection] == [1, 2, 3]
+
+    down_only = tracer.run_replay(
+        {"scope": "flow", "feature": {"app_id": "0003", "msg_seq": "1EC2"}},
+        directions=["downlink"],
+    )
+    # 方向筛选后：状态机与必要证据（ack/response）保持完整，仅投影收窄
+    assert down_only["flow"]["stage"] == "confirmed"
+    assert down_only["flow"]["ack"] is not None
+    assert down_only["flow"]["response"] is not None
+    assert [f["direction"] for f in down_only["flow"]["frames"]] == ["downlink"]
+
+
+# ---------------------------------------------------------------------------
 # REQS-0022 Phase 0：默认解析资格确认
 #
 # 目的：确认侦听台默认解析后端（GwHPLCAnalysis.dll）已经暴露并发抄表所需的

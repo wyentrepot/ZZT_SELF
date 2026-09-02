@@ -25,3 +25,26 @@
   - `docs/api-contract.md` 新增 6.0.1 节登记 listener 分层证据契约。
   - 回归：`apps/listener/test_trace_service.py` + `test_trace_api.py` **29 passed**。
   - 提交 `c5e3af1`（仅 REQS 三件套、`REQS-INDEX.md`、`docs/api-contract.md`、资格测试）。
+
+## 2026-09-03
+
+- **Phase 1 Step 1–5（完成）**：复用 `TraceService` 的 AI `trace_query` 适配。
+  - `apps/listener/trace_service.py`：
+    - `NormalizedFeature` 新增 `raw_hex_contains: str | None`；`validate_feature` 增加
+      `_normalise_hex_condition`（删空白、大写、偶数长度 2–512，否则 `FeatureError`）。
+    - **收窄门**：`raw_hex_contains` 无 `app_id`/NID/时间窗/帧 ID 窗口任一收窄条件 → `FeatureError`。
+    - `_ROW_SQL` 末尾追加读取现有 `raw_hex` 列（**不改 schema**）；`_to_frame` 透传 `raw_hex`；
+      `_apply_l2_filters` 增加 `raw_hex_contains` 末端子串命中。
+    - `run_replay` / `_flow_report` 增加 `directions` 参数；`_flow_report` 末尾构建 `frames`
+      方向投影（downlink 含 sent/retransmission/confirm、uplink 为 response、ack 为 ack），
+      按 `frame_id` 排序后再按 `directions` 白名单过滤。新增静态方法 `_frame_projection`
+      输出 14 字段（frame_id/log_time/direction/role/frm_type/nid/src/dst/ori_s/ch_type/
+      app_id/msg_seq/flow_dir/meter_addrs）。
+  - `apps/workbench/ai_operations.py`：新增 `trace_query` 分发与五个方法
+    `_normalise_trace_query_match` / `_trace_query_window` / `_create_listener_trace_query_observation` /
+    `_run_trace_query_observation` / `_trace_query_result`。feature 原样透传；directions 校验
+    `downlink/uplink/ack`；观察窗口转 trace 窗口（live → 422）；`raw_hex_contains` 收窄门 422；
+    `validate_feature` 的 `FeatureError` → `InvalidObservation`；每帧产 `frame_key=listener:<index_id>:<frame_id>`。
+  - 测试：`apps/listener/test_trace_service.py` + `test_trace_api.py` **33 passed**；
+    `apps/workbench/test_ai_operations.py` **31 passed**（含 4 个新 trace_query 测试）。
+  - v1 回归：`test_ai_trace.py` + `test_ai_api.py` **31 passed**（既有 `/api/ai/v1/listener/traces` 行为不变）。

@@ -59,6 +59,7 @@ class NormalizedFeature:
     use_ack_evidence: bool
     confirm_via_0x0020: bool
     expect_meters: list = field(default_factory=list)
+    raw_hex_contains: str | None = None
     cluster_gap_s: int = DEFAULT_CLUSTER_GAP_S
     raw: dict = field(default_factory=dict)
 
@@ -80,6 +81,19 @@ def _parse_hex_int(value, name, bits=16, required=False):
     if not 0 <= parsed < (1 << bits):
         raise FeatureError(f"{name} 超出 {bits}bit 范围：{value}")
     return parsed
+
+
+_HEX_DIGITS = frozenset("0123456789ABCDEF")
+
+
+def _normalise_hex_condition(value, name: str) -> str | None:
+    """REQS-0022：全帧 HEX 条件规范化——删空白、大写、偶数长度 2–512。"""
+    text = "".join(str(value or "").split()).upper()
+    if not text:
+        return None
+    if len(text) % 2 or not 2 <= len(text) <= 512 or any(c not in _HEX_DIGITS for c in text):
+        raise FeatureError(f"{name} 必须是删除空白后 2–512 个偶数长度的十六进制字符")
+    return text
 
 
 def validate_feature(feature: dict) -> NormalizedFeature:
@@ -122,6 +136,20 @@ def validate_feature(feature: dict) -> NormalizedFeature:
     if start_id is not None and end_id is not None and start_id > end_id:
         raise FeatureError("window.end_id 不能小于 start_id")
 
+    # REQS-0022：全帧 HEX 条件仅作为收窄后的末端验证
+    raw_hex_contains = _normalise_hex_condition(feat.get("raw_hex_contains"), "feature.raw_hex_contains")
+    nid = _parse_hex_int(feat.get("nid"), "feature.nid", bits=24)
+    if raw_hex_contains:
+        narrowed = (
+            bool(app_id) or nid is not None
+            or (mode == "time_range" and (start_time or end_time))
+            or (mode == "cursor_range" and (start_id is not None or end_id is not None))
+        )
+        if not narrowed:
+            raise FeatureError(
+                "feature.raw_hex_contains 必须搭配 app_id、NID、时间窗或帧 ID 窗口收窄"
+            )
+
     policy = feature.get("response_policy") or {}
     if not isinstance(policy, dict):
         raise FeatureError("response_policy 必须是 JSON 对象")
@@ -144,7 +172,7 @@ def validate_feature(feature: dict) -> NormalizedFeature:
         frm_type=str(feat.get("frm_type") or "").strip() or None,
         dst_tei=str(feat.get("dst_tei") or "").strip().upper() or None,
         app_raw_contains=str(feat.get("app_raw_contains") or "").strip().upper() or None,
-        nid=_parse_hex_int(feat.get("nid"), "feature.nid", bits=24),
+        nid=nid,
         channel=str(feat.get("channel") or "").strip() or None,
         start_time=start_time, end_time=end_time,
         start_id=start_id, end_id=end_id, window_mode=mode,
@@ -152,6 +180,7 @@ def validate_feature(feature: dict) -> NormalizedFeature:
         use_ack_evidence=bool(policy.get("use_ack_evidence", True)),
         confirm_via_0x0020=bool(policy.get("confirm_via_0x0020", True)),
         expect_meters=expect_meters,
+        raw_hex_contains=raw_hex_contains,
         cluster_gap_s=int(cluster_gap_s),
         raw=feature,
     )
@@ -188,6 +217,7 @@ class _Frame:
     parse_error: str | None
     summary: dict = field(default_factory=dict)
     confirm: bool | None = None  # 0x0020 确认位（True 确认 / False 否认）
+    raw_hex: str | None = None   # REQS-0022：全帧 HEX 末端验证用
 
 
 class TraceService:
@@ -199,7 +229,7 @@ class TraceService:
 
     _ROW_SQL = (
         "SELECT id, sequence, log_time, summary_json, parse_error, app_port, app_id, "
-        "msg_seq, flow_dir, meter_addrs, sta_tei, ori_tei, ack_peer, frm_type FROM frames"
+        "msg_seq, flow_dir, meter_addrs, sta_tei, ori_tei, ack_peer, frm_type, raw_hex FROM frames"
     )
 
     def __init__(self, log_service):
@@ -297,7 +327,8 @@ class TraceService:
     # 回放入口
     # ------------------------------------------------------------------
 
-    def run_replay(self, feature: dict, index_id=None, mode: str = "replay") -> dict:
+    def run_replay(self, feature: dict, index_id=None, mode: str = "replay",
+                   directions=None) -> dict:
         nf = validate_feature(feature)
         service = self.log_service.open_index(index_id) if index_id else self.log_service
         if not service.trace_ready():
@@ -316,7 +347,10 @@ class TraceService:
         flow_reports = []
         for index, cluster in enumerate(clusters):
             flows = self._build_flows(cluster, nf.app_id)
-            reports = [self._flow_report(f, acks, confirms, nf) for f in flows]
+            reports = [
+                self._flow_report(f, acks, confirms, nf, directions=directions)
+                for f in flows
+            ]
             flow_reports.extend(reports)
             rounds.append(self._round_report(index, cluster, reports, nf, bad_frames))
 
@@ -469,6 +503,7 @@ class TraceService:
             parse_error=row["parse_error"],
             summary=summary,
             confirm=confirm,
+            raw_hex=row["raw_hex"],
         )
 
     @staticmethod
@@ -480,7 +515,7 @@ class TraceService:
 
     @staticmethod
     def _apply_l2_filters(frames: list[_Frame], nf: NormalizedFeature) -> list[_Frame]:
-        """L2 过滤：frm_type / channel / app_raw_contains（物化列未覆盖项）。"""
+        """L2 过滤：frm_type / channel / app_raw_contains / raw_hex_contains。"""
         out = []
         for frame in frames:
             if nf.frm_type and frame.summary.get("FrmType") != nf.frm_type:
@@ -490,6 +525,11 @@ class TraceService:
             if nf.app_raw_contains:
                 app_raw = str(frame.summary.get("APP_RAW") or "").upper()
                 if nf.app_raw_contains not in app_raw:
+                    continue
+            if nf.raw_hex_contains:
+                # REQS-0022：全帧 HEX 末端验证（收窄条件已在特征校验把关）
+                hex_text = str(frame.raw_hex or "").replace(" ", "").upper()
+                if nf.raw_hex_contains not in hex_text:
                     continue
             out.append(frame)
         return out
@@ -614,7 +654,29 @@ class TraceService:
                 flow["ups"].append(frame)
         return sorted(grouped.values(), key=lambda f: min(x.frame_id for x in f["downs"] + f["ups"]))
 
-    def _flow_report(self, flow: dict, acks: dict, confirms: dict, nf: NormalizedFeature) -> dict:
+    @staticmethod
+    def _frame_projection(frame: _Frame, direction: str, role: str) -> dict:
+        """REQS-0022：flow 级帧投影（方向 + 角色 + 既有解析字段，不复制解析数据）。"""
+        summary = frame.summary or {}
+        return {
+            "frame_id": frame.frame_id,
+            "log_time": frame.log_time,
+            "direction": direction,
+            "role": role,
+            "frm_type": summary.get("FrmType"),
+            "nid": summary.get("SNID"),
+            "src": summary.get("SRC"),
+            "dst": summary.get("DST"),
+            "ori_s": summary.get("ORI_S"),
+            "ch_type": summary.get("ChType"),
+            "app_id": summary.get("APP_ID"),
+            "msg_seq": None if frame.msg_seq is None else f"0x{frame.msg_seq:04X}",
+            "flow_dir": frame.flow_dir,
+            "meter_addrs": frame.meter_addrs or [],
+        }
+
+    def _flow_report(self, flow: dict, acks: dict, confirms: dict, nf: NormalizedFeature,
+                     directions=None) -> dict:
         """单流状态机：armed→sent→acked→responded→confirmed/denied/timeout。"""
         downs = sorted(flow["downs"], key=lambda f: f.frame_id)
         ups = sorted(flow["ups"], key=lambda f: f.frame_id)
@@ -666,15 +728,35 @@ class TraceService:
             }
 
         confirm = None
+        confirm_frame = None
         if nf.confirm_via_0x0020:
             for cf in confirms.get(seq, []):
                 if downs and cf.abs_ms is not None and downs[0].abs_ms is not None \
                         and cf.abs_ms < downs[0].abs_ms:
                     continue
                 confirm = {"frame_id": cf.frame_id, "t": cf.log_time, "denied": cf.confirm is False}
+                confirm_frame = cf
                 break
 
         stage, s3 = self._flow_stage(flow, downs, ups, ack, confirm, retransmissions, denied_addrs, nf)
+        # REQS-0022：帧级方向投影（directions 仅筛展示，不动状态机与必要证据）
+        projections = []
+        for position, down in enumerate(downs):
+            projections.append(self._frame_projection(
+                down, "downlink", "sent" if position == 0 else "retransmission",
+            ))
+        for up in ups:
+            projections.append(self._frame_projection(up, "uplink", "response"))
+        if ack is not None:
+            ack_frame = acks.get(ack["frame_id"])
+            if ack_frame is not None:
+                projections.append(self._frame_projection(ack_frame, "ack", "ack"))
+        if confirm_frame is not None:
+            projections.append(self._frame_projection(confirm_frame, "downlink", "confirm"))
+        projections.sort(key=lambda item: item["frame_id"])
+        if directions:
+            allowed = {str(item) for item in directions}
+            projections = [item for item in projections if item["direction"] in allowed]
         return {
             "flow_key": f"{flow['app_id']}:{seq:04X}",
             "app_id": flow["app_id"],
@@ -689,6 +771,7 @@ class TraceService:
             "s3": s3,
             "targets": self._flow_targets(flow),
             "responses": self._flow_responses(flow),
+            "frames": projections,
         }
 
     @staticmethod

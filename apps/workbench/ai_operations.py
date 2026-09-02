@@ -35,6 +35,12 @@ _FORBIDDEN_OBSERVATION_KEYS = frozenset({
 _MAX_CURSOR_RANGE = 10_000
 _MAX_LISTENER_CURSOR_RANGE = 500
 _MODULE_LOG_LOCAL_TIMEZONE = datetime.now().astimezone().tzinfo or timezone.utc
+# REQS-0022：trace_query 方向投影（L2 展示/计数筛选）
+_LISTENER_TRACE_DIRECTIONS = ("downlink", "uplink", "ack")
+_TRACE_FEATURE_KEYS = frozenset({
+    "app_id", "msg_seq", "frm_type", "dst_tei", "nid", "channel",
+    "app_raw_contains", "raw_hex_contains",
+})
 
 
 def _iso_now() -> str:
@@ -1148,9 +1154,241 @@ class AIControlService:
             raise InvalidObservation(f"listener cursor_range {field} 不能为负数")
         return value
 
+    # -- REQS-0022：trace_query 复用既有 TraceService -------------------------
+
+    @staticmethod
+    def _normalise_trace_query_match(match: dict) -> dict:
+        """trace_query 匹配器：scope + feature（TraceService 字段）+ directions。"""
+        if not isinstance(match, dict):
+            raise InvalidObservation("match 必须是对象")
+        scope = str(match.get("scope") or "round")
+        if scope not in ("flow", "round", "campaign"):
+            raise InvalidObservation("trace_query scope 仅支持 flow、round 或 campaign")
+        feature = match.get("feature")
+        if not isinstance(feature, dict):
+            raise InvalidObservation("trace_query 必须提供 feature 对象")
+        extra = {str(key) for key in feature} - _TRACE_FEATURE_KEYS
+        if extra:
+            raise InvalidObservation(
+                f"trace_query feature 不支持字段：{', '.join(sorted(extra))}"
+            )
+        directions = match.get("directions")
+        if directions is not None:
+            if not isinstance(directions, list) or not directions:
+                raise InvalidObservation("trace_query directions 必须是非空数组")
+            cleaned: list[str] = []
+            for item in directions:
+                text = str(item or "")
+                if text not in _LISTENER_TRACE_DIRECTIONS:
+                    raise InvalidObservation(
+                        "trace_query directions 仅支持 downlink、uplink、ack"
+                    )
+                if text not in cleaned:
+                    cleaned.append(text)
+            directions = cleaned
+        return {
+            "kind": "trace_query",
+            "scope": scope,
+            "feature": {str(key): value for key, value in feature.items()},
+            "directions": directions,
+        }
+
+    @staticmethod
+    def _trace_query_window(window: dict) -> tuple[dict, str]:
+        """观察窗口 → TraceService 特征窗口；无窗口 = 全索引回放。"""
+        if not isinstance(window, dict):
+            raise InvalidObservation("window 必须是对象")
+        mode = str(window.get("mode") or "")
+        if not mode:
+            return {}, "none"
+        if mode == "time_range":
+            start = str(window.get("start") or "")
+            end = str(window.get("end") or "")
+            if not start or not end:
+                raise InvalidObservation("trace_query time_range 必须提供 start 和 end")
+            return {"mode": "time_range", "start_time": start, "end_time": end}, mode
+        if mode == "cursor_range":
+            start_id = window.get("start_frame_id")
+            end_id = window.get("end_frame_id")
+            for name, value in (("start_frame_id", start_id), ("end_frame_id", end_id)):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise InvalidObservation(f"trace_query cursor_range {name} 必须是非负整数")
+            if start_id > end_id:
+                raise InvalidObservation("trace_query cursor_range start_frame_id 不能大于 end_frame_id")
+            return {"mode": "cursor_range", "start_id": start_id, "end_id": end_id}, mode
+        raise InvalidObservation("trace_query window.mode 仅支持 time_range 或 cursor_range")
+
+    def _create_listener_trace_query_observation(self, request: dict, *, actor: str,
+                                                 client_request_id: str = "",
+                                                 replay_fingerprint: str = "") -> dict:
+        if self.trace_service is None:
+            raise SourceUnavailable("侦听台追踪服务不可用")
+        self._listener_log_or_error()
+        target = request.get("target") or {}
+        window = request.get("window") or {}
+        match = self._normalise_trace_query_match(request.get("match") or {})
+        trace_window, window_mode = self._trace_query_window(window)
+        # 全帧 HEX 收窄门：无 app_id/NID/时间窗/帧 ID 窗口 → 422
+        feature = match["feature"]
+        if str(feature.get("raw_hex_contains") or "").strip():
+            narrowed = (
+                str(feature.get("app_id") or "").strip()
+                or str(feature.get("nid") or "").strip()
+                or bool(trace_window)
+            )
+            if not narrowed:
+                raise InvalidObservation(
+                    "raw_hex_contains 必须搭配 app_id、NID、时间窗或帧 ID 窗口收窄"
+                )
+        trace_feature = {"scope": match["scope"], "feature": dict(feature)}
+        if trace_window:
+            trace_feature["window"] = trace_window
+        from listener.trace_service import FeatureError, validate_feature
+        try:
+            validate_feature(trace_feature)
+        except FeatureError as exc:
+            raise InvalidObservation(str(exc)) from exc
+        try:
+            index_id = self._listener_current_index_id(str(target.get("index_id") or ""))
+        except KeyError as exc:
+            raise InvalidObservation("listener index_id 不存在") from exc
+        completion = self._normalise_observation_completion(request.get("completion"))
+        resource = self.listener_resource(str(target.get("mapping_id") or ""))
+        payload = {
+            "source": "listener",
+            "target": {"mapping_id": resource, "capture": "current"},
+            "index_id": index_id,
+            "observation_kind": "trace_query",
+            "window": {
+                "mode": window_mode,
+                "start": window.get("start") if window_mode == "time_range" else None,
+                "end": window.get("end") if window_mode == "time_range" else None,
+                "start_frame_id": window.get("start_frame_id") if window_mode == "cursor_range" else None,
+                "end_frame_id": window.get("end_frame_id") if window_mode == "cursor_range" else None,
+            },
+            "match": match,
+            "trace_feature": trace_feature,
+            "completion": completion,
+            "start_frame_id": 0,
+            "deadline_monotonic": None,
+        }
+        fingerprint = self._observation_idempotency_fingerprint({
+            "semantic": {
+                "kind": "observation",
+                "source": "listener",
+                "observation_kind": "trace_query",
+                "resource": {"mapping_id": resource, "index_id": index_id, "capture": "current"},
+                "match": match,
+                "window": payload["window"],
+                "completion": completion,
+            },
+            "request": self._observation_request_identity(request),
+        })
+        operation = self.store.create(
+            "observation", actor, payload, client_request_id=client_request_id,
+            idempotency_fingerprint=fingerprint,
+            idempotency_replay_fingerprint=replay_fingerprint,
+        )
+        if operation["state"] != "created":
+            return operation
+        self.store.audit(
+            actor=actor, action="listener.observation.create", resource=resource,
+            result="querying", operation_id=operation["operation_id"],
+        )
+        return self._run_trace_query_observation(operation["operation_id"])
+
+    def _run_trace_query_observation(self, operation_id: str) -> dict:
+        """执行 trace_query：调用既有 run_replay 并落终态（闭合窗口同步完成）。"""
+        operation = self.store.get(operation_id)
+        payload = operation["payload"]
+        try:
+            report = self.trace_service.run_replay(
+                payload["trace_feature"],
+                index_id=payload["index_id"],
+                directions=(payload.get("match") or {}).get("directions"),
+            )
+            result = self._trace_query_result(payload, report, operation_id)
+            required = max(int((payload.get("completion") or {}).get("match_count", 1)), 1)
+            flows = int(((report.get("summary") or {}).get("flows")) or 0)
+            state = "matched" if flows >= required else "succeeded"
+            completed = self.store.set_state(operation_id, state, result=result)
+            self.store.audit(
+                actor=operation["actor"],
+                action="listener.observation.match" if state == "matched" else "listener.observation.complete",
+                resource=payload["target"]["mapping_id"], result=state,
+                operation_id=operation_id,
+            )
+            return completed
+        except Exception as exc:
+            self.store.audit(
+                actor=operation["actor"], action="listener.observation.complete",
+                resource=payload["target"]["mapping_id"], result="error",
+                operation_id=operation_id,
+            )
+            return self.store.set_state(operation_id, "error", error=str(exc))
+
+    def _trace_query_result(self, payload: dict, report: dict, operation_id: str = "") -> dict:
+        """把回放报告投影成既有 listener observation 结果（稳定 index_id+frame_id 引用）。"""
+        index_id = payload["index_id"]
+        matches = []
+        for round_report in report.get("rounds") or []:
+            for flow in round_report.get("flows") or []:
+                for frame in flow.get("frames") or []:
+                    frame_id = int(frame.get("frame_id"))
+                    matches.append({
+                        "frame_key": {"index_id": index_id, "frame_id": frame_id},
+                        "log_time": frame.get("log_time"),
+                        "direction": frame.get("direction"),
+                        "role": frame.get("role"),
+                        "flow_key": flow.get("flow_key"),
+                        "msg_seq": flow.get("msg_seq"),
+                        "stage": flow.get("stage"),
+                        "frm_type": frame.get("frm_type"),
+                        "nid": frame.get("nid"),
+                        "src": frame.get("src"),
+                        "dst": frame.get("dst"),
+                        "ori_s": frame.get("ori_s"),
+                        "ch_type": frame.get("ch_type"),
+                        "app_id": frame.get("app_id"),
+                        "flow_dir": frame.get("flow_dir"),
+                        "meter_addrs": frame.get("meter_addrs") or [],
+                        "detail_url": (
+                            "/api/ai/v1/listener/indexes/" + index_id + "/frames/" + str(frame_id)
+                        ),
+                    })
+        matches = matches[:50]
+        required = max(int((payload.get("completion") or {}).get("match_count", 1)), 1)
+        flows = int(((report.get("summary") or {}).get("flows")) or 0)
+        result = {
+            "source": "listener",
+            "condition_met": flows >= required,
+            "index": {"index_id": index_id, "scope": (payload.get("match") or {}).get("scope")},
+            "trace": {"mode": report.get("mode"), "summary": report.get("summary") or {}},
+            "matches": matches,
+            "snippet": matches[:10],
+            "artifact_id": None,
+        }
+        source_log_path = self._listener_index_source_path(index_id)
+        if source_log_path is not None:
+            result["index"]["source_log_path"] = source_log_path
+        if operation_id:
+            artifact = self.store.register_artifact(
+                operation_id=operation_id,
+                resource=str(payload["target"].get("mapping_id") or "listener-main"),
+                kind="listener_trace_query_result",
+                content=result,
+            )
+            result["artifact_id"] = artifact["artifact_id"]
+        return result
+
     def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "",
                                      replay_fingerprint: str = "") -> dict:
         self._listener_log_or_error()
+        if str((request.get("match") or {}).get("kind") or "") == "trace_query":
+            return self._create_listener_trace_query_observation(
+                request, actor=actor, client_request_id=client_request_id,
+                replay_fingerprint=replay_fingerprint,
+            )
         target = request.get("target") or {}
         window = request.get("window") or {}
         window_type = window.get("type")
