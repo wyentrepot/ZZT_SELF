@@ -16,6 +16,43 @@ class AuthorizationError(PermissionError):
     pass
 
 
+# P1 only maps v2 names to existing grant scopes.  It neither changes grant
+# storage nor v1's authenticate semantics.
+V2_CAPABILITY_SCOPES: dict[str, frozenset[str]] = {
+    "capabilities.read": frozenset({"status:read"}),
+    "investigations.create": frozenset({"observation:create", "evidence:read"}),
+    "verification_runs.create": frozenset({"simcon:verify"}),
+    "module_actions.ensure": frozenset({"module_session:ensure"}),
+    "module_actions.send": frozenset({"module_send:execute"}),
+    "module_actions.stop": frozenset({"module_session:stop"}),
+    "flash_jobs.create": frozenset({"module_flash:execute"}),
+    "jobs.read": frozenset({"evidence:read"}),
+    "jobs.cancel": frozenset({"observation:create"}),
+    "jobs.evidence.read": frozenset({"evidence:read"}),
+}
+
+# A capability is usable only against aliases from these logical sources.  The
+# mapping deliberately uses opaque resource IDs, never physical serial names.
+V2_CAPABILITY_SOURCES: dict[str, frozenset[str]] = {
+    "capabilities.read": frozenset({"module_log", "listener", "simcon"}),
+    "investigations.create": frozenset({"module_log", "listener", "simcon"}),
+    "verification_runs.create": frozenset({"simcon"}),
+    "module_actions.ensure": frozenset({"module_log"}),
+    "module_actions.send": frozenset({"module_log"}),
+    "module_actions.stop": frozenset({"module_log"}),
+    "flash_jobs.create": frozenset({"module_log"}),
+    "jobs.read": frozenset({"module_log", "listener", "simcon"}),
+    "jobs.cancel": frozenset({"module_log", "listener", "simcon"}),
+    "jobs.evidence.read": frozenset({"module_log", "listener", "simcon"}),
+}
+
+
+def grant_allows_v2_capability(grant: dict, capability: str) -> bool:
+    """Whether a valid LAN grant contains every existing scope for v2 capability."""
+    required = V2_CAPABILITY_SCOPES[capability]
+    return required.issubset({str(scope) for scope in grant.get("scopes") or []})
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 

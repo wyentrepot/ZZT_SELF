@@ -1496,8 +1496,8 @@ class AIControlService:
         operation = self.store.get(operation_id)
         if operation["state"] in TERMINAL_STATES:
             return operation
-        if operation["kind"] == "module_flash":
-            raise SessionBusy("烧录操作不能由观察任务取消接口中断")
+        if operation["kind"] in {"module_flash", "simcon_verify"}:
+            raise SessionBusy("烧录或模拟集中器验证操作不能由观察任务取消接口中断")
         result = self.store.set_state(operation_id, "cancelled", result={"cancelled_at": _iso_now()})
         self.store.audit(actor=actor, action="operation.cancel", result="cancelled",
                          operation_id=operation_id)

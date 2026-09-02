@@ -279,6 +279,7 @@ def create_workbench_app(
     from .ai_auth import AuthorizationStore
     from .ai_operations import AIControlService
     from .ai_store import OperationStore
+    from .ai_v2_api import create_ai_v2_router
 
     configured_storage_dir = ai_storage_dir or os.environ.get("WORKBENCH_AI_STORAGE_DIR")
     storage_dir = Path(configured_storage_dir) if configured_storage_dir else (
@@ -326,6 +327,12 @@ def create_workbench_app(
     app.include_router(create_ai_router(
         app.state.ai_control_service, app.state.ai_auth_store,
         admin_key=ai_admin_key or os.environ.get("WORKBENCH_AI_ADMIN_KEY"),
+    ))
+    local_full_value = os.environ.get("WORKBENCH_LOCAL_FULL_ACCESS", "").strip().lower()
+    app.state.ai_local_full_access = local_full_value in {"1", "true", "yes", "on"}
+    app.include_router(create_ai_v2_router(
+        app.state.ai_control_service, app.state.ai_auth_store,
+        local_full_enabled=app.state.ai_local_full_access,
     ))
 
     # ---- 3.5 串口 Profile（P4）：GET/PUT 只保存 + POST apply 一键应用 ----

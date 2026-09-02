@@ -1,13 +1,13 @@
 # API 契约文档（事实来源：后端代码）
 
-> 基线：commit `8134be7`（2026-08-31）。本文档从后端路由代码逐条核对生成，
+> 基线：workbench OpenAPI（运行 `python tools/scripts/verify_api_inventory.py` 校验）。本文档从后端路由代码逐条核对生成，
 > **改接口必须先改代码、再同步本文件**；开发新功能或排查联调问题按本文件对账。
 >
 > 事实来源文件（改动接口时同步核对）：
 > - 侦听台：`apps/listener/app.py`
 > - 模块日志：`apps/module_log/app.py`（loghooks 路由也在其中）
 > - 模拟集中器：`libs/sim_concentrator/api.py`
-> - AI 控制面：`apps/workbench/ai_api.py`（用法手册：`.agents/skills/ai-control-plane/SKILL.md`、`docs/16-AI操作指南.md`）
+> - AI 控制面：v2 任务门面 `apps/workbench/ai_v2_api.py`；v1 专家兼容层 `apps/workbench/ai_api.py`（用法手册：`.agents/skills/ai-control-plane/SKILL.md`、`docs/16-AI操作指南.md`）
 > - 编排：`apps/workbench/api.py`；字典：`apps/workbench/dict_api.py`；串口 Profile：`apps/workbench/serial_profile_api.py`
 > - 挂载/代理：`apps/workbench/app.py`（`_PrefixProxy` / `_mount_proxied`）
 
@@ -187,7 +187,51 @@ workbench 外部：`/api/indexes/... → /api/listener/indexes/...`；别名路�
 | GET | `/frames` | `session_id?, direction:tx\|rx?, updown:up\|down?, afn?, fn?, kind?, run_id?, after_seq, limit≤500` | **`{session_id, entries[], next_after_seq, matched_total, has_more, counts{tx,rx,uplink}}`** —— 列表键是 `entries`（2026-08-31 b7647ab 前端曾误读 `frames` 键致卡"加载中"） | 404 无会话 |
 | GET | `/session` | — | `{current, sessions[]}`（sc-* 帧日志会话，落盘 data/logs/simcon/） | 200 |
 
-## 6. AI 控制面（`/api/ai/v1`，供外部 AI agent；完整 playbook 见 ai-control-plane skill）
+## 6. AI 任务门面 v2（默认 AI 调用面）
+
+v2 将“查状态、并行观察、模块动作、验证、烧录、取证”收敛为任务级工作流。AI
+客户端默认只需要发现能力、提交一个任务、读取 job、按需取证四类调用；底层
+v1 路由仍保留给专家诊断和兼容场景，不通过删除 v1 来减少库存。
+
+**访问边界**：本机请求只有在真实对端为 `127.0.0.1`/`::1` 且显式设置
+`WORKBENCH_LOCAL_FULL_ACCESS=1` 时进入 `local_full`，仍会写审计；局域网请求
+必须使用 Bearer grant，并按 capability、scope 和逻辑资源 alias 过滤。管理员发放
+或撤销 grant 仍要求本机 + `X-Workbench-Admin-Key`。
+
+| 方法 | 路径 | 请求 schema | 响应 schema | capability | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/api/ai/v2/capabilities` | — | `CapabilitySnapshot` | `capabilities.read` | 能力、后端健康和逻辑资源别名；不泄漏 token、物理串口或绝对路径 |
+| POST | `/api/ai/v2/investigations` | `InvestigationRequest` | `JobEnvelope` | `investigations.create` | 最多 3 个观察并行编排模块日志、侦听台、simcon |
+| POST | `/api/ai/v2/verification-runs` | `VerificationRunRequest` | `JobEnvelope` | `verification_runs.create` | 复用现有 simcon 验证；结果不是烧录成功的替代 |
+| POST | `/api/ai/v2/module-actions` | `ModuleActionRequest` | `JobEnvelope` | `module_actions.*` | 显式 `ensure`/`send`/`stop`，禁止任意 action 透传 |
+| POST | `/api/ai/v2/flash-jobs` | `FlashJobRequest` | `JobEnvelope` | `flash_jobs.create` | 复用既有烧录控制；固件路径必须在授权 `firmware_roots` 内 |
+| GET | `/api/ai/v2/jobs/{job_id}` | — | `JobEnvelope` | `jobs.read` | 读取统一 job；`wait_seconds=0..30` 不会因 GET 产生副作用 |
+| POST | `/api/ai/v2/jobs/{job_id}/cancel` | — | `JobEnvelope` | `jobs.cancel` | 观察等可取消任务；烧录/验证拒绝取消 |
+| GET | `/api/ai/v2/jobs/{job_id}/evidence` | — | `EvidenceView` | `jobs.evidence.read` | `level=L1|L2|L3`；L1/L2 有界，L3 只返回稳定引用 |
+
+v2 的请求和响应使用命名 Pydantic schema；写任务携带 `client_request_id` 实现幂等。
+`JobEnvelope.job_state` 与业务 `verdict` 分离：模块动作/烧录成功不伪装成
+`pass`；观察支持 `pass/fail/inconclusive/error`。历史日志必须保留 `index_id`；
+实时 `not_seen` 且无可信到达时间只能返回 `inconclusive`（`live_window_unverified`）。
+
+兼容分层与自动核对：
+
+| 层 | 路径 | 用途 |
+| --- | --- | --- |
+| `v2_task_facade` | `/api/ai/v2/*`（8 条） | AI 默认低 token 任务流 |
+| `v1_expert_compat` | `/api/ai/v1/*` | 既有专家操作、细粒度诊断和旧客户端兼容 |
+| `workbench_legacy_orchestration` | 其余 `/api/*` | 页面、CLI 和既有编排能力 |
+
+每次路由或 schema 变化后运行：
+
+```bash
+python tools/scripts/verify_api_inventory.py
+python tools/scripts/verify_api_inventory.py --json
+```
+
+该检查只构造带惰性 stub 子应用的 OpenAPI，不打开串口、不启动侦听台、不执行真实烧录。
+
+## 6.1 AI 控制面 v1（专家兼容层；默认 AI 不再从这里起步）
 
 **鉴权模型**：
 - 所有业务接口需 `Authorization: Bearer <token>`；token 由人经 `POST /admin/grants` 签发（仅 127.0.0.1 + `X-Workbench-Admin-Key` 请求头）。
@@ -274,7 +318,7 @@ evidence:read, simcon:verify, simcon:send, simcon:read`。
 | `pages/module-serial/module-serial.js`（两副本） | §4 + `/fs/*` + `/loghooks/*` | `API_BASE = body[data-api-base] ?? "/api"` ＋ 路径自带 `/module-serial` 命名空间 → 两部署形态通用 |
 | `pages/serial-profile/serial-profile.js` | §9 | `API_BASE`（`/api`） |
 | `apps/module_log/static/module-serial.js` | 同上（独立版） | 同机制（8766 直连） |
-| AI agent（无页面） | §6 | 直连 8790 `/api/ai/v1` |
+| AI agent（无页面） | §6（默认）/§6.1（专家兼容） | 默认直连 8790 `/api/ai/v2`；需要旧细粒度能力时使用 `/api/ai/v1` |
 
 ## 11. 契约红线（开发/检查清单）
 
@@ -286,7 +330,8 @@ evidence:read, simcon:verify, simcon:send, simcon:read`。
 6. **409 是资源冲突**（串口占用/互斥），不是错误——UI 应提示而非报错弹窗。
 7. 字典/规则端点数据来自 `libs/parser_lib/adapters/*/metadata/*.json` 与 `libs/loghooks/rules/`，**改 JSON 即改端点输出**（无拷贝层）。
 8. AI 控制面：新接口必须声明 scope；烧录类必须走 firmware_roots 白名单；幂等键 `client_request_id` 全程携带。
-9. 主题（REQS-0012）：`html[data-theme]` + `--theme-registry` 单一数据源；新增主题只改 `tokens-v2.css` 一处；iframe 内页面需带防闪跳 boot 脚本与 `wb-theme-change` message 监听（见 §12 已知缺口）。
+9. v2 是默认低 token 任务入口；v1 保持专家兼容，不得因库存收敛而删除或改名。
+10. 主题（REQS-0012）：`html[data-theme]` + `--theme-registry` 单一数据源；新增主题只改 `tokens-v2.css` 一处；iframe 内页面需带防闪跳 boot 脚本与 `wb-theme-change` message 监听（见 §12 已知缺口）。
 
 ## 12. 已知缺口（2026-08-31 前端改动审核产出；G1/G2 已于同日修复）
 
