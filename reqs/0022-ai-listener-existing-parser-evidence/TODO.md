@@ -6,10 +6,10 @@
 ## Phase 0 — REQS 基线与默认解析资格确认
 
 - [x] Step 1：创建 REQS-0022 三件套，原样登记 Frozen API Contract 与四个 Phase 停止门
-- [ ] Step 2：写失败测试，用 `parser` fixture 验证一帧并发抄表摘要含 `FrmType`、NID、源/目的、`APP_ID`、`APP_RAW`
-- [ ] Step 3：运行失败测试（预期 FAIL）
-- [ ] Step 4：补 fixture 与断言；用临时 SQLite 为原始样本建立只读资格报告（**不作为最终验收**）
-- [ ] Step 5：提交仅 REQS 与资格测试（`git diff --check --cached`；样本原文件/临时 SQLite/runtime 索引不入库）
+- [x] Step 2：写失败测试，用 `parser` fixture 验证一帧并发抄表摘要含 `FrmType`、NID、源/目的、`APP_ID`、`APP_RAW`
+- [x] Step 3：运行失败测试（FAIL：`fixture 'parser' not found`）
+- [x] Step 4：补 fixture 与断言；用临时 SQLite 为原始样本建立只读资格报告（**不作为最终验收**）
+- [x] Step 5：提交仅 REQS 与资格测试（`c5e3af1`）
 
 ## Phase 1 — 复用 TraceService 的 AI 查询适配
 
