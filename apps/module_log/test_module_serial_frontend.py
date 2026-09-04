@@ -55,14 +55,6 @@ class ModuleDynamicFrontendContractTest(unittest.TestCase):
         self.assertIn("cmpRefreshSessions", js)
         self.assertIn("session_id", js)
 
-    def test_simcon_port_mapping_applies_maintained_serial_defaults(self):
-        js = STANDALONE_JS.read_text(encoding="utf-8")
-
-        self.assertIn("simconApplyPortDetail", js)
-        self.assertIn("simcon.portDetails", js)
-        self.assertIn("mapping_id", js)
-        self.assertIn("simcon-port", js)
-
     def test_embedded_copy_uses_proxy_api_base_but_same_dynamic_contract(self):
         html = WORKBENCH_HTML.read_text(encoding="utf-8")
         js = WORKBENCH_JS.read_text(encoding="utf-8")

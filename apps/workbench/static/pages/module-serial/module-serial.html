@@ -269,7 +269,6 @@
     <nav class="ms-tabs">
       <button class="ms-tab active" data-tab="live" type="button">实时日志</button>
       <button class="ms-tab" data-tab="compare" type="button">对照解析</button>
-      <button class="ms-tab" data-tab="simcon" type="button">模拟集中器</button>
     </nav>
 
 <div id="ms-tab-live" class="ms-tabpane">
@@ -482,95 +481,6 @@
       </div>
     </div>
 
-    <!-- 模拟集中器验证页：AI 可接管串口，同时本页提供可视化操作界面 -->
-    <div id="ms-tab-simcon" class="ms-tabpane" hidden>
-      <!-- 串口控制区 -->
-      <div class="simcon-bar">
-        <div class="simcon-serial">
-          <div class="field">
-            <label for="simcon-port">串口</label>
-            <select id="simcon-port" style="width:140px"></select>
-          </div>
-          <div class="field">
-            <label for="simcon-baud">波特率</label>
-            <select id="simcon-baud" style="width:110px">
-              <option value="9600" selected>9600</option>
-              <option value="19200">19200</option>
-              <option value="38400">38400</option>
-              <option value="57600">57600</option>
-              <option value="115200">115200</option>
-              <option value="230400">230400</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="simcon-parity">校验位</label>
-            <select id="simcon-parity" style="width:90px">
-              <option value="N">无(N)</option>
-              <option value="E" selected>偶(E)</option>
-              <option value="O">奇(O)</option>
-              <option value="M">标记(M)</option>
-              <option value="S">空格(S)</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="simcon-bytesize">数据位</label>
-            <select id="simcon-bytesize" style="width:70px">
-              <option value="5">5</option>
-              <option value="6">6</option>
-              <option value="7">7</option>
-              <option value="8" selected>8</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="simcon-stopbits">停止位</label>
-            <select id="simcon-stopbits" style="width:70px">
-              <option value="1" selected>1</option>
-              <option value="2">2</option>
-            </select>
-          </div>
-          <button id="simcon-open" class="primary-button" type="button">打开串口</button>
-          <button id="simcon-close" class="secondary-button" type="button" disabled>关闭串口</button>
-          <span class="simcon-status" id="simcon-status">未连接</span>
-        </div>
-        <button id="simcon-refresh-ports" class="text-button" type="button">刷新端口</button>
-      </div>
-
-      <div class="simcon-body">
-        <!-- 左：应答规则 -->
-        <div class="simcon-pane simcon-rules">
-          <div class="simcon-pane-head">
-            <span class="simcon-pane-title">应答规则（内置 + 覆盖）</span>
-          </div>
-          <div id="simcon-rule-list" class="simcon-rule-list">
-            <div class="simcon-empty">加载中…</div>
-          </div>
-        </div>
-
-        <!-- 右：验证任务 -->
-        <div class="simcon-pane simcon-task">
-          <div class="simcon-pane-head">
-            <span class="simcon-pane-title">验证任务（AI 验证闭环）</span>
-            <span class="simcon-pane-hint">REST: /api/simcon/verify · CLI: python -m sim_concentrator verify &lt;task.json&gt;</span>
-          </div>
-          <textarea id="simcon-task-input" class="simcon-task-input" spellcheck="false">{
-  "id": "verify.demo",
-  "enable_responder": true,
-  "fail_fast": true,
-  "steps": [
-    {
-      "name": "示例：下发 00H-F1 确认帧（仅下发，无接收断言）",
-      "send": { "afn": "00", "fn": "F1" }
-    }
-  ]
-}</textarea>
-          <div class="simcon-task-toolbar">
-            <button id="simcon-run-task" class="primary-button" type="button">▶ 执行验证任务</button>
-            <span class="simcon-task-tip">使用模拟串口（无硬件）时也会返回结构化结论</span>
-          </div>
-          <div id="simcon-result" class="simcon-result" hidden></div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- 文件选择对话框（兜底）：通过后端 /api/fs/* 浏览服务器本地 Windows 目录 -->

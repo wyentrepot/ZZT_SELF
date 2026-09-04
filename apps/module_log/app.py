@@ -75,26 +75,6 @@ def create_app(module_serial_service=None, resource_registry: SerialResourceRegi
     app.state.serial_resource_registry = resource_registry
     app.mount("/static", NoCacheHTMLStaticFiles(directory=STATIC_DIR), name="static")
 
-    # 模拟集中器验证工具（第三页签后端）：挂载独立子应用到 /api/simcon
-    # 子应用路由用相对路径（prefix=""），避免 mount 前缀 + 路由前缀双前缀
-    from sim_concentrator.api import create_simcon_app
-    _simcon_sub = create_simcon_app(prefix="", resource_registry=resource_registry)
-    app.mount(
-        "/api/simcon",
-        _simcon_sub,
-        name="simcon",
-    )
-    # P4：把 simcon 的 open/close 服务函数提升到 module_log state，供统一工作台
-    # SerialProfileApplier 经适配器注入（不经 HTTP 回调）。
-    app.state.simcon_open_io = getattr(_simcon_sub.state, "simcon_open_io", None)
-    app.state.simcon_close_io = getattr(_simcon_sub.state, "simcon_close_io", None)
-    # 帧日志/AI 单步执行核心：同模式提升，供 workbench AI 控制面进程内注入。
-    for _name in ("simcon_run_verify", "simcon_run_step", "simcon_frames",
-                  "simcon_session", "simcon_open",
-                  "simcon_store_snapshots", "simcon_store_snapshot_items",
-                  "simcon_store_events"):
-        setattr(app.state, _name, getattr(_simcon_sub.state, _name, None))
-
     @app.get("/module-serial")
     def module_serial_page():
         # 页面内嵌默认任务 JSON 等易变内容，禁用浏览器缓存（与 /static 挂载一致）
