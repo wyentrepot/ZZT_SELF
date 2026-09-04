@@ -411,8 +411,8 @@ def test_dict_rules(client):
 def test_trace_dict_pages_no_cache(client):
     # 新页面同样走 NoCacheHTMLStaticFiles，且 JS 带 ?v= 版本参数
     for path, js in [
-        ("/static/pages/trace/trace.html", "trace.js?v=trace-v1"),
-        ("/static/pages/dict/dict.html", "dict.js?v=dict-v1"),
+        ("/static/pages/trace/trace.html", "trace.js?v=trace-v2"),
+        ("/static/pages/dict/dict.html", "dict.js?v=dict-v2"),
     ]:
         r = client.get(path)
         assert r.status_code == 200, path
