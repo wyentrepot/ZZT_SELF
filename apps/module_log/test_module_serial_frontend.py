@@ -69,6 +69,17 @@ class ModuleDynamicFrontendContractTest(unittest.TestCase):
         self.assertIn("activeSessionId", js)
         self.assertNotIn('id="ms-panel-cco"', html)
 
+    def test_compare_module_selection_guarded_from_polling_overwrite(self):
+        """对照解析：文件模式下手选 CCO/STA 不得被会话轮询覆盖。
+
+        回归 2026-09-05：cmpRefreshSessions 与 cmp-session change 里同步
+        session.module 时若不带 source 守卫，轮询（refreshSessions ->
+        cmpRefreshSessions）会把用户手选的模块冲回默认 cco（“选 STA 闪回 CCO”）。
+        """
+        for js_path in (STANDALONE_JS, WORKBENCH_JS):
+            js = js_path.read_text(encoding="utf-8")
+            self.assertIn('session.module && cmp.source === "realtime"', js)
+
     def test_both_javascript_copies_parse(self):
         node = shutil.which("node")
         if node is None:

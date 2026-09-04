@@ -531,7 +531,7 @@
     if (previous) setSelectValue("cmp-session", previous);
     cmp.sessionId = select.value || null;
     const session = cmpCurrentSession();
-    if (session && session.module) {
+    if (session && session.module && cmp.source === "realtime") {
       cmp.module = session.module;
       cmpSyncModuleButtons();
     }
@@ -897,7 +897,7 @@
     $("cmp-session").addEventListener("change", function () {
       cmp.sessionId = $("cmp-session").value || null;
       const session = cmpCurrentSession();
-      if (session && session.module) {
+      if (session && session.module && cmp.source === "realtime") {
         cmp.module = session.module;
         cmpSyncModuleButtons();
       }
