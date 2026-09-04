@@ -176,6 +176,7 @@ def _mount_proxied(app: FastAPI, name: str, sub_app, api_prefix: str, sub_root: 
 def create_workbench_app(
     listener_factory=None,
     module_log_factory=None,
+    simcon_factory=None,
     mount_listener: bool = True,
     ai_control_service=None,
     ai_auth_store=None,
@@ -185,6 +186,7 @@ def create_workbench_app(
     """创建统一工作台应用。
 
     参数可注入替代工厂（测试用）；listener 挂载失败自动降级（mount_listener=False）。
+    simcon_factory：REQS-0023 起 simcon 拆为平级子应用，测试可注入假实现隔离依赖。
     """
     app = FastAPI(
         title="AI 闭环研发验证工作台",
@@ -219,12 +221,11 @@ def create_workbench_app(
         else:
             _ml_sub = module_log_factory()
         _mount_proxied(app, "module-serial", _ml_sub, "/api/module-serial", sub_root="/api/module-serial")
-        # module_log 子应用还自带 /api/fs、/api/loghooks 路由，并在内部把
-        # simcon 挂在 /api/simcon；统一工作台下按透传模式补齐这三组前缀，
-        # 使 module-serial 页面的 fs/loghooks/simcon 请求在 iframe 内可达。
+        # module_log 子应用还自带 /api/fs、/api/loghooks 路由；统一工作台下按
+        # 透传模式补齐这两组前缀，使 module-serial 页面的 fs/loghooks 请求
+        # 在 iframe 内可达。（simcon 已拆为平级子应用，见下方独立挂载段。）
         _mount_proxied(app, "module-serial-fs", _ml_sub, "/api/fs", sub_root="/api/fs")
         _mount_proxied(app, "module-serial-loghooks", _ml_sub, "/api/loghooks", sub_root="/api/loghooks")
-        _mount_proxied(app, "module-serial-simcon", _ml_sub, "/api/simcon", sub_root="/api/simcon")
         app.state.module_serial_service = getattr(
             getattr(_ml_sub, "state", None), "module_serial_service", None,
         )
@@ -274,6 +275,23 @@ def create_workbench_app(
     else:
         app.state.listener_mounted = False
 
+    # ---- 2.5 挂载 simcon（模拟集中器，拆为平级子应用，REQS-0023）----
+    # 独立 try/except 降级：module_log 挂载失败不再连带 simcon 不可用。
+    _simcon_sub = None
+    try:
+        if simcon_factory is None:
+            from sim_concentrator.api import create_simcon_app
+            _simcon_sub = create_simcon_app(
+                prefix="", resource_registry=app.state.serial_resource_registry,
+            )
+        else:
+            _simcon_sub = simcon_factory()
+        app.mount("/api/simcon", _simcon_sub, name="simcon")
+        app.state.simcon_mounted = True
+    except Exception as exc:  # pragma: no cover - 依赖缺失降级
+        app.state.simcon_mounted = False
+        app.state.simcon_error = str(exc)
+
     # ---- 3. AI 控制面：仅复用已挂载的后端服务，不经 HTTP 回调 ----
     from .ai_api import create_ai_router
     from .ai_auth import AuthorizationStore
@@ -292,13 +310,13 @@ def create_workbench_app(
     )
     # 模拟集中器 AI 桥：进程内包装 simcon 执行核心（缺失则 AI simcon 接口 503）
     _simcon_accessors = {
-        name: getattr(_ml_sub.state, name, None)
+        name: getattr(getattr(_simcon_sub, "state", None), name, None)
         for name in ("simcon_run_verify", "simcon_run_step", "simcon_frames",
                      "simcon_session", "simcon_open", "simcon_close_io")
     }
     # REQS-0018：1376.2 收发库只读查询访问器（与核心访问器解耦——库缺失不影响 verify/frames）。
     _simcon_store_accessors = {
-        name: getattr(_ml_sub.state, name, None)
+        name: getattr(getattr(_simcon_sub, "state", None), name, None)
         for name in ("simcon_store_snapshots", "simcon_store_snapshot_items",
                      "simcon_store_events")
     }
@@ -342,8 +360,8 @@ def create_workbench_app(
     from .serial_profile_applier import SerialProfileApplier, SimconProfileAdapter
 
     _profile_store = _ProfileStore(runtime_dir=_prof_dir())
-    _simcon_open = getattr(getattr(_ml_sub, "state", None), "simcon_open_io", None)
-    _simcon_close = getattr(getattr(_ml_sub, "state", None), "simcon_close_io", None)
+    _simcon_open = getattr(getattr(_simcon_sub, "state", None), "simcon_open_io", None)
+    _simcon_close = getattr(getattr(_simcon_sub, "state", None), "simcon_close_io", None)
     _simcon_adapter = None
     if _simcon_open is not None and _simcon_close is not None:
         try:

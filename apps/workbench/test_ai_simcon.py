@@ -59,15 +59,22 @@ class FakeSimconCore:
         return {"open": False}
 
 
-def _simcon_module_factory(core):
+def _simcon_factory(core):
+    """REQS-0023：simcon 拆为平级子应用，测试注入假 simcon 子应用。
+
+    与真实 create_simcon_app 同构：把执行核心提升到 state，供 AI 桥读取。
+    """
     app = FastAPI()
-    app.state.module_serial_service = FakeModuleService()
     app.state.simcon_run_verify = core.verify
     app.state.simcon_run_step = core.step
     app.state.simcon_frames = core.frames
     app.state.simcon_session = core.session
     app.state.simcon_open = core.open
     app.state.simcon_close_io = core.close
+    # REQS-0018 收发库只读访问器（缺省 None，模拟库未启用）
+    app.state.simcon_store_snapshots = None
+    app.state.simcon_store_snapshot_items = None
+    app.state.simcon_store_events = None
     return app
 
 
@@ -75,6 +82,11 @@ def _plain_module_factory():
     app = FastAPI()
     app.state.module_serial_service = FakeModuleService()
     return app
+
+
+def _plain_simcon_factory():
+    """simcon 子应用存在但无执行核心访问器（模拟核心缺失 → AI 桥应 503）。"""
+    return FastAPI()
 
 
 def _listener_factory():
@@ -97,8 +109,9 @@ def _client(core=None, scopes=None, resources=None):
         resources=resources or ["*"], ttl_seconds=60, created_by="human",
     )
     app = create_workbench_app(
-        module_log_factory=(_plain_module_factory if core is None
-                            else lambda: _simcon_module_factory(core)),
+        module_log_factory=_plain_module_factory,
+        simcon_factory=(_plain_simcon_factory if core is None
+                        else lambda: _simcon_factory(core)),
         listener_factory=_listener_factory,
         ai_auth_store=auth,
     )

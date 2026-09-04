@@ -22,9 +22,18 @@ def _listener_factory():
     return FastAPI()
 
 
+def _plain_simcon_factory():
+    """simcon 子应用存在但无执行核心访问器（REQS-0023 拆出后测试隔离用）。
+
+    避免测试走真实 create_simcon_app（其内部加载串口目录，可能访问硬件）。
+    """
+    return FastAPI()
+
+
 def _app(*, auth: AuthorizationStore | None = None):
     return create_workbench_app(
         module_log_factory=_module_factory,
+        simcon_factory=_plain_simcon_factory,
         listener_factory=_listener_factory,
         ai_auth_store=auth,
     )
@@ -147,6 +156,7 @@ def test_v2_resource_aliases_reject_paths_and_physical_serial_handles(monkeypatc
     }
     app = create_workbench_app(
         module_log_factory=lambda: module_app,
+        simcon_factory=_plain_simcon_factory,
         listener_factory=_listener_factory,
     )
 
@@ -179,6 +189,7 @@ def test_v2_registration_does_not_change_v1_auth_or_human_admin_protection(monke
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(
         module_log_factory=_module_factory,
+        simcon_factory=_plain_simcon_factory,
         listener_factory=_listener_factory,
         ai_admin_key="human-admin-key",
     )
@@ -231,6 +242,7 @@ def test_v2_investigation_fans_out_sources_and_returns_bounded_evidence(monkeypa
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
                                listener_factory=_listener_bundle_factory)
     client = TestClient(app)
 
@@ -256,6 +268,7 @@ def test_v2_investigation_preserves_historical_listener_index_id_across_l2_and_l
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
                                listener_factory=_listener_bundle_factory)
     client = TestClient(app)
     created = client.post("/api/ai/v2/investigations", json=_historical_investigation())
@@ -277,6 +290,7 @@ def test_v2_live_not_seen_is_inconclusive_and_job_read_does_not_refresh(monkeypa
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
                                listener_factory=_listener_bundle_factory)
     client = TestClient(app)
     body = {
@@ -332,6 +346,8 @@ def _write_app(module, *, simcon=None, auth=None):
     return create_workbench_app(
         ai_control_service=control,
         ai_auth_store=auth,
+        module_log_factory=_module_factory,
+        simcon_factory=_plain_simcon_factory,
         listener_factory=_listener_factory,
     )
 
@@ -481,6 +497,7 @@ def test_v2_listener_evidence_is_layered_l1_no_raw_hex_l2_projections(monkeypatc
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
                                listener_factory=_trace_bundle_factory)
     client = TestClient(app)
     job_id = _create_trace_job(client)
@@ -516,6 +533,7 @@ def test_v2_listener_evidence_l3_accepts_job_refs_and_rejects_foreign(monkeypatc
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
                                listener_factory=_trace_bundle_factory)
     client = TestClient(app)
     job_id = _create_trace_job(client)
@@ -585,6 +603,7 @@ def test_v2_listener_minute_periods_l2_exposes_freeze_time(monkeypatch, tmp_path
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
     app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
                                listener_factory=_minute_periods_bundle_factory)
     client = TestClient(app)
     created = client.post("/api/ai/v2/investigations", json={

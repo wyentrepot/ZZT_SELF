@@ -45,7 +45,15 @@ def _stub_module_log_factory():
     async def loghooks_sources():
         return {"root": "stub", "groups": {}}
 
-    @app.get("/api/simcon/ports")
+    return app
+
+
+def _stub_simcon_factory():
+    from fastapi import FastAPI
+
+    app = FastAPI(title="stub-simcon")
+
+    @app.get("/ports")
     async def simcon_ports():
         return {"ports": [], "port_details": []}
 
@@ -57,6 +65,7 @@ def client():
     app = create_workbench_app(
         listener_factory=_stub_listener_factory,
         module_log_factory=_stub_module_log_factory,
+        simcon_factory=_stub_simcon_factory,
     )
     return TestClient(app)
 
@@ -104,13 +113,17 @@ def test_module_log_mounted(client):
 
 
 def test_module_log_extra_prefixes_proxied(client):
-    # module_log 子应用自带的 /api/fs、/api/loghooks、/api/simcon
-    # 在统一工作台下也必须可达（module-serial 页面的 iframe 依赖它们）。
+    # module_log 子应用自带的 /api/fs、/api/loghooks 在统一工作台下也必须可达
+    # （module-serial 页面的 iframe 依赖它们）。
     r = client.get("/api/fs/roots")
     assert r.status_code == 200
     assert r.json()["roots"][0]["name"] == "stub"
     r = client.get("/api/loghooks/sources")
     assert r.status_code == 200
+
+
+def test_simcon_mounted(client):
+    # REQS-0023：simcon 拆为平级子应用，直接挂到 /api/simcon（不再经 module_log 透传）。
     r = client.get("/api/simcon/ports")
     assert r.status_code == 200
 
