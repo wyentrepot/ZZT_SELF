@@ -16,7 +16,20 @@
   var profiles = null;   // GET /api/serial-profile -> {profiles:{slot:{...}}}
   var portDetails = [];  // GET /api/module-serial/ports -> port_details
   var applyResult = {};  // 上次 apply 逐槽结果
+  var statesBySlot = {}; // GET /api/serial-profile/status -> {slot:{state,owner}}
   var busy = false;
+
+  // 后端状态枚举 -> 中文显示
+  var STATE_TEXT = {
+    running: "运行中",
+    starting: "启动中",
+    stopped: "已停止",
+    idle: "空闲",
+    open: "已打开",
+    closed: "已关闭",
+    error: "错误",
+    unknown: "未知",
+  };
 
   var gridEl = document.getElementById("slotGrid");
   var summaryEl = document.getElementById("errorSummary");
@@ -77,6 +90,20 @@
       portDetails = [];
     }
     return portDetails;
+  }
+
+  // 四槽实时状态与占用（只读快照；applier 未配置时后端返回 503，此处降级为空）
+  async function loadStates() {
+    try {
+      var data = await request(api("/serial-profile/status"));
+      statesBySlot = {};
+      (data.slots || []).forEach(function (s) {
+        statesBySlot[s.slot] = s;
+      });
+    } catch (err) {
+      statesBySlot = {};   // 状态不可用时留空，各槽显示「未知」，不阻断页面
+    }
+    return statesBySlot;
   }
 
   // 从 port_details 提取可选项（映射 + 未映射设备）
@@ -173,21 +200,28 @@
       parField.appendChild(parity);
       card.appendChild(parField);
 
-      // 状态
+      // 状态 / 占用（数据源：GET /api/serial-profile/status，ADR-35 要求项）
+      var st = statesBySlot[def.slot] || {};
+      var stateKey = st.state || "";
       var status = document.createElement("div");
       status.className = "slot-status";
       status.id = "status-" + def.slot;
       status.innerHTML =
         "<dl>" +
-        "<dt>状态</dt><dd id='st-" + def.slot + "'>…</dd>" +
-        "<dt>占用</dt><dd id='own-" + def.slot + "'>…</dd>" +
+        "<dt>状态</dt><dd id='st-" + def.slot + "'>" +
+        escapeHtml(STATE_TEXT[stateKey] || stateKey || "未知") + "</dd>" +
+        "<dt>占用</dt><dd id='own-" + def.slot + "'>" +
+        escapeHtml(st.owner || "—") + "</dd>" +
         "</dl>";
       card.appendChild(status);
 
-      // 应用结果
+      // 应用结果（重建卡片后仍需保留上次 apply 的逐槽结果）
       var result = document.createElement("div");
-      result.className = "result";
+      result.className = "result" + (res.status === "failed" ? " fail" : (res.status ? " ok" : ""));
       result.id = "result-" + def.slot;
+      if (res.status) {
+        result.textContent = res.status + (res.reason ? "：" + res.reason : "");
+      }
       card.appendChild(result);
 
       gridEl.appendChild(card);
@@ -305,6 +339,7 @@
       if (hintEl) hintEl.textContent = "一键应用完成 ✓";
       if (body.overall === "ok") showSummary("");
       else showSummary("部分槽未成功：详见各槽应用结果");
+      await loadStates();   // 应用后立刻反映各槽真实状态
       renderSlots();
     } catch (err) {
       showSummary("一键应用失败：" + err.message);
@@ -316,7 +351,8 @@
   async function doRefresh() {
     busy = true; setBusy(true);
     try {
-      await Promise.all([loadProfiles(), loadPorts()]);
+      // 「刷新状态」名副其实：连同角色标签与各槽实时状态一并刷新
+      await Promise.all([loadProfiles(), loadPorts(), loadTags(), loadStates()]);
       renderSlots();
       if (hintEl) hintEl.textContent = "已刷新状态 ✓";
       showSummary("");
@@ -437,7 +473,7 @@
   // 初始加载
   (async function init() {
     try {
-      await Promise.all([loadProfiles(), loadPorts(), loadTags()]);
+      await Promise.all([loadProfiles(), loadPorts(), loadTags(), loadStates()]);
       renderSlots();
     } catch (err) {
       showSummary("加载失败：" + err.message);

@@ -124,3 +124,45 @@ def test_apply_default_profile_starts_nothing(client):
     for s in body["slots"]:
         assert s["status"] in ("skipped", "unchanged")
     assert body["overall"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/serial-profile/status 只读状态快照
+# P6 配置页「状态/占用」字段的数据源（ADR-35 要求项，此前前端渲染后从不赋值）
+# ---------------------------------------------------------------------------
+
+def test_status_returns_four_slots(client):
+    c, _ = client
+    resp = c.get("/api/serial-profile/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    by_slot = {s["slot"]: s for s in body["slots"]}
+    assert set(by_slot.keys()) == {
+        "module_log.cco", "module_log.sta", "listener.main", "simcon.main",
+    }
+    # 未启用任何槽：不得伪装成运行中（历史缺陷：状态字段恒为占位符）
+    for s in body["slots"]:
+        assert s["state"] in ("stopped", "closed", "idle", "unknown")
+        assert "owner" in s
+
+
+def test_status_reflects_runtime_state_after_apply(client):
+    """apply 后状态/占用必须立刻反映真实串口状态。"""
+    c, _ = client
+    c.put("/api/serial-profile", json={
+        "profiles": {"listener.main": {"mapping_id": "listener", "enabled": True}},
+    })
+    c.post("/api/serial-profile/apply")
+    resp = c.get("/api/serial-profile/status")
+    assert resp.status_code == 200
+    by_slot = {s["slot"]: s for s in resp.json()["slots"]}
+    assert by_slot["listener.main"]["state"] == "running"
+    assert by_slot["listener.main"]["owner"]   # 占用给出实际端口
+
+
+def test_status_503_when_applier_unset(profile_store):
+    """未配置 applier 时返回 503，而不是伪装成全空闲。"""
+    app = FastAPI()
+    app.include_router(create_serial_profile_router(profile_store=profile_store))
+    resp = TestClient(app).get("/api/serial-profile/status")
+    assert resp.status_code == 503

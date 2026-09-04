@@ -5,6 +5,9 @@
 - PUT /api/serial-profile：只保存，不操作硬件。
 - POST /api/serial-profile/apply：手动一键应用已保存版本（调 SerialProfileApplier）。
 - Apply 只读取已保存 Profile，不接受临时表单配置。
+
+P6 配置页补充（ADR-35 状态/占用）：
+- GET /api/serial-profile/status：只读状态快照，四槽当前状态与占用。
 """
 from __future__ import annotations
 
@@ -64,6 +67,17 @@ def create_serial_profile_router(
         except InvalidProfileError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"profiles": profiles, "slots": PROFILE_SLOTS}
+
+    @router.get("/status")
+    def get_status() -> dict[str, Any]:
+        """只读状态快照：四槽当前状态与占用，不打开/关闭任何串口。
+
+        P6 配置页「状态/占用」字段的数据源（ADR-35）。依赖各子应用服务，
+        未配置 applier 时返回 503，而不是伪装成全空闲。
+        """
+        store = _store()
+        applier_instance = _applier_for(store)
+        return applier_instance.snapshot()
 
     @router.put("")
     def put_profile(request: Request, payload: dict[str, Any]) -> dict[str, Any]:

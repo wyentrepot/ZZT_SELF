@@ -256,3 +256,33 @@ class SerialProfileApplier:
         if slot == "simcon.main":
             return {"state": "open" if getattr(self.simcon_service, "open_port", None) else "closed"}
         return {"state": "unknown"}
+
+    def snapshot(self) -> dict[str, Any]:
+        """只读状态快照：四槽当前状态与占用，不打开/关闭任何串口。
+
+        用途：P6 配置页「状态/占用」字段的数据源（ADR-35 要求该两项，
+        此前前端渲染后从不赋值）。
+
+        复用 `_current_state()`；按 `PROFILE_SLOTS` 顺序返回（与前端四槽顺序一致）；
+        单槽取数失败不影响其他槽，只把该槽标为 unknown。
+        """
+        profiles = self.profile_store.load()
+        slots: list[dict[str, Any]] = []
+        for slot in PROFILE_SLOTS:
+            profile = profiles.get(slot) or {}
+            try:
+                state = self._current_state(slot, profile) or {}
+            except Exception as exc:  # noqa: BLE001 - 单槽失败继续
+                state = {"state": "unknown",
+                         "reason": str(exc) or exc.__class__.__name__}
+            # 占用：module 槽是托管会话 ID，listener/simcon 是实际端口
+            owner = state.get("session_id") or state.get("port") or ""
+            if slot == "simcon.main" and not owner:
+                owner = getattr(self.simcon_service, "open_port", None) or ""
+            slots.append({
+                "slot": slot,
+                "state": state.get("state") or "unknown",
+                "owner": owner,
+                "detail": state,
+            })
+        return {"slots": slots}
