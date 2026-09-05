@@ -1,0 +1,25 @@
+{
+ "id": "nwk.heartbeat.offline_4cycles",
+ "name": "心跳 4 周期离网 + 10s 延迟删除",
+ "family": "heartbeat",
+ "severity_hint": "fault",
+ "description": "CCO 心跳保活：第 1 个心跳周期无心跳置 OFFLINE 并回调应用层；连续 4 个心跳周期无心跳置 WAITON、发离网指示（MMeLeaveInd，table91，代理广播载波/无线双发），延迟 10s 后执行离网删除。",
+ "trigger": {"event": "heartbeat_missing", "params": {"counter": "InactiveHtCnt"}},
+ "observation_window": {"kind": "period_count", "note": "以心跳周期（路由周期×2/×4，见 nwk.heartbeat.period_ratio）为节拍累计无心跳次数。"},
+ "verdict": {
+  "pass": "站点在心跳窗口内有活跃位图（心跳/发现列表/代理变更请求均刷新）",
+  "fail": "连续 4 个心跳周期无任何活跃刷新→离网指示 + 10s 后删除"
+ },
+ "thresholds": [
+  {"key": "offline_mark_cycles", "op": "==", "value": 1, "unit": "心跳周期", "meaning": "第 1 次无心跳置 OFFLINE 并回调 StaStateChgFunc"},
+  {"key": "leave_ind_cycles", "op": ">=", "value": 4, "unit": "心跳周期", "meaning": "连续 ≥4 个心跳周期无心跳→WAITON + 离网指示"},
+  {"key": "leave_delete_delay_ms", "op": "==", "value": 10000, "unit": "ms", "meaning": "DelayLeavelSet 10s 后执行离网删除"},
+  {"key": "leave_ind_table", "op": "==", "value": 91, "unit": "表号", "meaning": "MMeLeaveInd 按 table91 填原因/站点数/延迟时间，代理广播双通道发送"}
+ ],
+ "source": {
+  "doc": "CCO实现逻辑/07-NWK入网-路由-心跳-信标-冲突.md",
+  "section": "第五章 §5.4（nwk_task.c:568-585、sta.c:1165）",
+  "quote": "ent->InactiveHtCnt++; if(ent->InactiveHtCnt >= 4) { ent->status = WAITON; AddLeaveIndBuf(addr); DelayLeavelSet(ent->tei, 10*1000ul); }"
+ },
+ "notes": "离线判定属 10373 运维管理要求，4 周期/10s 延迟为工程自定义门限。代理变更请求视作心跳补救（nwk_hbc.c:279）。"
+}

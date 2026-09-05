@@ -1,0 +1,26 @@
+{
+ "id": "nwk.comm_success_rate.three_tier",
+ "name": "通信成功率/离线率三级判级",
+ "family": "success_rate",
+ "severity_hint": "warn",
+ "description": "网络承载评估 A 档三级判级：通信成功率 ≥98% 健康、90~98% 亚健康、<90% 故障；离线率 ≤2% 健康、2~10% 亚健康、>10% 故障；汇总取最差，无法判定离线率时剔除该维度（仅用成功率）。",
+ "trigger": {"event": "assessment_period_snapshot", "params": {"fields": ["success_rate_pct", "offline_rate_pct"]}},
+ "observation_window": {"kind": "rolling_window", "note": "按评估周期窗口；离线率弱代理口径：某 STA 周期窗口无上报=该周期离线。"},
+ "verdict": {
+  "pass": "成功率 ≥98% 且离线率 ≤2%（或离线率不可判定时仅成功率达标）",
+  "fail": "成功率 <90% 或离线率 >10% 判故障；90~98% / 2~10% 判亚健康"
+ },
+ "thresholds": [
+  {"key": "success_rate_healthy_min_pct", "op": ">=", "value": 98, "unit": "%", "meaning": "≥98% 健康"},
+  {"key": "success_rate_degraded_min_pct", "op": ">=", "value": 90, "unit": "%", "meaning": "90~98% 亚健康，<90% 故障"},
+  {"key": "offline_rate_healthy_max_pct", "op": "<=", "value": 2, "unit": "%", "meaning": "≤2% 健康"},
+  {"key": "offline_rate_degraded_max_pct", "op": "<=", "value": 10, "unit": "%", "meaning": "2~10% 亚健康，>10% 故障"},
+  {"key": "sta_zero_success_offline_cycles", "op": "==", "value": 4, "unit": "路由周期", "meaning": "STA 侧离网口径：连续 4 个路由周期通信成功率为 0 主动离线（06_测试用例 §2.5.2.11）"}
+ ],
+ "source": {
+  "doc": "侦听台网络承载评估 B 类规则（apps/listener/network_assessment.py，用户拍板口径）",
+  "section": "模块 docstring『三级判定（记忆库 B 类规则）』",
+  "quote": "通信成功率：健康 >=98%，亚健康 90~98%，故障 <90%；离线率：健康 <=2%，亚健康 2~10%，故障 >10%"
+ },
+ "notes": "STA 连续 4 路由周期成功率 0 主动离线出自 06_测试用例 网络维护条目；成功率的失败重传行为参见 08-MAC §二（minBE=4/maxBE=8 退避）。"
+}

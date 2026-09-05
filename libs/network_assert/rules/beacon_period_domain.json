@@ -1,0 +1,24 @@
+{
+ "id": "nwk.beacon.period_domain",
+ "name": "信标周期合法域",
+ "family": "beacon",
+ "severity_hint": "warn",
+ "description": "中央信标周期的合法域：协议口径信标周期 1~10s；侦听台评估参数口径（Detail『信标周期Xms』权威值）放宽为 500ms~120s（实测设备可配置 14878ms）；低于下界视为解析异常。",
+ "trigger": {"event": "beacon_observed", "params": {"field": "beacon_period_ms"}},
+ "observation_window": {"kind": "per_event", "note": "逐中央信标事件判定；与评估页到达间隔推算口径（1~10s 过滤乱序）区分。"},
+ "verdict": {
+  "pass": "信标周期落在所选口径合法域内",
+  "fail": "周期越界：<500ms 判解析异常，>120s 超出常见信标周期"
+ },
+ "thresholds": [
+  {"key": "beacon_period_s", "op": "in_range", "value": [1, 10], "unit": "s", "meaning": "协议口径：信标周期 1~10s（06_测试用例 §7.3；评估到达间隔过滤口径）"},
+  {"key": "beacon_param_ms", "op": "in_range", "value": [500, 120000], "unit": "ms", "meaning": "评估参数口径：Detail 权威值 500ms~120s（实测 14878ms）"},
+  {"key": "dup_window_ms", "op": "==", "value": 800, "unit": "ms", "meaning": "同一信标重复抓包窗口（实测重复间隔 <200ms 留余量）"}
+ ],
+ "source": {
+  "doc": "蒸馏/06_测试用例.md",
+  "section": "§7.3 关键定时参数",
+  "quote": "信标周期 1~10s（数据链路层协议）；路由周期 20~420s（协议口径，代码实现为 50~720s 自适应，见 nwk.route.period_adaptive）"
+ },
+ "notes": "双口径并存：协议口径（1~10s）用于到达间隔合法性；评估参数口径（500ms~120s）用于 Detail 权威参数——与 apps/listener/network_assessment.py 的 BEACON_PERIOD_MIN/MAX、BEACON_PARAM_MIN/MAX 一致。"
+}

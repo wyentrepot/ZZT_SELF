@@ -1,0 +1,23 @@
+{
+ "id": "nwk.csma.occupancy_two_tier",
+ "name": "CSMA 时隙占用两级门限",
+ "family": "csma",
+ "severity_hint": "warn",
+ "description": "B 档时隙占用评估：CSMA 时隙占比 = CSMA 时隙大小 / 信标周期；占比 >60% 判降级、>80% 判故障，与周期/网络评级最差合并。",
+ "trigger": {"event": "assessment_period_snapshot", "params": {"field": "csma_slot_ratio_pct", "from": "summary_json.Detail（时隙分配条目 table50）"}},
+ "observation_window": {"kind": "rolling_window", "note": "按中央信标周期窗口统计，与评估页 B 档同口径。"},
+ "verdict": {
+  "pass": "CSMA 时隙占比 ≤60%",
+  "fail": ">60% 降级；>80% 故障"
+ },
+ "thresholds": [
+  {"key": "csma_slot_ratio_degraded_pct", "op": ">", "value": 60, "unit": "%", "meaning": ">60% → 降级"},
+  {"key": "csma_slot_ratio_fault_pct", "op": ">", "value": 80, "unit": "%", "meaning": ">80% → 故障"}
+ ],
+ "source": {
+  "doc": "侦听台网络承载评估 B 类规则（apps/listener/network_assessment.py，用户拍板口径）",
+  "section": "模块 docstring『B 档时隙占用』",
+  "quote": "B 档时隙占用：CSMA 时隙占比=CSMA时隙大小/信标周期，>60% 降级、>80% 故障。"
+ },
+ "notes": "CSMA 时段参数出处：双模 4-2 表50 时隙分配条目（CSMA 时段提前 2ms 结束、分片长度域 ×10 转 ms，08-MAC §一）。求值输入为评估快照或 0024 信标事件流提取的 table50 参数。"
+}

@@ -1,0 +1,27 @@
+{
+ "id": "nwk.assoc_reject.backoff_tiers",
+ "name": "关联拒绝退避分档",
+ "family": "association",
+ "severity_hint": "warn",
+ "description": "准入失败（不在白名单/未设白名单）时，CCO 按『拒绝原因 + 运行时长』计算重关联退避并回 AssocNack：上电 <121s 走防洪泛档（防上电洪泛），121~1800s / >1800s 分档递增；退避开关关闭时回退按 MAC 的指数退避。",
+ "trigger": {"event": "assoc_reject", "params": {"reason_codes": [1, 4], "meaning": "1=不在白名单 OUTOFLIST，4=未设白名单 WLIST_NOSET"}},
+ "observation_window": {"kind": "per_event", "note": "逐拒绝事件判定回填的退避时间；结果码经关联确认 table70 携带。"},
+ "verdict": {
+  "pass": "拒绝确认携带退避时间，且档位与『原因 + CCO 运行时长』匹配（上电 121s 内用防洪泛档）",
+  "fail": "退避缺失、或上电 >121s 后仍复用防洪泛档、或档位与原因错配"
+ },
+ "thresholds": [
+  {"key": "backoff_power_on_tier_ms", "op": "==", "value": 40000, "unit": "ms", "meaning": "上电 <121s 防洪泛档默认退避（cac.h 默认值集 40/60/600/30s）"},
+  {"key": "backoff_not_in_whiter_ms", "op": "==", "value": 60000, "unit": "ms", "meaning": "运行 121~1800s 不在白名单档默认退避"},
+  {"key": "backoff_not_set_whiter_ms", "op": "==", "value": 600000, "unit": "ms", "meaning": "运行 >1800s 未设白名单档默认退避"},
+  {"key": "power_on_tier_guard_s", "op": "<", "value": 121, "unit": "s", "meaning": "防洪泛档适用上界"},
+  {"key": "tier_boundary_s", "op": "<", "value": 1800, "unit": "s", "meaning": "分档边界：小于走 60s 档，否则 600s 档"},
+  {"key": "retry_backoff_base_s", "op": "==", "value": 16, "unit": "s", "meaning": "开关关闭时按 MAC 指数退避 16×2^cnt 秒，上限 6 次"}
+ ],
+ "source": {
+  "doc": "CCO实现逻辑/07-NWK入网-路由-心跳-信标-冲突.md",
+  "section": "第一章 §1.4（nwk_reject_list.c:115-119、cac.h:173-178）",
+  "quote": "不在白名单按运行时分档，防上电洪泛……退避默认值在 cac.h:173-178（40s/60s/600s/30s 等）；开关关闭时回退按 MAC 的指数退避 nwk_retry_time（16×2^cnt 秒，上限 6 次）"
+ },
+ "notes": "退避数值为工程自定义（协议未规定）；具体档位→数值映射以 cac.h:173-178 为准，本规则固化 40/60/600s 三主档与 121s/1800s 边界。求值需 REQS-0024 关联事件流。"
+}
