@@ -120,6 +120,18 @@ class BuildRequest(BaseModel):
     seq: int = 1
 
 
+class BatchReadRequest(BaseModel):
+    """并发抄表任务创建请求（REQS-0027 G5）。"""
+    meters: List[str] = []
+    max_concurrent: int = 5
+    mode: str = "single"            # single=02H-F1 单抄 / batch=F1H-F1 并发抄表
+    protocol_type: int = 2          # 00 透明 / 02=645-2007 / 03=698.45
+    timeout: Optional[float] = None  # 缺省按 expect_rules 档位（单抄59s/并抄99s）
+    profile: Optional[str] = None
+    port: Optional[str] = None
+    mapping_id: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # 应用工厂
 # ---------------------------------------------------------------------------
@@ -574,16 +586,6 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     app.state.simcon_batch_stop = _batch_stop
     app.state.simcon_readings = _readings
     app.state.simcon_report_buckets = _report_buckets
-
-    class BatchReadRequest(BaseModel):
-        meters: List[str] = []
-        max_concurrent: int = 5
-        mode: str = "single"            # single=02H-F1 单抄 / batch=F1H-F1 并发抄表
-        protocol_type: int = 2          # 00 透明 / 02=645-2007 / 03=698.45
-        timeout: Optional[float] = None  # 缺省按 expect_rules 档位（单抄59s/并抄99s）
-        profile: Optional[str] = None
-        port: Optional[str] = None
-        mapping_id: Optional[str] = None
 
     @app.post(f"{prefix}/batch_read")
     async def batch_read(request: BatchReadRequest):
