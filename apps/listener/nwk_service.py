@@ -20,7 +20,7 @@ import sqlite3
 import sys
 import threading
 import time
-from contextlib import closing
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -40,6 +40,21 @@ EVENT_GROUPS = {
     "信标": ["beacon_central", "beacon_proxy", "beacon_discover"],
     "业务": ["app_data"],
 }
+
+
+@contextmanager
+def _connect(service):
+    """统一连接入口：LogFileService._connect 是 @contextmanager 生成器（yield 连接，
+    退出时 commit/close），测试桩可能直接返回 sqlite3.Connection——两种形态都支持。"""
+    obj = service._connect()
+    if isinstance(obj, sqlite3.Connection):
+        try:
+            yield obj
+        finally:
+            obj.close()
+    else:
+        with obj as connection:
+            yield connection
 
 _BEACON_EVENTS = ("beacon_central", "beacon_proxy", "beacon_discover")
 
@@ -107,7 +122,7 @@ class NwkService:
         service = self._log.open_index(index_id) if index_id else self._log
         budget = max_frames or self.MAX_SCAN_PER_CALL
         with self._lock:
-            with closing(service._connect()) as connection:
+            with _connect(service) as connection:
                 self._ensure_tables(connection)
                 row = connection.execute(
                     "SELECT last_frame_id FROM nwk_scan_state WHERE id = 1"
@@ -243,7 +258,7 @@ class NwkService:
             wildcard = f"%{query.strip()}%"
             params.extend([wildcard, wildcard, wildcard])
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        with closing(service._connect()) as connection:
+        with _connect(service) as connection:
             self._ensure_tables(connection)
             total = connection.execute(
                 f"SELECT COUNT(*) FROM nwk_events{where}", params
@@ -295,7 +310,7 @@ class NwkService:
         for net in networks.values():
             net["stations"] = sorted(net["stations"])
             net["station_count"] = len(net["stations"])
-        with closing(service._connect()) as connection:
+        with _connect(service) as connection:
             self._ensure_tables(connection)
             state = connection.execute(
                 "SELECT frames_total, mgmt_total, app_total, beacon_total,"

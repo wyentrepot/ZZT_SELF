@@ -1,6 +1,7 @@
 """NwkService 单测：临时索引库 + 真机夹具帧 → 事件落库/总览/信标查询。"""
 import sqlite3
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -12,13 +13,20 @@ from parser_lib.adapters.adapter_dualmac.tests import samples as S  # noqa: E402
 
 
 class _StubLogService:
-    """LogFileService 最小桩：暴露 _connect / _time_range_bound / open_index。"""
+    """LogFileService 最小桩：_connect 与真实实现同为 @contextmanager 生成器
+    （回归防线：2026-09-05 曾因桩用裸连接漏掉 contextmanager 形态缺陷）。"""
 
     def __init__(self, db_path):
-        self.database_path = db_path
+        self.database_path = str(db_path)
 
+    @contextmanager
     def _connect(self):
-        return sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(self.database_path)
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
 
     @staticmethod
     def _time_range_bound(value, is_end=False):
