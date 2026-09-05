@@ -29,7 +29,7 @@ from sim_concentrator.frame_codec import (
     frame_to_hex,
     hex_to_bytes,
 )
-from sim_concentrator.matcher import match_frame
+from sim_concentrator.matcher import deny_info, match_frame
 from sim_concentrator.responder import Responder
 from sim_concentrator.serial_io import SerialIO, resolve_serial_config
 from sim_concentrator.scenario_codec import (
@@ -202,6 +202,7 @@ def run_step(io: SerialIO, responder: Optional[Responder],
 
     # 5) 期望接收一帧（主动下发后等待 CCO 回复；recv_only 则直接等待上报）
     deadline = time.time() + timeout
+    bystanders = []  # REQS-0027：窗口内不匹配的旁听帧（CCO 插播主动上报等）
     while time.time() < deadline:
         got = io.recv_frame(timeout=max(0.05, deadline - time.time()))
         if got is None:
@@ -210,21 +211,58 @@ def run_step(io: SerialIO, responder: Optional[Responder],
         result["parsed"] = _safe_decode(got)
         # 先自动应答（若命中规则），再匹配 expect
         _auto_reply(io, responder, got)
+        # 否认帧特判（REQS-0027 G2）：预期确认类应答（AFN=00H）时，到达的
+        # 00H-F2 否认帧（FN=2）不满足 fn=1 的字面匹配，但业务上必须立即判定失败
+        d = deny_info(_safe_decode(got))
+        if d is not None and expect.get("afn") == 0x00:
+            result["parsed"] = _safe_decode(got)
+            result["deny"] = d
+            result["result"] = "fail"
+            result["reason"] = f"否认（{d['text']}）"
+            return result
         matched, decoded, reasons = match_frame(got, expect)
         result["parsed"] = decoded
         if matched:
             result["result"] = "pass"
             result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
+            d2 = deny_info(decoded)
+            if d2 is not None:
+                # 00H-F2 否认帧：匹配命中但业务失败，附否认码人话（result 仍为 fail，
+                # 上层按 result["deny"]["code"] 细分失败口径）
+                result["deny"] = d2
+                result["result"] = "fail"
+                result["reason"] = f"否认（{d2['text']}）"
             return result
         # 不匹配：跳过继续等（CCO 会插播主动上报帧，如 10H-F1 从节点数量，
-        # 需跳过直至出现期望帧或超时）。记录已收到的帧便于诊断。
+        # 需跳过直至出现期望帧或超时）。记录旁听帧便于诊断。
         result["received_hex"] = (result.get("received_hex", []) or [])
         result["received_hex"].append(frame_to_hex(got))
+        bystanders.append({
+            "hex": frame_to_hex(got),
+            "afn": (f"{_afn_of(decoded):02X}" if _afn_of(decoded) is not None else None),
+            "fn": _fn_of(decoded),
+        })
         # 若 recv_only 也继续等；send+expect 同样跳过无关帧（修复：真实 CCO 插播主动帧）
     rx_count = len(result.get("received_hex", []) or [])
-    result["reason"] = (f"超时({timeout}s)未收到期望帧" 
+    result["reason"] = (f"超时({timeout}s)未收到期望帧"
                         + (f"，期间收到 {rx_count} 帧未匹配" if rx_count else ""))
+    if bystanders:
+        result["bystanders"] = bystanders
     return result
+
+
+def _afn_of(decoded: dict):
+    if isinstance(decoded.get("afn"), int):
+        return decoded["afn"]
+    raw = decoded.get("fields", {}).get("AFN", {}).get("raw")
+    return raw if isinstance(raw, int) else None
+
+
+def _fn_of(decoded: dict):
+    if isinstance(decoded.get("fn"), int):
+        return decoded["fn"]
+    raw = decoded.get("fields", {}).get("FN", {}).get("raw")
+    return raw if isinstance(raw, int) else None
 
 
 def _safe_decode(raw: bytes) -> dict:
@@ -380,18 +418,22 @@ def execute_task(task: dict, io: Optional[SerialIO] = None, *,
 def run_single_step(io: SerialIO, *, send: Optional[dict] = None,
                     profile: Optional[dict] = None,
                     expect: Optional[dict] = None,
-                    expect_timeout: float = 5.0,
+                    expect_timeout: Optional[float] = None,
                     expect_no_reply: bool = False,
                     recv_only: bool = False,
                     enable_responder: bool = True,
                     name: str = "单步",
                     seq: Optional[int] = None,
-                    run_id: Optional[str] = None) -> dict:
+                    run_id: Optional[str] = None,
+                    auto_expect: bool = True) -> dict:
     """单步语义执行（AI 单步下发 / 感知主动上报，ADR-5 语义）。
 
     - send：afn/fn + params（raw 整帧已移除，传入即报错）；
     - recv_only=True：不下发，只等待并匹配一帧（等 CCO 主动上报）；
     - send 与 recv_only 二选一；expect / expect_no_reply 同 run_step 语义。
+    - auto_expect（REQS-0027 G2）：expect 未显式给出时按 expect_rules 自动生成
+      默认 expect，超时未指定时按 per-Fn 档位取值（单抄 59s/并抄 99s/默认 5s）；
+      显式 expect / expect_timeout 优先（G2 契约：显式可覆盖）。
     帧以 kind=manual_send、run_id 打入会话帧日志。
     """
     if not send and not recv_only:
@@ -401,11 +443,44 @@ def run_single_step(io: SerialIO, *, send: Optional[dict] = None,
     if send and send.get("raw"):
         raise ScenarioCodecError("send.raw 已移除（ADR-5 用例语义化），请改用 afn/fn + params")
 
+    pairing: Optional[dict] = None
+    resolved_timeout = expect_timeout
+    resolved_expect = expect
+    if auto_expect and send and expect is None and not recv_only and not expect_no_reply:
+        from sim_concentrator import expect_rules
+        afn = send.get("afn")
+        fn = send.get("fn")
+        gen_expect, rule = expect_rules.default_expect(afn, fn)
+        if gen_expect is not None:
+            resolved_expect = gen_expect
+            meta = expect_rules.timeout_for(afn, fn)
+            if resolved_timeout is None:
+                resolved_timeout = meta["seconds"]
+            pairing = {
+                "rule_id": rule.get("id"),
+                "desc": rule.get("desc"),
+                "expect": gen_expect,
+                "form": gen_expect.get("form"),
+                "timeout": meta,
+                "expect_source": "auto",
+            }
+        elif expect_rules.is_report_afn(afn):
+            pairing = {
+                "rule_id": None,
+                "desc": "主动上报 AFN：无预期应答（仅下发确认）",
+                "expect": None,
+                "form": None,
+                "timeout": None,
+                "expect_source": "none",
+            }
+    if resolved_timeout is None:
+        resolved_timeout = 5.0
+
     step = {
         "name": name,
         "send": send,
-        "expect": expect,
-        "expect_timeout": expect_timeout,
+        "expect": resolved_expect,
+        "expect_timeout": resolved_timeout,
         "expect_no_reply": expect_no_reply,
         "recv_only": recv_only,
     }
@@ -418,6 +493,9 @@ def run_single_step(io: SerialIO, *, send: Optional[dict] = None,
     scope_ctx = journal.scope(resolved_run_id, "manual_send") if journal is not None else nullcontext()
     with scope_ctx:
         result = run_step(io, responder, step, 0, profile=profile, seq=seq)
+    if pairing is not None:
+        result["pairing"] = pairing
+        result["bystanders"] = result.get("bystanders", [])
     out = {"run_id": resolved_run_id, "step": result}
     if journal is not None:
         out["session_id"] = journal.session_id

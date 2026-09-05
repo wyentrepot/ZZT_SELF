@@ -93,11 +93,17 @@ class VerifyTask(BaseModel):
 
 
 class StepRequest(BaseModel):
-    """单步语义执行请求（ADR-5：send 只写 afn/fn+params，raw 报错）。"""
+    """单步语义执行请求（ADR-5：send 只写 afn/fn+params，raw 报错）。
+
+    REQS-0027：expect_timeout=None 时按 expect_rules per-Fn 档位自动取值
+    （默认 5s / 单抄 59s / 并抄 99s）；auto_expect=True 且未显式给 expect 时
+    按规则库自动生成默认 expect（显式 expect 可覆盖）。
+    """
     send: Optional[Dict[str, Any]] = None
     profile: Optional[str] = None
     expect: Optional[Dict[str, Any]] = None
-    expect_timeout: float = 5.0
+    expect_timeout: Optional[float] = None
+    auto_expect: bool = True
     expect_no_reply: bool = False
     recv_only: bool = False
     enable_responder: bool = True
@@ -144,6 +150,8 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     _sessions = SessionManager(log_dir=journal_dir, store=_store)
     app.state.simcon_sessions = _sessions
     app.state.simcon_step_state = {"profile": None, "seq": 0, "lock": threading.Lock()}
+    # REQS-0027 G5：并发抄表任务注册表（job_id → BatchReadJob）
+    app.state.simcon_batch_jobs = {}
 
     def _resolve(
         port: Optional[str] = None,
@@ -306,7 +314,9 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             send=payload.get("send"),
             profile=profile,
             expect=payload.get("expect"),
-            expect_timeout=float(payload.get("expect_timeout") or 5.0),
+            expect_timeout=(None if payload.get("expect_timeout") is None
+                            else float(payload.get("expect_timeout"))),
+            auto_expect=bool(payload.get("auto_expect", True)),
             expect_no_reply=bool(payload.get("expect_no_reply")),
             recv_only=bool(payload.get("recv_only")),
             enable_responder=bool(payload.get("enable_responder", True)),
@@ -404,6 +414,12 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         r = Responder()
         return {"rules": r.list_rules()}
 
+    @app.get(f"{prefix}/expect_rules")
+    async def expect_rules_endpoint():
+        """应答预期规则库（REQS-0027 G2/G3）：映射表 + 否认码语义 + 超时档位。"""
+        from sim_concentrator import expect_rules as er
+        return er.load()
+
     @app.post(f"{prefix}/open")
     async def open_serial(request: OpenSpec):
         try:
@@ -497,6 +513,118 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             "current": current.info() if current is not None else None,
             "sessions": _sessions.list_info(),
         }
+
+    # ---- REQS-0027：并发抄表滑窗任务 + 统一抄读汇总 + 上报分桶 --------------
+    def _batch_create(payload: dict) -> dict:
+        meters = [str(m).strip() for m in (payload.get("meters") or []) if str(m).strip()]
+        if not meters:
+            raise ValueError("meters 不能为空（12 位表地址列表）")
+        io = _io()
+        if io is None or not io.is_open():
+            io = _open_io(_resolve(
+                payload.get("port"), payload.get("mapping_id"),
+                payload.get("baudrate"), payload.get("bytesize"),
+                payload.get("parity"), payload.get("stopbits"),
+            ))
+        profile = load_profile(str(payload.get("profile") or "anhui"))
+        with app.state.simcon_step_state["lock"]:
+            app.state.simcon_step_state["seq"] += len(meters)
+            seq_start = int(app.state.simcon_step_state["seq"])
+        from sim_concentrator.batch import BatchReadJob
+        job = BatchReadJob(
+            io, meters,
+            max_concurrent=int(payload.get("max_concurrent") or 5),
+            mode=str(payload.get("mode") or "single"),
+            protocol_type=int(payload.get("protocol_type") or 2),
+            timeout=(None if payload.get("timeout") is None else float(payload["timeout"])),
+            profile=profile, seq_start=seq_start,
+        )
+        app.state.simcon_batch_jobs[job.id] = job
+        job.start()
+        return job.snapshot()
+
+    def _batch_get(job_id: str) -> dict:
+        job = app.state.simcon_batch_jobs.get(job_id)
+        if job is None:
+            raise LookupError(f"任务不存在: {job_id}")
+        return job.snapshot()
+
+    def _batch_list() -> dict:
+        jobs = {jid: job.snapshot() for jid, job in app.state.simcon_batch_jobs.items()}
+        return {"jobs": jobs}
+
+    def _batch_stop(job_id: str) -> dict:
+        job = app.state.simcon_batch_jobs.get(job_id)
+        if job is None:
+            raise LookupError(f"任务不存在: {job_id}")
+        job.stop()
+        return job.snapshot()
+
+    def _readings(**kw) -> dict:
+        from sim_concentrator.aggregate import collect_readings
+        return collect_readings(_store, app.state.simcon_batch_jobs, **kw)
+
+    def _report_buckets(**kw) -> dict:
+        from sim_concentrator.aggregate import report_buckets
+        return report_buckets(_store, **kw)
+
+    app.state.simcon_batch_create = _batch_create
+    app.state.simcon_batch_get = _batch_get
+    app.state.simcon_batch_list = _batch_list
+    app.state.simcon_batch_stop = _batch_stop
+    app.state.simcon_readings = _readings
+    app.state.simcon_report_buckets = _report_buckets
+
+    class BatchReadRequest(BaseModel):
+        meters: List[str] = []
+        max_concurrent: int = 5
+        mode: str = "single"            # single=02H-F1 单抄 / batch=F1H-F1 并发抄表
+        protocol_type: int = 2          # 00 透明 / 02=645-2007 / 03=698.45
+        timeout: Optional[float] = None  # 缺省按 expect_rules 档位（单抄59s/并抄99s）
+        profile: Optional[str] = None
+        port: Optional[str] = None
+        mapping_id: Optional[str] = None
+
+    @app.post(f"{prefix}/batch_read")
+    async def batch_read(request: BatchReadRequest):
+        """创建并发抄表任务（G5）：滑窗调度，回一帧补一发保持在途=最大并发。"""
+        try:
+            return _batch_create(request.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"并发任务创建失败：{exc}") from exc
+
+    @app.get(f"{prefix}/batch_read")
+    async def batch_read_list():
+        return _batch_list()
+
+    @app.get(f"{prefix}/batch_read/{{job_id}}")
+    async def batch_read_job(job_id: str):
+        try:
+            return _batch_get(job_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post(f"{prefix}/batch_read/{{job_id}}/stop")
+    async def batch_read_stop(job_id: str):
+        try:
+            return _batch_stop(job_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(f"{prefix}/readings")
+    async def readings(
+        source: str = "", result: str = "", since: str = "", limit: int = 1000,
+    ):
+        """统一抄读数据表格（G4）：并发任务/查询快照/上报抄读合并 + 成功率统计。"""
+        return _readings(source=source or None, result=result or None,
+                         since=since or None, limit=limit)
+
+    @app.get(f"{prefix}/report_buckets")
+    async def report_buckets(limit: int = 500):
+        """主动上报分类型计数（G6）：F1-F5 各桶 + 停复电子类单列。"""
+        return _report_buckets(limit=limit)
 
     # ---- REQS-0013：1376.2 收发库查询（快照 + 上报事件） -------------------
     @app.get(f"{prefix}/store/snapshots")
