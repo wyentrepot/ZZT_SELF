@@ -357,11 +357,13 @@ evidence:read, simcon:verify, simcon:send, simcon:read`。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/dict` | 四本字典清单 `[{id:oad|di|afn-fn|rules, name, count, path, desc}]` |
+| GET | `/api/dict` | 字典清单 `[{id:oad|di|afn-fn|rules|cases, name, count, path, desc}]` |
 | GET | `/api/dict/oad?q=` | 698.45 OAD 字典（模糊过滤键/名称/描述） |
 | GET | `/api/dict/di?q=` | 645-2007 DI 字典 |
 | GET | `/api/dict/afn-fn?q=` | 1376.2 AFN/Fn（`{items, fn_count, source, note}`） |
 | GET | `/api/dict/rules?q=` | loghooks 事件规则（`{files:[{file,count,entries}]}`） |
+| GET | `/api/dict/cases?category=&type=&q=` | 检测用例库（REQS-0025）：`{count, declared_total:269, categories, items}`；category 过滤分类、type=case\|param_table、q 模糊过滤 |
+| GET | `/api/dict/cases/{entry_id}` | 单条用例/参数表行（404 不存在）；字段含 purpose/frames/steps/criteria/source（doc+distill+section 可追溯） |
 
 ## 9. 串口 Profile（`/api/serial-profile`）
 

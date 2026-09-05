@@ -375,12 +375,13 @@ def test_dict_list(client):
     r = client.get("/api/dict")
     assert r.status_code == 200
     dicts = {d["id"]: d for d in r.json()}
-    assert set(dicts) == {"oad", "di", "afn-fn", "rules"}
+    assert set(dicts) == {"oad", "di", "afn-fn", "rules", "cases"}
     assert dicts["oad"]["count"] > 0
     assert dicts["di"]["count"] > 0
     assert dicts["afn-fn"]["count"] >= 14
     assert dicts["afn-fn"]["fn_count"] >= 70
     assert dicts["rules"]["count"] > 0
+    assert dicts["cases"]["count"] > 200  # REQS-0025 检测用例库
 
 
 def test_dict_oad_search(client):

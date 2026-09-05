@@ -54,10 +54,11 @@
 
 | 功能 | 端点 |
 | --- | --- |
-| 四本字典清单 | `GET /api/dict` |
+| 字典清单 | `GET /api/dict` |
 | 698.45 OAD / 645 DI / 1376.2 AFN-Fn / 事件规则 | `GET /api/dict/{oad,di,afn-fn,rules}?q=` 模糊过滤 |
-| 数据源 | `libs/parser_lib/adapters/*/metadata/*.json` + `libs/loghooks/rules/`——**改 JSON 即生效**（无拷贝层） |
-| 页面 | 协议字典页 |
+| 检测用例库（REQS-0025）：269 项体系可枚举条目 + 检测线抄控器 + 河南流水线 + 测试/安全模式参数表 | `GET /api/dict/cases?category=&type=&q=`、`GET /api/dict/cases/{entry_id}` |
+| 数据源 | `libs/parser_lib/adapters/*/metadata/*.json` + `libs/loghooks/rules/` + `libs/case_library/data/cases.json`（generate.py 再生成）——**改 JSON 即生效**（无拷贝层） |
+| 页面 | 协议字典页（第 5 本字典卡 + 分类下拉） |
 
 ## 6. 验证编排（`/api/*`，CLI / REST / AI 三端复用）
 

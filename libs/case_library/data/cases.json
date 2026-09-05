@@ -1,0 +1,5341 @@
+{
+ "meta": {
+  "title": "双模通信检测用例库",
+  "description": "国网计量中心双模通信互联互通检测条目（269 项体系）+ 检测线抄控器协议 + 河南流水线方案，从蒸馏库 06_测试用例.md 半自动转换（generate.py），逐条保留来源小节与条款号。",
+  "source": {
+   "distill": "蒸馏/06_测试用例.md",
+   "source_doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+   "knowledge_base_id": "7416304956882450"
+  },
+  "declared": {
+   "total": 269,
+   "breakdown": {
+    "HPLC性能测试": 7,
+    "无线通信性能测试": 11,
+    "HPLC协议一致性": "~120",
+    "无线协议一致性": "~80",
+    "互操作性测试": 11
+   },
+   "note": "蒸馏文档 §7.1：原文 286K 字符，协议一致性细节仅展开代表性条目；本库枚举 md 全部可枚举检测条目 + 扩展协议消息 + 参数表，detail_level=framework 表示仅条目名级（原 md 未展开步骤/判定）。"
+  },
+  "counts": {
+   "entries": 279,
+   "cases": 237,
+   "param_rows": 42,
+   "by_category": {
+    "hplc-perf": 7,
+    "wireless-perf": 11,
+    "hplc-consistency": 142,
+    "wireless-consistency": 39,
+    "interop": 11,
+    "tester-protocol": 22,
+    "henan-pipeline": 5,
+    "params": 42
+   }
+  },
+  "red_line": "国网口径；南网/ 目录未引用。"
+ },
+ "categories": [
+  {
+   "id": "hplc-perf",
+   "name": "HPLC 性能测试",
+   "declared": 7
+  },
+  {
+   "id": "wireless-perf",
+   "name": "无线通信性能测试",
+   "declared": 11
+  },
+  {
+   "id": "hplc-consistency",
+   "name": "HPLC 协议一致性",
+   "declared": "~120"
+  },
+  {
+   "id": "wireless-consistency",
+   "name": "无线协议一致性",
+   "declared": "~80"
+  },
+  {
+   "id": "interop",
+   "name": "互操作性测试",
+   "declared": 11
+  },
+  {
+   "id": "tester-protocol",
+   "name": "检测线抄控器协议",
+   "declared": null
+  },
+  {
+   "id": "henan-pipeline",
+   "name": "河南流水线检测方案",
+   "declared": null
+  },
+  {
+   "id": "params",
+   "name": "测试模式/扩展命令参数表",
+   "declared": null
+  }
+ ],
+ "entries": [
+  {
+   "id": "HPLC-PERF-01",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "工作频段及功率谱密度",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.1"
+   },
+   "purpose": "验证DUT所发信号的工作频段、带内/带外PSD是否达标",
+   "frames": [
+    "测试模式帧（TMI=4回传模式）",
+    "SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-PERF-02",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "抗白噪声",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.2"
+   },
+   "purpose": "验证DUT在白噪声环境下各TMI模式的接收性能",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）"
+   ],
+   "criteria": [
+    "成功率≥90%时增大衰减，记录成功率刚小于90%时的衰减值"
+   ]
+  },
+  {
+   "id": "HPLC-PERF-03",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "抗频偏",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.3"
+   },
+   "purpose": "验证DUT在频偏、衰减、窄带噪声、脉冲噪声环境下各TMI模式的接收性能",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）"
+   ]
+  },
+  {
+   "id": "HPLC-PERF-04",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "抗衰减",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.3"
+   },
+   "purpose": "验证DUT在频偏、衰减、窄带噪声、脉冲噪声环境下各TMI模式的接收性能",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）"
+   ]
+  },
+  {
+   "id": "HPLC-PERF-05",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "抗窄带噪声",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.3"
+   },
+   "purpose": "验证DUT在频偏、衰减、窄带噪声、脉冲噪声环境下各TMI模式的接收性能",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）"
+   ]
+  },
+  {
+   "id": "HPLC-PERF-06",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "抗脉冲噪声",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.3"
+   },
+   "purpose": "验证DUT在频偏、衰减、窄带噪声、脉冲噪声环境下各TMI模式的接收性能",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）"
+   ]
+  },
+  {
+   "id": "HPLC-PERF-07",
+   "entry_type": "case",
+   "category": "hplc-perf",
+   "group": "性能测试",
+   "name": "通信速率",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.2/§2.3.4"
+   },
+   "purpose": "验证DUT在各频段各TMI模式下的通信速率",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）"
+   ]
+  },
+  {
+   "id": "RF-PERF-01",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "工作频段及功率谱密度",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证无线信号工作频段和PSD",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-02",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "最大输入电平",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证DUT能承受的最大输入电平",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-03",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "最大发射功率",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证DUT最大发射功率满足限值",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-04",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "杂散辐射",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证DUT杂散辐射限值",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-05",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "接收灵敏度",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证各Option/MCS模式下接收灵敏度",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-06",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "邻道干扰",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证邻道干扰下接收性能",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-07",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "抗频偏容忍度",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证频偏容忍度",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-08",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "发射频谱模板",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证发射频谱模板符合规范",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-09",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "多径信道",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证多径信道下接收性能",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-10",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "阻塞干扰",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证阻塞干扰下接收性能",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-PERF-11",
+   "entry_type": "case",
+   "category": "wireless-perf",
+   "group": "性能测试",
+   "name": "EVM",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.4"
+   },
+   "purpose": "验证发射信号EVM指标",
+   "frames": [
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-PHY-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "物理层",
+   "name": "HPLC TMI 模式遍历测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.1.1"
+   },
+   "clause": "4.1.1.1",
+   "purpose": "验证DUT是否支持TMI遍历测试TMI集合的所有模式",
+   "frames": [
+    "信标帧",
+    "SOF帧（各TMI模式）",
+    "ACK帧"
+   ],
+   "steps": [
+    "设置DUT工作频段并进入回传模式",
+    "软件平台发送5个信标帧（间隔1s）用于时钟同步",
+    "下发各TMI模式测试报文，DUT回传FC+PB",
+    "比较回传内容与发送内容是否一致"
+   ],
+   "criteria": [
+    "所有TMI模式都能被DUT成功回传"
+   ]
+  },
+  {
+   "id": "HPLC-PHY-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "物理层",
+   "name": "HPLC ToneMask 功能测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.1.2"
+   },
+   "clause": "4.1.1.2",
+   "purpose": "验证DUT的ToneMask配置功能",
+   "frames": [
+    "测试命令帧（模式7）",
+    "信标帧",
+    "SOF帧"
+   ],
+   "steps": [
+    "通过扩展命令设置不同ToneMask值，验证DUT在对应ToneMask配置下的通信能力"
+   ]
+  },
+  {
+   "id": "RF-PHY-01",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "物理层",
+   "name": "无线 Option 和 MCS 模式遍历测试",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.1.3"
+   },
+   "clause": "4.3.1.1",
+   "purpose": "验证DUT是否支持所有Option和MCS模式",
+   "frames": [
+    "无线信标帧",
+    "无线SOF帧"
+   ],
+   "criteria": [
+    "OFDM Option、PHR MCS速率等级、PSDU MCS速率等级、PB块大小"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-BCN-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信标机制",
+   "name": "CCO 发送中央信标的周期性与合法性测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.1"
+   },
+   "clause": "4.2.1.1",
+   "purpose": "验证CCO能否在A、B、C三相线上周期性发送正确的中央信标",
+   "frames": [
+    "中央信标帧",
+    "关联请求帧",
+    "关联确认帧",
+    "选择确认帧(SACK)"
+   ],
+   "steps": [
+    "模拟集中器下发\"设置主节点地址\"(05-F1)和\"添加从节点\"(11-F1)",
+    "监测10个信标周期，验证中央信标合法性",
+    "模拟未入网STA发送关联请求，验证关联确认响应"
+   ],
+   "criteria": [
+    "| 测试项 | 测试目的 | 涉及帧类型 |",
+    "|--------|----------|------------|",
+    "| CCO通过代理组网过程中的中央信标测试 | 验证代理组网时中央信标合法性 | 中央信标、代理信标、关联请求/确认 |",
+    "| CCO组网过程中的中央信标测试 | 验证组网过程中央信标时隙规划 | 中央信标、发现信标 |",
+    "| CCO通过多级代理组网过程中的中央信标测试 | 验证多级代理组网信标 | 中央信标、代理信标 |",
+    "| STA多级站点入网过程中的代理信标测试 | 验证代理信标转发 | 代理信标、关联请求/确认 |",
+    "| STA发现信标的周期性和合法性测试 | 验证STA发现信标格式和周期 | 发现信标 |"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-BCN-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信标机制",
+   "name": "CCO通过代理组网过程中的中央信标测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.1"
+   },
+   "purpose": "验证代理组网时中央信标合法性",
+   "frames": [
+    "中央信标",
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-BCN-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信标机制",
+   "name": "CCO组网过程中的中央信标测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.1"
+   },
+   "purpose": "验证组网过程中央信标时隙规划",
+   "frames": [
+    "中央信标",
+    "发现信标"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-BCN-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信标机制",
+   "name": "CCO通过多级代理组网过程中的中央信标测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.1"
+   },
+   "purpose": "验证多级代理组网信标",
+   "frames": [
+    "中央信标",
+    "代理信标"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-BCN-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信标机制",
+   "name": "STA多级站点入网过程中的代理信标测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.1"
+   },
+   "purpose": "验证代理信标转发",
+   "frames": [
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-BCN-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信标机制",
+   "name": "STA发现信标的周期性和合法性测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.1"
+   },
+   "purpose": "验证STA发现信标格式和周期",
+   "frames": [
+    "发现信标"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SLOT-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "时隙管理",
+   "name": "CCO时隙规划测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.2"
+   },
+   "purpose": "验证CCO在规定时隙发送相应帧",
+   "frames": [
+    "中央信标(含时隙分配条目)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SLOT-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "时隙管理",
+   "name": "STA/PCO时隙发送测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.2"
+   },
+   "purpose": "验证STA/PCO在规定时隙发送帧",
+   "frames": [
+    "代理信标",
+    "发现信标",
+    "SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CSMA-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信道访问",
+   "name": "CCO的CSMA时隙访问测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.3"
+   },
+   "purpose": "验证CCO的CSMA退避机制",
+   "frames": [
+    "SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CSMA-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信道访问",
+   "name": "CCO的冲突退避测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.3"
+   },
+   "purpose": "验证CCO冲突退避行为",
+   "frames": [
+    "SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CSMA-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信道访问",
+   "name": "STA的CSMA时隙访问测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.3"
+   },
+   "purpose": "验证STA的CSMA退避机制",
+   "frames": [
+    "SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CSMA-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "信道访问",
+   "name": "STA的冲突退避测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.3"
+   },
+   "purpose": "验证STA冲突退避行为",
+   "frames": [
+    "SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SACK-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "选择确认重传",
+   "name": "CCO对符合标准的SOF帧的处理",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.5"
+   },
+   "purpose": "验证CCO正确处理标准SOF帧并回复SACK",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SACK-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "选择确认重传",
+   "name": "CCO对物理块校验异常的SOF帧的处理",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.5"
+   },
+   "purpose": "验证CCO丢弃CRC异常的SOF帧",
+   "frames": [
+    "SOF帧(CRC错误)",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SACK-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "选择确认重传",
+   "name": "CCO对不同网络或地址不匹配的SOF帧的处理",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.5"
+   },
+   "purpose": "验证CCO过滤非本网络SOF帧",
+   "frames": [
+    "SOF帧(不同NID)",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SACK-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "选择确认重传",
+   "name": "CCO发送单播SOF帧后接收对应SACK帧",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.5"
+   },
+   "purpose": "验证CCO正确处理对应SACK",
+   "frames": [
+    "单播SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SACK-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "选择确认重传",
+   "name": "CCO发送单播SOF帧后接收非对应SACK帧",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.5"
+   },
+   "purpose": "验证CCO忽略非对应SACK",
+   "frames": [
+    "单播SOF帧",
+    "SACK帧(非对应)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-SACK-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "选择确认重传",
+   "name": "STA系列选择确认重传测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.5"
+   },
+   "purpose": "同CCO测试，验证STA的SOF/SACK处理",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-FILTER-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "报文过滤",
+   "name": "CCO处理全网广播报文测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.6"
+   },
+   "purpose": "验证CCO处理全网广播MSDU",
+   "frames": [
+    "全网广播SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-FILTER-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "报文过滤",
+   "name": "CCO处理代理广播报文测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.6"
+   },
+   "purpose": "验证CCO处理代理广播MSDU",
+   "frames": [
+    "代理广播SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-FILTER-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "报文过滤",
+   "name": "STA全网广播相同MSDU号和相同重启次数",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.6"
+   },
+   "purpose": "验证STA过滤重复广播",
+   "frames": [
+    "全网广播SOF帧(重复)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-FILTER-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "报文过滤",
+   "name": "STA全网广播相同MSDU号不同重启次数",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.6"
+   },
+   "purpose": "验证STA处理重启后广播",
+   "frames": [
+    "全网广播SOF帧(不同重启次数)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-FILTER-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "报文过滤",
+   "name": "STA代理广播报文过滤测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.6"
+   },
+   "purpose": "验证STA代理广播过滤",
+   "frames": [
+    "代理广播SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-FILTER-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "报文过滤",
+   "name": "STA单播报文过滤测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.6"
+   },
+   "purpose": "验证STA单播报文过滤",
+   "frames": [
+    "单播SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CLK-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "时钟同步",
+   "name": "CCO的网络时钟同步测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.8"
+   },
+   "purpose": "验证CCO发送NTB同步",
+   "frames": [
+    "中央信标(含NTB)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CLK-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "时钟同步",
+   "name": "STA/PCO网络时钟同步(中央信标指引入网)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.8"
+   },
+   "purpose": "验证STA通过中央信标同步NTB",
+   "frames": [
+    "中央信标"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CLK-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "时钟同步",
+   "name": "STA/PCO网络时钟同步(发现信标指引入网)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.8"
+   },
+   "purpose": "验证STA通过发现信标同步NTB",
+   "frames": [
+    "发现信标"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CLK-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "时钟同步",
+   "name": "STA/PCO网络时钟同步(代理信标指引入网)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.8"
+   },
+   "purpose": "验证STA通过代理信标同步NTB",
+   "frames": [
+    "代理信标"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "CCO发送网间协调帧测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证CCO发送网间协调帧",
+   "frames": [
+    "网间协调帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "CCO对网间协调帧的处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证CCO正确处理网间协调帧",
+   "frames": [
+    "网间协调帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "CCO在NID冲突时的网间协调测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证NID冲突时网间协调",
+   "frames": [
+    "网间协调帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "CCO在带宽冲突时的网间协调测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证带宽冲突时网间协调",
+   "frames": [
+    "网间协调帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "CCO认证STA入网测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证CCO对STA入网认证",
+   "frames": [
+    "关联请求",
+    "确认帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "STA多网络环境下的主动入网测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证STA多网络环境入网选择",
+   "frames": [
+    "关联请求帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MNET-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "多网共存及协调",
+   "name": "STA单网络环境下的主动入网测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.9"
+   },
+   "purpose": "验证STA单网络入网",
+   "frames": [
+    "关联请求帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "CCO通过1级单站点入网(允许)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证CCO允许1级站点入网",
+   "frames": [
+    "中央信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "CCO通过1级单站点入网(拒绝)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证CCO拒绝站点入网",
+   "frames": [
+    "中央信标",
+    "关联请求",
+    "确认(拒绝)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "CCO通过1级多站点入网(允许)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证CCO多站点并发入网",
+   "frames": [
+    "中央信标",
+    "多个关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "CCO通过多级单站点入网(允许)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证CCO多级代理入网",
+   "frames": [
+    "中央信标",
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "CCO通过多级单站点入网(拒绝)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证CCO拒绝多级入网",
+   "frames": [
+    "中央信标",
+    "代理信标",
+    "关联请求",
+    "确认(拒绝)"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "STA通过中央信标关联标志位入网",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证STA根据关联标志位入网",
+   "frames": [
+    "中央信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "STA作为2级站点入网",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证STA 2级入网",
+   "frames": [
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "STA作为15级站点入网",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证STA最大层级入网",
+   "frames": [
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-09",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "STA作为1级PCO使站点入网",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证STA作为PCO代理入网",
+   "frames": [
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-NET-10",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单网络组网",
+   "name": "STA作为多级PCO使站点入网",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.10"
+   },
+   "purpose": "验证STA多级PCO代理入网",
+   "frames": [
+    "代理信标",
+    "关联请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-MAINT-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "CCO发现列表报文测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证CCO发现列表报文处理"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "CCO发离线指示让STA离线",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证CCO主动离线指示"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "CCO判断STA离线未入网",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证CCO离线判断"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA一级站点发现列表报文",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA发现列表上报"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA二级站点发现列表报文",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA二级发现列表"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA代理站点发现列表/心跳/通信成功率上报",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证代理站点维护报文"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA两个路由周期收不到信标主动离线",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA超时离线"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA连续四个路由周期通信成功率为0主动离线",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA通信失败离线"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-09",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA收到组网序列号变化后主动离线",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA序列号变化离线"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-10",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA收到离线指示后主动离线",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA响应离线指示"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-11",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA层级超过15级主动离线",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA层级超限离线"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-12",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA动态路由维护测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA动态路由"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-13",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA实时路由修复测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA路由修复"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-14",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA实时路由修复作为中继节点",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA中继路由修复"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-15",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA实时路由修复失败测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA路由修复失败处理"
+  },
+  {
+   "id": "HPLC-DLL-MAINT-16",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "网络维护",
+   "name": "STA相线识别测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.11"
+   },
+   "purpose": "验证STA相线识别"
+  },
+  {
+   "id": "HPLC-DLL-DATA-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 72字节 · 长MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.1",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 72字节 · 短MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.5",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 72字节 · 分多包MPDU(长MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.9",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 72字节 · 分多包MPDU(短MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.13",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 136字节 · 长MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.2",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 136字节 · 短MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.6",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 136字节 · 分多包MPDU(长MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.10",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 136字节 · 分多包MPDU(短MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.14",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-09",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 264字节 · 长MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.3",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-10",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 264字节 · 短MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.7",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-11",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 264字节 · 分多包MPDU(长MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.11",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-12",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 264字节 · 分多包MPDU(短MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.15",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-13",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 520字节 · 长MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.4",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-14",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 520字节 · 短MAC帧头 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.8",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-15",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 520字节 · 分多包MPDU(长MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.12",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-16",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "MPDU 载荷 520字节 · 分多包MPDU(短MAC) 处理测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.16",
+   "purpose": "验证 DUT 对不同载荷长度和 MAC 帧头格式的 SOF 帧处理能力",
+   "frames": [
+    "SOF帧",
+    "SACK帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-17",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "错误报文处理测试（CCO 侧）",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.17",
+   "purpose": "验证 DUT 对错误报文的处理不会造成异常",
+   "frames": [
+    "错误报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-DATA-18",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "数据处理",
+   "name": "错误报文处理测试（STA 侧）",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.4"
+   },
+   "clause": "4.2.4.18",
+   "purpose": "验证 DUT 对错误报文的处理不会造成异常",
+   "frames": [
+    "错误报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-CAST-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "单播/广播",
+   "name": "单播/全网广播/代理广播/本地广播处理测试",
+   "protocol": "HPLC",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.7"
+   },
+   "purpose": "验证 CCO/STA/PCO 对单播、全网广播、代理广播、本地广播报文的处理",
+   "frames": [
+    "单播SOF帧",
+    "全网广播SOF帧",
+    "代理广播SOF帧",
+    "本地广播SOF帧"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "单相STA零火正接相线识别",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "相线识别报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "三相STA相序ABCN相线识别",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "相线识别报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "三相STA相序CNAB相线识别",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "相线识别报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "CCO过零NTB采集性能",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "NTB采集报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "单相STA零火正接过零NTB采集",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "NTB采集报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "单相STA零火反接过零NTB采集",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "NTB采集报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "三相STA相序ABCN过零NTB采集",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "NTB采集报文"
+   ]
+  },
+  {
+   "id": "HPLC-DLL-ZX-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "过零性能",
+   "name": "三相STA相序CNAB过零NTB采集",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.2.12"
+   },
+   "frames": [
+    "NTB采集报文"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-01",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "CCO发送无线标准中央信标的周期性与合法性",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线标准中央信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-02",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "CCO发送无线精简中央信标的周期性与合法性",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线精简中央信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-03",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "CCO组网过程中的无线标准/精简中央信标",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线中央信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-04",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "CCO通过代理组网过程中的无线标准中央信标",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线标准中央信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-05",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "CCO通过多级代理组网过程中的无线标准中央信标",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线标准中央信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-06",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "代理STA多级站点入网过程中的标准信标",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线标准代理信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-BCN-07",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信标机制",
+   "name": "发现STA发送精简信标的周期性和合法性",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.1"
+   },
+   "frames": [
+    "无线精简发现信标"
+   ]
+  },
+  {
+   "id": "RF-DLL-ACCESS-01",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信道访问",
+   "name": "载波和无线双信道同时收发测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.2"
+   },
+   "clause": "4.3.3.3",
+   "frames": [
+    "载波SOF帧",
+    "无线SOF帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-01",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 16 · 单跳MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-02",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 16 · 标准短MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-03",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 16 · 标准长MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-04",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 40 · 单跳MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-05",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 40 · 标准短MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-06",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 40 · 标准长MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-07",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 72 · 单跳MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-08",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 72 · 标准短MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-09",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 72 · 标准长MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-10",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 136 · 单跳MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-11",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 136 · 标准短MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-12",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 136 · 标准长MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-13",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 264 · 单跳MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-14",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 264 · 标准短MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-15",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 264 · 标准长MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-16",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 520 · 单跳MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-17",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 520 · 标准短MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-DATA-18",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线数据处理",
+   "name": "MPDU 载荷 520 · 标准长MAC帧头 处理测试",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.3"
+   },
+   "purpose": "验证 DUT 对不同载荷长度与 MAC 帧头格式的无线 SOF 帧处理能力",
+   "frames": [
+    "无线SOF帧",
+    "无线SACK帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-CHNL-01",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信道协商",
+   "name": "无线信道冲突协商-信道变更(MAC较小)",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.4"
+   },
+   "purpose": "验证本网络MAC地址较小时变更信道",
+   "frames": [
+    "网间协调帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-CHNL-02",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信道协商",
+   "name": "无线信道冲突协商-信道保持(MAC较大)",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.4"
+   },
+   "purpose": "验证本网络MAC地址较大时保持信道",
+   "frames": [
+    "网间协调帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-CHNL-03",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信道协商",
+   "name": "CCO通过STA无线信道冲突上报调整信道-保持",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.4"
+   },
+   "purpose": "验证CCO收到冲突上报后保持信道",
+   "frames": [
+    "信道冲突上报帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-CHNL-04",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信道协商",
+   "name": "CCO通过STA无线信道冲突上报调整信道-变更",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.4"
+   },
+   "purpose": "验证CCO收到冲突上报后变更信道",
+   "frames": [
+    "信道冲突上报帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-CHNL-05",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线信道协商",
+   "name": "STA无线信道冲突上报测试",
+   "protocol": "无线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3.4"
+   },
+   "purpose": "验证STA检测到信道冲突时上报",
+   "frames": [
+    "信道冲突上报帧"
+   ]
+  },
+  {
+   "id": "RF-DLL-MIRROR-01",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线时隙管理",
+   "name": "无线〈时隙管理〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈时隙管理〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "RF-DLL-MIRROR-02",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线选择确认重传",
+   "name": "无线〈选择确认重传〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈选择确认重传〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "RF-DLL-MIRROR-03",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线报文过滤",
+   "name": "无线〈报文过滤〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈报文过滤〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "RF-DLL-MIRROR-04",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线单播/广播",
+   "name": "无线〈单播/广播〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈单播/广播〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "RF-DLL-MIRROR-05",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线时钟同步",
+   "name": "无线〈时钟同步〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈时钟同步〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "RF-DLL-MIRROR-06",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线单网络组网",
+   "name": "无线〈单网络组网〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈单网络组网〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "RF-DLL-MIRROR-07",
+   "entry_type": "case",
+   "category": "wireless-consistency",
+   "group": "无线网络维护",
+   "name": "无线〈网络维护〉协议一致性测试组",
+   "protocol": "无线",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.3"
+   },
+   "purpose": "无线数据链路层〈网络维护〉测试结构与 HPLC 对称（蒸馏文档 §2.5.3 声明），原检测文档未逐条展开，待补充原始文档后细化为独立条目。",
+   "frames": [
+    "无线帧"
+   ],
+   "fields": {
+    "mirror_of": "HPLC 对应组"
+   }
+  },
+  {
+   "id": "HPLC-APP-READ-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "CCO通过集中器主动抄表",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证CCO集中器抄表",
+   "frames": [
+    "698.45抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "CCO通过路由主动抄表",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证CCO路由抄表",
+   "frames": [
+    "698.45抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "CCO通过集中器主动并发抄表",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证CCO并发抄表",
+   "frames": [
+    "698.45并发抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "STA通过集中器主动抄表",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证STA集中器抄表",
+   "frames": [
+    "698.45抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "STA通过路由主动抄表",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证STA路由抄表",
+   "frames": [
+    "698.45抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "STA在规定时间内抄表",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证STA抄表时延",
+   "frames": [
+    "698.45抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "STA并发抄表(单STA多数据项)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证STA多数据项抄表",
+   "frames": [
+    "698.45",
+    "DLT645抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-READ-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "抄表",
+   "name": "STA并发抄表(多STA同一数据项)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.1"
+   },
+   "purpose": "验证多STA并发抄表",
+   "frames": [
+    "698.45",
+    "DLT645抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-REG-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "从节点注册",
+   "name": "CCO作为DUT正常流程",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.2"
+   },
+   "purpose": "验证CCO处理从节点注册",
+   "frames": [
+    "从节点注册请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-APP-REG-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "从节点注册",
+   "name": "CCO作为DUT报文序号测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.2"
+   },
+   "purpose": "验证CCO注册报文序号",
+   "frames": [
+    "从节点注册请求(不同序号)"
+   ]
+  },
+  {
+   "id": "HPLC-APP-REG-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "从节点注册",
+   "name": "CCO作为DUT停止从节点注册",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.2"
+   },
+   "purpose": "验证CCO停止注册",
+   "frames": [
+    "停止注册命令"
+   ]
+  },
+  {
+   "id": "HPLC-APP-REG-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "从节点注册",
+   "name": "STA从节点注册正常流程",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.2"
+   },
+   "purpose": "验证STA主动注册",
+   "frames": [
+    "从节点注册请求",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-APP-REG-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "从节点注册",
+   "name": "STA从节点注册MAC地址异常",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.2"
+   },
+   "purpose": "验证STA MAC异常处理",
+   "frames": [
+    "从节点注册请求(MAC异常)"
+   ]
+  },
+  {
+   "id": "HPLC-APP-CLK-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "校时",
+   "name": "CCO发送广播校时消息",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.3"
+   },
+   "purpose": "验证CCO广播校时",
+   "frames": [
+    "广播校时报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-CLK-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "校时",
+   "name": "STA对符合标准校时消息的处理",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.3"
+   },
+   "purpose": "验证STA校时处理",
+   "frames": [
+    "广播校时报文(标准)"
+   ]
+  },
+  {
+   "id": "HPLC-APP-CLK-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "校时",
+   "name": "STA对非DL/T 645/698.45格式校时消息的处理",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.3"
+   },
+   "purpose": "验证STA异常校时处理",
+   "frames": [
+    "广播校时报文(非标准格式)"
+   ]
+  },
+  {
+   "id": "HPLC-APP-EVT-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "事件上报",
+   "name": "CCO收到STA事件上报的应答确认",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.4"
+   },
+   "purpose": "验证CCO确认事件",
+   "frames": [
+    "事件上报报文",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-APP-EVT-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "事件上报",
+   "name": "COO收到STA事件上报的应答禁止",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.4"
+   },
+   "purpose": "验证CCO禁止事件上报",
+   "frames": [
+    "事件上报报文",
+    "禁止命令"
+   ]
+  },
+  {
+   "id": "HPLC-APP-EVT-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "事件上报",
+   "name": "STA事件主动上报",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.4"
+   },
+   "purpose": "验证STA事件上报",
+   "frames": [
+    "事件上报报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-EVT-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "事件上报",
+   "name": "STA在CCO应答缓存区满时上报",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.4"
+   },
+   "purpose": "验证STA缓存满时上报",
+   "frames": [
+    "事件上报报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-EVT-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "事件上报",
+   "name": "STA在CCO禁止事件上报时不发起",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.4"
+   },
+   "purpose": "验证STA遵守禁止",
+   "frames": [
+    "（不发送事件上报）"
+   ]
+  },
+  {
+   "id": "HPLC-APP-COMM-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "通信测试命令",
+   "name": "CCO发送通信测试帧",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.5"
+   },
+   "purpose": "验证CCO通信测试",
+   "frames": [
+    "通信测试帧"
+   ]
+  },
+  {
+   "id": "HPLC-APP-COMM-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "通信测试命令",
+   "name": "STA处理通信测试帧",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.5"
+   },
+   "purpose": "验证STA通信测试响应",
+   "frames": [
+    "通信测试帧"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "CCO在线升级流程",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证CCO升级",
+   "frames": [
+    "升级命令",
+    "数据",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "CCO在线升级补偿机制",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证CCO升级补偿",
+   "frames": [
+    "升级补偿报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA在线升级流程",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA升级",
+   "frames": [
+    "升级命令",
+    "数据",
+    "确认"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA停止升级机制",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA停止升级",
+   "frames": [
+    "停止升级命令"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA升级时间窗机制",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA时间窗",
+   "frames": [
+    "升级命令(时间窗外)"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA查询站点信息",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA站点查询",
+   "frames": [
+    "站点信息查询",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA试运行机制(无法入网)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA试运行失败",
+   "frames": [
+    "试运行相关报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA试运行机制(可正常入网)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA试运行成功",
+   "frames": [
+    "试运行相关报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-09",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA在线升级补偿机制",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA升级补偿",
+   "frames": [
+    "升级补偿报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-UPG-10",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "在线升级",
+   "name": "STA无效报文处理机制",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.6"
+   },
+   "purpose": "验证STA无效报文处理",
+   "frames": [
+    "无效升级报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-TA-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "台区户变识别",
+   "name": "CCO台区户变关系识别流程",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.7"
+   },
+   "purpose": "验证CCO台区识别",
+   "frames": [
+    "台区识别报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-TA-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "台区户变识别",
+   "name": "STA台区户变关系识别(CCO集中识别)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.7"
+   },
+   "purpose": "验证STA集中识别",
+   "frames": [
+    "台区识别报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-TA-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "台区户变识别",
+   "name": "STA台区户变关系识别(STA分布式识别)",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.7"
+   },
+   "purpose": "验证STA分布式识别",
+   "frames": [
+    "台区识别报文"
+   ]
+  },
+  {
+   "id": "HPLC-APP-ID-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "ID 信息读取",
+   "name": "CCO读取ID信息",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.8"
+   },
+   "purpose": "验证CCO芯片ID读取",
+   "frames": [
+    "ID读取请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-APP-ID-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "ID 信息读取",
+   "name": "STA读取ID信息",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.4.8"
+   },
+   "purpose": "验证STA芯片ID读取",
+   "frames": [
+    "ID读取请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "HPLC-SEC-01",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SHA256算法测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数",
+    "输出数据": "哈希结果"
+   }
+  },
+  {
+   "id": "HPLC-SEC-02",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SM3算法测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数",
+    "输出数据": "哈希结果"
+   }
+  },
+  {
+   "id": "HPLC-SEC-03",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "ECC签名测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数",
+    "输出数据": "签名(r,s)、公钥(x,y)"
+   }
+  },
+  {
+   "id": "HPLC-SEC-04",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "ECC验签成功测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、签名(r,s)、公钥(x,y)",
+    "输出数据": "验签结果(1=成功)"
+   }
+  },
+  {
+   "id": "HPLC-SEC-05",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "ECC验签失败测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、签名(r,s)、公钥(x,y)",
+    "输出数据": "验签结果(0=失败)"
+   }
+  },
+  {
+   "id": "HPLC-SEC-06",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SM2签名测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数",
+    "输出数据": "签名(r,s)、公钥(x,y)"
+   }
+  },
+  {
+   "id": "HPLC-SEC-07",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SM2验签成功测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、签名(r,s)、公钥(x,y)",
+    "输出数据": "验签结果(1=成功)"
+   }
+  },
+  {
+   "id": "HPLC-SEC-08",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SM2验签失败测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、签名(r,s)、公钥(x,y)",
+    "输出数据": "验签结果(0=失败)"
+   }
+  },
+  {
+   "id": "HPLC-SEC-09",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "AES-CBC加密测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、密钥",
+    "输出数据": "IV、密文"
+   }
+  },
+  {
+   "id": "HPLC-SEC-10",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "AES-CBC解密测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "密钥、IV、密文",
+    "输出数据": "明文"
+   }
+  },
+  {
+   "id": "HPLC-SEC-11",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "AES-GCM加密测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、密钥",
+    "输出数据": "IV、密文、MAC TAG"
+   }
+  },
+  {
+   "id": "HPLC-SEC-12",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "AES-GCM解密测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "密钥、IV、密文",
+    "输出数据": "明文"
+   }
+  },
+  {
+   "id": "HPLC-SEC-13",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SM4-CBC加密测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "随机数、密钥",
+    "输出数据": "IV、密文"
+   }
+  },
+  {
+   "id": "HPLC-SEC-14",
+   "entry_type": "case",
+   "category": "hplc-consistency",
+   "group": "安全算法",
+   "name": "SM4-CBC解密测试",
+   "protocol": "HPLC",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.5.5"
+   },
+   "purpose": "验证安全算法一致性（扩展命令数据域按密钥/IV/公钥/签名分长度域封装）",
+   "frames": [
+    "加密透传扩展命令帧"
+   ],
+   "fields": {
+    "输入数据": "密钥、IV、密文",
+    "输出数据": "明文"
+   }
+  },
+  {
+   "id": "IOP-01",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "全网组网测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证多厂商设备组网互通",
+   "frames": [
+    "中央信标",
+    "代理信标",
+    "关联请求",
+    "确认",
+    "发现列表"
+   ]
+  },
+  {
+   "id": "IOP-02",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "站点入网测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证新站点入网",
+   "frames": [
+    "关联请求",
+    "确认",
+    "中央信标",
+    "代理信标"
+   ]
+  },
+  {
+   "id": "IOP-03",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "站点离线测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证站点离线机制",
+   "frames": [
+    "离线指示帧",
+    "心跳检测报文"
+   ]
+  },
+  {
+   "id": "IOP-04",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "代理变更测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证代理站点变更",
+   "frames": [
+    "中央信标(时隙变更)",
+    "代理信标"
+   ]
+  },
+  {
+   "id": "IOP-05",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "全网抄表测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证全网抄表互通",
+   "frames": [
+    "698.45",
+    "DLT645抄表请求",
+    "响应"
+   ]
+  },
+  {
+   "id": "IOP-06",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "高频采集测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证分钟级采集",
+   "frames": [
+    "高频采集命令",
+    "数据"
+   ]
+  },
+  {
+   "id": "IOP-07",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "广播校时测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证广播校时互通",
+   "frames": [
+    "广播校时报文"
+   ]
+  },
+  {
+   "id": "IOP-08",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "搜表功能测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证搜表互通",
+   "frames": [
+    "搜表命令",
+    "响应"
+   ]
+  },
+  {
+   "id": "IOP-09",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "事件主动上报测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证事件上报互通",
+   "frames": [
+    "事件上报报文",
+    "确认"
+   ]
+  },
+  {
+   "id": "IOP-10",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "实时费控测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证费控互通",
+   "frames": [
+    "费控命令",
+    "响应"
+   ]
+  },
+  {
+   "id": "IOP-11",
+   "entry_type": "case",
+   "category": "interop",
+   "group": "互操作",
+   "name": "多网络综合测试",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.6"
+   },
+   "purpose": "验证多网络共存",
+   "frames": [
+    "网间协调帧",
+    "各网络信标"
+   ]
+  },
+  {
+   "id": "TST-MSG-01",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "射频参数广播配置（STA 检测线）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.1.1"
+   },
+   "frames": [
+    "698 扩展帧"
+   ],
+   "fields": {
+    "OAD": "`FF F0 01 00`- **OI** = FF F0（检测线扩展定义），属性=01（射频参数广播配置，HPLC抄控模式，广播发送）",
+    "携带字段": "无线调制方式(option)、无线信道编号(index)",
+    "数据类型": "09（octet-string），长度02请求：```68 1b 00 43 05 01 00 00 00 00 00 10 d9 14 06 01 01 FF F0 01 00 09 02 02 29 00 ef 9e 16```确认：```68 19 00 c3 05 01 00 00 00 00 00 10 2c 7b 86 01 01 FF F0 01 00 00 00 00 fa a3 16```",
+    "值": ""
+   }
+  },
+  {
+   "id": "TST-MSG-02",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "设置抄控模式（STA 检测线）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.1.2"
+   },
+   "frames": [
+    "698 扩展帧"
+   ],
+   "fields": {
+    "OAD": "`FF F0 02 00`- **OI** = FF F0，属性=02（抄控模式设置）",
+    "携带字段": "抄控子类型（01=HPLC抄读模式，02=HRF抄读模式）请求：```68 1a 00 43 05 01 00 00 00 00 00 10 48 41 06 01 03 FF F0 02 00 09 01 02 00 9d 3d 16```确认：```68 19 00 c3 05 01 00 00 00 00 00 10 2c 7b 86 01 03 FF F0 02 00 00 00 00 59 b5 16```",
+    "数据类型": "",
+    "值": ""
+   }
+  },
+  {
+   "id": "TST-MSG-03",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "抄读芯片 ID（STA 检测线）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.1.4"
+   },
+   "frames": [
+    "698 扩展帧"
+   ],
+   "fields": {
+    "OAD": "`FF F0 05 00`- **OI** = FF F0，属性=05（抄读ID）读取芯片ID：```68 17 00 43 05 01 00 00 00 00 00 10 26 f6 05 01 01 ff f0 05 00 00 2b d4 16```数据回复（24字节芯片ID）：```68 33 00 c3 05 01 00 00 00 00 00 10 2e 8e 85 01 01 ff f0 05 00 01 09 18 A1 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 AA 00 00 de af 16```",
+    "携带字段": "",
+    "数据类型": "",
+    "值": ""
+   }
+  },
+  {
+   "id": "TST-MSG-04",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "虚拟表地址请求（CCO 检测线）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.2.1"
+   },
+   "frames": [
+    "698 扩展帧"
+   ],
+   "fields": {
+    "OAD": "`40 01 02 00`- **OI** = 40 01（参变量通信地址），属性=02（虚拟地址获取）",
+    "携带字段": "",
+    "数据类型": "",
+    "值": ""
+   }
+  },
+  {
+   "id": "TST-MSG-05",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "射频参数配置（CCO 检测线）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.2.1"
+   },
+   "frames": [
+    "698 扩展帧"
+   ],
+   "fields": {
+    "OAD": "`FF F0 03 00`- **OI** = FF F0，属性=03（射频参数配置，HRF抄控模式）请求（option 2 index 41）：```68 1b 00 43 05 01 00 00 00 00 00 10 d9 14 06 01 04 FF F0 03 00 09 02 02 29 00 ef 35 16```确认：```68 19 00 c3 05 01 00 00 00 00 00 10 2c 7b 86 01 04 FF F0 03 00 00 00 00 13 22 16```",
+    "携带字段": "",
+    "数据类型": "",
+    "值": ""
+   }
+  },
+  {
+   "id": "TST-MSG-06",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "无线射频控制（CCO 检测线）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.2.1"
+   },
+   "frames": [
+    "698 扩展帧"
+   ],
+   "fields": {
+    "OAD": "`FF F0 04 00`- **OI** = FF F0，属性=04（无线射频控制）",
+    "携带字段": "",
+    "数据类型": "",
+    "值": "01=HRF开启，02=HRF关闭请求（HRF关闭）：```68 1a 00 43 05 01 00 00 00 00 00 10 48 41 06 01 06 FF F0 04 00 09 01 02 00 7f 57 16```确认：```68 19 00 c3 05 01 00 00 00 00 00 10 2c 7b 86 01 06 FF F0 04 00 00 00 00 a0 19 16```"
+   }
+  },
+  {
+   "id": "TST-MSG-07",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器消息",
+   "name": "抄表消息（标准 698）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.1.1.3"
+   },
+   "purpose": "标准 698 抄表（正向有功），抄控器模拟表计应答",
+   "frames": [
+    "698.45 抄表帧"
+   ]
+  },
+  {
+   "id": "TST-3762-01",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器 376.2 扩展",
+   "name": "设置抄控通道",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.4"
+   },
+   "frames": [
+    "1376.2 帧"
+   ],
+   "fields": {
+    "AFN": "05",
+    "Fn": "80",
+    "数据内容": "抄控通道(BIN,1字节): 01=HPLC, 02=HRF"
+   }
+  },
+  {
+   "id": "TST-3762-02",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器 376.2 扩展",
+   "name": "配置无线参数（立即生效）",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.4"
+   },
+   "frames": [
+    "1376.2 帧"
+   ],
+   "fields": {
+    "AFN": "05",
+    "Fn": "81",
+    "数据内容": "option(BIN,1字节) + index(BIN,1字节)"
+   }
+  },
+  {
+   "id": "TST-3762-03",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "抄控器 376.2 扩展",
+   "name": "无线射频控制",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.4"
+   },
+   "frames": [
+    "1376.2 帧"
+   ],
+   "fields": {
+    "AFN": "05",
+    "Fn": "82",
+    "数据内容": "开关状态(BIN,1字节): 01=开启, 02=关闭"
+   }
+  },
+  {
+   "id": "TST-FLOW-01",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "STA 双模抄控方案",
+   "name": "射频参数广播配置（HRF参数）",
+   "protocol": "检测线698扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.1"
+   },
+   "frames": [
+    "698扩展(OAD: FF F0 01 00) → HPLC广播"
+   ]
+  },
+  {
+   "id": "TST-FLOW-02",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "STA 双模抄控方案",
+   "name": "HPLC抄表",
+   "protocol": "检测线698扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.1"
+   },
+   "frames": [
+    "698抄表(OAD: 00 10 02 00) → HPLC点抄"
+   ]
+  },
+  {
+   "id": "TST-FLOW-03",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "STA 双模抄控方案",
+   "name": "HPLC芯片ID抄读",
+   "protocol": "检测线698扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.1"
+   },
+   "frames": [
+    "698扩展(OAD: FF F0 05 00) → HPLC通道"
+   ]
+  },
+  {
+   "id": "TST-FLOW-04",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "STA 双模抄控方案",
+   "name": "设置抄控模式（HRF模式）",
+   "protocol": "检测线698扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.1"
+   },
+   "frames": [
+    "698扩展(OAD: FF F0 02 00, 值=02)"
+   ]
+  },
+  {
+   "id": "TST-FLOW-05",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "STA 双模抄控方案",
+   "name": "HRF抄表",
+   "protocol": "检测线698扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.1"
+   },
+   "frames": [
+    "698抄表 → HRF点抄"
+   ]
+  },
+  {
+   "id": "TST-FLOW-06",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "STA 双模抄控方案",
+   "name": "HRF芯片ID抄读",
+   "protocol": "检测线698扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.1"
+   },
+   "frames": [
+    "698扩展(OAD: FF F0 05 00) → HRF通道"
+   ]
+  },
+  {
+   "id": "TST-FLOW-07",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "CCO 双模抄控方案",
+   "name": "虚拟表地址请求",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.2"
+   },
+   "frames": [
+    "698 GET-Request(OAD: 40 01 02 00) → 串口"
+   ]
+  },
+  {
+   "id": "TST-FLOW-08",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "CCO 双模抄控方案",
+   "name": "设置抄控通道（HPLC模式）",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.2"
+   },
+   "frames": [
+    "698透传376.2(AFN=05,F80, 值=01)"
+   ]
+  },
+  {
+   "id": "TST-FLOW-09",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "CCO 双模抄控方案",
+   "name": "HPLC抄表",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.2"
+   },
+   "frames": [
+    "698抄表 → CCO HPLC点抄"
+   ]
+  },
+  {
+   "id": "TST-FLOW-10",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "CCO 双模抄控方案",
+   "name": "射频参数配置（终端+抄控器）",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.2"
+   },
+   "frames": [
+    "698透传376.2(AFN=05,F81) + 698扩展(OAD: FF F0 03 00)"
+   ]
+  },
+  {
+   "id": "TST-FLOW-11",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "CCO 双模抄控方案",
+   "name": "HRF抄表",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.2"
+   },
+   "frames": [
+    "698抄表 → CCO HRF点抄"
+   ]
+  },
+  {
+   "id": "TST-FLOW-12",
+   "entry_type": "case",
+   "category": "tester-protocol",
+   "group": "CCO 双模抄控方案",
+   "name": "无线射频控制（关闭）",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "framework",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§3.2.2"
+   },
+   "frames": [
+    "698透传376.2(AFN=05,F82, 值=02) + 698扩展(OAD: FF F0 04 00, 值=02)"
+   ]
+  },
+  {
+   "id": "HN-STAGE-01",
+   "entry_type": "case",
+   "category": "henan-pipeline",
+   "group": "流水线检测步骤",
+   "name": "载波信道检测阶段",
+   "protocol": "河南流水线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§5.1.1"
+   },
+   "steps": [
+    "1 上电，对陪测CCO清参，设置CCO MAC（376.2命令）",
+    "2 设置固定载波入网模式（1376.2扩展: AFN=05, F18（值=1，仅载波组网））",
+    "3 设置载波频段（1376.2: AFN=05, F16（建议频段2））",
+    "4 设置无线频点（1376.2: AFN=05, F17（建议禁止无线信道协商））",
+    "5 添加档案（376.2: AFN=11, F1）",
+    "6 验证组网通道（1376.2扩展: AFN=10, F20（查询网络拓扑））",
+    "7 完成载波信道检测项目（功耗、芯片ID、通信性能、电源适应性等）",
+    "8 陪测CCO与待测STA断电（—）"
+   ]
+  },
+  {
+   "id": "HN-STAGE-02",
+   "entry_type": "case",
+   "category": "henan-pipeline",
+   "group": "流水线检测步骤",
+   "name": "无线信道检测阶段",
+   "protocol": "河南流水线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§5.1.2"
+   },
+   "steps": [
+    "9 上电，对陪测CCO清参，设置CCO MAC（376.2命令）",
+    "10 设置固定无线组网模式（1376.2扩展: AFN=05, F18（值=2，仅无线组网））",
+    "11 设置无线频点（1376.2: AFN=05, F17（与步骤4一致））",
+    "12 添加档案（376.2: AFN=11, F1）",
+    "13 验证组网通道（1376.2扩展: AFN=10, F20（查询网络拓扑））",
+    "14 完成无线信道检测项目，与载波数据对比（验证载波与无线抄读数据一致性）"
+   ]
+  },
+  {
+   "id": "HN-EXT-01",
+   "entry_type": "case",
+   "category": "henan-pipeline",
+   "group": "1376.2 扩展命令",
+   "name": "AFN=03 F18 读取组网方式",
+   "protocol": "河南流水线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§5.2.3"
+   },
+   "frames": [
+    "1376.2 扩展帧"
+   ],
+   "fields": {
+    "数据内容": "组网方式 BIN 1 字节（0=混合组网，1=仅载波组网，2=仅无线组网）"
+   }
+  },
+  {
+   "id": "HN-EXT-02",
+   "entry_type": "case",
+   "category": "henan-pipeline",
+   "group": "1376.2 扩展命令",
+   "name": "AFN=05 F18 设置组网方式",
+   "protocol": "河南流水线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§5.2.3"
+   },
+   "frames": [
+    "1376.2 扩展帧"
+   ],
+   "fields": {
+    "数据内容": "组网方式 BIN 1 字节；上行报文为确认/否认帧"
+   }
+  },
+  {
+   "id": "HN-EXT-03",
+   "entry_type": "case",
+   "category": "henan-pipeline",
+   "group": "判定标准",
+   "name": "载波/无线数据一致性判定",
+   "protocol": "河南流水线",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§5.2.1"
+   },
+   "purpose": "CCO 接收 STA 应答时，只有当接收信道与组网信道相同，且载波抄读与无线抄读数据相同时，才认为抄读成功"
+  },
+  {
+   "id": "PARAM-MODE-01",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "转发应用层报文至应用层串口信道（暂未使用）",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "1",
+    "模式持续时间/配置值": "填0"
+   }
+  },
+  {
+   "id": "PARAM-MODE-02",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "转发应用层报文至载波信道（暂未使用）",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "2",
+    "模式持续时间/配置值": "填0"
+   }
+  },
+  {
+   "id": "PARAM-MODE-03",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "HPLC物理层透传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "3",
+    "模式持续时间/配置值": "持续时间（分钟）"
+   }
+  },
+  {
+   "id": "PARAM-MODE-04",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "HPLC物理层回传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "4",
+    "模式持续时间/配置值": "持续时间（分钟）"
+   }
+  },
+  {
+   "id": "PARAM-MODE-05",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "MAC层透传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "5",
+    "模式持续时间/配置值": "持续时间（分钟）"
+   }
+  },
+  {
+   "id": "PARAM-MODE-06",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "频段切换操作",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "6",
+    "模式持续时间/配置值": "0=频段0(1.953~11.96MHz), 1=频段1(2.441~5.615MHz), 2=频段2(0.781~2.930MHz), 3=频段3(1.758~2.930MHz)"
+   }
+  },
+  {
+   "id": "PARAM-MODE-07",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "ToneMask配置操作",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "7",
+    "模式持续时间/配置值": "目标ToneMask值"
+   }
+  },
+  {
+   "id": "PARAM-MODE-08",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "无线信道切换操作",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "8",
+    "模式持续时间/配置值": "Option值(2字节4-7bit)+信道号(03字节)"
+   }
+  },
+  {
+   "id": "PARAM-MODE-09",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "RF物理层回传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "9",
+    "模式持续时间/配置值": "持续时间（分钟）"
+   }
+  },
+  {
+   "id": "PARAM-MODE-10",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "RF物理层透传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "10",
+    "模式持续时间/配置值": "持续时间（分钟）"
+   }
+  },
+  {
+   "id": "PARAM-MODE-11",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "RF/PLC物理层回传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "11",
+    "模式持续时间/配置值": "持续时间（分钟）"
+   }
+  },
+  {
+   "id": "PARAM-MODE-12",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "PLC到RF物理层回传模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "12",
+    "模式持续时间/配置值": "持续时间（分钟），PHR_MCS/PSDU_MCS/PbSIZE字段生效"
+   }
+  },
+  {
+   "id": "PARAM-MODE-13",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "测试模式扩展命令",
+   "name": "安全测试模式",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "13",
+    "模式持续时间/配置值": "持续时间（分钟），安全测试模式字段标识子模式"
+   }
+  },
+  {
+   "id": "PARAM-SEC-01",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "SHA256算法测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "1"
+   }
+  },
+  {
+   "id": "PARAM-SEC-02",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "SM3算法测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "2"
+   }
+  },
+  {
+   "id": "PARAM-SEC-03",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "ECC签名测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "3"
+   }
+  },
+  {
+   "id": "PARAM-SEC-04",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "ECC验签测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "4"
+   }
+  },
+  {
+   "id": "PARAM-SEC-05",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "SM2签名测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "5"
+   }
+  },
+  {
+   "id": "PARAM-SEC-06",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "SM2验签测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "6"
+   }
+  },
+  {
+   "id": "PARAM-SEC-07",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "AES-CBC加密测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "7"
+   }
+  },
+  {
+   "id": "PARAM-SEC-08",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "AES-CBC解密测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "8"
+   }
+  },
+  {
+   "id": "PARAM-SEC-09",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "AES-GCM加密测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "9"
+   }
+  },
+  {
+   "id": "PARAM-SEC-10",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "AES-GCM解密测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "10"
+   }
+  },
+  {
+   "id": "PARAM-SEC-11",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "SM4-CBC加密测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "11"
+   }
+  },
+  {
+   "id": "PARAM-SEC-12",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "安全测试模式",
+   "name": "SM4-CBC解密测试",
+   "protocol": "测试模式",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§2.1.1"
+   },
+   "fields": {
+    "值": "12"
+   }
+  },
+  {
+   "id": "PARAM-OAD-01",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线扩展 OAD",
+   "name": "射频参数广播配置（HPLC抄控模式，广播发送）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.3"
+   },
+   "fields": {
+    "OAD": "`FF F0 01 00`",
+    "属性": "01",
+    "适用场景": "STA检测"
+   }
+  },
+  {
+   "id": "PARAM-OAD-02",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线扩展 OAD",
+   "name": "抄控模式设置（01=HPLC, 02=HRF）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.3"
+   },
+   "fields": {
+    "OAD": "`FF F0 02 00`",
+    "属性": "02",
+    "适用场景": "STA检测"
+   }
+  },
+  {
+   "id": "PARAM-OAD-03",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线扩展 OAD",
+   "name": "射频参数配置（HRF抄控模式）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.3"
+   },
+   "fields": {
+    "OAD": "`FF F0 03 00`",
+    "属性": "03",
+    "适用场景": "CCO检测"
+   }
+  },
+  {
+   "id": "PARAM-OAD-04",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线扩展 OAD",
+   "name": "无线射频控制（01=开启, 02=关闭）",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.3"
+   },
+   "fields": {
+    "OAD": "`FF F0 04 00`",
+    "属性": "04",
+    "适用场景": "CCO检测"
+   }
+  },
+  {
+   "id": "PARAM-OAD-05",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线扩展 OAD",
+   "name": "抄读芯片ID",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.3"
+   },
+   "fields": {
+    "OAD": "`FF F0 05 00`",
+    "属性": "05",
+    "适用场景": "STA/CCO检测"
+   }
+  },
+  {
+   "id": "PARAM-OAD-06",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线扩展 OAD",
+   "name": "虚拟地址获取",
+   "protocol": "检测线698扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§4.1.3"
+   },
+   "fields": {
+    "OAD": "`40 01 02 00`",
+    "属性": "02",
+    "适用场景": "CCO检测（抄控器）"
+   }
+  },
+  {
+   "id": "PARAM-3762-01",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线/河南扩展 376.2",
+   "name": "设置抄控通道",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.2"
+   },
+   "fields": {
+    "AFN/Fn": "AFN=05, F80",
+    "国网通用定义": "设置抄控通道",
+    "河南扩展": "—"
+   }
+  },
+  {
+   "id": "PARAM-3762-02",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线/河南扩展 376.2",
+   "name": "配置无线参数",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.2"
+   },
+   "fields": {
+    "AFN/Fn": "AFN=05, F81",
+    "国网通用定义": "配置无线参数",
+    "河南扩展": "—"
+   }
+  },
+  {
+   "id": "PARAM-3762-03",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线/河南扩展 376.2",
+   "name": "无线射频控制",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.2"
+   },
+   "fields": {
+    "AFN/Fn": "AFN=05, F82",
+    "国网通用定义": "无线射频控制",
+    "河南扩展": "—"
+   }
+  },
+  {
+   "id": "PARAM-3762-04",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线/河南扩展 376.2",
+   "name": "设置组网方式(0=混合,1=载波,2=无线)",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.2"
+   },
+   "fields": {
+    "AFN/Fn": "AFN=05, F18",
+    "国网通用定义": "—",
+    "河南扩展": "设置组网方式(0=混合,1=载波,2=无线)"
+   }
+  },
+  {
+   "id": "PARAM-3762-05",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线/河南扩展 376.2",
+   "name": "读取组网方式",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.2"
+   },
+   "fields": {
+    "AFN/Fn": "AFN=03, F18",
+    "国网通用定义": "—",
+    "河南扩展": "读取组网方式"
+   }
+  },
+  {
+   "id": "PARAM-3762-06",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "检测线/河南扩展 376.2",
+   "name": "查询网络拓扑信息",
+   "protocol": "检测线376.2扩展",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.2"
+   },
+   "fields": {
+    "AFN/Fn": "AFN=10, F20",
+    "国网通用定义": "—",
+    "河南扩展": "查询网络拓扑信息"
+   }
+  },
+  {
+   "id": "PARAM-BCNFLAG-01",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "无线信标标志",
+   "name": "仅发送高速载波信标",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.3"
+   },
+   "fields": {
+    "值": "0x00",
+    "应用场景": "载波单信道组网、载波检测阶段"
+   }
+  },
+  {
+   "id": "PARAM-BCNFLAG-02",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "无线信标标志",
+   "name": "仅发送无线标准信标",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.3"
+   },
+   "fields": {
+    "值": "0x01",
+    "应用场景": "无线单信道组网、无线检测阶段"
+   }
+  },
+  {
+   "id": "PARAM-BCNFLAG-03",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "无线信标标志",
+   "name": "载波信标+无线标准信标",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.3"
+   },
+   "fields": {
+    "值": "0x02",
+    "应用场景": "混合组网"
+   }
+  },
+  {
+   "id": "PARAM-BCNFLAG-04",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "无线信标标志",
+   "name": "载波信标+无线精简信标",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.3"
+   },
+   "fields": {
+    "值": "0x03",
+    "应用场景": "混合组网（精简无线信标）"
+   }
+  },
+  {
+   "id": "PARAM-BCNFLAG-05",
+   "entry_type": "param_table",
+   "category": "params",
+   "group": "无线信标标志",
+   "name": "载波信标+CSMA时隙无线精简信标",
+   "protocol": "双模",
+   "detail_level": "detailed",
+   "source": {
+    "doc": "双模通信互联互通测试用例（国网计量中心 2022-01）",
+    "distill": "蒸馏/06_测试用例.md",
+    "section": "§6.3"
+   },
+   "fields": {
+    "值": "0x04",
+    "应用场景": "混合组网（CSMA无线精简信标）"
+   }
+  }
+ ]
+}

@@ -1,8 +1,9 @@
-"""workbench.dict_api —— 协议字典只读端点（reqs/0010 P1）。
+"""workbench.dict_api —— 协议字典只读端点（reqs/0010 P1；reqs/0025 新增检测用例库）。
 
-四本共享字典的统一查询口：698.45 OAD、645-2007 DI、1376.2 AFN/Fn、模块日志事件规则。
-数据全部来自仓库真实文件（libs/ 下 metadata 与 loghooks rules），此处不做任何加工拷贝；
-simple JSON 键即事实契约，字典文件改动即刻反映到本端点与字典页。
+共享知识库的统一查询口：698.45 OAD、645-2007 DI、1376.2 AFN/Fn、模块日志事件规则、
+双模检测用例库（REQS-0025 G1）。
+数据全部来自仓库真实文件（libs/ 下 metadata、loghooks rules 与 case_library data），
+此处不做任何加工拷贝；simple JSON 键即事实契约，字典文件改动即刻反映到本端点与字典页。
 """
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+
+from libs.case_library import library as case_library
 
 router = APIRouter(prefix="/api/dict")
 
@@ -46,6 +49,7 @@ def list_dicts():
     for rel in rule_files:
         data = _load_json(_RULES_DIR / rel)
         rule_count += len(data) if isinstance(data, list) else 0
+    cases_lib = case_library.meta()
     return [
         {"id": "oad", "name": "698.45 OAD", "count": len(oad),
          "path": "libs/parser_lib/adapters/adapter_698/metadata/oad.json",
@@ -60,6 +64,11 @@ def list_dicts():
         {"id": "rules", "name": "事件规则", "count": rule_count,
          "path": "libs/loghooks/rules/",
          "desc": "模块日志事件识别规则（loghooks），事件名即场景脚本 expected_flow 的 event_type；含省份扩展。"},
+        {"id": "cases", "name": "检测用例库", "count": cases_lib["counts"]["entries"],
+         "case_count": cases_lib["counts"]["cases"],
+         "path": "libs/case_library/data/cases.json",
+         "desc": f"国网双模互联互通检测条目库（REQS-0025）：269 项检测体系中可枚举 {cases_lib['counts']['cases']} 项 + "
+                 "检测线抄控器协议 + 河南流水线 + 测试模式/安全模式参数表；detail_level=framework 表示原蒸馏文档未展开步骤。"},
     ]
 
 
@@ -105,6 +114,38 @@ def get_rules(q: Optional[str] = Query(None, description="模糊过滤规则 id/
             ]
         out.append({"file": rel, "count": len(entries), "entries": entries})
     return {"dict": "rules", "count": sum(f["count"] for f in out), "files": out}
+
+
+@router.get("/cases")
+def get_cases(
+    category: Optional[str] = Query(None, description="分类 id（hplc-perf/wireless-perf/hplc-consistency/…）"),
+    type: Optional[str] = Query(None, alias="type", description="条目类型 case/param_table"),
+    q: Optional[str] = Query(None, description="模糊过滤 id/名称/目的/帧类型/来源"),
+):
+    """检测用例库查询（REQS-0025 G1）：返回分类清单与过滤后条目。"""
+    items = case_library.entries(category=category, entry_type=type, q=q)
+    cats = case_library.categories()
+    if category:
+        cats = [c for c in cats if c["id"] == category]
+    return {
+        "dict": "cases",
+        "count": len(items),
+        "declared_total": case_library.meta()["declared"]["total"],
+        "categories": [
+            {**c, "count": sum(1 for e in case_library.entries() if e["category"] == c["id"])}
+            for c in cats
+        ],
+        "items": items,
+    }
+
+
+@router.get("/cases/{entry_id}")
+def get_case(entry_id: str):
+    """单条用例/参数表行详情。"""
+    entry = case_library.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"用例不存在：{entry_id}")
+    return entry
 
 
 def _filter(items: list, q: Optional[str]) -> list:
