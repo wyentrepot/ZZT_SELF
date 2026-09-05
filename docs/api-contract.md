@@ -117,6 +117,16 @@ workbench 外部：`/api/indexes/... → /api/listener/indexes/...`；别名路�
 | GET | `/api/network/assessment` | `index_id?, start_time?, end_time?, nid?` | 完整评估；无信标时 `{networks:[], beacon_period_ms:null, fallback:"beacon_undetected", message}` |
 | GET | `/api/network/status` | 同上 | **AI 用轻量快照 ≤1KB**：`{networks[{nid,cco_mac,beacon_period_ms,overall_health,latest_success_rate}], beacon_period_ms, overall_health, latest_cycle{start_time,end_time,success_rate,rating}, fallback}`；rating 枚举 healthy/degraded/fault |
 
+### 3.4a 组网观测（REQS-0024）
+
+| 方法 | 内部路径 | 参数 | 响应要点 |
+| --- | --- | --- | --- |
+| GET | `/api/network/events` | `index_id?, start_time?, end_time?, nid?, event?, group?, direction?, query?, limit≤1000, offset?` | 组网事件流（首次调用触发增量扫描，`refresh.pending` 表示存量未扫完再点刷新）；`group` 枚举 组网/维护/冲突/路由/信标/业务；`direction` 枚举 down(CCO→)/up(→CCO)/mesh；事件 `fields` 含该类报文全量解析字段（如 assoc_cnf 的 rslt/retry_time_ms/proxy_tei） |
+| GET | `/api/network/overview` | `index_id?, start_time?, end_time?, nid?` | `{networks[{nid,cco_mac,beacon_period_ms,stations,station_count,event_count}], event_type_counts, link_counters{frames_total,mgmt_total,app_total,beacon_total,sack_total,sack_fail,sack_fail_rate,icv_fail,truncated,decode_fail}, groups, event_names}` |
+| GET | `/api/network/beacons` | `index_id?, start_time?, end_time?, nid?, bcn_type=beacon_central, limit≤200` | 信标明细；`fields.periods_ms{beacon,tdma,csma,bind_csma}` 为四时段重建（ms，相对信标周期起始），`fields.csma_slots` 为各相分片 |
+
+> 解析依据：`libs/parser_lib/adapters/adapter_dualmac/`（GW 封装剥离 + 4-2 表13/4/17/19/23/26/30/34/38/47/48/49/50/54/55/57 + NWK 管理帧 table60/70/76/79/84/88/91/94/100/102/111/114/117/118/121）；位域经 reqs/0009 真机样本 2276 帧实证，BPCS/ICV 校验通过口径见模块 docstring。NID 展示为 24bit 小端十六进制（如 947F69），查询同时匹配字节序反转写法（697F94）。
+
 ### 3.5 通信流追踪（需求 0009，注意双前缀）
 
 | 方法 | 内部路径 | workbench 外部路径 | 请求体 | 响应要点 | 状态码 |

@@ -24,6 +24,7 @@
 | 任务报文分析 | `logs/task-config-tasks/summary/lifecycle`、`task-minute-analysis`、`task-derived-period` | |
 | 网络承载评估 | `network/assessment`（完整）/ `network/status`（AI 轻量快照 ≤1KB，healthy/degraded/fault） | 无信标时 fallback=beacon_undetected |
 | 串口实时采集 | `serial/ports·status·start`(202)·`stop` | 落盘 data/logs/侦听台/ |
+| 组网观测（REQS-0024） | `network/events`、`network/overview`、`network/beacons` | 4-2 链路层/NWK 组网事件流+网络总览+信标时隙重建；页面「组网观测」页签；首次调用触发增量扫描落 nwk_events 表 |
 | 通信流追踪（需求 0009/ADR-9） | `POST/GET/DELETE /api/listener/listener/traces…`（**双前缀**） | 三段证据链 S1 发出→S2 ACK/响应→S3 接收，回放 + live |
 | 新版帧浏览 | frames-pro 页签 | `feature_hint` 一键反推追踪特征草稿 |
 
