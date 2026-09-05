@@ -4,7 +4,7 @@ description: Control the HPLC meter-reading workbench over HTTP as an AI. Defaul
 argument-hint: "[task, e.g. 监控cco日志直到出现XX / 向sta发送... / 烧录固件 / 跑验证用例]"
 metadata:
   author: reasonix
-  version: "2.1.0"
+  version: "2.3.0"
   applies-to: D:/2-侦听台改造
 ---
 
@@ -43,6 +43,7 @@ v2 每次写任务带 `client_request_id`；默认 `cleanup=owned_only`。`job_s
 | 烧录固件 | `flash-operations` → `wait` | references/module-serial.md |
 | 验证用例 / 单步 / 查帧 | `simcon/verify·step` → `frames` | references/simcon.md |
 | 查已解析帧 / 追踪一轮业务 | `listener/indexes…/frames`、`listener/traces` | references/listener.md |
+| 排查组网问题（入网/离网/冲突/心跳/信标） | `listener/network/digest`（L1 结论 ≤4KB：verdict+异常清单+时间桶）→ `network/events?level=alarm,watch`（L2 明细，锁定桶窗）→ `network/events/{id}/brief`（L3 单帧粗解 ≤2KB）；评级快照才用 `network/status` | references/network-diagnostics.md |
 | 离线数据排查 / 漏点定位 | **API 优先**：`listener/minute-periods` + `simcon/store/events|snapshots`；原始日志/CCO grep 才离线直查（组合场景，读 3 个） | references/offline-analysis.md（+ cco-log.md + listener.md） |
 | 跑场景全链路 | `POST /api/run` → 轮询 → report | references/helpers.md |
 | 查协议语义 / 构帧预检 | `/api/dict`、`/api/simcon/build` | references/helpers.md |

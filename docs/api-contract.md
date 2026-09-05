@@ -117,13 +117,17 @@ workbench 外部：`/api/indexes/... → /api/listener/indexes/...`；别名路�
 | GET | `/api/network/assessment` | `index_id?, start_time?, end_time?, nid?` | 完整评估；无信标时 `{networks:[], beacon_period_ms:null, fallback:"beacon_undetected", message}` |
 | GET | `/api/network/status` | 同上 | **AI 用轻量快照 ≤1KB**：`{networks[{nid,cco_mac,beacon_period_ms,overall_health,latest_success_rate}], beacon_period_ms, overall_health, latest_cycle{start_time,end_time,success_rate,rating}, fallback}`；rating 枚举 healthy/degraded/fault |
 
-### 3.4a 组网观测（REQS-0024）
+### 3.4a 组网观测（REQS-0024/0026）
 
 | 方法 | 内部路径 | 参数 | 响应要点 |
 | --- | --- | --- | --- |
-| GET | `/api/network/events` | `index_id?, start_time?, end_time?, nid?, event?, group?, direction?, query?, limit≤1000, offset?` | 组网事件流（首次调用触发增量扫描，`refresh.pending` 表示存量未扫完再点刷新）；`group` 枚举 组网/维护/冲突/路由/信标/业务；`direction` 枚举 down(CCO→)/up(→CCO)/mesh；事件 `fields` 含该类报文全量解析字段（如 assoc_cnf 的 rslt/retry_time_ms/proxy_tei） |
+| GET | `/api/network/events` | `index_id?, start_time?, end_time?, nid?, event?, group?, direction?, query?, level?, limit≤1000, offset?` | 组网事件流（首次调用触发增量扫描，`refresh.pending` 表示存量未扫完再点刷新）；`group` 枚举 组网/维护/冲突/路由/信标/业务；`direction` 枚举 down(CCO→)/up(→CCO)/mesh；`level` 逗号分隔 `alarm,watch,normal`（0026 降噪过滤，缺省全量）；事件 `fields` 含该类报文全量解析字段（如 assoc_cnf 的 rslt/retry_time_ms/proxy_tei），并附 `level`（三级分级）+ `human`（TEI→表号人话摘要）+ `src_label`/`dst_label` 翻译列 |
+| GET | `/api/network/digest` | `index_id?, start_time?, end_time?, nid?` | **印象结论包 ≤4KB（0026，人 + AI 同源 L1）**：`{verdict 一句话判定, level(alarm/watch/normal), alarm_count, watch_count, event_total, alarms[{type,name,count,first_time,last_time,sample_human}]≤6, watch[]≤3, network{nid,cco_mac,station_count}, quality{frames_total,sack_*,icv_fail,truncated,decode_fail}, scan_pending, buckets[{start,end,total,alarms}]≤60 非空桶, bucket_seconds}`；时间桶自适应粒度（跨度 ≤30min 用 1 分钟，更大取 ≤60 桶取整）；异常分级门限出处：蒸馏库 07-NWK/08-MAC（rslt∉{0,0xA} 被拒、离网、NID/信道冲突、路由错误、BPCS 失败=alarm；代理变更、网间协调、成功率<90%=watch） |
+| GET | `/api/network/events/{frame_id}/brief` | `index_id?` | **单帧粗略解析 ≤2KB（0026 按需 L3）**：`{frame_id, log_time, nid, layers[{title,fields{中文键:值}}]（GW封装/MAC头/管理表·信标/选择确认/业务载荷）, events[{level,name,human}], warnings[]}`；帧不存在 404，解析失败 422 |
 | GET | `/api/network/overview` | `index_id?, start_time?, end_time?, nid?` | `{networks[{nid,cco_mac,beacon_period_ms,stations,station_count,event_count}], event_type_counts, link_counters{frames_total,mgmt_total,app_total,beacon_total,sack_total,sack_fail,sack_fail_rate,icv_fail,truncated,decode_fail}, groups, event_names}` |
 | GET | `/api/network/beacons` | `index_id?, start_time?, end_time?, nid?, bcn_type=beacon_central, limit≤200` | 信标明细；`fields.periods_ms{beacon,tdma,csma,bind_csma}` 为四时段重建（ms，相对信标周期起始），`fields.csma_slots` 为各相分片 |
+
+> 0026 前端分工：组网观测卡片区只保留事件侧统计（事件数/异常数/SACK 失败率/ICV 失败），信标周期/CSMA 占用等信道质量指标归网络承载评估页；评估页异常周期有「下钻排查」按钮，带周期时间窗跳转组网观测。
 
 > 解析依据：`libs/parser_lib/adapters/adapter_dualmac/`（GW 封装剥离 + 4-2 表13/4/17/19/23/26/30/34/38/47/48/49/50/54/55/57 + NWK 管理帧 table60/70/76/79/84/88/91/94/100/102/111/114/117/118/121）；位域经 reqs/0009 真机样本 2276 帧实证，BPCS/ICV 校验通过口径见模块 docstring。NID 展示为 24bit 小端十六进制（如 947F69），查询同时匹配字节序反转写法（697F94）。
 
