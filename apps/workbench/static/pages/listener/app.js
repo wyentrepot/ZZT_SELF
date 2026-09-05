@@ -958,6 +958,8 @@ function switchView(name) {
   minuteElements.view.hidden = name !== "minute";
   minuteElements.deleteConfigView.hidden = name !== "delete-config";
   if (networkElements) networkElements.view.hidden = name !== "network-assessment";
+  if (observeElements && observeElements.view) observeElements.view.hidden = name !== "network-observe";
+  if (name === "network-observe") loadNetworkObserve();
   if (name === "minute") loadMinuteTaskList();
   if (name === "network-assessment") loadNetworkStatus();
 }
@@ -2136,3 +2138,215 @@ async function loadNetworkAssessment() {
 
 networkElements.refresh.addEventListener("click", loadNetworkStatus);
 networkElements.assessment.addEventListener("click", loadNetworkAssessment);
+
+// ===== 组网观测（REQS-0024）：GET listener/network/overview · /network/events · /network/beacons =====
+// 事件流由后端增量扫描 frames 表并按 adapter_dualmac 解析落库（nwk_events）。
+var observeElements = {
+  view: document.getElementById("network-observe-view"),
+  refresh: document.getElementById("network-observe-refresh"),
+  group: document.getElementById("network-observe-group"),
+  event: document.getElementById("network-observe-event"),
+  direction: document.getElementById("network-observe-direction"),
+  query: document.getElementById("network-observe-query"),
+  scan: document.getElementById("network-observe-scan"),
+  cards: document.getElementById("network-observe-cards"),
+  beacon: document.getElementById("network-observe-beacon"),
+  rows: document.getElementById("network-observe-rows"),
+  detail: document.getElementById("network-observe-detail"),
+  error: document.getElementById("network-observe-error"),
+};
+
+const OBSERVE_DIR_TEXT = { up: "上行", down: "下行", mesh: "中继" };
+let observeEventNames = {};
+
+function observeQuery(overrides = {}) {
+  const params = networkRequestParams();
+  const map = {
+    group: observeElements.group ? observeElements.group.value : "",
+    event: observeElements.event ? observeElements.event.value : "",
+    direction: observeElements.direction ? observeElements.direction.value : "",
+    query: observeElements.query ? observeElements.query.value.trim() : "",
+  };
+  Object.entries({ ...map, ...overrides }).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  return params.toString();
+}
+
+async function loadNetworkObserve() {
+  if (!observeElements.view || observeElements.view.hidden) return;
+  observeElements.error.hidden = true;
+  try {
+    const [overview, events, beacons] = await Promise.all([
+      fetchNetwork(`/api/listener/network/overview?${networkRequestParams()}`),
+      fetchNetwork(`/api/listener/network/events?${observeQuery()}&limit=200`),
+      fetchNetwork(`/api/listener/network/beacons?${networkRequestParams()}&limit=1`),
+    ]);
+    observeEventNames = overview.event_names || {};
+    if (observeElements.event && observeElements.event.options.length <= 1) {
+      Object.entries((overview.groups || {})).forEach(([, list]) => {
+        list.forEach((key) => {
+          if ([...observeElements.event.options].some((o) => o.value === key)) return;
+          const option = document.createElement("option");
+          option.value = key;
+          option.textContent = observeEventNames[key] || key;
+          observeElements.event.appendChild(option);
+        });
+      });
+    }
+    renderObserveCards(overview);
+    renderObserveBeacon((beacons.events || [])[0] || null);
+    renderObserveRows(events.events || []);
+    observeElements.scan.textContent = events.refresh && events.refresh.pending
+      ? `增量扫描中（已扫 ${events.refresh.last_frame_id} 帧，再点刷新继续）`
+      : `已扫描 ${overview.link_counters ? overview.link_counters.frames_total || 0 : 0} 帧`;
+  } catch (error) {
+    observeElements.error.textContent =
+      error.status === 503 ? "后端未就绪（日志服务未启用）" : `组网观测加载失败：${error.message}`;
+    observeElements.error.hidden = false;
+  }
+}
+
+function observeCard(label, value, bad = false) {
+  const card = document.createElement("div");
+  card.className = "observe-card" + (bad ? " is-bad" : "");
+  const labelEl = document.createElement("span");
+  labelEl.className = "observe-card-label";
+  labelEl.textContent = label;
+  const valueEl = document.createElement("strong");
+  valueEl.className = "observe-card-value";
+  valueEl.textContent = value;
+  card.append(labelEl, valueEl);
+  return card;
+}
+
+function renderObserveCards(overview) {
+  const wrap = observeElements.cards;
+  wrap.textContent = "";
+  const net = (overview.networks || [])[0] || {};
+  const counters = overview.link_counters || {};
+  const sackRate = counters.sack_fail_rate;
+  wrap.append(
+    observeCard("网络 NID", net.nid || "—"),
+    observeCard("CCO MAC", net.cco_mac || "—"),
+    observeCard("实测信标周期", net.beacon_period_ms ? `${net.beacon_period_ms} ms` : "—"),
+    observeCard("站点数（去 CCO）", net.station_count != null ? String(net.station_count) : "—"),
+    observeCard("组网事件数", String(overview.event_total ?? 0)),
+    observeCard("SACK 失败率", sackRate != null ? `${(sackRate * 100).toFixed(2)}%` : "—",
+      sackRate != null && sackRate > 0.05),
+    observeCard("ICV 校验失败", String(counters.icv_fail ?? 0), (counters.icv_fail || 0) > 0),
+    observeCard("截断长帧", String(counters.truncated ?? 0), (counters.truncated || 0) > 0),
+  );
+}
+
+function renderObserveBeacon(beaconEvent) {
+  const wrap = observeElements.beacon;
+  wrap.textContent = "";
+  if (!beaconEvent || !beaconEvent.fields || !beaconEvent.fields.periods_ms) {
+    return;
+  }
+  const fields = beaconEvent.fields;
+  const period = fields.beacon_period_ms || 15000;
+  const title = document.createElement("div");
+  title.className = "observe-beacon-title";
+  title.textContent = `最新中央信标 · 周期#${fields.cycle_count || "—"} · ${beaconEvent.log_time} · 时隙重建（总长 ${period} ms）`;
+  const bar = document.createElement("div");
+  bar.className = "observe-period-bar";
+  const segments = [
+    ["seg-beacon", "信标", fields.periods_ms.beacon],
+    ["seg-tdma", "TDMA", fields.periods_ms.tdma],
+    ["seg-csma", "CSMA", fields.periods_ms.csma],
+    ["seg-bind", "绑定CSMA", fields.periods_ms.bind_csma],
+  ];
+  segments.forEach(([cls, label, range]) => {
+    if (!range) return;
+    const width = Math.max(((range.end - range.start) / period) * 100, 1.5);
+    const seg = document.createElement("div");
+    seg.className = `observe-period-seg ${cls}`;
+    seg.style.width = `${width}%`;
+    seg.title = `${label} ${range.start}~${range.end} ms`;
+    seg.textContent = width > 8 ? `${label} ${range.end - range.start}ms` : label;
+    bar.appendChild(seg);
+  });
+  wrap.append(title, bar);
+  const chips = document.createElement("div");
+  chips.className = "observe-phase-chips";
+  const slot = fields.csma_slots || [];
+  if (slot.length) {
+    const phases = { 0: "未知相", 1: "A相", 2: "B相", 3: "C相" };
+    slot.forEach((item) => {
+      const chip = document.createElement("span");
+      chip.className = "observe-phase-chip";
+      chip.textContent = `CSMA ${phases[item.phase] || item.phase} · ${item.length_ms} ms`;
+      chips.appendChild(chip);
+    });
+    const noCentral = fields.no_central_slots;
+    if (noCentral != null) {
+      const chip = document.createElement("span");
+      chip.className = "observe-phase-chip";
+      chip.textContent = `非中央信标时隙 ${noCentral} + 中央 3`;
+      chips.appendChild(chip);
+    }
+  }
+  if (chips.childElementCount) wrap.appendChild(chips);
+}
+
+function renderObserveRows(events) {
+  const body = observeElements.rows;
+  body.textContent = "";
+  if (!events.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.className = "observe-empty";
+    cell.textContent = "当前过滤条件下没有组网事件";
+    row.appendChild(cell);
+    body.appendChild(row);
+    return;
+  }
+  events.forEach((event) => {
+    const row = document.createElement("tr");
+    const cells = [event.log_time, observeEventNames[event.event] || event.event,
+      OBSERVE_DIR_TEXT[event.direction] || event.direction,
+      event.src_tei || "—", event.dst_tei || "—", event.summary];
+    cells.forEach((value, index) => {
+      const cell = document.createElement("td");
+      if (index === 2) {
+        cell.classList.add(`observe-dir-${event.direction || "mesh"}`);
+      }
+      if (index === 5) cell.title = value || "";
+      cell.textContent = value == null ? "—" : String(value);
+      row.appendChild(cell);
+    });
+    row.addEventListener("click", () => {
+      [...body.children].forEach((item) => item.classList.remove("observe-row-active"));
+      row.classList.add("observe-row-active");
+      showObserveDetail(event);
+    });
+    body.appendChild(row);
+  });
+}
+
+function showObserveDetail(event) {
+  const panel = observeElements.detail;
+  panel.hidden = false;
+  panel.textContent = "";
+  const title = document.createElement("div");
+  title.className = "observe-detail-title";
+  title.textContent = `${event.name} · 帧 #${event.frame_id} · ${event.log_time} · NID ${event.nid}`;
+  const pre = document.createElement("pre");
+  pre.textContent = JSON.stringify(event.fields, null, 2) || "{}";
+  panel.append(title, pre);
+}
+
+if (observeElements.refresh) observeElements.refresh.addEventListener("click", loadNetworkObserve);
+[observeElements.group, observeElements.event, observeElements.direction].forEach((el) => {
+  if (el) el.addEventListener("change", loadNetworkObserve);
+});
+if (observeElements.query) {
+  let observeQueryTimer = null;
+  observeElements.query.addEventListener("input", () => {
+    clearTimeout(observeQueryTimer);
+    observeQueryTimer = setTimeout(loadNetworkObserve, 400);
+  });
+}

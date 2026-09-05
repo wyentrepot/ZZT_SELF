@@ -1304,3 +1304,73 @@ body[data-source="serial"] [data-mode="serial"] { display: block; }
 @media (max-width: 900px) {
   .network-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+
+/* ===== 组网观测（REQS-0024） ===== */
+.network-observe .observe-filter {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid var(--color-border-default);
+}
+.observe-select, .observe-query {
+  background: var(--color-bg-input); color: var(--color-fg-default);
+  border: 1px solid var(--color-border-default); border-radius: 6px;
+  padding: 6px 8px; font-size: 12px;
+}
+.observe-query { flex: 1 1 160px; min-width: 140px; }
+.observe-scan-state { color: var(--color-fg-subtle); font-size: 12px; margin-right: 8px; }
+.observe-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px; padding: 10px 12px;
+}
+.observe-card {
+  background: var(--color-bg-raised); border: 1px solid var(--color-border-default);
+  border-radius: 8px; padding: 8px 10px;
+}
+.observe-card .observe-card-label {
+  display: block; color: var(--color-fg-muted); font-size: 11px; margin-bottom: 4px;
+}
+.observe-card .observe-card-value {
+  color: var(--color-fg-default); font-size: 15px; font-weight: 600;
+  font-family: var(--font-mono);
+}
+.observe-card.is-bad .observe-card-value { color: var(--color-status-fail); }
+.observe-beacon { padding: 0 12px 10px; }
+.observe-beacon .observe-beacon-title {
+  color: var(--color-fg-muted); font-size: 12px; margin-bottom: 6px;
+}
+.observe-period-bar {
+  display: flex; height: 26px; border-radius: 6px; overflow: hidden;
+  border: 1px solid var(--color-border-default); font-size: 11px;
+  color: var(--color-fg-default);
+}
+.observe-period-seg {
+  display: flex; align-items: center; justify-content: center;
+  white-space: nowrap; overflow: hidden; min-width: 18px;
+}
+.observe-period-seg.seg-beacon { background: var(--color-accent-soft); }
+.observe-period-seg.seg-tdma { background: var(--color-status-info); color: #04121f; }
+.observe-period-seg.seg-csma { background: var(--color-status-pass); color: #04140a; }
+.observe-period-seg.seg-bind { background: var(--color-dir-tx); color: #141007; }
+.observe-phase-chips { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.observe-phase-chip {
+  font-size: 11px; color: var(--color-fg-muted);
+  border: 1px solid var(--color-border-default); border-radius: 10px; padding: 2px 8px;
+}
+.observe-table td.observe-dir-down { color: var(--color-dir-tx); }
+.observe-table td.observe-dir-up { color: var(--color-status-info); }
+.observe-table td.observe-dir-mesh { color: var(--color-fg-subtle); }
+.observe-table tbody tr { cursor: pointer; }
+.observe-table tbody tr.observe-row-active { background: var(--color-bg-input); }
+.observe-empty { color: var(--color-fg-subtle); text-align: center; padding: 18px 0; }
+.observe-detail {
+  margin: 0 12px 12px; padding: 10px 12px; border-radius: 8px;
+  background: var(--color-bg-canvas); border: 1px solid var(--color-border-default);
+  font-size: 12px; max-height: 260px; overflow: auto;
+}
+.observe-detail .observe-detail-title {
+  color: var(--color-fg-default); font-weight: 600; margin-bottom: 6px;
+}
+.observe-detail pre {
+  margin: 0; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--font-mono); color: var(--color-fg-muted);
+}

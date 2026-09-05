@@ -82,6 +82,8 @@
         data-view="delete-config" aria-selected="false">任务配置统计</button>
       <button class="view-tab" type="button" role="tab"
         data-view="network-assessment" aria-selected="false">网络承载评估</button>
+      <button class="view-tab" type="button" role="tab"
+        data-view="network-observe" aria-selected="false">组网观测</button>
     </nav>
 
     <!-- 新版帧浏览（reqs/0010 P2）：三列布局 + feature_hint + 报文追踪联动 -->
@@ -606,6 +608,64 @@
         </div>
       </div>
     </section>
+
+    <section id="network-observe-view" class="network-observe" aria-label="组网观测" hidden>
+      <div class="list-panel">
+        <div class="panel-toolbar">
+          <div>
+            <span class="section-kicker">06 / 组网观测</span>
+            <h2>4-2 链路层组网事件流（REQS-0024）</h2>
+          </div>
+          <div class="network-toolbar">
+            <span id="network-observe-scan" class="observe-scan-state"></span>
+            <button id="network-observe-refresh" class="primary-button" type="button">刷新</button>
+          </div>
+        </div>
+
+        <div id="network-observe-error" class="error-banner" role="alert" hidden></div>
+
+        <div class="observe-filter">
+          <select id="network-observe-group" class="observe-select" aria-label="事件分组">
+            <option value="">全部分组</option>
+            <option value="组网">组网</option>
+            <option value="维护">维护</option>
+            <option value="冲突">冲突</option>
+            <option value="路由">路由</option>
+            <option value="信标">信标</option>
+            <option value="业务">业务</option>
+          </select>
+          <select id="network-observe-event" class="observe-select" aria-label="事件类型">
+            <option value="">全部事件</option>
+          </select>
+          <select id="network-observe-direction" class="observe-select" aria-label="方向">
+            <option value="">全部方向</option>
+            <option value="down">下行（CCO→）</option>
+            <option value="up">上行（→CCO）</option>
+            <option value="mesh">中继段</option>
+          </select>
+          <input id="network-observe-query" class="observe-query" type="text"
+                 placeholder="按 TEI / 摘要搜索" maxlength="64" />
+        </div>
+
+        <div id="network-observe-cards" class="observe-cards"></div>
+        <div id="network-observe-beacon" class="observe-beacon"></div>
+
+        <div class="table-shell observe-table">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th><th>事件</th><th>方向</th><th>源</th><th>目的</th><th>摘要</th>
+              </tr>
+            </thead>
+            <tbody id="network-observe-rows">
+              <tr><td colspan="6" class="observe-empty">打开日志索引后自动扫描组网事件</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="network-observe-detail" class="observe-detail" hidden></div>
+      </div>
+    </section>
+
   </main>
 
   <!-- 文件选择对话框：通过后端 /api/fs/* 浏览服务器本地目录 -->

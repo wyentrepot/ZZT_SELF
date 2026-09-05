@@ -26,6 +26,7 @@ from shared.parser_service import FrameValidationError, ParserService
 from listener.index_registry import ListenerIndexRegistry
 from listener.log_service import LogFileService
 from listener.serial_service import SerialCaptureService
+from listener.nwk_service import NwkService
 from listener.trace_service import FeatureError, TraceService
 
 
@@ -220,6 +221,9 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
     # 通信流追踪（需求 0009）：与 log_service 同生命周期；live 句柄注册表在内部
     trace_service = TraceService(log_service) if log_service is not None else None
     app.state.trace_service = trace_service
+    # 组网观测（REQS-0024）：基于 adapter_dualmac 的组网事件流/网络总览
+    nwk_service = NwkService(log_service) if log_service is not None else None
+    app.state.nwk_service = nwk_service
     if serial_service is not None and trace_service is not None:
         serial_service.on_frames_appended = trace_service.on_frames_appended
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -403,6 +407,64 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         if nid.strip():
             kwargs["nid"] = nid
         return log_service.list_beacon_periods(**kwargs)
+
+    @app.get("/api/network/events")
+    def network_events(
+        index_id: str = Query("", max_length=64),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+        nid: str = Query("", max_length=16),
+        event: str = Query("", max_length=32),
+        group: str = Query("", max_length=16),
+        direction: str = Query("", max_length=8),
+        query: str = Query("", max_length=64),
+        limit: int = Query(200, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+    ):
+        if nwk_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            data = nwk_service.list_events(
+                index_id, start_time, end_time, nid, event, group,
+                direction, query, limit, offset,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"组网事件查询失败：{exc}") from exc
+        return data
+
+    @app.get("/api/network/overview")
+    def network_overview(
+        index_id: str = Query("", max_length=64),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+        nid: str = Query("", max_length=16),
+    ):
+        if nwk_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            return nwk_service.overview(index_id, start_time, end_time, nid)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"组网总览失败：{exc}") from exc
+
+    @app.get("/api/network/beacons")
+    def network_beacons(
+        index_id: str = Query("", max_length=64),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+        nid: str = Query("", max_length=16),
+        bcn_type: str = Query("beacon_central", max_length=24),
+        limit: int = Query(50, ge=1, le=200),
+    ):
+        if nwk_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            return nwk_service.list_beacons(
+                index_id, start_time, end_time, nid, bcn_type, limit
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"信标明细查询失败：{exc}") from exc
 
     @app.get("/api/network/assessment")
     def network_assessment(
