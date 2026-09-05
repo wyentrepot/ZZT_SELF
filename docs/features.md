@@ -44,7 +44,11 @@
 | --- | --- | --- |
 | 串口自动选择 | `POST open` / `close` | **无固定映射**：不传 port 自动选可用串口（9600/E/8/1），显式 port 覆盖 |
 | 验证任务 | `POST verify` | 多步 + 应答器，逐步判定 + summary.verdict |
-| 单步下发 / 感知主动上报 | `POST step` | ADR-5 语义化（send 只写 afn/fn+params） |
+| 单步下发 / 感知主动上报 | `POST step` | ADR-5 语义化（send 只写 afn/fn+params）；REQS-0027：auto_expect 自动生成 expect + per-Fn 超时档位（5s/59s/99s）+ 否认码人话 + 旁听帧归类 |
+| 应答预期规则库 | `GET expect_rules` | AFN/Fn→应答形态映射、否认码 6D/6E/6F 语义、超时档位声明（蒸馏出处标注） |
+| 并发抄表滑窗 | `POST batch_read`、`GET batch_read/{id}`、`POST …/stop` | 最大并发可配；回一帧补一发保持在途=最大并发；应答/否认/超时均释放槽位 |
+| 统一抄读表格 | `GET readings` | 单抄/并抄/快照/上报共用一表；成功率统计 + 否认码细分 + 来源/结果筛选 |
+| 上报分类型计数 | `GET report_buckets` | 06H F1-F5 各桶；停复电（协议类型 04H）单独一表 |
 | 语义构帧预览 | `POST build` | 只算不发（scenario_codec），UI 帧预览 |
 | 会话帧日志 | `GET frames`（**entries 信封** + 游标翻页）、`GET session` | 持久化 data/logs/simcon/sc-*.jsonl |
 | 内置应答规则 | `GET responders` | |
