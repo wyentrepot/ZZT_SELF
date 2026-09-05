@@ -466,6 +466,13 @@
     state.sending = true;
     var btn = $("#btnSend");
     btn.disabled = true;
+    var sendDesc = null;
+    try {
+      var a0 = state.afnList[state.curAfn], f0 = a0.fns[state.curFn];
+      sendDesc = { afn: send.afn, fn: send.fn, name: f0.name,
+                   afnHex: a0.code, fnNo: f0.no };
+    } catch (e) {}
+    if (sendDesc) panelPending(sendDesc);   // REQS-0027：等待配对（倒计时）
     api("/api/simcon/step", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ send: send, profile: $("#profileSel").value, enable_responder: true, name: "page-send" }),
@@ -476,10 +483,12 @@
       refreshStatus();
       btn.disabled = false;
       state.sending = false;
+      if (sendDesc) showPairing(r, sendDesc);   // REQS-0027：配对卡片
     }).catch(function (err) {
       banner("下发失败：" + err.message);
       btn.disabled = false;
       state.sending = false;
+      panelAbort(err.message);
     });
   });
 
@@ -587,8 +596,343 @@
     return " " + a + f;
   }
 
+  /* ================= REQS-0027：结果面板 ================= */
+
+  var ER = null;               // expect_rules 文档（/api/simcon/expect_rules）
+  var pairTimer = null;        // 等待应答倒计时
+  var panelTab = "pair";
+  var readTimer = null, rptTimer = null, batchTimer = null;
+  var batchJobId = null;
+  var readFilter = { source: "", result: "" };
+
+  function loadExpectRules() {
+    api("/api/simcon/expect_rules").then(function (d) { ER = d; }).catch(function () {});
+  }
+
+  /* 与后端 expect_rules.rule_for 同语义：Fn 级规则优先于 AFN 级 */
+  function ruleFor(afnInt, fnInt) {
+    if (!ER) return null;
+    var fallback = null;
+    for (var i = 0; i < (ER.rules || []).length; i++) {
+      var r = ER.rules[i], m = r.match || {};
+      var ma = parseInt(m.afn, 16), mf = m.fn == null ? null : parseInt(m.fn, 10);
+      if (ma !== afnInt) continue;
+      if (mf != null && mf === fnInt) return r;
+      if (mf == null && !fallback) fallback = r;
+    }
+    return fallback;
+  }
+
+  function tierFor(afnInt, fnInt) {
+    var r = ruleFor(afnInt, fnInt);
+    var id = (r && r.timeout_tier) || "default";
+    var t = ER && ER.timeout_tiers ? ER.timeout_tiers[id] : null;
+    return t ? { seconds: t.seconds, tier: id, note: t.note || "" }
+             : { seconds: 5, tier: "default", note: "规则未加载，按默认 5s" };
+  }
+
+  function afnHexOf(n) { return (n == null ? "—?" : Number(n).toString(16).toUpperCase().padStart(2, "0") + "H"); }
+  function fnNoOf(n) { return n == null ? "" : "F" + n; }
+
+  /* ---- 收发配对 ---- */
+  function setPairBody(html) { $("#pBodyPair").innerHTML = html; }
+
+  function panelPending(desc) {
+    switchPanel("pair", true);
+    var tier = tierFor(desc.afn, desc.fn);
+    stopPairTimer();
+    var t0 = Date.now(), total = tier.seconds * 1000;
+    setPairBody(
+      '<div class="pairwrap">' +
+        '<div class="pcard"><div class="pcard-h"><span class="chip chip--tx">下发</span><b class="mono">' + esc(desc.afnHex + " " + desc.fnNo) + "</b>" + esc(desc.name) + "</div>" +
+        '<div class="pcard-in"><div class="pkv"><span class="k">状态</span><span class="v"><span class="badge badge--wait">等待应答…</span></span></div>' +
+        '<div class="pkv"><span class="k">超时档位</span><span class="v mono" title="' + esc(tier.note) + '">' + esc(tier.tier) + " · " + tier.seconds + "s</span></div>" +
+        '<div class="cd-bar"><i id="cdBar" style="width:0%"></i></div></div></div>' +
+        '<div class="pcard"><div class="pcard-h"><span class="chip chip--rx">应答</span></div>' +
+        '<div class="pcard-in"><span class="hint">窗口内持续等待应答帧（跳过旁听帧）…</span></div></div>' +
+      "</div>");
+    var meta = $("#panelMeta");
+    if (tier.note) meta.textContent = "档位 " + tier.tier + "（" + tier.note + "）";
+    pairTimer = setInterval(function () {
+      var p = Math.min(100, (Date.now() - t0) / total * 100);
+      var bar = $("#cdBar");
+      if (bar) bar.style.width = p + "%";
+      if (p >= 100) stopPairTimer();
+    }, 200);
+  }
+
+  function stopPairTimer() { if (pairTimer) { clearInterval(pairTimer); pairTimer = null; } }
+  function panelAbort(msg) {
+    stopPairTimer();
+    setPairBody('<div class="empty" style="height:80px"><p>下发失败：' + esc(msg) + "</p></div>");
+  }
+
+  function decodedSummary(parsed) {
+    if (!parsed) return "";
+    var rows = (parsed.items || []).map(function (it) {
+      return "<tr><td>" + esc(it.name) + "</td><td class='mono'>" + esc(it.value != null ? it.value : it.hex) + "</td></tr>";
+    }).join("");
+    var nested = parsed.nested || [];
+    var html = rows ? '<table class="rtab"><thead><tr><th>数据项</th><th>值</th></tr></thead><tbody>' + rows + "</tbody></table>" : "";
+    if (nested.length) {
+      html += '<div class="hint" style="margin-top:6px">嵌套帧 × ' + nested.length + "（645/698 明细见收发记录展开）</div>";
+    }
+    return html;
+  }
+
+  function showPairing(r, desc) {
+    stopPairTimer();
+    switchPanel("pair", true);
+    var s = (r && r.step) || {};
+    var tier = tierFor(desc.afn, desc.fn);
+    var meta = s.pairing || {};
+    var srcNote = meta.expect_source === "auto"
+      ? "规则 " + esc(meta.rule_id || "—") + " 自动生成 expect"
+      : "显式 expect（覆盖规则）";
+    // 左卡：下发
+    var tx = '<div class="pcard"><div class="pcard-h"><span class="chip chip--tx">下发</span>' +
+      '<b class="mono">' + esc(desc.afnHex + " " + desc.fnNo) + "</b><span>" + esc(desc.name) + "</span></div>" +
+      '<div class="pcard-in"><div class="pkv"><span class="k">构帧</span><span class="v mono">' + colorHex(s.sent_hex) + "</span></div>" +
+      '<div class="pkv"><span class="k">预期</span><span class="v"><span class="badge badge--idle">' + esc(meta.desc || "—") + "</span></span></div>" +
+      '<div class="pkv"><span class="k">超时</span><span class="v mono" title="' + esc((meta.timeout || tier).note || "") + '">' +
+      esc(((meta.timeout || tier).tier || "?") + " · " + ((meta.timeout || tier).seconds + "s")) + "</span></div></div></div>";
+    // 右卡：应答（按形态分格式）
+    var rxIn = "";
+    if (s.deny) {
+      rxIn = '<div class="pkv"><span class="k">判定</span><span class="v"><span class="badge badge--deny">否认 ' + esc(s.deny.code_hex) + "</span></span></div>" +
+        '<div class="pkv"><span class="k">语义</span><span class="v"><b>' + esc(s.deny.text) + "</b></span></div>";
+    } else if (s.result === "pass") {
+      var confirmish = s.parsed && (s.parsed.fields || {}).AFN && /^0x00/.test(String(s.parsed.fields.AFN.value || ""));
+      rxIn = '<div class="pkv"><span class="k">判定</span><span class="v"><span class="badge badge--ok">' +
+        (confirmish ? "确认 00H-F1" : "应答匹配 " + esc(s.parsed && s.parsed.fields && s.parsed.fields.AFN ? String(s.parsed.fields.AFN.value).split(" ")[0] : "")) + "</span></span></div>";
+    } else {
+      rxIn = '<div class="pkv"><span class="k">判定</span><span class="v"><span class="badge badge--idle">预期应答未到（超时）</span></span></div>' +
+        '<div class="pkv"><span class="k">原因</span><span class="v">' + esc(s.reason || "") + "</span></div>";
+    }
+    var rxBody = rxIn + (s.result === "pass" || s.deny ? decodedSummary(s.parsed) : "");
+    var bl = s.bystanders || [];
+    if (bl.length) {
+      rxBody += '<div class="pkv"><span class="k">旁听</span><span class="v"><div class="byst">' +
+        bl.slice(-6).map(function (b) {
+          return '<div class="b-row"><span class="afn-tag2">' + esc(b.afn ? b.afn + "H" : "—") + " " + esc(b.fn != null ? "F" + b.fn : "") + '</span><span class="mono">' + esc(String(b.hex).slice(0, 40)) + "…</span></div>";
+        }).join("") + "</div><div class='hint'>窗口内收到 " + bl.length + " 帧非预期帧（主动上报插播），不占匹配窗口</div></span></div>";
+    }
+    var rx = '<div class="pcard"><div class="pcard-h"><span class="chip chip--rx">应答</span>' +
+      (s.result === "pass" ? '<span class="badge badge--ok">匹配成功</span>' : s.deny ? '<span class="badge badge--deny">业务失败</span>' : '<span class="badge badge--idle">未应答</span>') + "</div>" +
+      '<div class="pcard-in">' + rxBody + "</div></div>";
+    setPairBody('<div class="pairwrap">' + tx + rx + "</div>" +
+      '<div class="hint" style="margin-top:6px">' + srcNote + " · 档位出处见超时 tooltip</div>");
+    $("#panelMeta").textContent = "最近配对 · " + new Date().toLocaleTimeString();
+  }
+
+  /* ---- 抄读汇总（G4） ---- */
+  function renderReadings(d) {
+    var s = d.stats || {};
+    var denyChips = Object.keys(s.deny_breakdown || {}).map(function (k) {
+      return '<span class="chip">' + esc(k) + " × " + s.deny_breakdown[k] + "</span>";
+    }).join("");
+    var head = '<div class="statrow" style="margin-bottom:9px">' +
+      '<div class="statkv"><div class="k">下发</div><div class="v">' + (s.sent || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">应答</div><div class="v">' + (s.replied || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">成功</div><div class="v v-ok">' + (s.success || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">失败</div><div class="v v-fail">' + (s.failed || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">成功率</div><div class="v ' + ((s.success_rate || 0) >= 0.8 ? "v-ok" : "v-fail") + '">' +
+      (s.success_rate == null ? "—" : Math.round(s.success_rate * 100) + "%") + "</div></div>" + denyChips +
+      '<span class="sp" style="margin-left:auto"></span>' +
+      '<select class="mini-in" id="rfSource"><option value="">全部来源</option><option value="batch">并发任务</option><option value="snapshot">查询快照</option><option value="report">上报抄读</option></select>' +
+      '<select class="mini-in" id="rfResult"><option value="">全部结果</option><option value="success">成功</option><option value="deny">否认</option><option value="timeout">超时</option><option value="error">错误</option></select>' +
+      "</div>";
+    var rows = d.rows || [];
+    var tbl = rows.length
+      ? '<table class="rtab"><thead><tr><th>时间</th><th>来源</th><th>表地址</th><th>AFN/Fn</th><th>数据项</th><th>值</th><th class="num">耗时ms</th><th>结果</th></tr></thead><tbody>' +
+        rows.map(function (x) {
+          var st = x.status === "success" ? '<span class="badge badge--ok">成功</span>'
+            : x.status === "deny" ? '<span class="badge badge--deny">' + esc(x.deny_code || "否认") + " " + esc(x.deny_text || "") + "</span>"
+            : x.status === "timeout" ? '<span class="badge badge--idle">超时</span>'
+            : '<span class="badge badge--idle">' + esc(x.status) + "</span>";
+          return "<tr><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td><td>" + esc(x.source_label || x.source || "") + "</td>" +
+            "<td class='mono'>" + esc(x.meter || "") + "</td><td class='mono'>" + esc(x.afn_fn || "") + "</td><td>" + esc(x.item || "") + "</td>" +
+            "<td class='mono' style='max-width:220px;overflow:hidden;text-overflow:ellipsis'>" + esc(x.value || "") + "</td>" +
+            "<td class='num'>" + (x.elapsed_ms != null ? x.elapsed_ms : "—") + "</td><td>" + st + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="empty" style="height:80px"><p>暂无抄读记录（下发单抄/并抄后自动汇总）</p></div>';
+    $("#pBodyReadings").innerHTML = head + tbl;
+    var src = $("#rfSource"), rst = $("#rfResult");
+    if (src) {
+      src.value = readFilter.source; rst.value = readFilter.result;
+      src.addEventListener("change", function () { readFilter.source = src.value; loadReadings(); });
+      rst.addEventListener("change", function () { readFilter.result = rst.value; loadReadings(); });
+    }
+  }
+
+  function loadReadings() {
+    var q = "?limit=300" + (readFilter.source ? "&source=" + readFilter.source : "") +
+      (readFilter.result ? "&result=" + readFilter.result : "");
+    api("/api/simcon/readings" + q).then(renderReadings).catch(function (e) {
+      $("#pBodyReadings").innerHTML = '<div class="empty" style="height:80px"><p>读取失败：' + esc(e.message) + "</p></div>";
+    });
+  }
+
+  /* ---- 并发抄表（G5） ---- */
+  function renderBatchForm() {
+    $("#pBodyBatch").innerHTML =
+      '<div class="pbody-row">' +
+        '<span class="hint">表地址（每行一个或逗号分隔）</span>' +
+        '<span class="hint">最大并发</span><input class="mini-in" id="bcMax" value="5" style="width:52px" title="在途数=最大并发；6D=超最大并发">' +
+        '<select class="mini-in" id="bcMode"><option value="single">单抄 02H-F1（59s 档）</option><option value="batch">并发抄表 F1H-F1（99s 档）</option></select>' +
+        '<select class="mini-in" id="bcProto"><option value="2">645-2007</option><option value="3">698.45</option><option value="0">透明</option></select>' +
+        '<button class="btn btn--sm btn--primary" id="bcStart">启动任务</button>' +
+        '<button class="btn btn--sm btn--ghost" id="bcStop">停止</button>' +
+        '<span class="chip chip--ghost" id="bcMeta">滑窗：回一帧补一发</span>' +
+      "</div>" +
+      '<textarea class="meter-ta" id="bcMeters" placeholder="000000000001&#10;000000000002&#10;000000000003"></textarea>' +
+      '<div id="bcStatus"><div class="empty" style="height:60px"><p>启动后此处显示在途/完成/排队计数与逐表明细</p></div></div>';
+    $("#bcStart").addEventListener("click", startBatch);
+    $("#bcStop").addEventListener("click", function () {
+      if (batchJobId) api("/api/simcon/batch_read/" + batchJobId + "/stop", { method: "POST" }).then(pollBatch).catch(function (e) { banner(e.message); });
+    });
+  }
+
+  function startBatch() {
+    var meters = $("#bcMeters").value.split(/[^0-9A-Za-z]+/).filter(function (x) { return x.length === 12; });
+    if (!meters.length) { banner("请先填入 12 位表地址"); return; }
+    var body = {
+      meters: meters,
+      max_concurrent: parseInt($("#bcMax").value, 10) || 5,
+      mode: $("#bcMode").value,
+      protocol_type: parseInt($("#bcProto").value, 10) || 2,
+      profile: $("#profileSel").value,
+    };
+    api("/api/simcon/batch_read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (j) {
+        banner(null);
+        batchJobId = j.job_id;
+        renderBatchStatus(j);
+        if (!batchTimer) batchTimer = setInterval(pollBatch, 1000);
+      }).catch(function (e) { banner("任务创建失败：" + e.message); });
+  }
+
+  function pollBatch() {
+    if (!batchJobId) return;
+    api("/api/simcon/batch_read/" + batchJobId).then(function (j) {
+      renderBatchStatus(j);
+      if (j.finished && batchTimer) { clearInterval(batchTimer); batchTimer = null; loadReadings(); }
+    }).catch(function () {});
+  }
+
+  function renderBatchStatus(j) {
+    var rate = j.done ? Math.round(j.success / j.done * 100) + "%" : "—";
+    var head = '<div class="statrow" style="margin-bottom:9px">' +
+      '<div class="statkv"><div class="k">在途</div><div class="v">' + (j.in_flight || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">排队</div><div class="v">' + (j.queued || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">完成</div><div class="v">' + (j.done || 0) + "/" + j.meters_total + "</div></div>" +
+      '<div class="statkv"><div class="k">成功</div><div class="v v-ok">' + (j.success || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">失败</div><div class="v v-fail">' + (j.failed || 0) + "</div></div>" +
+      '<div class="statkv"><div class="k">成功率</div><div class="v">' + rate + "</div></div>" +
+      '<span class="chip chip--ghost mono">' + esc(j.afn_fn || "") + " · 并发 " + j.max_concurrent + "</span>" +
+      (j.finished ? '<span class="badge badge--idle">已结束</span>' : '<span class="badge badge--wait">运行中</span>') +
+      "</div>";
+    var rows = (j.rows || []).slice().reverse();
+    var tbl = rows.length
+      ? '<table class="rtab"><thead><tr><th>时间</th><th>表地址</th><th>AFN/Fn</th><th class="num">耗时ms</th><th>结果</th></tr></thead><tbody>' +
+        rows.map(function (x) {
+          var st = x.status === "success" ? '<span class="badge badge--ok">成功</span>'
+            : x.status === "deny" ? '<span class="badge badge--deny">' + esc(x.deny_code || "否认") + " " + esc(x.deny_text || "") + "</span>"
+            : x.status === "timeout" ? '<span class="badge badge--idle">超时</span>'
+            : '<span class="badge badge--idle">' + esc(x.status) + (x.note ? " · " + esc(x.note) : "") + "</span>";
+          return "<tr><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td><td class='mono'>" + esc(x.meter) + "</td>" +
+            "<td class='mono'>" + esc(x.afn_fn) + "</td><td class='num'>" + x.elapsed_ms + "</td><td>" + st + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="empty" style="height:60px"><p>等待第一块表的应答…</p></div>';
+    $("#bcStatus").innerHTML = head + tbl;
+  }
+
+  /* ---- 主动上报分类型（G6） ---- */
+  function renderReports(d) {
+    var b = d.buckets || {};
+    var power = b.F5_power || { name: "停复电事件", count: 0, items: [] };
+    var html = '<div class="statrow" style="margin-bottom:9px">' +
+      '<div class="statkv"><div class="k">上报总数</div><div class="v">' + (d.total || 0) + "</div></div>" +
+      ["F1", "F2", "F3", "F4", "F5"].map(function (k) {
+        return '<span class="chip"><span class="mono">' + k + "</span> " + esc((b[k] || {}).name || "") + " × " + ((b[k] || {}).count || 0) + "</span>";
+      }).join("") +
+      '<span class="chip chip--ac">停复电 × ' + power.count + "</span></div>";
+    // 停复电单独一表
+    html += '<div class="bkt-card"><div class="bkt-h">停复电事件（06H-F5 · 协议类型 04H）<span class="cnt">' + power.count + "</span></div>";
+    html += power.items.length
+      ? '<table class="rtab"><thead><tr><th>时间</th><th>表地址</th><th>事件</th><th>摘要</th></tr></thead><tbody>' +
+        power.items.map(function (x) {
+          var ev = x.event === "停电" ? '<span class="badge badge--deny">停电</span>'
+            : x.event === "复电" ? '<span class="badge badge--ok">复电</span>'
+            : '<span class="badge badge--idle">' + esc(x.event || "—") + "</span>";
+          return "<tr><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td><td class='mono'>" + esc(x.meter) + "</td><td>" + ev + "</td><td class='mono' style='max-width:280px;overflow:hidden;text-overflow:ellipsis'>" + esc(x.summary) + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="empty" style="height:52px"><p>暂无停复电事件（真机停电/复电后到达）</p></div>';
+    html += "</div>";
+    // 其余类型各一表
+    ["F1", "F2", "F3", "F4", "F5"].forEach(function (k) {
+      var bk = b[k] || { count: 0, items: [] };
+      html += '<div class="bkt-card"><div class="bkt-h">06H-' + k + " " + esc(bk.name || "") + '<span class="cnt">' + bk.count + "</span></div>";
+      html += bk.items.length
+        ? '<table class="rtab"><thead><tr><th>时间</th><th>地址</th><th>摘要</th></tr></thead><tbody>' +
+          bk.items.slice(0, 30).map(function (x) {
+            return "<tr><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td><td class='mono'>" + esc(x.meter) + "</td><td class='mono' style='max-width:320px;overflow:hidden;text-overflow:ellipsis'>" + esc(x.summary) + "</td></tr>";
+          }).join("") + "</tbody></table>"
+        : '<div class="empty" style="height:44px"><p>暂无</p></div>';
+      html += "</div>";
+    });
+    $("#pBodyReports").innerHTML = html;
+    $("#panelMeta").textContent = "上报分桶 · 总数 " + (d.total || 0);
+  }
+
+  function loadReports() {
+    api("/api/simcon/report_buckets?limit=300").then(renderReports).catch(function (e) {
+      $("#pBodyReports").innerHTML = '<div class="empty" style="height:80px"><p>读取失败：' + esc(e.message) + "</p></div>";
+    });
+  }
+
+  /* ---- 面板页签 ---- */
+  function stopPanelTimers() {
+    if (readTimer) { clearInterval(readTimer); readTimer = null; }
+    if (rptTimer) { clearInterval(rptTimer); rptTimer = null; }
+    if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+  }
+
+  function switchPanel(tab, force) {
+    if (panelTab === tab && !force) return;
+    panelTab = tab;
+    Array.prototype.forEach.call(document.querySelectorAll("#segPanel button"), function (x) {
+      x.classList.toggle("on", x.dataset.p === tab);
+    });
+    $("#pBodyPair").style.display = tab === "pair" ? "" : "none";
+    $("#pBodyReadings").style.display = tab === "readings" ? "" : "none";
+    $("#pBodyBatch").style.display = tab === "batch" ? "" : "none";
+    $("#pBodyReports").style.display = tab === "reports" ? "" : "none";
+    stopPanelTimers();
+    if (tab === "readings") { loadReadings(); readTimer = setInterval(loadReadings, 3000); }
+    if (tab === "reports") { loadReports(); rptTimer = setInterval(loadReports, 5000); }
+    if (tab === "batch") {
+      if (!$("#bcMeters")) renderBatchForm();
+      if (batchJobId && !batchTimer) { pollBatch(); batchTimer = setInterval(pollBatch, 1000); }
+    }
+  }
+
+  $("#segPanel").addEventListener("click", function (e) {
+    var btn = e.target.closest("button");
+    if (btn) switchPanel(btn.dataset.p);
+  });
+  $("#btnPanelToggle").addEventListener("click", function () {
+    $("#panel").classList.toggle("fold");
+    var folded = $("#panel").classList.contains("fold");
+    $("#btnPanelToggle").textContent = folded ? "▸" : "▾";
+    if (!folded) switchPanel(panelTab, true);
+    else stopPanelTimers();
+  });
+
   /* ================= 初始化 ================= */
   loadDict();
   loadPorts();
   loadResponders();
+  loadExpectRules();
+  renderBatchForm();
 })();
