@@ -6,25 +6,25 @@
 
 ## 工作包 1 — G1：269 项检测用例库入库（B1）
 
-- [ ] Step 1.1：确认存储落点与 schema（决策点：JSON 随库分发 vs SQLite；字段：分类/编号/名称/涉及帧类型/步骤/判定标准/来源/适用协议）
-- [ ] Step 1.2：写半自动转换脚本（蒸馏 md → JSON），先转互联互通 269 项主表
-- [ ] Step 1.3：人工核对抽查（每类 ≥10%）；补检测线抄控器协议与河南流水线方案条目
-- [ ] Step 1.4：查询 API（仿 /api/dict 风格，支持分类/关键词过滤）+ 字典页展示（或独立页签）
-- [ ] Step 1.5：单测 + docs/features.md、api-contract.md 同步
+- [x] Step 1.1：确认存储落点与 schema（决策点：JSON 随库分发 vs SQLite；字段：分类/编号/名称/涉及帧类型/步骤/判定标准/来源/适用协议）——定 `libs/case_library/data/cases.json`（JSON 随库分发，采纳基线倾向①）
+- [x] Step 1.2：写半自动转换脚本（蒸馏 md → JSON），先转互联互通 269 项主表——`generate.py`，237 条检测条目 + 42 行参数表
+- [x] Step 1.3：人工核对抽查（每类 ≥10%）；补检测线抄控器协议与河南流水线方案条目——抽查记录见 DONE.md；已补 TST-MSG/TST-3762/TST-FLOW/HN-* 条目
+- [x] Step 1.4：查询 API（仿 /api/dict 风格，支持分类/关键词过滤）+ 字典页展示（或独立页签）——`/api/dict/cases(+{entry_id})`，字典页第 5 本字典卡 + 分类下拉
+- [x] Step 1.5：单测 + docs/features.md、api-contract.md 同步
 
 ## 工作包 2 — G2：网络层断言规则库（C1）
 
-- [ ] Step 2.1：确认落点 `libs/network_assert/` 与断言定义 schema（触发条件/观测窗口/判定/阈值/出处引用）
-- [ ] Step 2.2：固化第一批门限断言（来源 07/08 篇）：关联拒绝原因码×退避分档、心跳 4 周期离网+10s 延迟、信标周期合法域、CSMA 占用 60%/80% 两级、通信成功率 98/90% 三级、冲突仲裁时序 307ms/20.7s/30min、心跳周期路由周期×2/×4
-- [ ] Step 2.3：静态校验器（schema 校验 + 阈值出处可追溯）+ 单测
-- [ ] Step 2.4：预留求值接口（输入为 0024 的事件流/评估快照；本需求不实现求值）
+- [x] Step 2.1：确认落点 `libs/network_assert/` 与断言定义 schema（触发条件/观测窗口/判定/阈值/出处引用）
+- [x] Step 2.2：固化第一批门限断言（来源 07/08 篇）：关联拒绝原因码×退避分档、心跳 4 周期离网+10s 延迟、信标周期合法域、CSMA 占用 60%/80% 两级、通信成功率 98/90% 三级、冲突仲裁时序 307ms/20.7s/30min、心跳周期路由周期×2/×4——8 条（成功率+离线率三级合并一条）
+- [x] Step 2.3：静态校验器（schema 校验 + 阈值出处可追溯）+ 单测——schema.py 白名单含南网出处拒绝
+- [x] Step 2.4：预留求值接口（输入为 0024 的事件流/评估快照；本需求不实现求值）——`evaluate()` NotImplementedError 桩 + 契约 docstring
 
 ## 工作包 3 — G3：AI 诊断知识包（D1）
 
-- [ ] Step 3.1：ai-control-plane 技能 references/ 新增 `network-diagnostics.md`：组网状态机速查（UNASSOC/OFFLINE/WAITON/ONNET + 9 种拒绝码）、门限速查表、信标/时隙速查
-- [ ] Step 3.2：故障特征→根因映射表（≥15 条，覆盖：无法入网/反复重关联/整站离网/部分离网/代理震荡/冲突频发/心跳丢失/CSMA 拥塞）
-- [ ] Step 3.3：SKILL.md 路由表加一行（诊断组网类问题 → 按 references 按需加载）；版本号递增
-- [ ] Step 3.4：抽查验证——用 0020 真机困难点记录 2~3 个症状走一遍知识包路径，确认能命中
+- [x] Step 3.1：ai-control-plane 技能 references/ 新增 `network-diagnostics.md`：组网状态机速查（UNASSOC/OFFLINE/WAITON/ONNET + 9 种拒绝码）、门限速查表、信标/时隙速查
+- [x] Step 3.2：故障特征→根因映射表（≥15 条，覆盖：无法入网/反复重关联/整站离网/部分离网/代理震荡/冲突频发/心跳丢失/CSMA 拥塞）——20 条
+- [x] Step 3.3：SKILL.md 路由表加一行（诊断组网类问题 → 按 references 按需加载）；版本号递增——v2.1.0→v2.2.0
+- [x] Step 3.4：抽查验证——用 0020 真机困难点记录 2~3 个症状走一遍知识包路径，确认能命中（3 症状全命中，见 DONE.md）
 
 ## 收尾
 

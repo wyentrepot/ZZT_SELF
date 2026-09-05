@@ -1,0 +1,27 @@
+{
+ "id": "nwk.route.period_adaptive",
+ "name": "路由周期自适应域",
+ "family": "route",
+ "severity_hint": "warn",
+ "description": "CCO 路由周期按站点数自适应：<20 站固定 60s；≥20 站按 ceil(n/20)×50s 计算并钳位到 [50,720]s；RF 发现列表周期 = 路由周期/5+10 且 ≤255s，代理/站点发现列表固定 60s。",
+ "trigger": {"event": "beacon_observed", "params": {"field": "route_period_s", "entry": "table48 路由参数"}},
+ "observation_window": {"kind": "per_event", "note": "逐信标的路由参数宣告（table48）判定。"},
+ "verdict": {
+  "pass": "宣告的路由周期与站点数对应的自适应值一致",
+  "fail": "路由周期越出 [50,720]s、或与站点数档位明显错配"
+ },
+ "thresholds": [
+  {"key": "route_period_min_s", "op": "==", "value": 50, "unit": "s", "meaning": "NWK_BCN_PERIOD_MIN 钳位下界"},
+  {"key": "route_period_max_s", "op": "==", "value": 720, "unit": "s", "meaning": "NWK_BCN_PERIOD_MAX 钳位上界"},
+  {"key": "small_net_threshold_sta", "op": "<", "value": 20, "unit": "站", "meaning": "<20 站固定 60s"},
+  {"key": "small_net_period_s", "op": "==", "value": 60, "unit": "s", "meaning": "小网固定路由周期"},
+  {"key": "large_net_step_s", "op": "==", "value": 50, "unit": "s", "meaning": "≥20 站按 ceil(n/20)×50s"},
+  {"key": "rf_discover_period_max_s", "op": "<=", "value": 255, "unit": "s", "meaning": "RF 发现列表周期 = period/5+10，≤255"}
+ ],
+ "source": {
+  "doc": "CCO实现逻辑/07-NWK入网-路由-心跳-信标-冲突.md",
+  "section": "第六章 §6.4（nwk_bcn.h:11-12、link.c:336-377）",
+  "quote": "路由周期自适应。站点数 <20 固定 60s，否则 ceil(n/20)×50s 并钳位 [50,720]s；RF 发现列表周期=period/5+10（≤255），代理/站点发现列表固定 60s"
+ },
+ "notes": "协议口径路由周期 20~420s（06_测试用例 §7.3），代码实现为 50~720s——工程自定义差异，判级按代码口径。心跳周期以此为基础 ×2/×4（nwk.heartbeat.period_ratio）。"
+}

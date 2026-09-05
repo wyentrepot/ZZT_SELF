@@ -24,7 +24,7 @@
 | 任务报文分析 | `logs/task-config-tasks/summary/lifecycle`、`task-minute-analysis`、`task-derived-period` | |
 | 网络承载评估 | `network/assessment`（完整）/ `network/status`（AI 轻量快照 ≤1KB，healthy/degraded/fault） | 无信标时 fallback=beacon_undetected |
 | 串口实时采集 | `serial/ports·status·start`(202)·`stop` | 落盘 data/logs/侦听台/ |
-| 组网观测（REQS-0024） | `network/events`、`network/overview`、`network/beacons` | 4-2 链路层/NWK 组网事件流+网络总览+信标时隙重建；页面「组网观测」页签；首次调用触发增量扫描落 nwk_events 表 |
+| 组网观测（REQS-0024/0026） | `network/events`、`network/digest`、`network/events/{id}/brief`、`network/overview`、`network/beacons` | 4-2 链路层/NWK 组网事件流（三级分级 alarm/watch/normal + TEI→表号人话翻译）+ 印象结论 digest（≤4KB：一句话判定+异常清单+自适应时间桶）+ 点击行按需单帧粗略解析 brief（≤2KB）；页面「组网观测」页签：结论卡/时间桶定点排查/降噪事件表/行内解析面板；卡片只留事件侧统计（信道质量归评估页，评估页异常周期可下钻）；首次调用触发增量扫描落 nwk_events 表（含 level 列自动迁移） |
 | 通信流追踪（需求 0009/ADR-9） | `POST/GET/DELETE /api/listener/listener/traces…`（**双前缀**） | 三段证据链 S1 发出→S2 ACK/响应→S3 接收，回放 + live |
 | 新版帧浏览 | frames-pro 页签 | `feature_hint` 一键反推追踪特征草稿 |
 
@@ -54,10 +54,11 @@
 
 | 功能 | 端点 |
 | --- | --- |
-| 四本字典清单 | `GET /api/dict` |
+| 字典清单 | `GET /api/dict` |
 | 698.45 OAD / 645 DI / 1376.2 AFN-Fn / 事件规则 | `GET /api/dict/{oad,di,afn-fn,rules}?q=` 模糊过滤 |
-| 数据源 | `libs/parser_lib/adapters/*/metadata/*.json` + `libs/loghooks/rules/`——**改 JSON 即生效**（无拷贝层） |
-| 页面 | 协议字典页 |
+| 检测用例库（REQS-0025）：269 项体系可枚举条目 + 检测线抄控器 + 河南流水线 + 测试/安全模式参数表 | `GET /api/dict/cases?category=&type=&q=`、`GET /api/dict/cases/{entry_id}` |
+| 数据源 | `libs/parser_lib/adapters/*/metadata/*.json` + `libs/loghooks/rules/` + `libs/case_library/data/cases.json`（generate.py 再生成）——**改 JSON 即生效**（无拷贝层） |
+| 页面 | 协议字典页（第 5 本字典卡 + 分类下拉） |
 
 ## 6. 验证编排（`/api/*`，CLI / REST / AI 三端复用）
 

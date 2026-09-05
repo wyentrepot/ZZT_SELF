@@ -420,6 +420,7 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
         query: str = Query("", max_length=64),
         limit: int = Query(200, ge=1, le=1000),
         offset: int = Query(0, ge=0),
+        level: str = Query("", max_length=32),
     ):
         if nwk_service is None:
             raise HTTPException(status_code=503, detail="日志服务未启用")
@@ -427,12 +428,44 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             data = nwk_service.list_events(
                 index_id, start_time, end_time, nid, event, group,
                 direction, query, limit, offset,
+                level=level,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"组网事件查询失败：{exc}") from exc
         return data
+
+    @app.get("/api/network/digest")
+    def network_digest(
+        index_id: str = Query("", max_length=64),
+        start_time: str = Query("", max_length=12),
+        end_time: str = Query("", max_length=12),
+        nid: str = Query("", max_length=16),
+    ):
+        """印象结论包（REQS-0026，≤4KB）：人 + AI 同源的 L1 结论层。"""
+        if nwk_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            return nwk_service.digest(index_id, start_time, end_time, nid)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"组网结论生成失败：{exc}") from exc
+
+    @app.get("/api/network/events/{frame_id}/brief")
+    def network_event_brief(frame_id: int, index_id: str = Query("", max_length=64)):
+        """单帧粗略解析（REQS-0026，≤2KB）：点击事件时按需调用，不预载全量。"""
+        if nwk_service is None:
+            raise HTTPException(status_code=503, detail="日志服务未启用")
+        try:
+            return nwk_service.frame_brief(frame_id, index_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"找不到帧 #{frame_id}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"帧粗略解析失败：{exc}") from exc
 
     @app.get("/api/network/overview")
     def network_overview(

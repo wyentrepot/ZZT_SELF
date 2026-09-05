@@ -611,6 +611,9 @@
 
         <div id="network-observe-error" class="error-banner" role="alert" hidden></div>
 
+        <div id="network-observe-digest" class="observe-digest"></div>
+        <div id="network-observe-buckets" class="observe-buckets"></div>
+
         <div class="observe-filter">
           <select id="network-observe-group" class="observe-select" aria-label="事件分组">
             <option value="">全部分组</option>
@@ -632,6 +635,9 @@
           </select>
           <input id="network-observe-query" class="observe-query" type="text"
                  placeholder="按 TEI / 摘要搜索" maxlength="64" />
+          <label class="observe-show-normal" title="默认只显示异常与关注事件">
+            <input id="network-observe-show-normal" type="checkbox" /> 显示常规
+          </label>
         </div>
 
         <div id="network-observe-cards" class="observe-cards"></div>
@@ -641,15 +647,14 @@
           <table>
             <thead>
               <tr>
-                <th>时间</th><th>事件</th><th>方向</th><th>源</th><th>目的</th><th>摘要</th>
+                <th>时间</th><th>级别</th><th>事件</th><th>方向</th><th>源</th><th>目的</th><th>摘要</th>
               </tr>
             </thead>
             <tbody id="network-observe-rows">
-              <tr><td colspan="6" class="observe-empty">打开日志索引后自动扫描组网事件</td></tr>
+              <tr><td colspan="7" class="observe-empty">打开日志索引后自动扫描组网事件</td></tr>
             </tbody>
           </table>
         </div>
-        <div id="network-observe-detail" class="observe-detail" hidden></div>
       </div>
     </section>
 

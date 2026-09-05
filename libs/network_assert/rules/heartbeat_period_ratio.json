@@ -1,0 +1,25 @@
+{
+ "id": "nwk.heartbeat.period_ratio",
+ "name": "心跳周期=路由周期×2/×4",
+ "family": "heartbeat",
+ "severity_hint": "info",
+ "description": "心跳周期随网络规模取路由周期的 2 倍（≤20 站）或 4 倍（>20 站）；心跳位图快照清零节拍：正常 4 个路由周期（测试模式 2 个）。",
+ "trigger": {"event": "heartbeat_observed", "params": {"counter": "路由周期计数 NwkBcnRouterCycle"}},
+ "observation_window": {"kind": "period_count", "note": "以路由周期计数为节拍；判读心跳缺失窗口时必须代入本档位，否则误判离网时延。"},
+ "verdict": {
+  "pass": "心跳清零/判活节拍与站点数对应档位一致",
+  "fail": "节拍与档位错配（如 >20 站仍按 ×2 判读）导致离网误判或滞后"
+ },
+ "thresholds": [
+  {"key": "heart_cycle_ratio_small_net", "op": "==", "value": 2, "unit": "×路由周期", "meaning": "≤20 站：心跳周期 = 路由周期×2"},
+  {"key": "heart_cycle_ratio_large_net", "op": "==", "value": 4, "unit": "×路由周期", "meaning": ">20 站：心跳周期 = 路由周期×4"},
+  {"key": "hbc_snapshot_ratio_normal", "op": "==", "value": 4, "unit": "×路由周期", "meaning": "正常模式心跳位图快照清零节拍"},
+  {"key": "hbc_snapshot_ratio_test", "op": "==", "value": 2, "unit": "×路由周期", "meaning": "测试模式快照清零节拍"}
+ ],
+ "source": {
+  "doc": "CCO实现逻辑/07-NWK入网-路由-心跳-信标-冲突.md",
+  "section": "第五章 §5.4（link.c:390-407、nwk_hbc.c:204-212）",
+  "quote": "心跳周期 HeartCycleGet（link.c:390-407）=路由周期×2（≤20 站）或×4（>20 站）……nwk_hbc_poll 10ms 一次，每 2（测试模式）/4（正常）个路由周期快照并清零"
+ },
+ "notes": "协议未规定心跳周期，×2/×4 为工程自定义；离网判定（nwk.heartbeat.offline_4cycles）的『周期』即本档位。"
+}

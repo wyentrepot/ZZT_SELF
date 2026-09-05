@@ -39,6 +39,9 @@
     if (dictId === "rules") {
       return [item.file, JSON.stringify(item.entries)].join(" ");
     }
+    if (dictId === "cases") {
+      return [item.id, item.name, item.purpose, (item.frames || []).join(" ")].join(" ");
+    }
     return [item.key, item.name, item.desc, item.data_type].join(" ");
   }
 
@@ -66,6 +69,8 @@
 
   function selectDict(id) {
     state.cur = state.dicts.filter(function (d) { return d.id === id; })[0];
+    $("#catSel").style.display = id === "cases" ? "" : "none";
+    $("#catSel").value = "";
     Array.prototype.forEach.call(document.querySelectorAll("#dctList .dct-card"), function (el) {
       var on = el.dataset.d === id;
       el.classList.toggle("on", on);
@@ -86,7 +91,10 @@
   function loadEntries() {
     var id = state.cur.id;
     var q = $("#q").value.trim();
-    var url = "/api/dict/" + id + (q ? "?q=" + encodeURIComponent(q) : "");
+    var params = [];
+    if (q) params.push("q=" + encodeURIComponent(q));
+    if (id === "cases" && $("#catSel").value) params.push("category=" + encodeURIComponent($("#catSel").value));
+    var url = "/api/dict/" + id + (params.length ? "?" + params.join("&") : "");
     api(url).then(function (data) {
       state.raw = data;
       if (id === "rules") {
@@ -96,12 +104,22 @@
       } else {
         state.items = data.items || [];
       }
+      if (id === "cases") fillCatSel(data.categories || []);
       renderEntries();
     }).catch(function (err) {
       state.items = [];
       renderEntries();
       banner(err.message);
     });
+  }
+
+  function fillCatSel(cats) {
+    var sel = $("#catSel");
+    var prev = sel.value;
+    sel.innerHTML = '<option value="">全部分类</option>' + cats.map(function (c) {
+      return '<option value="' + esc(c.id) + '">' + esc(c.name) + " (" + c.count + ")</option>";
+    }).join("");
+    sel.value = Array.prototype.some.call(sel.options, function (o) { return o.value === prev; }) ? prev : "";
   }
 
   function renderEntries() {
@@ -116,6 +134,15 @@
         return '<div class="en-item" data-i="' + i + '"><div class="en-in">' +
           '<div class="en-r"><span class="en-key" style="min-width:0">' + esc(f.file) + '</span><span class="sub-count">' + f.count + " 条</span></div>" +
           '<div class="en-s"><span class="ds">事件识别规则文件（loghooks）</span></div></div></div>';
+      }).join("");
+    } else if (id === "cases") {
+      html = state.items.map(function (it, i) {
+        var fw = it.detail_level === "framework";
+        return '<div class="en-item" data-i="' + i + '"><div class="en-in">' +
+          '<div class="en-r"><span class="en-key">' + esc(it.id) + '</span><span class="en-nm">' + esc(it.name) + "</span>" +
+          (fw ? '<span class="note-dot" title="framework：原蒸馏文档未展开步骤/判定"></span>' : "") + "</div>" +
+          '<div class="en-s"><span class="ds">' + esc(it.group || "") +
+          (it.clause ? " · " + esc(it.clause) : "") + "</span></div></div></div>";
       }).join("");
     } else if (id === "afn-fn") {
       html = state.items.map(function (a, i) {
@@ -194,6 +221,37 @@
         fnRows + "</tbody></table></div></div>" +
         (state.raw.note ? '<div class="card fixcard"><div class="card-h">字典说明</div><div class="card-in">' +
           '<div style="font-size:11.5px;color:var(--color-fg-muted);line-height:1.7">' + esc(state.raw.note) + "</div></div></div>" : "");
+    } else if (id === "cases") {
+      var cat = (state.raw.categories || []).filter(function (c) { return c.id === item.category; })[0];
+      $("#parHead").innerHTML = '<div class="par-t1"><b class="mono">' + esc(item.id) + "</b><b>" + esc(item.name) + "</b>" +
+        '<span class="chip chip--ac">' + esc(cat ? cat.name : item.category) + "</span>" +
+        '<span class="chip">' + esc(item.protocol || "—") + "</span>" +
+        (item.detail_level === "framework" ? '<span class="chip chip--am">framework</span>' : "") + "</div>" +
+        '<div class="par-t2">' + esc(item.purpose || "（原蒸馏文档未展开测试目的）") + "</div>";
+      var rows = [
+        ["分组", esc(item.group || "—")],
+        ["涉及帧类型", (item.frames || []).length ? item.frames.map(function (f) { return "<span class='chip' style='margin:1px 3px 1px 0'>" + esc(f) + "</span>"; }).join("") : "—"],
+        ["条款号", item.clause ? "<span class='mono'>" + esc(item.clause) + "</span>" : "—"],
+        ["来源", esc((item.source && item.source.doc) || "—") + "<br><span class='hint'>" +
+          esc((item.source && item.source.distill) || "") + " " + esc((item.source && item.source.section) || "") + "</span>"],
+      ];
+      body = kvTable(rows);
+      if (item.steps && item.steps.length) {
+        body += '<div class="card"><div class="card-h">测试步骤<span class="hint">' + item.steps.length + " 步</span></div>" +
+          '<div class="card-in"><ol style="padding-left:18px;font-size:12px;color:var(--color-fg-muted);line-height:1.8">' +
+          item.steps.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "</ol></div></div>";
+      }
+      if (item.criteria && item.criteria.length) {
+        body += '<div class="card"><div class="card-h">判定标准 / 检查项目</div><div class="card-in">' +
+          '<div style="font-size:12px;color:var(--color-fg-muted);line-height:1.8">' +
+          item.criteria.map(function (s) { return "· " + esc(s); }).join("<br>") + "</div></div></div>";
+      }
+      if (item.fields && Object.keys(item.fields).length) {
+        body += '<div class="card"><div class="card-h">参数 / 字段</div><div class="card-in">' +
+          kvTable(Object.keys(item.fields).map(function (k) {
+            return [esc(k), esc(String(item.fields[k] == null ? "—" : item.fields[k]))];
+          })) + "</div></div>";
+      }
     } else {
       var note = NOTE_RE.test(item.desc || "");
       $("#parHead").innerHTML = '<div class="par-t1"><b class="mono">' + esc(item.key) + "</b><b>" + esc(item.name) + "</b>" +
@@ -223,6 +281,7 @@
     clearTimeout(debounce);
     debounce = setTimeout(loadEntries, 250);
   });
+  $("#catSel").addEventListener("change", function () { loadEntries(); });
 
   loadDicts();
 })();

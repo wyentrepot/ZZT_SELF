@@ -146,7 +146,10 @@ input,select{font:inherit;color:inherit}
     </div>
     <div class="col">
       <div class="sec-h"><h3 id="enTitle">条目</h3><span class="sp"></span><span class="hint">琥珀点 = desc 含纠错/实证注记</span></div>
-      <div class="en-filter"><input class="fld" id="q" placeholder="搜索名称 / 键 / 描述…"></div>
+      <div class="en-filter" style="display:flex;gap:6px">
+        <select class="fld" id="catSel" style="display:none;flex:none;width:150px"></select>
+        <input class="fld" id="q" placeholder="搜索名称 / 键 / 描述…" style="flex:1">
+      </div>
       <div class="col-body" id="enList"><div class="empty"><p>加载中…</p></div></div>
     </div>
     <div class="col">

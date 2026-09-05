@@ -1,0 +1,30 @@
+{
+ "id": "nwk.conflict.arbitration_timing",
+ "name": "NID/RF 信道冲突仲裁时序",
+ "family": "conflict",
+ "severity_hint": "warn",
+ "description": "冲突按双方 CCO MAC 字节序仲裁避让：NID 冲突 MAC 小者 307ms 后改 NID、大者 30min；RF 信道冲突网间协调帧触发一律 20.7s，信标/STA 上报触发 MAC 小者 20.7s、大者 30min；t2=5min 内无再冲突解除；切换延迟 100s、t3=102s 确认完成。",
+ "trigger": {"event": "conflict_detected", "params": {"tables": [102, 121], "entries": ["邻网信标", "网间协调帧"]}},
+ "observation_window": {"kind": "per_event", "note": "逐冲突事件判定；事件源 = 邻网信标 / 网间协调帧 / STA 冲突上报（table102/121）。"},
+ "verdict": {
+  "pass": "冲突事件后按 MAC 仲裁在对应时窗内完成 NID/信道变更并公告（table49/55 剩余>100ms 宣告）",
+  "fail": "时窗错配（如协调帧触发仍等 30min）、或 t2 内反复冲突未收敛"
+ },
+ "thresholds": [
+  {"key": "nid_change_mac_small_ms", "op": "==", "value": 307, "unit": "ms", "meaning": "NID 冲突 MAC 小者 307ms 后变更"},
+  {"key": "change_mac_large_ms", "op": "==", "value": 1800000, "unit": "ms", "meaning": "MAC 大者 30min 后变更"},
+  {"key": "rf_change_coord_ms", "op": "==", "value": 20700, "unit": "ms", "meaning": "RF 冲突网间协调帧触发一律 20.7s"},
+  {"key": "rf_change_mac_small_ms", "op": "==", "value": 20700, "unit": "ms", "meaning": "RF 冲突信标/上报触发 MAC 小者 20.7s"},
+  {"key": "conflict_clear_window_s", "op": "==", "value": 300, "unit": "s", "meaning": "t2=5min 内无再冲突则解除"},
+  {"key": "rf_cutover_delay_s", "op": "==", "value": 100, "unit": "s", "meaning": "RfChnlCutoverSet 100s 后切换"},
+  {"key": "rf_cutover_confirm_s", "op": "==", "value": 102, "unit": "s", "meaning": "t3=102s 确认切换完成"},
+  {"key": "nb_nid_table_size", "op": "==", "value": 31, "unit": "个", "meaning": "邻居 NID 表容量，新 NID 顺延避开邻居"},
+  {"key": "rf_detect_guard_s", "op": "==", "value": 60, "unit": "s", "meaning": "上电 60s 内不检测 RF 信道冲突"}
+ ],
+ "source": {
+  "doc": "CCO实现逻辑/07-NWK入网-路由-心跳-信标-冲突.md",
+  "section": "第七章 §7.2/§7.4（nwk_nid_conflict.c:137-146、nwk_rf_chnl_conflict.c:373-382/497-498）",
+  "quote": "MAC 小者先改 NID，大者等 30 分钟……conflict_time_update(&nid_conflict_info.t1, 307)//307ms后变更nid；网间协调帧触发时 NID/信道冲突一律 307ms/20.7s 立即避让；RfChnlCutoverSet(option, chnl, 100000ul)//100sec；timer_set(&rf_chnl_conflict_info.t3, 102000ul)"
+ },
+ "notes": "307ms/20.7s/30min/102s 全部为工程自定义时序（13 号差异记录三类）；频点全占用时换 option 随机。新 NID 范围 1~16777215。"
+}

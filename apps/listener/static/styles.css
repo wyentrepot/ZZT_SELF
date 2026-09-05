@@ -1374,3 +1374,113 @@ body[data-source="serial"] [data-mode="serial"] { display: block; }
   margin: 0; white-space: pre-wrap; word-break: break-all;
   font-family: var(--font-mono); color: var(--color-fg-muted);
 }
+
+/* ===== 组网观测价值化（REQS-0026）：结论卡 / 时间桶 / 降噪 / 行内粗略解析 ===== */
+/* 三级分级色：异常红 / 关注黄 / 常规灰 */
+:root {
+  --observe-alarm: #ff7385;
+  --observe-watch: #f2c14e;
+  --observe-normal: #698095;
+}
+.observe-digest {
+  margin: 12px; padding: 12px 14px; border-radius: 8px;
+  background: var(--color-bg-canvas); border: 1px solid var(--color-border-default);
+}
+.observe-digest-verdict { font-size: 14px; font-weight: 600; color: var(--color-fg-default); }
+.observe-digest-verdict.observe-level-alarm { color: var(--observe-alarm); }
+.observe-digest-verdict.observe-level-watch { color: var(--observe-watch); }
+.observe-digest-chips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.observe-chip {
+  border: 1px solid var(--color-border-default); border-radius: 999px;
+  background: transparent; color: var(--color-fg-muted);
+  padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.observe-chip.is-alarm {
+  color: var(--observe-alarm); border-color: color-mix(in srgb, var(--observe-alarm) 45%, transparent);
+}
+.observe-chip.is-watch {
+  color: var(--observe-watch); border-color: color-mix(in srgb, var(--observe-watch) 45%, transparent);
+}
+.observe-chip:hover { background: var(--color-bg-input); }
+.observe-digest-footer {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 12px; color: var(--color-fg-subtle);
+}
+.observe-digest-link {
+  margin-left: auto; border: none; background: transparent; cursor: pointer;
+  color: var(--color-status-info); font-size: 12px; text-decoration: underline;
+}
+.observe-digest-link:hover { color: var(--color-dir-tx); }
+
+.observe-buckets { margin: 0 12px 12px; }
+.observe-bucket-strip {
+  display: flex; align-items: flex-end; gap: 2px; height: 46px;
+  padding: 4px; border-radius: 8px;
+  background: var(--color-bg-canvas); border: 1px solid var(--color-border-default);
+}
+.observe-bucket {
+  flex: 1 1 0; min-width: 6px; border: none; border-radius: 2px 2px 0 0;
+  background: var(--color-status-info); opacity: .55; cursor: pointer; padding: 0;
+  position: relative; font-size: 10px; color: #fff;
+}
+.observe-bucket:hover { opacity: .8; }
+.observe-bucket.is-bad { background: var(--observe-alarm); opacity: .9; }
+.observe-bucket.is-active { outline: 2px solid var(--color-fg-default); opacity: 1; }
+.observe-bucket span {
+  position: absolute; top: -2px; left: 50%; transform: translate(-50%, -100%);
+  color: var(--observe-alarm); font-weight: 700;
+}
+.observe-bucket-caption {
+  margin-top: 4px; font-size: 11px; color: var(--color-fg-subtle);
+}
+.observe-show-normal {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--color-fg-muted); white-space: nowrap; cursor: pointer;
+}
+
+/* 事件表：分级徽标列 + 异常/关注行底色 */
+.observe-table td.observe-level-cell { font-size: 11px; white-space: nowrap; }
+.observe-table td.observe-level-alarm { color: var(--observe-alarm); font-weight: 700; }
+.observe-table td.observe-level-watch { color: var(--observe-watch); }
+.observe-table td.observe-level-normal { color: var(--observe-normal); }
+.observe-table tbody tr.observe-row-alarm td:first-child { box-shadow: inset 3px 0 0 var(--observe-alarm); }
+.observe-table tbody tr.observe-row-watch td:first-child { box-shadow: inset 3px 0 0 var(--observe-watch); }
+.observe-table tbody tr.observe-row-open { background: var(--color-bg-input); }
+.observe-more-note { font-size: 11px; }
+
+/* 行内粗略解析面板（G4） */
+.observe-brief-cell {
+  padding: 10px 14px; background: var(--color-bg-canvas);
+  font-size: 12px; color: var(--color-fg-muted);
+}
+.observe-brief-title {
+  font-weight: 600; color: var(--color-fg-default); margin-bottom: 8px;
+}
+.observe-brief-layer { margin-bottom: 8px; }
+.observe-brief-layer-title {
+  font-size: 11px; color: var(--color-status-info);
+  text-transform: none; margin-bottom: 3px; font-weight: 600;
+}
+.observe-brief-layer table { border-collapse: collapse; }
+.observe-brief-layer th {
+  text-align: right; padding: 1px 10px 1px 0; font-weight: 400;
+  color: var(--color-fg-subtle); white-space: nowrap; vertical-align: top;
+}
+.observe-brief-layer td {
+  padding: 1px 0; font-family: var(--font-mono); word-break: break-all;
+  color: var(--color-fg-default);
+}
+.observe-brief-event { margin-top: 4px; }
+.observe-brief-event.observe-level-alarm { color: var(--observe-alarm); }
+.observe-brief-event.observe-level-watch { color: var(--observe-watch); }
+.observe-brief-warning { color: var(--observe-watch); margin-top: 4px; }
+.observe-brief-error { color: var(--observe-alarm); }
+
+/* 评估页周期行下钻按钮（G5 联动） */
+.cycle-drill {
+  margin-left: 8px; padding: 1px 8px; font-size: 11px;
+  border: 1px solid color-mix(in srgb, var(--color-status-info) 45%, transparent);
+  border-radius: 999px; background: transparent; cursor: pointer;
+  color: var(--color-status-info);
+}
+.cycle-drill:hover { background: var(--color-bg-input); }
