@@ -372,10 +372,14 @@ data/logs/
 data/runs.sqlite
 data/reports/
 # 侦听台运行时帧索引库（data/listener_*.sqlite*），不入库
-# （REQS-0022：临时 SQLite 与 runtime 索引一律不进入 Git）
+# （REQS-0028：临时 SQLite 与 runtime 索引一律不进入 Git）
+# 注：这些文件曾在提交 eb6f9c0 中被 `git add -f` 强加入库，2026-09-07 重写本地历史时已剔除；
+#     规则保留以防再次误入库（含 Windows 复制来的副本/Zone.Identifier 等派生文件）
 data/listener_*.sqlite
 data/listener_*.sqlite-shm
 data/listener_*.sqlite-wal
+# Windows 文件传输遗留的 NTFS 备用数据标签（如 "xxx.txt:Zone.Identifier"），非源码产物，不入库
+*Zone.Identifier
 packages/
 __pycache__/
 *.pyc

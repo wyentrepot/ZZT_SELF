@@ -99,3 +99,62 @@ def test_duplicate_ids_are_reported_without_choosing_one():
 
     assert "重复" in catalog.mapping_error
     assert catalog.find("COM4") is None
+
+def test_usb_busid_mapping():
+    """REQS-串口锚点：config 含 usb_busid，按 BusId 匹配映射。"""
+    data = _config()
+    data["ports"][0]["usb_busid"] = "6-1"  # listener
+    data["ports"][1]["usb_busid"] = "5-2"  # cco-main
+    catalog = SerialPortCatalog.load(_write_config(data))
+
+    # find_by_busid 稳定命中
+    assert catalog.find_by_busid("6-1").id == "listener"
+    assert catalog.find_by_busid("5-2").id == "cco-main"
+    # as_dict 暴露 usb_busid
+    assert catalog.find_by_busid("6-1").as_dict()["usb_busid"] == "6-1"
+
+
+def test_merge_system_ports_priority_busid():
+    """枚举时优先按 usb_busid 匹配（即使设备名与映射别名不同）。"""
+    data = _config()
+    data["ports"][0]["usb_busid"] = "6-1"
+    # 故意让 listener 的 linux_device 与实际枚举名不一致（模拟漂移）
+    data["ports"][0]["linux_device"] = "/dev/ttyUSB99"
+    catalog = SerialPortCatalog.load(_write_config(data))
+
+    merged = catalog.merge_system_ports(
+        [{"device": "/dev/ttyUSB3", "description": "CP2102"}],
+        device_busids={"/dev/ttyUSB3": "6-1"},
+    )
+    hit = [r for r in merged if r["device"] == "/dev/ttyUSB3"]
+    assert hit and hit[0]["mapping_id"] == "listener"
+    assert hit[0]["usb_busid"] == "6-1"
+
+
+def test_merge_system_ports_ch342_dual_interface():
+    """CH342 双串口：usb_busid 支持 busid:interface（5-2:1.0 / 5-2:1.2）区分。"""
+    data = _config()
+    # cco-main=5-2:1.0（ttyACM0）, sta-main=5-2:1.2（ttyACM1）
+    data["ports"][1]["usb_busid"] = "5-2:1.0"
+    data["ports"].append({
+        "id": "sta-main",
+        "linux_device": "/dev/ttyACM1",
+        "windows_com": "COM9",
+        "usb_busid": "5-2:1.2",
+        "label": "STA 模块",
+        "usage": "module_log",
+        "module": "sta",
+        "baudrate": 115200, "parity": "N", "bytesize": 8, "stopbits": 1, "enabled": True,
+    })
+    catalog = SerialPortCatalog.load(_write_config(data))
+
+    merged = catalog.merge_system_ports(
+        [
+            {"device": "/dev/ttyACM0", "description": "USB Dual_Serial"},
+            {"device": "/dev/ttyACM1", "description": "USB Dual_Serial"},
+        ],
+        device_busids={"/dev/ttyACM0": "5-2:1.0", "/dev/ttyACM1": "5-2:1.2"},
+    )
+    by_dev = {r["device"]: r for r in merged}
+    assert by_dev["/dev/ttyACM0"]["mapping_id"] == "cco-main"
+    assert by_dev["/dev/ttyACM1"]["mapping_id"] == "sta-main"

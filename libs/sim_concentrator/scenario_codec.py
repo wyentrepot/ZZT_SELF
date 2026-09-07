@@ -2,8 +2,10 @@
 
 把 task step 的 `send`（afn/fn + 最小业务参数）结合 profile（全局信息）
 翻译成一次 build_13762_frame 调用：
-- 地址域 A：module_id=1 带地址域；A1/A3 按方向装配（下行 A1=cco_addr
-  A3=sta_addr；上行 A1=sta_addr A3=cco_addr；广播 A3=全 9）。
+- 地址域 A（REQS-0027）：**默认不带地址域**（module_id=0）。实机验证集中器
+  不支持带地址域下行（否认 0A）；仅当显式指定 src/dst（params.dst、broadcast
+  广播 A3=全 F）才装配地址域（module_id=1）。params.meters / params.addr 是业务
+  数据单元（11H-F1 添加 / 11H-F2 删除对象），不参与地址域装配。
 - 信息域 R：seq 由执行器自动分配递增（seq_auto=true 时）。
 - 应用数据：调 parser_lib 的 encode_app_data 按 AFN/Fn 编码 params。
 
@@ -86,24 +88,39 @@ def resolve_arch_addr(meters, profile: dict):
 # ---------------------------------------------------------------------------
 def build_address(profile: dict, params: dict, direction: str,
                   explicit_src=None, explicit_dst=None) -> dict:
-    """按方向装配地址域 {src, dst}（module_id=1 带地址域）。
+    """按方向装配地址域 {src, dst}（默认不带地址域，REQS-0027）。
 
-    下行：A1=cco_addr, A3=sta_addr（params 显式 / profile 档案查表 / 广播）。
-    上行：A1=sta_addr, A3=cco_addr（应答回源）。
+    1376.2 实机验证（REQS-0020/0021）：CCO/集中器本地交互**不支持带地址域**的
+    下行帧（带地址域查询被否认 0A）。故默认返回空 → module_id=0 无地址域。
+    仅当显式指定 src/dst（如 params.dst/addr、meters、broadcast 广播 A3=全F）
+    时才装配地址域（module_id=1）。
+
+    下行：A1=cco_addr, A3=sta_addr（仅显式场景）。
+    上行：A1=sta_addr, A3=cco_addr（应答回源，仍按显式 dst 装配）。
     广播：A3=999999999999H。
     """
+    # REQS-0027：默认无地址域（module_id=0）。无显式目标 → 直接返回空。
+    # 注意：params.meters / params.addr 是业务数据单元里的从节点地址
+    # （11H-F1 添加 / 11H-F2 删除 / 档案管理），不是 1376.2 路由地址域 A，
+    # **不**触发地址域装配。仅 params.dst / broadcast 视为显式路由目标。
+    has_explicit_target = bool(
+        explicit_src or explicit_dst
+        or params.get("dst")
+        or params.get("broadcast")
+    )
+    if not has_explicit_target:
+        return {}
+
     cco = explicit_src or profile.get("cco_addr")
     if not cco:
-        # 无 profile / 无 cco_addr：降级为无地址域（module_id=0），等价旧 CCO 本地帧
+        # 无 profile / 无 cco_addr：无地址域（module_id=0），等价旧 CCO 本地帧
         return {}
 
     if explicit_dst:
         dst = explicit_dst
     else:
-        # 目标 sta 地址优先级：send 显式地址 > profile 档案 > 同址 cco
-        dst = params.get("dst") or params.get("addr")
-        if dst is None and params.get("meters"):
-            dst = resolve_arch_addr(params["meters"], profile)[0] if params["meters"] else None
+        # 目标 sta 地址优先级：send 显式 dst > 广播
+        dst = params.get("dst")
         if dst is None and params.get("broadcast"):
             dst = _BROADCAST
 

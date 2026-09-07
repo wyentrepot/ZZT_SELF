@@ -29,6 +29,7 @@ from sim_concentrator.journal import SessionManager
 from sim_concentrator.runner import execute_task, run_single_step
 from sim_concentrator.responder import Responder
 from sim_concentrator.scenario_codec import build_send, load_profile
+from sim_concentrator import recipes as simcon_recipes
 from shared.serial_mapping import SerialPortCatalog
 from shared.serial_resources import SerialResourceRegistry
 from sim_concentrator.serial_io import (
@@ -41,6 +42,11 @@ from sim_concentrator.serial_io import (
 # ---------------------------------------------------------------------------
 # Pydantic 模型
 # ---------------------------------------------------------------------------
+class RecipeRunRequest(BaseModel):
+    """执行常用步骤（recipe）的请求：参数覆盖。"""
+    overrides: Dict[str, Any] = {}
+
+
 class OpenSpec(BaseModel):
     # 所有字段均可省略；省略时采用 config/serial_ports.json 的 simcon 映射默认值。
     port: Optional[str] = None
@@ -431,6 +437,39 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     async def close_serial():
         _close_io()
         return {"open": False}
+
+    # ---- 常用步骤（recipe）restful 子资源（REQS-0028）----
+    @app.get(f"{prefix}/recipes")
+    async def recipe_list():
+        """列目录：所有可用 recipe 的元信息（id/name/description/params）。"""
+        return {"recipes": simcon_recipes.list_recipes()}
+
+    @app.get(f"{prefix}/recipes/{{recipe_id}}")
+    async def recipe_detail(recipe_id: str):
+        """单个 recipe 详情（含参数定义）。"""
+        try:
+            return simcon_recipes.get_recipe(recipe_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"recipe 不存在: {recipe_id}")
+
+    @app.post(f"{prefix}/recipes/{{recipe_id}}/run")
+    async def recipe_run(recipe_id: str, request: RecipeRunRequest):
+        """执行常用步骤：一次调用完成整套流程并返回判定结果。
+
+        复用当前已打开的串口（_io()）；未打开则按 recipe 配置自建。
+        body: {"overrides": {参数key: 值}}。
+        """
+        try:
+            io = _io()
+            # 复用当前 open 的串口；未打开时 recipe 自建
+            return simcon_recipes.run_recipe(
+                recipe_id, request.overrides, io=io if (io and io.is_open()) else None)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"recipe 执行失败：{exc}") from exc
 
     @app.post(f"{prefix}/verify")
     async def verify(task: VerifyTask):

@@ -33,6 +33,9 @@
 | 0024 | 网络层与组网解析基建（4-2 链路层信封 + NWK 管理帧组网事件流 + 信标条目/时隙重建；依据蒸馏库 CCO实现逻辑 07/08/11，国网口径） | 大需求 | ✅ 已完成（adapter_dualmac 23 测 + 组网观测页签 + 3 端点；assessment 换源与 AI v2 暴露 2 项留后续） | master | 2026-09-05 |
 | 0025 | 网络层知识工程（269 项检测用例入库 + 网络层断言规则库 libs/network_assert + AI 诊断知识包；国网口径，南网排除） | 小需求 | ✅ 已完成（279 条用例 JSON + /api/dict/cases + 字典页第 5 卡；8 条断言声明+静态校验+预留求值；network-diagnostics.md 知识包+技能 v2.2.0；回归绿，test_ai_store_query 5 失败为存量与本需求无导入关系） | req/0025-network-knowledge-pack（待合 master；0026 提交随本分支一并合入） | 2026-09-05 |
 | 0026 | 组网观测价值化（印象结论 digest + 事件降噪/TEI 翻译 + 时间定点排查 + 点击按需粗略解析 + 与评估页去重分工） | 小需求 | ✅ 已完成（digest ≤4KB + brief ≤2KB + 事件三级分级/人话翻译 + 时间桶定点排查 + 双副本结论卡/降噪表/行内解析 + 评估页下钻；15 测全绿，浏览器实测通过） | req/0025-network-knowledge-pack（开发时该分支已检出，提交随 0025 合并入 master） | 2026-09-05 |
+| 0027 | 1376.2 协议下发统一不带地址域（集中器否认 0A 修复；`build_address` 默认空） | 小需求 | ✅ 已完成（P0 实机验证 + P1 代码改造 + P2 回归；清空 120 档案验证） | master | 2026-09-02 |
+| 0028 | 集中器常用步骤（recipe）库与接口（`GET/POST /api/simcon/recipes*`；清空/添加档案；AI+前端可调） | 小需求 | ✅ 已完成（recipe 库 + restful 接口 + 实机验证 + 16 测试） | master | 2026-09-02 |
+| 0029 | WSL 串口稳定识别（usbipd BusId 锚点：vhci status 解析 + usb_busid 映射 + 按 busid 打开） | 小需求 | ✅ 已完成（BusId 解析 + 枚举/打开优先 busid + config + 实机验证） | master | 2026-09-02 |
 
 ## 使用说明
 

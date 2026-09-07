@@ -12,7 +12,8 @@
       "parity": "E",
       "bytesize": 8,
       "stopbits": 1,
-      "enabled": true
+      "enabled": true,
+      "usb_busid": "6-1"
     },
     {
       "id": "listener",
@@ -25,7 +26,8 @@
       "parity": "N",
       "bytesize": 8,
       "stopbits": 1,
-      "enabled": true
+      "enabled": true,
+      "usb_busid": "6-4"
     },
     {
       "id": "cco-main",
@@ -38,7 +40,8 @@
       "parity": "N",
       "bytesize": 8,
       "stopbits": 1,
-      "enabled": true
+      "enabled": true,
+      "usb_busid": "5-2:1.0"
     },
     {
       "id": "sta-main",
@@ -51,7 +54,8 @@
       "parity": "N",
       "bytesize": 8,
       "stopbits": 1,
-      "enabled": true
+      "enabled": true,
+      "usb_busid": "5-2:1.2"
     }
   ]
 }

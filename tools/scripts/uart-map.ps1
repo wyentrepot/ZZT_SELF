@@ -162,6 +162,13 @@ function Map-To-Wsl {
         Write-Host "  WSL 已检测到串口设备:" -ForegroundColor Green
         foreach ($d in $wslDev) { Write-Host "    $d" -ForegroundColor Green }
         Write-Host "  [成功] 串口已映射到 WSL（如 /dev/ttyUSB0、/dev/ttyUSB1 ...）" -ForegroundColor Green
+        # BusId ↔ WSL tty 对照（vhci status 稳定锚点，config usb_busid 用）
+        Write-Host ""
+        Write-Host "  BusId ↔ WSL 设备对照（config 的 usb_busid 稳定锚点）：" -ForegroundColor Cyan
+        $busidMap = Invoke-WslCommand "awk 'NR>1 && \$5!~/00000000/ {split(\$5,d,\"\"); split(\$7,l,\":\"); print \$7, sprintf(\"%d-%d\", strtonum(\"0x\" substr(\$5,1,4)), strtonum(\"0x\" substr(\$5,5,4)))}' /sys/devices/platform/vhci_hcd.0/status 2>/dev/null"
+        foreach ($line in $busidMap) {
+            if ($line -match '^\S+\s+\S+$') { Write-Host "    $line" -ForegroundColor DarkCyan }
+        }
     } else {
         Write-Host "  [警告] WSL 未检测到 tty 设备，请检查 usbipd 防火墙与 WSL 驱动" -ForegroundColor Yellow
     }

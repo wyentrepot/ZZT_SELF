@@ -1,0 +1,137 @@
+[OPEN] /dev/ttyACM1 @ 115200
+[SENT] 'reboot'
+rebootE
+******************************
+  Unicorn Bootloader
+******************************
+  Version           : ver_02-00-41
+  Release Date      : Oct 22 2023 16:55:01
+  Silicon Version   : venus8m @ 200/100/100 MHz
+
+
+Press 'd' key to enter bootloader mode!
+Press '@' key to skip the waiting time and run image!
+ 3 2 1 0
+Run image0, wait a moment, please!
+idx start    stop     store    size(h)  len(h)   c
+--------------------------------------------------
+  0 20000200 20008200 fe040320 00003693 00008000 1
+  1 20008200 2000e0f4 fe0439b4 00001d88 00005ef4 1
+  2 2000e100 20012ed0 fe04573c 00000b30 00004dd0 1
+  3 2002ad24 20032d24 fe04626c 0000424a 00008000 1
+  4 20032d24 2003ad24 fe04a4b8 00003cd0 00008000 1
+  5 2003ad24 20042d24 fe04e188 00004b8a 00008000 1
+  6 20042d24 2004ad24 fe052d14 00004134 00008000 1
+  7 2004ad24 20052d24 fe056e48 00004900 00008000 1
+  8 20052d24 2005ad24 fe05b748 000048b1 00008000 1
+  9 2005ad24 20062d24 fe05fffc 00003c87 00008000 1
+ 10 20062d24 2006ad24 fe063c84 00003d89 00008000 1
+ 11 2006ad24 20072d24 fe067a10 00003e25 00008000 1
+ 12 20072d24 2007ad24 fe06b838 00003e38 00008000 1
+ 13 2007ad24 20082d24 fe06f670 00003e13 00008000 1
+ 14 20082d24 2008ad24 fe073484 000035fc 00008000 1
+ 15 2008ad24 20092d24 fe076a80 00004086 00008000 1
+ 16 20092d24 2009ad24 fe07ab08 00003b08 00008000 1
+ 17 2009ad24 200a2d24 fe07e610 00001e86 00008000 1
+ 18 200a2d24 200aad24 fe080498 000028c4 00008000 1
+ 19 200aad24 200b2d24 fe082d5c 000021a7 00008000 1
+ 20 200b2d24 200bad24 fe084f04 0000231f 00008000 1
+ 21 200bad24 200c2d24 fe087224 000026f0 00008000 1
+ 22 200c2d24 200cad24 fe089914 00002b1b 00008000 1
+ 23 200cad24 200d2d24 fe08c430 00002651 00008000 1
+ 24 200d2d24 200dad24 fe08ea84 000029a3 00008000 1
+ 25 200dad24 200e2d24 fe091428 00004b73 00008000 1
+ 26 200e2d24 200ead24 fe095f9c 0000569f 00008000 1
+ 27 200ead24 200f1620 fe09b63c 00004cce 000068fc 1
+ 28 70000200 70008200 fe0a030c 0000368a 00008000 1
+ 29 70008200 7000e0c0 fe0a3998 0000200b 00005ec0 1
+ 30 7000e0c0 700160c0 fe0a59a4 00002a0e 00008000 1
+ 31 700160c0 7001e0c0 fe0a83b4 00001dc8 00008000 1
+ 32 7001e0c0 700260c0 fe0aa17c 00001ae2 00008000 1
+ 33 700260c0 7002df34 fe0abc60 00002b9b 00007e74 1
+ 34 7002df38 70035f38 fe0ae7fc 00002084 00008000 1
+ 35 70035f38 700373f8 fe0b0880 000004ae 000014c0 1
+ 36 d3040000 d3040100 fe0b0d30 00000100 00000100 0
+ 37 d3060000 d3060800 fe0b0e30 00000800 00000800 0
+
+**************************
+*       See OS run       *
+* CPU:200MHz  RAM:200MHz *
+**************************
+[node /]$ 
+---------------------------------------
+boot_ver:ver_02-00-41
+sdk_ver:ver_03-00-02-08
+hver:0201, sver:002601
+fc sversion : 090013
+fc ver_date : 2026-05-13
+---------------------------------------
+System reset by 8000
+reset reason:
+SFT_GLB_RST
+phy init ok!
+phy sal init ok!
+wphy init ok with rf type: v2 !
+hver:0201, sver:002601
+iap wait...
+iap band=1, opt=2, chnl=13
+iap timeout
+1077 | info | device_list.c (425)| deviceFlashToRam devcnt 1
+1120 | info | device_list.c (581)| add mac
+103827699719
+1121 | info | device_list.c (545)| device length = 1
+1121 | info | brd_dev_list.c (375)| deviceFlashToRam devcnt -1
+1122 | info | brd_dev_list.c (380)| devcnt -1 not correct
+1122 | info | brd_dev_list.c (60)| brdDevlist length = 0
+
+1127 | info | refusedev_list.c (60)| refuselist length = 0
+
+1133 | info | com_port.c (587)| bps_en e2a09efc bsp 1 bps 9600 prty 2
+1134 | info | aps_transdata_state.c (285)| transdata_state_init!
+1134 | info | aps_upgrade_state.c (727)| upgrade_state_init!
+1135 | info | aps_upgrade_data_state.c (198)| upgrade_data_state_init
+1135 | info | aps_upgrade_concurrent_state.c (113)| upgrade_conc_state_init!
+1135 | info | aps_report_state.c (192)| report_state_init!
+
+1135 | info | aps_broadcast_state.c (63)| broadcast_state_init!
+
+1135 | info | aps_register_state.c (136)| register_state_init!
+
+mtad_state_init!
+mclt_state_init!
+1136 | info | aps_idrefer_state.c (166)| idrefer_state_init!
+
+1136 | info | aps_ckq_state.c (99)| ckq_state_init!
+
+1136 | info | aps_routeInitiative_state.c (66)| routeInitiative_state_init
+1136 | info | aps_bpsCheck_state.c (70)| bpsCheck_state_init!
+
+1176 | info | aps_affair.c (1054)| apsScheduleTask run!
+
+1179 | info | concurrent_schedule.c (54)| conc_stragey_init
+1180 | info | aps_affair.c (1112)| task_id = 15
+1180 | info | aps_ioctrl_nwk.c (178)| devCntToNwk 0
+1986 | info | aps_ioctrl_nwk.c (651)| aps_to_nwk_cco_mac_set
+1987 | info | device_list.c (4047)| AddDevToNwk.
+1987 | info | device_list.c (4058)| pf_dev->use 1 join_src 0 devtype 0
+1987 | info | device_list.c (4061)| aps_to_nwk_whitelist_add.
+103827699719
+1987 | info | aps_ioctrl_nwk.c (486)| aps_to_nwk_whitelist_add
+1993 | info | aps_intf.c (1618)| band_en 0 phase_three_en 0
+.2067 | info | gw13762.c (56)| not huhuan_taiti_test:cco mac!
+444444444444
+2073 | info | aps_intf.c (1495)| bpsCheck_start
+2076 | info | uart_com.c (222)| p:701bd034,uarttxlen:120
+687800c3000040000001030201f237082100003c14004f0800080c444444444444800401001010131010134346384609052601266480000000000000
+00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e016
+2077 | info | aps_bpsCheck_state.c (50)| bpsCheck_affair_init!
+
+2077 | info | aps_bpsCheck_state.c (200)| bpsCheck_state0 trycnt 0
+2077 | info | aps_affair_state.c (170)| P:701c0dc4->F:12, S(c00 -> c01),T:2000
+2089 | info | aps_intf.c (1515)| aps_mclt_start
+mclt_affair_init!
+2097 | info | aps_mclt_state.c (919)| mclt_state0
+2215 | info | uart_com.c (117)| tx idle.
+2215 | info | aps_affair.c (468)| [affair del]:701bd034
+
+[CLOSED] captured 5741 chars

@@ -1,0 +1,14 @@
+{
+  "id": "add_archive",
+  "name": "添加从节点档案",
+  "description": "向集中器添加从节点档案（11H-F1）。可单个或多个（meters 数组）。默认 645 协议。",
+  "profile": "anhui",
+  "module": "cco",
+  "baudrate": 9600,
+  "params": [
+    {"key": "meters", "type": "array", "required": true,
+     "description": "从节点地址数组，如 [\"013300000001\", \"013300000002\"]"},
+    {"key": "protocol", "type": "int", "default": 2,
+     "description": "协议类型：2=645, 3=698"}
+  ]
+}

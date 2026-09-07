@@ -144,9 +144,9 @@ def main() -> int:
     print(f"  每批上限: {MAX_BATCH}   查询条数/批: {args.query_count}")
     print("=" * 70)
 
-    # 先探测服务连通性
+    # 先探测服务连通性（send 与 recv_only 互斥：纯 recv_only 等待一帧即可）
     try:
-        status = _post(args.base, "/step", {"send": {"afn": 0}, "recv_only": True, "expect_timeout": 0.5})
+        status = _post(args.base, "/step", {"recv_only": True, "expect_timeout": 0.5})
         print(f"  服务连通 OK: {status.get('step', {}).get('result', '')}")
     except Exception as e:
         print(f"[ERROR] 无法连接模拟集中器服务 {args.base}: {e}", file=sys.stderr)

@@ -1,0 +1,447 @@
+[OPEN] /dev/ttyACM0 @ 115200
+[SENT] 'reboot'
+rebootE
+******************************
+  Unicorn Bootloader
+******************************
+  Version           : ver_02-00-62
+  Release Date      : Oct 16 2024 16:40:05
+  silicon version   : venus2m_v7 @ 200/200/100 MHz
+
+
+Press 'd' key to enter bootloader mode!
+Press '@' key to skip the waiting time and run image!
+ 3 2 1 0
+Run image1, wait a moment, please!
+idx start    stop     store    size(h)  len(h)   c
+--------------------------------------------------
+  0 20000200 20008200 fe0c02bc 000034d1 00008000 1
+  1 20008200 2000e150 fe0c3790 00001408 00005f50 1
+  2 2000e160 20014fe5 fe0c4b98 00000b03 00006e85 1
+  3 fe190000 fe198000 fe0c569c 00003d6c 00008000 1
+  4 fe198000 fe1a0000 fe0c9408 00003ac4 00008000 1
+  5 fe1a0000 fe1a8000 fe0ccecc 00003bd8 00008000 1
+  6 fe1a8000 fe1b0000 fe0d0aa4 00004456 00008000 1
+  7 fe1b0000 fe1b8000 fe0d4efc 000030d6 00008000 1
+  8 fe1b8000 fe1c0000 fe0d7fd4 00003605 00008000 1
+  9 fe1c0000 fe1c0a5c fe0db5dc 0000061b 00000a5c 1
+ 10 2001df4c 20025f4c fe0dbbf8 000024d9 00008000 1
+ 11 20025f4c 2002df4c fe0de0d4 0000252c 00008000 1
+ 12 2002df4c 20035f4c fe0e0600 00002499 00008000 1
+ 13 20035f4c 2003df4c fe0e2a9c 0000203d 00008000 1
+ 14 2003df4c 20045f4c fe0e4adc 0000212d 00008000 1
+ 15 20045f4c 2004df4c fe0e6c0c 00001f4e 00008000 1
+ 16 2004df4c 20055f4c fe0e8b5c 00002719 00008000 1
+ 17 20055f4c 2005df4c fe0eb278 00004476 00008000 1
+ 18 2005df4c 20065f4c fe0ef6f0 000049bf 00008000 1
+ 19 20065f4c 2006df4c fe0f40b0 00004762 00008000 1
+ 20 2006df4c 20075f4c fe0f8814 0000463c 00008000 1
+ 21 20075f4c 2007df4c fe0fce50 00004789 00008000 1
+ 22 2007df4c 20085f4c fe1015dc 0000475d 00008000 1
+ 23 20085f4c 2008df4c fe105d3c 0000449a 00008000 1
+ 24 2008df4c 200929ce fe10a1d8 00003015 00004a82 1
+ 25 fe1c0a60 fe1c8a60 fe10d1f0 0000214c 00008000 1
+ 26 fe1c8a60 fe1c8dda fe10f33c 00000177 0000037a 1
+ 27 200929d0 2009a9d0 fe10f4b4 0000201e 00008000 1
+ 28 2009a9d0 200a29d0 fe1114d4 00002440 00008000 1
+ 29 200a29d0 200a4fb8 fe113914 00000f62 000025e8 1
+ 30 200a4fb8 200acfb8 fe114878 00001f87 00008000 1
+ 31 200acfb8 200ad3f8 fe116800 000000c0 00000440 1
+ 32 d3060000 d3060800 fe1168c0 00000800 00000800 0
+
+**************************
+*       See OS run       *
+* CPU:200MHz  RAM:200MHz *
+**************************
+[node /]$ 
+---------------------------------------
+boot_ver:ver_02-00-62
+sdk_ver:ver_03-00-03-11
+hver:0101, sver:004303
+isv :191006
+isv date:2026-08-11
+---------------------------------------
+System reset by 11000
+reset reason:
+EXT_PIN_RST
+read ok
+firm code[0x4643]
+...load_sta_para succ,rf_pwr=48
+load_sta_para succ,,hplc_pwr=8
+load_sta_para succ,hplc_pwr=8,rf_pwr=48,only_hplc=0,chpxy_cycle=0
+phy init ok!
+phy sal init ok!
+bsp init...0 | info | bsp_flash.c (64)| flash size : 200000
+bsp init done!factoryNV.devType:3
+
+factory para: *****
+devType = 3
+chipID:ffffffffffffffffffffffffffffffffffffffffffffffff
+moduleID: len = 64 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+sys_cfg.sw_rst:563
+after dc calibration: Q:fc I:ef min_dc: 0 wpmd dcr: 0x0ffe0003
+RXBPF_DIG_TUNE_EN: 0x3ff00401
+1 RXBPF_DIG_TUNE_EN: 0x3c8010c1
+2 RXBPF_DIG_TUNE_EN: 0x3da01501
+3 RXBPF_DIG_TUNE_EN: 0x3cc01501
+bpf calibration option: 13 72 72
+tx cal result dc_re: -56 dc_im: 24 corr_a: 4076  b: -171 d: 4100
+wphy init ok with rf type: wana_v2 !
+107 | info | factory_test.c (2221)| psfo->set != 0x5A not get sfo
+
+phy hplc init done!
+fact test wait..
+exit fact test!
+firmeware malloc addr = FE040000
+hver:0101, sver:004303
+iap wait...
+iap band=1, opt=2, chnl=13
+phy status is rx pd
+update init, hver: 0x0101
+power(8) greater than level4, 60min later to set hplc powernwk_init,hplc_pwr=0,rf_pwr=48
+load nwk info succ, nid = 0x0039f2ae, cco mac[444444444444], beacon period = 2094, band = 2, option = 2, chnl = 48
+tx_sfo -2.443 rx_sfo -2.443
+state_nsm.state:1
+iap timeout
+2616 | info | test_mode.c (747)| test mode start, wait a sem...
+2616 | info | test_mode.c (568)| test mode cmd task start...
+2617 | info | performance_test.c (67)| uart_tx_task run...
+2619 | info | mac_recv_task.c (1084)| mac recv task create ok, task_id = 12
+2620 | info | mac_intf.c (68)| mac init
+phy status is rx pd
+2623 | info | mac_intf.c (330)| self TEI change = 0x0003
+2629 | info | nwk_para.c (467)| get nwk info succ, nid = 0x0039f2ae, cco mac[444444444444], beacon period = 2094
+apsScheduleTask run!
+aps_affair_init p_affair:200b6b50
+p_affair:200b6b50 set state == WAIT
+2635 | info | sector_manager.c (163)| init_sector
+
+2635 | info | sector_manager.c (1864)| save_flag empty (0xffff), no config stored.
+
+2635 | info | aps_mclt_state.c (105)| id1 mclt task read fail, status=6
+2635 | info | aps_mclt_state.c (320)| mcltList_length: 0
+2635 | info | sector_manager.c (2103)| Recovering freeze data...
+
+2637 | info | nwk_nsm.c (252)| first_time_dc:1,last_nwk:0,last_nwk_flg:1
+2637 | info | nwk_nsm.c (270)| get last nwk info succ, link = 0, band = 2, duration = 32000
+2637 | info | nwk_nsm.c (271)| last nwk info crc32 = 0x950fe57b
+2637 |  err | nwk_nsm.c (871)| abort link = 0 disc network err! 251
+2637 |  err | nwk_nsm.c (876)| abort link = 1 disc network err! 251
+2637 | info | mac_intf.c (330)| self TEI change = 0x0000
+2637 | info | nwk_nsm.c (303)| nwk disc HPLC LINK band2,time=32000
+2637 | info | nwk_nsm.c (338)| get last nwk info succ, link = 1, option = 2, chnl = 48, duration = 32000
+2637 | info | nwk_nsm.c (339)| last nwk info crc32 = 0x950fe57b
+2637 | info | nwk_nsm.c (371)| option_indx :0,chnl_indx:255
+2637 | info | nwk_nsm.c (390)| option_indx :0,chnl_indx:255
+2637 | info | nwk_nsm.c (410)| option_indx :0,chnl_indx:255
+2637 | info | mac_intf.c (330)| self TEI change = 0x0000
+2637 | info | nwk_nsm.c (434)| nwk disc RF LINK option2, chnl 48,time=32000
+2637 | info | nwk_nsm.c (436)| wphy_status=2,phy_status=2
+2638 | info | nwk_nsm.c (458)| nsm->t2 = 800
+2639 | info | sector_manager.c (2123)| 01 addr fe141000 read OK !
+
+2639 | info | sector_manager.c (2133)| crc16 is err!
+
+2640 | info | sector_manager.c (2123)| 02 addr fe142000 read OK !
+
+2641 | info | sector_manager.c (2133)| crc16 is err!
+
+2642 | info | factory_test.c (2221)| psfo->set != 0x5A not get sfo
+
+phy status is rx pd
+2643 | info | sector_manager.c (2123)| 03 addr fe143000 read OK !
+
+2643 | info | sector_manager.c (2133)| crc16 is err!
+
+2644 | info | sector_manager.c (2123)| 04 addr fe144000 read OK !
+
+2644 | info | sector_manager.c (2133)| crc16 is err!
+
+2646 | info | sector_manager.c (2123)| 05 addr fe145000 read OK !
+
+2647 | info | sector_manager.c (2133)| crc16 is err!
+
+2648 | info | sector_manager.c (2123)| 06 addr fe146000 read OK !
+
+2648 | info | sector_manager.c (2133)| crc16 is err!
+
+2649 | info | sector_manager.c (2123)| 07 addr fe147000 read OK !
+
+2650 | info | sector_manager.c (2133)| crc16 is err!
+
+2651 | info | sector_manager.c (2123)| 08 addr fe148000 read OK !
+
+2651 | info | sector_manager.c (2133)| crc16 is err!
+
+2652 | info | sector_manager.c (2123)| 09 addr fe149000 read OK !
+
+2653 | info | sector_manager.c (2133)| crc16 is err!
+
+2654 | info | sector_manager.c (2123)| 10 addr fe14a000 read OK !
+
+2654 | info | sector_manager.c (2133)| crc16 is err!
+
+2655 | info | sector_manager.c (2123)| 11 addr fe14b000 read OK !
+
+2655 | info | sector_manager.c (2133)| crc16 is err!
+
+2656 | info | sector_manager.c (2123)| 12 addr fe14c000 read OK !
+
+2657 | info | sector_manager.c (2133)| crc16 is err!
+
+2658 | info | sector_manager.c (2123)| 13 addr fe14d000 read OK !
+
+2658 | info | sector_manager.c (2133)| crc16 is err!
+
+2659 | info | sector_manager.c (2123)| 14 addr fe14e000 read OK !
+
+2659 | info | sector_manager.c (2133)| crc16 is err!
+
+p_affair:200b6b50 set state == HANDLER
+2767 | info | aps_affair.c (182)| _addrmap_func_init
+2768 | info | aps_addrmap_state.c (1184)| turn:0 pos:0 baudrate:2400 E DLT645_CMD
+2768 | info | aps_addrmap_state.c (639)| lock uart ss
+2769 | info | com_port.c (911)| p_affair 200b6b50 com:0,len:16
+p_affair:200b6b50,len:16
+2836 | warn | bsp_uart1.c (253)| tx timeout, len=0
+2846 | info | aps_addrmap_state.c (1208)| addrmap_state1 rec indi
+2847 | info | aps_affair_state.c (112)| ->func:0 s:27,t:2500ms
+2933 | info | mac_recv_task.c (894)| idx         frame  tei   gain  phase nid sym pbc tmi len 
+
+2934 | info | mac_recv_task.c (908)| 1        rx sof       1   40  0   39f2ae 136 1   5   176      
+
+2943 | info | mac_recv_task.c (900)|                       bmp: b0eb66, dur: 48000 bso: 1499000
+
+3166 | info | mac_recv_task.c (908)| 3        rx sof       3   30  0   b0eb66 96  1   14  112      
+
+3428 | info | mac_recv_task.c (908)| 4        rx sof       1   -6  0   39f2ae 136 1   5   176      
+
+3510 | info | mac_recv_task.c (900)|                       bmp: 39f2ae, dur: 95000 bso: 485000
+
+3756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 0 clear_flag 0
+3767 | info | aps_mclt_state.c (697)| REMAP_ING
+4000 | info | phy_hplc.c (394)| diff=-397965575,ival=103287169,bts ee6f3eab,stime 0627b7b2, tei 0001 ,event 2,sfo 0.000
+
+4005 | info | mac_recv_task.c (908)| 6        rx beacon    1   22  0   b0eb66 91  1   6   176      
+
+4006 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0001, rssi 22, snr 3
+4007 | info | nwk_nd.c (291)| find item00, index=0
+4008 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000001 (nid=ffffff) op 3 chnl 180
+4059 | info | mac_recv_task.c (908)| 7        rx beacon    3   30  0   b0eb66 91  1   6   176      
+
+4066 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0003, rssi 30, snr 4
+4067 | info | nwk_nd.c (291)| find item00, index=1
+4067 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000003 (nid=ffffff) op 3 chnl 180
+4078 | info | mac_recv_task.c (908)| 8        rx beacon    2   27  0   b0eb66 91  1   6   176      
+
+4086 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0002, rssi 27, snr 3
+4087 | info | nwk_nd.c (291)| find item00, index=2
+4087 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000002 (nid=ffffff) op 3 chnl 180
+4449 | info | mac_recv_task.c (908)| 9        rx beacon    1   -6  0   39f2ae 91  1   6   176      
+
+4450 | info | mac_recv_task.c (908)| 10       rf beacon    1   -78 0   39f2ae 1   1   2   80       
+
+4456 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi -6, snr 2
+4457 | info | nwk_nd.c (291)| find item00, index=3
+4458 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+4458 | info | nwk_bcn.c (217)| recv bcn, from R  F, NID=0x39f2ae, src=0x0001, rssi -78, snr 8
+4459 | info | nwk_nd.c (232)| nwk_nd_bcnIn, link=RF, nid=39f2ae,tei:000001  (nid=ffffff)
+4465 | info | mac_recv_task.c (908)| 11       rx beacon    1   31  0   39f2ae 91  1   6   176      
+
+4466 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 31, snr 3
+4467 | info | nwk_nd.c (291)| find item00, index=3
+4467 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+4481 | info | mac_recv_task.c (908)| 12       rx beacon    1   33  0   39f2ae 91  1   6   176      
+
+4486 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 33, snr 3
+4487 | info | nwk_nd.c (291)| find item00, index=3
+4487 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+4713 | info | mac_recv_task.c (908)| 13       rf sof       1   -73 0   39f2ae 0   1   2   80       
+
+4756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 1 clear_flag 0
+4777 | info | aps_mclt_state.c (697)| REMAP_ING
+4842 | info | mac_recv_task.c (900)|                       bmp: b0eb66, dur: 48000 bso: 1681000
+
+5347 | info | aps_addrmap_state.c (1408)| turn:0 pos:2 baudrate:9600 E DLT698_CMD
+5348 | info | com_port.c (911)| p_affair 200b6b50 com:0,len:25
+p_affair:200b6b50,len:25
+6817004345aaaaaaaaaaaa10da5f0501134001020000204d16
+p_affair:200b6b50,state:2,action:0,trans:0
+5348 | info | aps_affair_state.c (112)| ->func:0 s:26,t:2500ms
+5386 | info | aps_addrmap_state.c (1208)| addrmap_state1 rec indi
+5387 | info | aps_affair_state.c (112)| ->func:0 s:27,t:2500ms
+5422 | info | mac_recv_task.c (900)|                       bmp: 39f2ae, dur: 95000 bso: 703000
+
+5756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 2 clear_flag 0
+5787 | info | aps_mclt_state.c (697)| REMAP_ING
+5802 | info | mac_recv_task.c (908)| 16       rx sof       2   32  0   b0eb66 96  1   14  112      
+
+5840 | info | mac_recv_task.c (894)| idx         frame  tei   gain  phase nid sym pbc tmi len 
+
+5840 | info | mac_recv_task.c (908)| 17       rx sof       1   24  0   b0eb66 136 1   5   176      
+
+6130 | info | phy_hplc.c (394)| diff=-8,ival=53245062,bts f19bd0ed,stime f19bd0f5, tei 0001 ,event 2,sfo 0.000
+
+6135 | info | mac_recv_task.c (908)| 18       rx beacon    1   24  0   b0eb66 91  1   6   176      
+
+6136 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0001, rssi 24, snr 3
+6137 | info | nwk_nd.c (291)| find item00, index=0
+6137 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000001 (nid=ffffff) op 3 chnl 180
+6189 | info | mac_recv_task.c (908)| 19       rx beacon    3   34  0   b0eb66 91  1   6   176      
+
+6196 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0003, rssi 34, snr 4
+6197 | info | nwk_nd.c (291)| find item00, index=1
+6197 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000003 (nid=ffffff) op 3 chnl 180
+6208 | info | mac_recv_task.c (908)| 20       rx beacon    2   29  0   b0eb66 91  1   6   176      
+
+6216 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0002, rssi 29, snr 3
+6217 | info | nwk_nd.c (291)| find item00, index=2
+6217 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000002 (nid=ffffff) op 3 chnl 180
+6530 | info | mac_recv_task.c (908)| 21       rx beacon    1   -6  0   39f2ae 91  1   6   176      
+
+6531 | info | mac_recv_task.c (908)| 22       rf beacon    1   -79 0   39f2ae 1   1   2   80       
+
+6536 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi -6, snr 2
+6537 | info | nwk_nd.c (291)| find item00, index=3
+6537 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+6537 | info | nwk_bcn.c (217)| recv bcn, from R  F, NID=0x39f2ae, src=0x0001, rssi -79, snr 8
+6538 | info | nwk_nd.c (232)| nwk_nd_bcnIn, link=RF, nid=39f2ae,tei:000001  (nid=ffffff)
+6545 | info | mac_recv_task.c (908)| 23       rx beacon    1   34  0   39f2ae 91  1   6   176      
+
+6546 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 34, snr 2
+6547 | info | nwk_nd.c (291)| find item00, index=3
+6547 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+6561 | info | mac_recv_task.c (908)| 24       rx beacon    1   42  0   39f2ae 91  1   6   176      
+
+6566 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 42, snr 2
+6567 | info | nwk_nd.c (291)| find item00, index=3
+6567 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+6710 | info | mac_recv_task.c (908)| 25       rx sof       1   32  0   39f2ae 136 1   5   176      
+
+6719 | info | mac_recv_task.c (900)|                       bmp: b0eb66, dur: 48000 bso: 1884000
+
+6756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 3 clear_flag 0
+6797 | info | aps_mclt_state.c (697)| REMAP_ING
+7095 | info | mac_recv_task.c (908)| 27       rx sof       1   40  0   39f2ae 136 1   5   176      
+
+7240 | info | mac_recv_task.c (908)| 28       rx sof       3   33  0   b0eb66 96  1   14  112      
+
+7317 | info | mac_recv_task.c (900)|                       bmp: 39f2ae, dur: 95000 bso: 938000
+
+7608 | info | mac_recv_task.c (908)| 30       rx sof       1   -6  0   39f2ae 136 1   5   176      
+
+7756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 4 clear_flag 0
+7807 | info | aps_mclt_state.c (697)| REMAP_ING
+7887 | info | aps_addrmap_state.c (1408)| turn:0 pos:3 baudrate:9600 E DLT645_CMD
+7887 | info | com_port.c (911)| p_affair 200b6b50 com:0,len:16
+p_affair:200b6b50,len:16
+fefefefe68aaaaaaaaaaaa681300df16
+p_affair:200b6b50,state:2,action:0,trans:0
+7888 | info | aps_affair_state.c (112)| ->func:0 s:26,t:2500ms
+7916 | info | aps_addrmap_state.c (1208)| addrmap_state1 rec indi
+7917 | info | aps_affair_state.c (112)| ->func:0 s:27,t:2500ms
+8260 | info | phy_hplc.c (394)| diff=-19,ival=53244238,bts f4c86085,stime f4c86098, tei 0001 ,event 2,sfo 0.000
+
+8319 | info | mac_recv_task.c (908)| 31       rx beacon    3   31  0   b0eb66 91  1   6   176      
+
+8326 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0003, rssi 31, snr 3
+8327 | info | nwk_nd.c (291)| find item00, index=1
+8327 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000003 (nid=ffffff) op 3 chnl 180
+8338 | info | mac_recv_task.c (908)| 32       rx beacon    2   27  0   b0eb66 91  1   6   176      
+
+8346 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0002, rssi 27, snr 3
+8347 | info | nwk_nd.c (291)| find item00, index=2
+8347 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000002 (nid=ffffff) op 3 chnl 180
+8611 | info | mac_recv_task.c (894)| idx         frame  tei   gain  phase nid sym pbc tmi len 
+
+8611 | info | mac_recv_task.c (908)| 33       rx beacon    1   -6  0   39f2ae 91  1   6   176      
+
+8611 | info | mac_recv_task.c (908)| 34       rf beacon    1   -79 0   39f2ae 1   1   2   80       
+
+8616 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi -6, snr 2
+8617 | info | nwk_nd.c (291)| find item00, index=3
+8617 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+8617 | info | nwk_bcn.c (217)| recv bcn, from R  F, NID=0x39f2ae, src=0x0001, rssi -79, snr 9
+8618 | info | nwk_nd.c (232)| nwk_nd_bcnIn, link=RF, nid=39f2ae,tei:000001  (nid=ffffff)
+8626 | info | mac_recv_task.c (908)| 35       rx beacon    1   29  0   39f2ae 91  1   6   176      
+
+8626 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 29, snr 4
+8628 | info | nwk_nd.c (291)| find item00, index=3
+8628 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+8642 | info | mac_recv_task.c (908)| 36       rx beacon    1   35  0   39f2ae 91  1   6   176      
+
+8646 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 35, snr 3
+8647 | info | nwk_nd.c (291)| find item00, index=3
+8647 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+8667 | info | mac_recv_task.c (900)|                       bmp: b0eb66, dur: 48000 bso: 2017000
+
+8756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 5 clear_flag 0
+8817 | info | aps_mclt_state.c (697)| REMAP_ING
+9756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 6 clear_flag 0
+9827 | info | aps_mclt_state.c (697)| REMAP_ING
+9916 | info | mac_recv_task.c (908)| 38       rx sof       3   32  0   b0eb66 96  1   14  112      
+
+9947 | info | mac_recv_task.c (908)| 39       rx sof       1   24  0   b0eb66 136 1   5   176      
+
+10390 | info | phy_hplc.c (394)| diff=-5,ival=53242859,bts f7f4f25b,stime f7f4f260, tei 0001 ,event 2,sfo -0.356
+
+10395 | info | mac_recv_task.c (908)| 40       rx beacon    1   26  0   b0eb66 91  1   6   176      
+
+10396 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0001, rssi 26, snr 3
+10397 | info | nwk_nd.c (291)| find item00, index=0
+10397 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000001 (nid=ffffff) op 3 chnl 180
+10417 | info | aps_addrmap_state.c (1408)| turn:0 pos:4 baudrate:2400 E DLT698_CMD
+10417 | info | com_port.c (911)| p_affair 200b6b50 com:0,len:25
+p_affair:200b6b50,len:25
+6817004345aaaaaaaaaaaa10da5f0501134001020000204d16
+p_affair:200b6b50,state:2,action:0,trans:0
+10418 | info | aps_affair_state.c (112)| ->func:0 s:26,t:2500ms
+10449 | info | mac_recv_task.c (908)| 41       rx beacon    3   34  0   b0eb66 91  1   6   176      
+
+10456 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0003, rssi 34, snr 3
+10457 | info | nwk_nd.c (291)| find item00, index=1
+10457 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000003 (nid=ffffff) op 3 chnl 180
+10468 | info | mac_recv_task.c (908)| 42       rx beacon    2   30  0   b0eb66 91  1   6   176      
+
+10476 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0xb0eb66, src=0x0002, rssi 30, snr 3
+10477 | info | nwk_nd.c (291)| find item00, index=2
+10477 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=b0eb66,tei:000002 (nid=ffffff) op 3 chnl 180
+10496 | info | nwk_nsm.c (915)| first disc nd not done, cnt=2
+state_nsm.state:2
+10496 | info | nwk_nsm.c (916)| find last nwk info again, stop nwk disc now, then turn to assoc req.
+10506 | info | nwk_nsm.c (752)| nwk disc done
+10506 | info | nwk_nsm.c (752)| nwk disc done
+10526 | warn | bsp_uart1.c (253)| tx timeout, len=0
+10536 | info | aps_addrmap_state.c (1208)| addrmap_state1 rec indi
+10536 | info | aps_affair_state.c (112)| ->func:0 s:27,t:2500ms
+10543 | info | mac_recv_task.c (900)|                       bmp: b0eb66, dur: 48000 bso: 141000
+
+10691 | info | mac_recv_task.c (908)| 44       rx beacon    1   -6  0   39f2ae 91  1   6   176      
+
+10692 | info | mac_recv_task.c (908)| 45       rf beacon    1   -79 0   39f2ae 1   1   2   80       
+
+10696 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi -6, snr 2
+10697 | info | nwk_nd.c (291)| find item00, index=3
+10697 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+10697 | info | nwk_bcn.c (217)| recv bcn, from R  F, NID=0x39f2ae, src=0x0001, rssi -79, snr 8
+10698 | info | nwk_nd.c (232)| nwk_nd_bcnIn, link=RF, nid=39f2ae,tei:000001  (nid=ffffff)
+10706 | info | mac_recv_task.c (908)| 46       rx beacon    1   30  0   39f2ae 91  1   6   176      
+
+10716 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 30, snr 3
+10717 | info | nwk_nd.c (291)| find item00, index=3
+10717 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+10722 | info | mac_recv_task.c (908)| 47       rx beacon    1   41  0   39f2ae 91  1   6   176      
+
+10726 | info | nwk_bcn.c (217)| recv bcn, from HPLC, NID=0x39f2ae, src=0x0001, rssi 41, snr 2
+10727 | info | nwk_nd.c (291)| find item00, index=3
+10727 | info | nwk_nd.c (293)| nwk_nd_bcnIn, link=HPLC, nid=39f2ae,tei:000001 (nid=ffffff) op 2 chnl 48
+10756 | info | aps_report_state.c (901)| phase 1 new 0 old 0 calc_cnt 7 clear_flag 0
+10758 | info | mac_recv_task.c (908)| 48       rx sof       1   30  0   39f2ae 136 1   5   176      
+
+10837 | info | aps_mclt_state.c (697)| REMAP_ING
+11251 | info | mac_recv_task.c (894)| idx         frame  tei   gain  phase nid sym pbc tmi len 
+
+11251 | info | mac_recv_task.c (908)| 49       rx sof       1   39  0   39f2ae 136 1   5   176      
+
+
+[CLOSED] captured 23776 chars

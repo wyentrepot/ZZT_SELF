@@ -14,10 +14,12 @@
 """
 from __future__ import annotations
 
+import os
 import queue
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from shared.serial_mapping import SerialPortCatalog, SerialPortMapping
@@ -57,12 +59,105 @@ def _mapping_by_id(catalog: SerialPortCatalog, mapping_id: str) -> SerialPortMap
     return None
 
 
+# ---------------------------------------------------------------------------
+# WSL usbipd BusId 解析（稳定串口锚点）
+# ---------------------------------------------------------------------------
+_VHCI_STATUS_PATH = "/sys/devices/platform/vhci_hcd.0/status"
+
+
+def vhci_busid_map() -> dict[str, str]:
+    """解析 vhci_hcd status，返回 {local_busid: usbipd_busid}。
+
+    WSL 内 usbip 挂载的 USB 设备在 status 里形如：
+        hub port sta spd dev      sockfd local_busid
+        hs  0001 006 002 00060001 000003 1-2
+    dev 字段（00060001）= bus(0006) + port(0001)，编码了 Windows 侧
+    usbipd 的 BusId（6-1）。local_busid（1-2）是 vhci 分配的漂移节点，
+    与 tty 的 LOCATION 一致。本函数把两者关联起来，供按 BusId 稳定识别。
+    """
+    mapping: dict[str, str] = {}
+    try:
+        text = Path(_VHCI_STATUS_PATH).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return mapping
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        hub, port, sta, spd, dev, sockfd, local_busid = parts[:7]
+        if hub in ("hub",):
+            continue
+        try:
+            dev_int = int(dev, 16)
+        except ValueError:
+            continue
+        if dev_int == 0:
+            continue
+        bus = dev_int >> 16
+        port_no = dev_int & 0xFFFF
+        usbipd_busid = f"{bus}-{port_no}"
+        mapping[local_busid] = usbipd_busid
+    return mapping
+
+
+def device_busid(device: str, port_info: Any = None) -> str:
+    """返回某 tty 设备对应的 usbipd BusId（如 6-1）；无法解析返回空串。
+
+    device: /dev/ttyUSB1 等；port_info: pyserial 的 ListPortInfo（可选，提供 location）。
+    """
+    # 1) 优先用 pyserial 的 location（= vhci local_busid，如 1-2）
+    location = ""
+    if port_info is not None:
+        location = str(getattr(port_info, "location", "") or "").strip()
+    if not location and _SERIAL_AVAILABLE:
+        try:
+            for info in list_ports.comports():
+                if str(getattr(info, "device", "") or "") == device:
+                    location = str(getattr(info, "location", "") or "").strip()
+                    break
+        except Exception:
+            pass
+    if location:
+        # location 可能带接口后缀（如 1-1:1.0 对应 CH342 双串口），
+        # vhci status 的 local_busid 是纯端口（1-1）——取冒号前的部分匹配。
+        vhci = vhci_busid_map()
+        base_location = location.split(":")[0] if ":" in location else location
+        busid = vhci.get(base_location)
+        if not busid:
+            return ""
+        # 双口设备（CH342）返回 busid:interface（如 5-2:1.0），单口返回纯 busid（6-1）
+        if ":" in location:
+            interface = location.split(":", 1)[1]
+            return f"{busid}:{interface}"
+        return busid
+    return ""
+
+
 def _natural_device_key(device: str) -> tuple:
     """COM10 排在 COM2 之后：按数字段数值排序。"""
     return tuple(
         (1, int(part)) if part.isdigit() else (0, part)
         for part in re.split(r"(\d+)", device)
     )
+
+
+def _find_device_by_busid(catalog: SerialPortCatalog, busid: str) -> str | None:
+    """枚举当前真实端口，返回第一个 usbipd BusId 与给定值匹配的设备名。
+
+    WSL 稳定锚点：即使 tty 节点漂移，只要 USB 物理口不变，busid 就稳定。
+    """
+    if not _SERIAL_AVAILABLE:
+        return None
+    wanted = str(busid or "").strip().lower()
+    if not wanted:
+        return None
+    for info in list_ports.comports():
+        device = str(getattr(info, "device", "") or "").strip()
+        if not device:
+            continue
+        if device_busid(device, info).lower() == wanted:
+            return device
+    return None
 
 
 def _auto_select_port(catalog: SerialPortCatalog) -> str | None:
@@ -92,10 +187,22 @@ def _auto_select_port(catalog: SerialPortCatalog) -> str | None:
 
 
 def list_serial_port_details(catalog: SerialPortCatalog | None = None) -> list[dict[str, Any]]:
-    """枚举实际端口并合并可维护的映射端口（含离线配置项）。"""
+    """枚举实际端口并合并可维护的映射端口（含离线配置项）。
+
+    WSL 下优先按 usbipd BusId（vhci status 解析）匹配映射，实现稳定识别。
+    """
     catalog = catalog or SerialPortCatalog.load()
     raw_ports = list_ports.comports() if _SERIAL_AVAILABLE else []
-    return catalog.merge_system_ports(raw_ports)
+    # 为每个真实端口解析 usbipd BusId（WSL 稳定锚点）
+    device_busids: dict[str, str] = {}
+    for info in raw_ports:
+        device = str(getattr(info, "device", "") or "").strip()
+        if not device:
+            continue
+        busid = device_busid(device, info)
+        if busid:
+            device_busids[device] = busid
+    return catalog.merge_system_ports(raw_ports, device_busids=device_busids)
 
 
 def list_serial_ports(catalog: SerialPortCatalog | None = None) -> list[str]:
@@ -154,7 +261,12 @@ def resolve_serial_config(
         }
 
     if mapping is not None:
+        # WSL 下优先按 usb_busid 定位真实设备（稳定锚点），回退静态 linux_device
         resolved_port = mapping.device_for()
+        if mapping.usb_busid and os.name != "nt":
+            live = _find_device_by_busid(catalog, mapping.usb_busid)
+            if live:
+                resolved_port = live
         identity = mapping.as_dict()
         identity["device"] = resolved_port
         return {

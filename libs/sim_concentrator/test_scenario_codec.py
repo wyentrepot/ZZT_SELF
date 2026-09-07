@@ -63,8 +63,14 @@ def test_load_profile_missing_raises():
         load_profile("no_such_profile")
 
 
+def test_build_address_default_no_address_field():
+    """REQS-0027：默认不带地址域（module_id=0，address=None）。"""
+    a = build_address(PROFILE, {}, "down")
+    assert a == {}
+
+
 def test_build_address_downstream():
-    """下行：A1=cco_addr, A3=sta_addr。"""
+    """下行：A1=cco_addr, A3=sta_addr（显式 dst 仍装配）。"""
     a = build_address(PROFILE, {}, "down", explicit_dst="013300000001")
     assert a == {"src": "020103040506", "dst": "013300000001"}
 
@@ -83,9 +89,15 @@ def test_build_address_broadcast():
 
 
 def test_build_address_from_params_addr():
-    """params 显式 addr 作为目标。"""
+    """REQS-0027：params.addr 是业务数据（档案管理），不触发地址域。"""
     a = build_address(PROFILE, {"addr": "080000000000"}, "down")
-    assert a["dst"] == "080000000000"
+    assert a == {}
+
+
+def test_build_address_from_params_dst():
+    """params.dst 显式路由目标 → 装配地址域。"""
+    a = build_address(PROFILE, {"dst": "080000000000"}, "down")
+    assert a == {"src": "020103040506", "dst": "080000000000"}
 
 
 def test_resolve_arch_ref():
@@ -113,6 +125,15 @@ def test_build_send_seq_auto_injected():
     raw = build_send({"afn": "10", "fn": "F4"}, PROFILE, seq=7)
     d = decode_frame(raw)
     assert _seq(d) == 7
+
+
+def test_build_send_default_no_address_field():
+    """REQS-0027：build_send 无显式目标 → 无地址域（module_id=0）。"""
+    raw = build_send({"afn": "10", "fn": "F2", "params": {"start": 0, "count": 16}},
+                     PROFILE, seq=1)
+    d = decode_frame(raw)
+    assert d["fields"]["地址域A"]["value"] == "(无)"
+    assert _afn(d) == 0x10 and _fn(d) == 2
 
 
 def test_build_send_broadcast():

@@ -1,0 +1,13 @@
+{
+  "id": "clear_archive",
+  "name": "清空全部从节点档案",
+  "description": "查询集中器全部从节点档案（10H-F2 分页），再分批删除（11H-F2，每批≤16），最后复查 total=0。用于初始化/重置集中器路由档案。",
+  "profile": "anhui",
+  "module": "cco",
+  "baudrate": 9600,
+  "max_batch": 16,
+  "params": [
+    {"key": "confirm", "type": "bool", "default": false,
+     "description": "必须显式传 true 才会真正执行删除（防误删）"}
+  ]
+}

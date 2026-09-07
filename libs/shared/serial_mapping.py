@@ -34,6 +34,7 @@ class SerialPortMapping:
     id: str
     linux_device: str = ""
     windows_com: str = ""
+    usb_busid: str = ""  # WSL 下 usbipd BusId（如 6-1）稳定锚点，优先于 linux_device
     label: str = ""
     usage: str = ""
     module: str = ""
@@ -61,6 +62,7 @@ class SerialPortMapping:
             "device": self.device_for(platform_name),
             "linux_device": self.linux_device,
             "windows_com": self.windows_com,
+            "usb_busid": self.usb_busid,
             "com": self.windows_com if (platform_name or os.name) != "nt" else "",
             "label": self.label,
             "usage": self.usage,
@@ -81,9 +83,12 @@ class SerialPortCatalog:
         self.mapping_error = mapping_error
         self.path = Path(path) if path is not None else default_config_path()
         self._by_alias: dict[str, SerialPortMapping] = {}
+        self._by_busid: dict[str, SerialPortMapping] = {}
         for mapping in self._mappings:
             for alias in mapping.aliases():
                 self._by_alias[alias] = mapping
+            if mapping.usb_busid:
+                self._by_busid[_normalise(mapping.usb_busid)] = mapping
 
     @property
     def mappings(self) -> tuple[SerialPortMapping, ...]:
@@ -117,6 +122,7 @@ class SerialPortCatalog:
             mapping_id = str(raw.get("id", "")).strip()
             linux_device = str(raw.get("linux_device", "")).strip()
             windows_com = str(raw.get("windows_com", "")).strip()
+            usb_busid = str(raw.get("usb_busid", "")).strip()
             usage = str(raw.get("usage", "")).strip()
             module = str(raw.get("module", "")).strip().lower()
             if not mapping_id:
@@ -153,6 +159,7 @@ class SerialPortCatalog:
                     id=mapping_id,
                     linux_device=linux_device,
                     windows_com=windows_com,
+                    usb_busid=usb_busid,
                     label=str(raw.get("label", "")).strip(),
                     usage=usage,
                     module=module,
@@ -170,13 +177,23 @@ class SerialPortCatalog:
     def find(self, device: str) -> SerialPortMapping | None:
         return self._by_alias.get(_normalise(device))
 
+    def find_by_busid(self, busid: str) -> SerialPortMapping | None:
+        """按 usbipd BusId（如 6-1）查找映射（WSL 稳定锚点）。"""
+        return self._by_busid.get(_normalise(busid))
+
     def identity_key(self, device: str) -> str:
         mapping = self.find(device)
         return mapping.id if mapping is not None else _normalise(device)
 
-    def merge_system_ports(self, ports: Iterable[Any], platform_name: str | None = None) -> list[dict[str, Any]]:
-        """返回可展示端口。映射存在但离线时也返回，供 UI 明确标记。"""
+    def merge_system_ports(self, ports: Iterable[Any], platform_name: str | None = None,
+                           device_busids: dict[str, str] | None = None) -> list[dict[str, Any]]:
+        """返回可展示端口。映射存在但离线时也返回，供 UI 明确标记。
+
+        device_busids：{device: usbipd_busid}，WSL 下由 serial_io 从 vhci status
+        解析注入。匹配时**优先按 usb_busid**（稳定锚点），回退按设备名别名。
+        """
         platform_name = platform_name or os.name
+        device_busids = device_busids or {}
         results: list[dict[str, Any]] = []
         seen_mapping_ids: set[str] = set()
         seen_devices: set[str] = set()
@@ -193,7 +210,11 @@ class SerialPortCatalog:
             if normalised in seen_devices:
                 continue
             seen_devices.add(normalised)
-            mapping = self.find(device)
+            # 优先按 usb_busid 匹配（稳定锚点），回退按设备名别名
+            busid = (device_busids.get(device) or "").strip()
+            mapping = self.find_by_busid(busid) if busid else None
+            if mapping is None:
+                mapping = self.find(device)
             record: dict[str, Any] = {
                 "device": device,
                 "description": description,
@@ -201,6 +222,7 @@ class SerialPortCatalog:
                 "mapping_id": "",
                 "linux_device": "",
                 "windows_com": "",
+                "usb_busid": busid,
                 "com": "",
                 "label": "",
                 "usage": "",

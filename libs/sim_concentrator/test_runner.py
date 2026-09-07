@@ -59,12 +59,22 @@ _PROFILE = {
 
 class TestBuildSendFrame:
     def test_address_field_from_profile(self):
-        """下行带 profile：地址域含 cco_addr（src）。"""
+        """REQS-0027：默认无地址域；显式 dst 才装配（src=cco_addr）。"""
         raw = build_send_frame(
             {"afn": 0x01, "fn": 1}, profile=_PROFILE, seq=1)
         d = decode_frame(raw)
-        # 地址域 src = cco_addr；无显式目标时 A3 同址
+        # 默认无显式目标 → 无地址域（module_id=0）
+        assert d["fields"]["地址域A"]["value"] == "(无)"
+
+    def test_address_field_explicit_dst(self):
+        """显式 dst 时装配地址域（src=cco_addr，A3=dst）。"""
+        raw = build_send_frame(
+            {"afn": 0x01, "fn": 1, "params": {"dst": "013300000001"}},
+            profile=_PROFILE, seq=1)
+        d = decode_frame(raw)
+        # 地址域 src = cco_addr；A3 = 显式 dst
         assert "070919051620" in d["fields"]["地址域A"]["value"]
+        assert "013300000001" in d["fields"]["地址域A"]["value"]
 
     def test_userdata_via_params(self):
         """params 应用数据经 13762 库编码进帧（10H-F2 查询从节点）。"""

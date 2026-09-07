@@ -166,3 +166,74 @@ class TestCli:
         rc = cli.main(["cco", str(CCO_SAMPLE), "010000012201", "--start"])
         assert rc == 2
         assert "参数错误" in capsys.readouterr().err
+
+
+
+class TestTaishRetryMetrics:
+    def test_cycle_wait_retry_and_topology_are_correlated(self, tmp_path):
+        """并发日志只能给出全局 F101；拓扑缺失地址须能与未成功地址对齐。"""
+        log = tmp_path / "taish_retry_metrics.log"
+        missing = "170000011101"
+        ok = "020000011101"
+
+        def send(ts, addr, seq):
+            return (
+                f"{ts} MTC@admin-PC: \"send cmd to cco:"
+                f"'685100430400000000{seq:02X}630198900000{addr}F1010003003200681700'\""
+            )
+
+        lines = [
+            send("2026-09-02 15:00:00:000", missing, 1),
+            send("2026-09-02 15:00:00:010", ok, 2),
+            "2026-09-02 15:00:00:100 MTC@admin-PC: \"Recieved F101\"",
+            "2026-09-02 15:00:00:116 MTC@admin-PC: \"restart timer ti_wait_new_report....,cycle :0\"",
+            "2026-09-02 15:00:00:200 MTC@admin-PC: \"More than maximum allowable number of 376.2 (109)\"",
+            "2026-09-02 15:00:00:210 MTC@admin-PC: \"Meter reading busy (111)\"",
+            send("2026-09-02 15:00:01:000", missing, 3),
+            send("2026-09-02 15:00:01:010", ok, 4),
+            "2026-09-02 15:00:01:015 MTC@admin-PC: \"ReadMeter Success, mac addr:'020000011101'\"",
+            send("2026-09-02 15:00:02:000", missing, 5),
+            "2026-09-02 15:00:05:061 MTC@admin-PC: \"Total read time in middle:5.061000\"",
+            "2026-09-02 15:00:05:062 MTC@admin-PC: \"restart timer ti_wait_new_report....,cycle ..:1\"",
+            "2026-09-02 15:00:05:062 MTC@admin-PC: \"not in net mac { '01'O, '10'O, '01'O, '00'O, '00'O, '04'O }\"",
+            "2026-09-02 15:00:05:063 MTC@admin-PC: \"not in net mac { '01'O, '11'O, '01'O, '00'O, '00'O, '17'O }\"",
+            "2026-09-02 15:00:05:064 MTC@admin-PC: \"successRate=0.993103, NeedsuccessRate=0.980000\"",
+            "2026-09-02 15:00:05:065 MTC@admin-PC: \"read cycle reach max(3)\"",
+            "2026-09-02 15:00:05:066 MTC@admin-PC: \"First duration:2.000000\"",
+            "2026-09-02 15:00:05:067 MTC@admin-PC: \"Second duration:3.000000\"",
+            "2026-09-02 15:00:05:068 MTC@admin-PC: \"High Frequence RM fail, time consumed: 5.000000\"",
+        ]
+        log.write_text("\n".join(lines), encoding="gbk")
+
+        res = analyze_taish_log(log)
+
+        assert res.phase_count == 2
+        assert res.f101_received == 1
+        assert res.busy_counts["busy"] == 2
+        assert res.busy_code_counts == {"109": 1, "111": 1}
+        assert res.extra_resend_total == 1
+        assert res.extra_resend_counts[missing] == 1
+        assert res.extra_resend_counts[ok] == 0
+        assert res.topology_missing_addrs == {missing}
+        assert res.topology_never_ok == [missing]
+        assert [(event.kind, event.cycle) for event in res.cycle_events] == [
+            ("RESET", 0), ("ADVANCE", 1)
+        ]
+        assert res.cycle_max_values == [3]
+        assert len(res.idle_waits) == 1
+        assert res.idle_waits[0].seconds == pytest.approx(4.046)
+        assert res.last_success_rate is not None
+        assert res.last_success_rate[1] == pytest.approx(0.993103)
+        assert res.total_duration == pytest.approx(5.0)
+
+        report = format_report(res)
+        for text in (
+            "Recieved F101 应答（仅全局计数）: 1",
+            "109=1 111=1",
+            "额外补发: 1 次",
+            "最终未入网 MAC: 170000011101",
+            "未入网且无 Success: 170000011101",
+            "cycle 事件: RESET=1，ADVANCE=1",
+            "4.046 秒",
+        ):
+            assert text in report
