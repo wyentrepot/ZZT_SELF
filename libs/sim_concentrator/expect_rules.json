@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "source": "蒸馏库 03_QGDW10376.2_全帧类型.md §4.1 确认/否认帧·§4.15 并发抄表帧 + CCO实现逻辑/01-事务框架（aps_conf.h 单抄59s/并抄99s；重发间隔 6500/14000/18000/25000ms）",
+  "deny_codes": {
+    "0": "通信超时",
+    "1": "无效数据单元",
+    "2": "长度错",
+    "3": "校验错误",
+    "4": "信息类不存在",
+    "5": "格式错误",
+    "6": "表号重复",
+    "7": "表号不存在",
+    "8": "电表应用层无应答",
+    "9": "主节点忙",
+    "10": "主节点不支持此命令",
+    "11": "从节点不应答",
+    "12": "从节点不在网内",
+    "109": "超过最大并发数（6D，CCO aps_max_trans 上限）",
+    "110": "超过单个1376.2帧最大允许的电表协议报文条数（6E）",
+    "111": "正在抄读该表（6F）"
+  },
+  "timeout_tiers": {
+    "default": {
+      "seconds": 5,
+      "note": "查询/确认/设置类默认档（沿用原 expect_timeout=5s）"
+    },
+    "single_read": {
+      "seconds": 59,
+      "note": "单抄业务超时：CCO aps_conf.h METER_TRANS_MAX_SEC=59s（业务文档口径 60s）"
+    },
+    "batch_read": {
+      "seconds": 99,
+      "note": "并发抄表业务超时：CCO aps_conf.h 并抄 99s"
+    },
+    "resend_intervals_ms": {
+      "single_unicast": 6500,
+      "batch_unicast": 14000,
+      "broadcast": 18000,
+      "batch_offnet": 25000,
+      "note": "CCO 抄读重发间隔实测值（aps_transdata_state 策略表）"
+    }
+  },
+  "rules": [
+    {
+      "id": "er.02f1",
+      "match": { "afn": "02", "fn": 1 },
+      "expect": { "afn": "02", "fn": 1, "dir": "up", "form": "table" },
+      "timeout_tier": "single_read",
+      "desc": "数据转发（单抄）→ 02H-F1 抄读应答（嵌套 645/698 数据）"
+    },
+    {
+      "id": "er.03",
+      "match": { "afn": "03" },
+      "expect": { "afn": "self", "fn": "self", "dir": "up", "form": "table" },
+      "timeout_tier": "default",
+      "desc": "查询数据 → 同 AFN 同 Fn 数据帧"
+    },
+    {
+      "id": "er.05",
+      "match": { "afn": "05" },
+      "expect": { "afn": "00", "fn": 1, "dir": "up", "form": "confirm_or_deny" },
+      "timeout_tier": "default",
+      "desc": "控制命令 → 确认（00H-F1）或否认（00H-F2 + 错误状态字）"
+    },
+    {
+      "id": "er.10",
+      "match": { "afn": "10" },
+      "expect": { "afn": "self", "fn": "self", "dir": "up", "form": "table" },
+      "timeout_tier": "default",
+      "desc": "路由查询 → 同 AFN 同 Fn 数据帧"
+    },
+    {
+      "id": "er.11",
+      "match": { "afn": "11" },
+      "expect": { "afn": "00", "fn": 1, "dir": "up", "form": "confirm_or_deny" },
+      "timeout_tier": "default",
+      "desc": "路由设置 → 确认（00H-F1）或否认（00H-F2）"
+    },
+    {
+      "id": "er.12",
+      "match": { "afn": "12" },
+      "expect": { "afn": "00", "fn": 1, "dir": "up", "form": "confirm_or_deny" },
+      "timeout_tier": "default",
+      "desc": "路由控制 → 确认（00H-F1）或否认（00H-F2）"
+    },
+    {
+      "id": "er.13",
+      "match": { "afn": "13" },
+      "expect": { "afn": "self", "fn": "self", "dir": "up", "form": "table" },
+      "timeout_tier": "batch_read",
+      "desc": "路由数据转发（监控从节点）→ 同 AFN 同 Fn 应答"
+    },
+    {
+      "id": "er.f1",
+      "match": { "afn": "F1", "fn": 1 },
+      "expect": { "afn": "F1", "fn": 1, "dir": "up", "form": "table" },
+      "timeout_tier": "batch_read",
+      "desc": "并发抄表 → F1H-F1 抄读应答（失败表以 A1 回标）"
+    }
+  ],
+  "no_expect_afn": ["06"],
+  "no_expect_note": "06H 主动上报由模块侧发起，集中器侧下发无预期应答；如需感知用 recv_only"
+}

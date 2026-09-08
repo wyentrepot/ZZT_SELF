@@ -155,3 +155,25 @@ def _compare(got, want, op: str) -> bool:
     if op == "startswith":
         return str(got).startswith(str(want))
     return got == want
+
+
+def deny_info(decoded: dict) -> Optional[dict]:
+    """否认帧识别（REQS-0027 G2）：AFN=00H-F2 → 提取错误状态字并翻译人话。
+
+    适配器已把错误状态字解为 items（hex='6D'）；此处取码值并查 expect_rules。
+    """
+    if _afn_of(decoded) != 0x00 or _fn_of(decoded) != 2:
+        return None
+    hexv = None
+    for it in decoded.get("items", []):
+        if it.get("name") == "错误状态字":
+            hexv = it.get("hex")
+            break
+    if hexv is None:
+        return None
+    try:
+        code = int(str(hexv), 16)
+    except (TypeError, ValueError):
+        return None
+    from sim_concentrator.expect_rules import deny_text
+    return {"code": code, "code_hex": f"{code:02X}", "text": deny_text(code)}

@@ -196,8 +196,13 @@ workbench 外部：`/api/indexes/... → /api/listener/indexes/...`；别名路�
 | POST | `/open` | `{port?, mapping_id?, baudrate?, bytesize?, parity?, stopbits?}` 全可省（走映射默认） | `{open:true, port, mapping_id, port_identity, session_id, baudrate, bytesize, parity, stopbits}` | 409 打开失败 |
 | POST | `/close` | — | `{open:false}` | 200 |
 | POST | `/verify` | VerifyTask `{id?, port?/mapping_id?..., enable_responder=true, fail_fast=true, responders?, steps:[{send,expect,expect_timeout,...}]}` | 逐步判定 + `summary{total,pass,fail,verdict}`；空任务不碰串口仍返映射解析 | 409 |
-| POST | `/step` | `{send?, profile?, expect?, expect_timeout=5.0, expect_no_reply=false, recv_only=false, enable_responder=true, name?}`；send 只写 afn/fn+params（ADR-5，raw 报错） | 单步执行结果（seq 自增） | 422 / 409 |
+| POST | `/step` | `{send?, profile?, expect?, expect_timeout=null, auto_expect=true, expect_no_reply=false, recv_only=false, enable_responder=true, name?}`；send 只写 afn/fn+params（ADR-5，raw 报错）。REQS-0027：`expect_timeout=null` 时按 expect_rules per-Fn 档位自动取值（默认 5s/单抄 59s/并抄 99s）；`auto_expect=true` 且未显式 expect 时按规则库自动生成，结果附 `step.pairing{rule_id,desc,expect,form,timeout}`、否认帧附 `step.deny{code,code_hex,text}`、插播帧附 `step.bystanders[]` | 单步执行结果（seq 自增） | 422 / 409 |
 | POST | `/build` | `{afn, fn, params{}, direction=down, profile?, seq=1}` | **只构帧不发送**：`{hex, length}` | 422 |
+| GET | `/expect_rules` | — | 应答预期规则库（REQS-0027）：`{version, source, deny_codes, timeout_tiers{default 5s/single_read 59s/batch_read 99s/resend_intervals_ms}, rules[], no_expect_afn}` | 200 |
+| POST | `/batch_read` | `{meters[12位地址], max_concurrent=5, mode=single\|batch, protocol_type=2, timeout?, profile?, port?}`（REQS-0027 G5 滑窗任务） | 任务快照 `{job_id, meters_total, max_concurrent, timeout, in_flight, queued, done, success, failed, deny_breakdown, finished, rows[]}` | 422 / 409 |
+| GET | `/batch_read`；GET `/batch_read/{job_id}`；POST `/batch_read/{job_id}/stop` | — | 任务列表 / 单任务快照 / 停止（快照结构同上） | 404 |
+| GET | `/readings` | `source?（batch\|snapshot\|report）, result?（success\|deny\|timeout\|error）, since?, limit` | 统一抄读表格（G4）：`{stats{sent,replied,success,failed,success_rate,deny_breakdown}, rows[]}`；口径：超时计失败 | 200 |
+| GET | `/report_buckets` | `limit` | 主动上报分桶（G6）：`{buckets{F1..F5, F5_power 停复电}, total}` | 200 |
 | GET | `/frames` | `session_id?, direction:tx\|rx?, updown:up\|down?, afn?, fn?, kind?, run_id?, after_seq, limit≤500` | **`{session_id, entries[], next_after_seq, matched_total, has_more, counts{tx,rx,uplink}}`** —— 列表键是 `entries`（2026-08-31 b7647ab 前端曾误读 `frames` 键致卡"加载中"） | 404 无会话 |
 | GET | `/session` | — | `{current, sessions[]}`（sc-* 帧日志会话，落盘 data/logs/simcon/） | 200 |
 

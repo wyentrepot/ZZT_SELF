@@ -204,6 +204,45 @@ select.fld{appearance:none;cursor:pointer;
 .ff-unit{flex:none;font-size:11.5px;font-family:var(--font-mono);color:var(--color-fg-muted);background:var(--color-bg-elevated);
   border:1px solid var(--color-border-default);border-radius:5px;padding:3px 8px;min-width:34px;text-align:center}
 .ff-desc{font-size:11px;color:var(--color-fg-dim);line-height:1.5}
+/* REQS-0027 结果面板 */
+.panel{flex:none;display:flex;flex-direction:column;background:var(--color-bg-surface);
+  border-top:1px solid var(--color-border-strong);max-height:42%;min-height:96px}
+.panel.fold .p-body{display:none!important}
+.p-h{display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;flex:none;
+  background:var(--color-bg-raised);border-bottom:1px solid var(--color-border-default)}
+.p-h .sp{margin-left:auto}
+.p-body{flex:1;overflow:auto;min-height:0;padding:10px 12px}
+.p-body.p-col{display:none;flex-direction:column;gap:10px}
+.pbody-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.pairwrap{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch}
+.pairwrap .arrow{display:none}
+.pcard{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden;min-width:0}
+.pcard-h{display:flex;align-items:center;gap:8px;padding:7px 11px;background:var(--color-bg-elevated);border-bottom:1px solid var(--color-border-default);font-size:12px;font-weight:500}
+.pcard-in{padding:9px 11px;display:grid;gap:7px;font-size:12px}
+.pkv{display:flex;gap:8px;min-width:0}
+.pkv .k{flex:none;width:64px;color:var(--color-fg-dim);font-size:11px;padding-top:1px}
+.pkv .v{min-width:0;word-break:break-all;font-size:12px}
+.badge{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:11px;font-size:11.5px;font-weight:500}
+.badge--ok{background:var(--color-status-pass-bg);color:var(--color-status-pass);border:1px solid var(--color-status-pass-border)}
+.badge--deny{background:var(--color-status-fail-bg);color:var(--color-status-fail);border:1px solid var(--color-status-fail-border)}
+.badge--wait{background:var(--color-status-warn-bg,var(--color-bg-elevated));color:var(--color-status-warn);border:1px solid var(--color-status-warn,var(--color-border-strong))}
+.badge--idle{background:var(--color-bg-elevated);color:var(--color-fg-subtle);border:1px solid var(--color-border-default)}
+.cd-bar{height:4px;border-radius:2px;background:var(--color-bg-elevated);overflow:hidden}
+.cd-bar i{display:block;height:100%;background:var(--color-status-warn,var(--color-accent));border-radius:2px;transition:width .3s linear}
+.byst{display:flex;flex-direction:column;gap:4px}
+.byst .b-row{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--color-fg-subtle)}
+.statrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.statkv{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:5px 11px;min-width:70px}
+.statkv .k{font-size:10.5px;color:var(--color-fg-dim)}
+.statkv .v{font-size:15px;font-family:var(--font-mono);font-weight:500;color:var(--color-accent)}
+.statkv .v.v-ok{color:var(--color-status-pass)}.statkv .v.v-fail{color:var(--color-status-fail)}
+.mini-in{height:26px;padding:0 8px;border-radius:var(--radius-md);background:var(--color-bg-surface);border:1px solid var(--color-border-strong);color:var(--color-fg-default);font-size:12px}
+.meter-ta{min-height:64px;resize:vertical;padding:8px 10px;font-family:var(--font-mono);font-size:12px;line-height:1.6;
+  background:var(--color-bg-canvas);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);color:var(--color-fg-default)}
+.bkt-card{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:10px}
+.bkt-card .bkt-h{display:flex;align-items:center;gap:8px;padding:7px 11px;background:var(--color-bg-elevated);border-bottom:1px solid var(--color-border-default);font-size:12px;font-weight:500}
+.bkt-card .cnt{font-family:var(--font-mono);font-size:12px;color:var(--color-accent);background:var(--color-bg-canvas);border-radius:10px;padding:0 8px}
+progress.inflight{width:160px;height:8px}
 
 </style>
 </head>
@@ -264,6 +303,27 @@ select.fld{appearance:none;cursor:pointer;
 
   <div class="resp-strip" id="respStrip"><span class="lbl">内置应答</span><span class="hint" style="padding-top:2px">加载中…</span></div>
 
+  <!-- REQS-0027：结果面板（收发配对 / 抄读汇总 / 并发抄表 / 主动上报） -->
+  <section class="panel" id="panel">
+    <div class="p-h">
+      <div class="seg" id="segPanel">
+        <button class="on" data-p="pair">收发配对</button>
+        <button data-p="readings">抄读汇总</button>
+        <button data-p="batch">并发抄表</button>
+        <button data-p="reports">主动上报</button>
+      </div>
+      <span class="sp"></span>
+      <span class="chip chip--ghost" id="panelMeta"></span>
+      <button class="btn btn--sm btn--ghost" id="btnPanelToggle" title="收起/展开">▾</button>
+    </div>
+    <div class="p-body" id="pBodyPair">
+      <div class="empty" style="height:96px"><p>下发后此处呈现「下发帧 ↔ 应答帧」配对结果</p></div>
+    </div>
+    <div class="p-body" id="pBodyReadings" style="display:none"></div>
+    <div class="p-body p-col" id="pBodyBatch" style="display:none"></div>
+    <div class="p-body" id="pBodyReports" style="display:none"></div>
+  </section>
+
   <section class="traffic" id="traffic">
     <div class="tr-h" id="trH">
       <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
@@ -280,6 +340,6 @@ select.fld{appearance:none;cursor:pointer;
     <div class="tr-body" id="trBody"><div class="empty" style="height:120px"><p>打开串口后，会话帧日志将显示在这里</p></div></div>
   </section>
 </div>
-<script src="simcon.js?v=simcon-v2"></script>
+<script src="simcon.js?v=simcon-v3-0027"></script>
 </body>
 </html>
