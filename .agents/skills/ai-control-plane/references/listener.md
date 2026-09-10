@@ -106,7 +106,8 @@ curl "http://127.0.0.1:8790/api/ai/v1/listener/minute-periods?task_no=1&cco_tei=
 - **查档位**：`GET http://127.0.0.1:8765/api/version` → `parse_backend`（及 `dll_available`）。
 - `none` 时 `/api/parse`（8765）返回 503，不影响串口采集与日志索引。
 - **起网关**（Windows 侧，需人在 Windows 执行）：桌面 `wsl环境部署.bat` → [4] 启动 / [5] 停止；
-  或 `powershell -File uart-map.ps1 -Action start-gateway`（详见 `tools/scripts/README.md`）。
+  或 `powershell -File <WORKBENCH_ROOT>/tools/scripts/uart-map.ps1 -Action start-gateway`
+  （详见 `<WORKBENCH_ROOT>/tools/scripts/README.md`）。WSL/Linux 侧无此步骤。
 - **排查提示**：帧缺协议明细时先看 `parse_backend`；`none` → 先起网关再继续，别怀疑数据/链路。
 
 ## v2 语义查询与分层证据（REQS-0022，默认 AI 入口）

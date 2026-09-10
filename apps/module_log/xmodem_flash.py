@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 import pathlib
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Sequence
 
 # XMODEM 协议常量
 SOH = 0x01   # 128 字节块头
@@ -160,6 +160,31 @@ def _read_text_until_quiet(ser, timeout_ms: int, quiet_ms: int,
     return text
 
 
+def _read_text_until_marker(ser, timeout_ms: int, markers: Sequence[str],
+                            log: Optional[Callable[[str], None]] = None) -> str:
+    """读取文本直到任一 marker 出现或超时（**不因静默期提前返回**）。
+
+    用于 bootloader 成功提示确认：模块烧写 flash 期间可能长时间无输出，
+    用静默期判定会提前返回而错过 `"Image download OK!"`（实测 2026-09-10）。
+    """
+    buf = bytearray()
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        if ser.in_waiting > 0:
+            buf.extend(ser.read(ser.in_waiting))
+            text = buf.decode("ascii", errors="replace")
+            if any(marker in text for marker in markers):
+                if log:
+                    log(f"RX text: {text!r}")
+                return text
+        else:
+            time.sleep(0.025)
+    text = buf.decode("ascii", errors="replace")
+    if text and log:
+        log(f"RX text: {text!r}")
+    return text
+
+
 def _send_line(ser, line: str, log: Optional[Callable[[str], None]] = None) -> None:
     """发送一行 ASCII 文本（追加 CRLF），与 ps1 Send-Line 一致。"""
     if log:
@@ -247,6 +272,34 @@ def wait_xmodem_request(ser, timeout_ms: int = DEFAULT_XMODEM_TIMEOUT_MS,
     raise RuntimeError("Timed out waiting for XMODEM request.")
 
 
+def _read_xmodem_response(ser, timeout_ms: int,
+                          log: Optional[Callable[[str], None]] = None) -> int:
+    """读取 XMODEM 协议响应，**跳过非协议字节**。
+
+    模块 bootloader 在烧写 flash 时会输出进度点 ``'.'``(0x2E) 等文本，
+    若把这些字节直接当协议响应，发送端会误判为意外响应并重发，导致接收端
+    等不到下一个包而超时取消（实测 "timeout"→"cancel"→退回 shell）。
+    本函数只认 ACK(0x06)/NAK(0x15)/CAN(0x18)，其余字节一律丢弃，直到
+    超时（返回 -1，与 ``_read_byte`` 语义一致）。
+    """
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    skipped = 0
+    while time.monotonic() < deadline:
+        if ser.in_waiting > 0:
+            chunk = ser.read(ser.in_waiting)
+            for b in chunk:
+                if b in (ACK, NAK, CAN):
+                    if skipped and log:
+                        log(f"XMODEM skipped {skipped} non-protocol bytes")
+                    return b
+                skipped += 1
+        else:
+            time.sleep(0.005)
+    if skipped and log:
+        log(f"XMODEM skipped {skipped} non-protocol bytes before timeout")
+    return -1
+
+
 def send_xmodem(ser, image: bytes, use_crc: bool, log: Optional[Callable[[str], None]] = None,
                 progress: Optional[Callable[[int, int], None]] = None,
                 response_timeout_ms: int = DEFAULT_RESPONSE_TIMEOUT_MS,
@@ -255,7 +308,9 @@ def send_xmodem(ser, image: bytes, use_crc: bool, log: Optional[Callable[[str], 
     """以 XMODEM 发送整个镜像（与 460800upgrade.py 的 MENU_SEND_XMODEM 一致）。
 
     按 block_size 分块（默认 1024=XMODEM-1K，128=标准 XMODEM）；每块发送后
-    等 ACK（成功）或 NAK（重发）；发完发 EOT 等 ACK。
+    等 ACK（成功）或 NAK（重发）；发完发 EOT 等 ACK。响应读取使用
+    ``_read_xmodem_response`` 过滤非协议字节（模块烧写进度点/shell 回显），
+    避免 desync 导致接收端超时取消。
     progress(packet_no, total_packets) 供前端进度条。
     """
     packet_no = 1
@@ -273,7 +328,7 @@ def send_xmodem(ser, image: bytes, use_crc: bool, log: Optional[Callable[[str], 
         sent = False
         for retry in range(max_retries):
             ser.write(packet)
-            resp = _read_byte(ser, response_timeout_ms)
+            resp = _read_xmodem_response(ser, response_timeout_ms, log=log)
             if resp == ACK:
                 sent = True
                 offset += count
@@ -305,7 +360,7 @@ def send_xmodem(ser, image: bytes, use_crc: bool, log: Optional[Callable[[str], 
 
     for retry in range(max_retries):
         ser.write(bytes([EOT]))
-        resp = _read_byte(ser, response_timeout_ms)
+        resp = _read_xmodem_response(ser, response_timeout_ms, log=log)
         if resp == ACK:
             if log:
                 log("XMODEM EOT ACK")
@@ -377,7 +432,13 @@ def flash(ser, bin_path: str, slot: int = 0,
     send_xmodem(ser, image, use_crc, log=log, progress=progress,
                 block_size=DEFAULT_BLOCK_SIZE)
 
-    result_text = _read_text_until_quiet(ser, 12000, 500, log)
+    # 成功提示确认：必须等到 marker 或超时，**不能**因静默期提前返回。
+    # 实测（2026-09-10）：bootloader 收到 EOT/ACK 后烧写 flash 有 ~2s 静默，
+    # 再打印 "Image download OK!"；用 _read_text_until_quiet(500ms) 会提前返回
+    # 而误报失败（固件其实已写入）。这里用 marker 等待替代。
+    result_text = _read_text_until_marker(
+        ser, 15000, ("Image download OK", "download", "success"), log=log,
+    )
     if not any(k in result_text for k in ("Image download OK", "download", "success")):
         raise RuntimeError(
             "XMODEM ended but bootloader success text was not observed."
