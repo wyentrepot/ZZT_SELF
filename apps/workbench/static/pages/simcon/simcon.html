@@ -89,7 +89,7 @@ select.fld{appearance:none;cursor:pointer;
 .seg button{height:22px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--color-fg-subtle);transition:all .14s var(--ease-in-out)}
 .seg button:hover{color:var(--color-fg-default)}
 .seg button.on{background:var(--color-bg-hover);color:var(--color-fg-default)}
-.work{flex:1;display:grid;grid-template-columns:236px 256px 1fr;min-height:0}
+.work{flex:1;display:grid;grid-template-columns:300px 236px 256px 1fr;min-height:0}
 .col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--color-bg-surface)}
 .col+.col{border-left:1px solid var(--color-border-default)}
 .sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
@@ -214,6 +214,17 @@ select.fld{appearance:none;cursor:pointer;
 .p-body{flex:1;overflow:auto;min-height:0;padding:10px 12px}
 .p-body.p-col{display:none;flex-direction:column;gap:10px}
 .pbody-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+/* REQS-0030：左侧深化应用章节 */
+.deep-sec{display:flex;flex-direction:column;min-height:100%}
+.deep-sec-h{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:12px;font-weight:500;
+  color:var(--color-fg-default);border-bottom:1px solid var(--color-border-default);background:var(--color-bg-elevated);
+  position:sticky;top:0;z-index:1}
+.deep-sec-h .hint{margin-left:auto;font-size:10px}
+.deep-body{padding:10px;display:flex;flex-direction:column;gap:9px;overflow-y:auto}
+.deep-body .pbody-row{gap:6px}
+.deep-body .btn{padding:0 9px}
+.deep-body .rtab{font-size:11px}
+.deep-body .rtab th,.deep-body .rtab td{padding:4px 6px}
 .pairwrap{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:stretch}
 .pairwrap .arrow{display:none}
 .pcard{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden;min-width:0}
@@ -262,6 +273,16 @@ progress.inflight{width:160px;height:8px}
   </header>
 
   <section class="work">
+    <!-- REQS-0030：左侧独立章节「深化应用」（并发抄表小节） -->
+    <div class="col">
+      <div class="sec-h"><h3>深化应用</h3><span class="sp"></span><span class="hint">业务向导</span></div>
+      <div class="col-body" id="deepCol">
+        <div class="deep-sec">
+          <div class="deep-sec-h">并发抄表 <span class="hint">10H-F2 档案 → 勾选 → F1H-F1 下发 → 周期统计</span></div>
+          <div id="dpBody" class="deep-body"></div>
+        </div>
+      </div>
+    </div>
     <div class="col">
       <div class="sec-h"><h3>AFN 应用功能码</h3><span class="sp"></span><span class="hint" id="afnCnt"></span></div>
       <div class="col-body" id="afnCol"><div class="empty"><p>加载中…</p></div></div>
@@ -311,7 +332,6 @@ progress.inflight{width:160px;height:8px}
         <button data-p="readings">抄读汇总</button>
         <button data-p="batch">并发抄表</button>
         <button data-p="reports">主动上报</button>
-        <button data-p="deep">深化应用</button>
       </div>
       <span class="sp"></span>
       <span class="chip chip--ghost" id="panelMeta"></span>
@@ -323,7 +343,6 @@ progress.inflight{width:160px;height:8px}
     <div class="p-body" id="pBodyReadings" style="display:none"></div>
     <div class="p-body p-col" id="pBodyBatch" style="display:none"></div>
     <div class="p-body" id="pBodyReports" style="display:none"></div>
-    <div class="p-body p-col" id="pBodyDeep" style="display:none"></div>
   </section>
 
   <section class="traffic" id="traffic">

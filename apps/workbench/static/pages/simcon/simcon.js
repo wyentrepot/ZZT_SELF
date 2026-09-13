@@ -896,7 +896,7 @@
   var deepTimer = null, deepStatsPeriod = "15m";
 
   function renderDeepPanel() {
-    $("#pBodyDeep").innerHTML =
+    $("#dpBody").innerHTML =
       '<div class="pbody-row">' +
         '<button class="btn btn--sm btn--primary" id="dpQueryArchive">① 查档案</button>' +
         '<button class="btn btn--sm btn--ghost" id="dpQueryOnline">查在网</button>' +
@@ -1050,19 +1050,12 @@
     $("#pBodyReadings").style.display = tab === "readings" ? "" : "none";
     $("#pBodyBatch").style.display = tab === "batch" ? "" : "none";
     $("#pBodyReports").style.display = tab === "reports" ? "" : "none";
-    $("#pBodyDeep").style.display = tab === "deep" ? "" : "none";
     stopPanelTimers();
     if (tab === "readings") { loadReadings(); readTimer = setInterval(loadReadings, 3000); }
     if (tab === "reports") { loadReports(); rptTimer = setInterval(loadReports, 5000); }
     if (tab === "batch") {
       if (!$("#bcMeters")) renderBatchForm();
       if (batchJobId && !batchTimer) { pollBatch(); batchTimer = setInterval(pollBatch, 1000); }
-    }
-    if (tab === "deep") {
-      if (!$("#dpTable")) renderDeepPanel();
-      if (deepNodes().length) renderDeepTable();
-      loadDeepStats();
-      if (!deepTimer) deepTimer = setInterval(loadDeepStats, 10000);
     }
   }
 
@@ -1085,4 +1078,6 @@
   loadExpectRules();
   renderBatchForm();
   renderDeepPanel();
+  loadDeepStats();
+  deepTimer = setInterval(loadDeepStats, 10000);
 })();
