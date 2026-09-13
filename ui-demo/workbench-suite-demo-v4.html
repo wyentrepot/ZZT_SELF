@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="midnight">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全工作台 · 软件化统一壳 Demo v4</title>
+<!--
+  ════════════════════════════════════════════════════════════════════
+  全工作台软件化统一壳 · 交互演示原型（纯前端，数据为模拟）
+  功能基线：ui-demo/功能清单.md（REQS-0011，94 项）——本 demo 呈现 IA 骨架
+  与代表性内容，落地时按 功能核对表.md 方法逐条核对。
+  设计要点：
+  1. 骨架上升为全局壳：菜单栏 / 模块侧栏(可收缩) / 二级页签 / 全局Dock / 状态栏
+  2. 一级=模块(9个，沿用生产壳四组)，二级=模块内视图(恒定页签条)
+  3. 全局 Dock = 跨模块"示波器"：帧日志/日志流/事件，simcon 下发、模块日志
+     发送均会实时推送行到 Dock（演示全局联动）
+  4. 机制零破坏：生产壳 iframe 保活 / hash 路由 / 主题广播原样保留
+  快捷键：Ctrl+B 折叠侧栏 · Ctrl+J 折叠 Dock
+  ════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ── tokens（摘自 tokens-v2.css）──────────────────────────────── */
+:root{
+  --p-slate-950:#05080f; --p-slate-900:#0a1628; --p-slate-850:#0d1a30; --p-slate-800:#0f1f3d;
+  --p-slate-750:#152a4a; --p-slate-600:#2a3d50; --p-slate-300:#8296ad; --p-slate-200:#94a3b8;
+  --p-slate-150:#a8b6c8; --p-slate-100:#e8f0f7; --p-slate-50:#f4f6f9; --p-slate-0:#ffffff;
+  --p-cyan-600:#0891b2; --p-cyan-500:#06b6d4; --p-cyan-400:#22d3ee; --p-cyan-700:#0e7490; --p-cyan-ink:#04202e;
+  --p-teal-500:#2dd4bf; --p-teal-700:#0f766e; --p-amber-500:#f0b429; --p-amber-700:#b45309;
+  --p-green-500:#10b981; --p-green-700:#15803d; --p-orange-500:#f59e0b; --p-orange-700:#b45309;
+  --p-red-500:#ef4444; --p-red-700:#b91c1c; --p-blue-500:#5a94ff; --p-blue-700:#1d4ed8;
+  --p-purple-500:#a371f7; --p-purple-700:#7c3aed; --p-pink-500:#e879a8; --p-pink-700:#be3455;
+  --radius-sm:.25rem; --radius-md:.5rem; --radius-lg:.75rem;
+  --ease:cubic-bezier(.16,1,.3,1);
+  --font-sans:"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Mono",Consolas,ui-monospace,monospace;
+}
+:root, html[data-theme="midnight"]{
+  color-scheme:dark;
+  --bg-canvas:var(--p-slate-900); --bg-surface:var(--p-slate-800); --bg-raised:var(--p-slate-750);
+  --bg-elevated:#1b3555; --bg-input:var(--p-slate-850);
+  --bg-hover:rgb(255 255 255/.05);
+  --fg-default:var(--p-slate-100); --fg-muted:var(--p-slate-150); --fg-subtle:var(--p-slate-200);
+  --fg-dim:var(--p-slate-300);
+  --bd-default:rgb(255 255 255/.07); --bd-strong:rgb(255 255 255/.14); --bd-emphasis:rgb(255 255 255/.24);
+  --ac:var(--p-cyan-500); --ac-hover:var(--p-cyan-400); --ac-active:var(--p-cyan-600);
+  --ac-fg:var(--p-cyan-ink); --ac-soft:color-mix(in srgb,var(--p-cyan-500) 14%,transparent);
+  --rx:var(--p-teal-500); --rx-soft:color-mix(in srgb,var(--p-teal-500) 14%,transparent);
+  --tx:var(--p-amber-500); --tx-soft:color-mix(in srgb,var(--p-amber-500) 14%,transparent);
+  --ok:var(--p-green-500); --ok-bg:color-mix(in srgb,var(--p-green-500) 15%,transparent); --ok-bd:color-mix(in srgb,var(--p-green-500) 35%,transparent);
+  --warn:var(--p-orange-500); --warn-bg:color-mix(in srgb,var(--p-orange-500) 15%,transparent); --warn-bd:color-mix(in srgb,var(--p-orange-500) 35%,transparent);
+  --fail:var(--p-red-500); --fail-bg:color-mix(in srgb,var(--p-red-500) 15%,transparent); --fail-bd:color-mix(in srgb,var(--p-red-500) 35%,transparent);
+  --info:var(--p-blue-500); --info-bg:color-mix(in srgb,var(--p-blue-500) 15%,transparent); --info-bd:color-mix(in srgb,var(--p-blue-500) 35%,transparent);
+  --cc:var(--p-purple-500);
+  --shadow-pop:0 8px 24px rgb(0 0 0/.45);
+}
+html[data-theme="daylight"]{
+  color-scheme:light;
+  --bg-canvas:var(--p-slate-50); --bg-surface:var(--p-slate-0); --bg-raised:#eef2f7;
+  --bg-elevated:#e6ecf4; --bg-input:var(--p-slate-0);
+  --bg-hover:rgb(15 23 42/.05);
+  --fg-default:#0f172a; --fg-muted:#334155; --fg-subtle:#475569; --fg-dim:#5a6b80;
+  --bd-default:rgb(15 23 42/.10); --bd-strong:rgb(15 23 42/.20); --bd-emphasis:rgb(15 23 42/.30);
+  --ac:var(--p-cyan-500); --ac-hover:var(--p-cyan-600); --ac-active:var(--p-cyan-700);
+  --ac-fg:var(--p-cyan-ink); --ac-soft:color-mix(in srgb,var(--p-cyan-500) 12%,transparent);
+  --rx:var(--p-teal-700); --rx-soft:color-mix(in srgb,var(--p-teal-700) 12%,transparent);
+  --tx:var(--p-amber-700); --tx-soft:color-mix(in srgb,var(--p-amber-700) 12%,transparent);
+  --ok:var(--p-green-700); --ok-bg:color-mix(in srgb,var(--p-green-700) 12%,transparent); --ok-bd:color-mix(in srgb,var(--p-green-700) 30%,transparent);
+  --warn:var(--p-orange-700); --warn-bg:color-mix(in srgb,var(--p-orange-700) 12%,transparent); --warn-bd:color-mix(in srgb,var(--p-orange-700) 30%,transparent);
+  --fail:var(--p-red-700); --fail-bg:color-mix(in srgb,var(--p-red-700) 12%,transparent); --fail-bd:color-mix(in srgb,var(--p-red-700) 30%,transparent);
+  --info:var(--p-blue-700); --info-bg:color-mix(in srgb,var(--p-blue-700) 12%,transparent); --info-bd:color-mix(in srgb,var(--p-blue-700) 30%,transparent);
+  --cc:var(--p-purple-700);
+  --shadow-pop:0 8px 24px rgb(15 23 42/.18);
+}
+/* ── 基础 ────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--fg-default);background:var(--bg-canvas);overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--bd-strong);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--font-mono);font-variant-ligatures:none}
+.app{display:grid;height:100vh;
+  grid-template-rows:36px 1fr auto 26px;
+  grid-template-columns:auto 1fr;
+  grid-template-areas:"menubar menubar" "side main" "dock dock" "status status"}
+
+/* ── 菜单栏 ──────────────────────────────────────────────────── */
+.menubar{grid-area:menubar;display:flex;align-items:center;gap:2px;padding:0 10px;position:relative;z-index:80;
+  background:var(--bg-surface);border-bottom:1px solid var(--bd-strong)}
+.brand{display:flex;align-items:center;gap:8px;margin-right:12px}
+.brand .logo{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;color:var(--ac-fg);
+  background:linear-gradient(135deg,var(--ac),var(--ac-active));font-size:10px;font-weight:700}
+.brand b{font-size:13px;font-weight:600;white-space:nowrap}
+.menu{position:relative}
+.menu>button{height:26px;padding:0 11px;border-radius:var(--radius-md);font-size:12.5px;color:var(--fg-muted);display:flex;align-items:center;gap:5px}
+.menu>button:hover,.menu.open>button{background:var(--bg-hover);color:var(--fg-default)}
+.menu .dd{display:none;position:absolute;left:0;top:calc(100% + 4px);min-width:200px;z-index:90;
+  background:var(--bg-elevated);border:1px solid var(--bd-strong);border-radius:var(--radius-md);
+  box-shadow:var(--shadow-pop);padding:5px}
+.menu.open .dd{display:block}
+.menu .dd button{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border-radius:var(--radius-sm);
+  font-size:12.5px;color:var(--fg-muted);text-align:left;white-space:nowrap}
+.menu .dd button:hover{background:var(--bg-hover);color:var(--fg-default)}
+.menu .dd button .kb{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--fg-dim)}
+.menu .dd .sep{height:1px;background:var(--bd-default);margin:5px 4px}
+.conn-chip{display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 10px;margin-left:auto;border-radius:var(--radius-md);
+  background:var(--bg-raised);border:1px solid var(--bd-default);font-size:11.5px;white-space:nowrap}
+.conn-chip .dot{width:6px;height:6px;border-radius:50%;background:var(--fail)}
+.conn-chip.on .dot{background:var(--ok);box-shadow:0 0 5px var(--ok)}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:var(--radius-md);
+  color:var(--fg-dim);transition:all .14s}
+.icon-btn:hover{background:var(--bg-hover);color:var(--fg-default)}
+.icon-btn svg{width:14px;height:14px}
+
+/* ── 侧栏：模块导航 ──────────────────────────────────────────── */
+.side{grid-area:side;display:flex;flex-direction:column;background:var(--bg-surface);
+  border-right:1px solid var(--bd-default);width:196px;transition:width .2s var(--ease);overflow:hidden}
+.nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px}
+.nav-label{font-size:10px;letter-spacing:.14em;color:var(--fg-dim);padding:9px 8px 3px;white-space:nowrap}
+.it{display:flex;align-items:center;gap:8px;width:100%;height:31px;padding:0 8px;border-radius:var(--radius-md);
+  color:var(--fg-muted);font-size:12.5px;white-space:nowrap;position:relative;transition:background .14s,color .14s}
+.it svg{width:15px;height:15px;flex:none}
+.it .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+.it .ct{font-family:var(--font-mono);font-size:10px;background:var(--bg-raised);color:var(--fg-dim);border-radius:8px;padding:0 6px}
+.it:hover{background:var(--bg-hover);color:var(--fg-default)}
+.it.on{background:var(--ac-soft);color:var(--ac)}
+.it.on::before{content:"";position:absolute;left:-8px;top:4px;bottom:4px;width:2.5px;border-radius:0 2px 2px 0;background:var(--ac)}
+.it.on .ct{background:var(--ac);color:var(--ac-fg)}
+.it .dot{width:6px;height:6px;border-radius:50%;flex:none}
+.dot.ok{background:var(--ok)}.dot.err{background:var(--fail)}.dot.idle{background:var(--fg-dim);opacity:.5}
+.side-foot{flex:none;padding:5px 8px;border-top:1px solid var(--bd-default)}
+.side-foot .it{height:28px}
+body.rail .side{width:50px}
+body.rail .nav-label{opacity:0;height:5px;padding:0;pointer-events:none}
+body.rail .it .nm,body.rail .it .ct,body.rail .it .dot{display:none}
+body.rail .it{justify-content:center;padding:0}
+body.rail .it[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:calc(100% + 8px);top:50%;
+  transform:translateY(-50%);background:var(--bg-elevated);color:var(--fg-default);border:1px solid var(--bd-strong);
+  border-radius:var(--radius-md);padding:3px 9px;font-size:12px;white-space:nowrap;z-index:95;box-shadow:var(--shadow-pop)}
+body.rail #btnRail svg{transform:rotate(180deg)}
+
+/* ── 主区：模块 + 二级页签 ───────────────────────────────────── */
+.main{grid-area:main;min-width:0;min-height:0;display:flex;flex-direction:column}
+.mod{display:none;flex:1;min-height:0;flex-direction:column}
+.mod.on{display:flex}
+.ztabs{flex:none;display:flex;align-items:center;gap:2px;height:38px;padding:0 10px;
+  background:var(--bg-surface);border-bottom:1px solid var(--bd-default)}
+.ztabs .mod-name{font-size:12.5px;font-weight:600;color:var(--fg-default);padding:0 10px 0 2px;margin-right:4px;
+  border-right:1px solid var(--bd-default);display:flex;align-items:center;gap:7px}
+.ztabs .mod-name svg{width:14px;height:14px;color:var(--ac)}
+.ztabs button.zt{height:27px;padding:0 12px;font-size:12px;color:var(--fg-dim);position:relative;font-weight:500;border-radius:var(--radius-sm) var(--radius-sm) 0 0}
+.ztabs button.zt:hover{color:var(--fg-default)}
+.ztabs button.zt.on{color:var(--ac)}
+.ztabs button.zt.on::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:2px;background:var(--ac)}
+.ztabs .sp{flex:1}
+.zv{display:none;flex:1;min-height:0;overflow-y:auto;padding:14px 16px 18px}
+.zv.on{display:block}
+.mod-head{flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--bg-surface);
+  border-bottom:1px solid var(--bd-default);flex-wrap:wrap}
+.mod-head .lbl{font-size:12px;color:var(--fg-dim)}
+.mod-body{flex:1;min-height:0;overflow:auto;padding:14px 16px}
+
+/* ── 通用组件 ───────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 12px;
+  border-radius:var(--radius-md);border:1px solid var(--bd-strong);background:var(--bg-elevated);color:var(--fg-muted);
+  font-size:12px;font-weight:500;transition:all .14s;white-space:nowrap}
+.btn:hover{background:var(--bg-hover);color:var(--fg-default);border-color:var(--bd-emphasis)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:linear-gradient(180deg,var(--ac),var(--ac-active));color:var(--ac-fg);border-color:var(--ac);font-weight:500}
+.btn--primary:hover{background:var(--ac-hover);color:var(--ac-fg)}
+.btn--sm{height:24px;padding:0 9px;font-size:11.5px}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--fg-subtle)}
+.btn--ghost:hover{background:var(--bg-elevated);color:var(--fg-default)}
+.btn--danger{background:var(--fail-bg);border-color:var(--fail-bd);color:var(--fail)}
+.fld{width:100%;height:28px;padding:0 8px;border-radius:var(--radius-md);background:var(--bg-input);
+  border:1px solid var(--bd-strong);color:var(--fg-default);font-size:12px;transition:all .14s}
+.fld:focus{outline:none;border-color:var(--ac);box-shadow:0 0 0 3px var(--ac-soft)}
+select.fld{appearance:none;cursor:pointer;padding-right:24px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 8px center}
+.chip{display:inline-flex;align-items:center;gap:5px;height:19px;padding:0 7px;border-radius:var(--radius-sm);
+  font-size:10.5px;font-weight:500;background:var(--bg-elevated);color:var(--fg-muted);border:1px solid var(--bd-default);white-space:nowrap}
+.chip--ac{background:var(--ac-soft);color:var(--ac);border-color:var(--ac)}
+.chip--tx{background:var(--tx-soft);color:var(--tx);border-color:var(--tx)}
+.chip--rx{background:var(--rx-soft);color:var(--rx);border-color:var(--rx)}
+.chip--ok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-bd)}
+.chip--fail{background:var(--fail-bg);color:var(--fail);border-color:var(--fail-bd)}
+.chip--wait{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-bd)}
+.chip--info{background:var(--info-bg);color:var(--info);border-color:var(--info-bd)}
+.chip--ghost{background:transparent;color:var(--fg-dim)}
+.seg{display:inline-flex;background:var(--bg-input);border:1px solid var(--bd-strong);border-radius:var(--radius-md);padding:2px;gap:2px}
+.seg button{height:20px;padding:0 9px;border-radius:4px;font-size:11px;color:var(--fg-dim)}
+.seg button.on{background:var(--bg-hover);color:var(--fg-default)}
+.card{background:var(--bg-surface);border:1px solid var(--bd-default);border-radius:var(--radius-lg);overflow:hidden;min-width:0}
+.card-h{display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--bg-raised);
+  border-bottom:1px solid var(--bd-default);font-size:12px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:10.5px;color:var(--fg-dim);font-weight:400}
+.card-in{padding:12px}
+.cols{display:grid;gap:12px}
+.cols-2{grid-template-columns:1fr 1fr}
+.cols-3{grid-template-columns:repeat(3,1fr)}
+.cols-4{grid-template-columns:repeat(4,1fr)}
+.cols-lm{grid-template-columns:260px 1fr}
+.cols-lmm{grid-template-columns:200px 220px 1fr}
+.hint{font-size:11px;color:var(--fg-dim)}
+.spacer{flex:1}
+.kv{display:flex;gap:8px;padding:5px 0;font-size:12px;border-bottom:1px solid var(--bd-default)}
+.kv:last-child{border-bottom:none}
+.kv .k{width:96px;flex:none;color:var(--fg-dim)}
+.kv .v{font-family:var(--font-mono);color:var(--fg-default);min-width:0;word-break:break-all}
+.ft{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed}
+.ft th{text-align:left;font-weight:400;font-size:10px;letter-spacing:.07em;color:var(--fg-dim);padding:6px 9px;
+  border-bottom:1px solid var(--bd-default);background:var(--bg-raised);position:sticky;top:0;z-index:2;white-space:nowrap}
+.ft td{padding:5px 9px;border-bottom:1px solid var(--bd-default);color:var(--fg-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ft tr:hover td{background:var(--bg-hover)}
+.ft .mono-cell{font-family:var(--font-mono);font-size:11px;color:var(--fg-default)}
+.ft input[type=checkbox]{accent-color:var(--ac);width:13px;height:13px;cursor:pointer}
+.f-row{display:flex;flex-direction:column;gap:3px;min-width:0}
+.f-label{font-size:11.5px;font-weight:500;color:var(--fg-default)}
+.f-desc{font-size:10.5px;color:var(--fg-dim)}
+.banner{display:flex;align-items:center;gap:8px;padding:8px 13px;border-radius:var(--radius-md);font-size:12px;
+  background:var(--info-bg);border:1px solid var(--info-bd);color:var(--fg-muted);margin-bottom:12px}
+.statkv{background:var(--bg-raised);border:1px solid var(--bd-default);border-radius:var(--radius-md);padding:7px 13px;min-width:90px}
+.statkv .k{display:block;font-size:10px;color:var(--fg-dim)}
+.statkv .v{font-size:16px;font-family:var(--font-mono);font-weight:500;color:var(--ac)}
+.statkv .v.v-ok{color:var(--ok)}.statkv .v.v-fail{color:var(--fail)}.statkv .v.v-warn{color:var(--warn)}
+.sw{width:32px;height:18px;border-radius:10px;background:var(--bg-input);border:1px solid var(--bd-strong);position:relative;flex:none;transition:all .18s}
+.sw::after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--fg-dim);transition:all .18s}
+.sw[aria-checked=true]{background:var(--ac);border-color:var(--ac)}
+.sw[aria-checked=true]::after{left:16px;background:var(--ac-fg)}
+.hex{font-family:var(--font-mono);font-size:12px;line-height:1.9;letter-spacing:.04em;word-break:break-all;
+  background:var(--bg-canvas);border:1px solid var(--bd-default);border-radius:var(--radius-md);padding:10px 12px}
+.hx{padding:1px 3px;border-radius:3px}
+.s-68,.s-16,.s-L{color:var(--cc)}.s-C{color:var(--warn)}.s-R{color:var(--fg-subtle)}.s-A{color:var(--rx)}
+.s-AFN{color:var(--ac);font-weight:600}.s-DT{color:var(--info)}.s-DU{color:var(--fg-default)}.s-CS{color:var(--warn)}
+.steps{display:flex;align-items:center;gap:0;margin-bottom:12px}
+.step{display:flex;align-items:center;gap:8px;padding:6px 13px;border-radius:var(--radius-md);font-size:12px;
+  color:var(--fg-dim);background:var(--bg-surface);border:1px solid var(--bd-default)}
+.step .no{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-mono);font-size:10.5px;
+  background:var(--bg-raised);border:1px solid var(--bd-strong);color:var(--fg-dim)}
+.step.done .no{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok)}
+.step.cur{color:var(--ac);border-color:var(--ac);background:var(--ac-soft)}
+.step.cur .no{background:var(--ac);border-color:var(--ac);color:var(--ac-fg)}
+.step-link{width:22px;height:1px;background:var(--bd-strong)}
+.logbox{font-family:var(--font-mono);font-size:11.5px;line-height:1.75;background:var(--bg-canvas);
+  border:1px solid var(--bd-default);border-radius:var(--radius-md);padding:10px 12px;overflow:auto}
+.lg-rx{color:var(--rx)}.lg-tx{color:var(--tx)}.lg-ev{color:var(--info)}.lg-err{color:var(--fail)}
+.lg-tm{color:var(--fg-dim);margin-right:8px}
+.timeline{display:flex;flex-direction:column}
+.tl-row{display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid var(--bd-default);font-size:12px}
+.tl-row:last-child{border-bottom:none}
+.tl-no{width:22px;height:22px;border-radius:50%;background:var(--ac-soft);color:var(--ac);display:grid;place-items:center;
+  font-family:var(--font-mono);font-size:11px;flex:none}
+.tl-ms{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--fg-dim)}
+.threecol{display:grid;grid-template-columns:250px 260px 1fr;gap:12px;min-height:0;flex:1}
+.col-list{overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.pick{display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:var(--radius-md);text-align:left;
+  border:1px solid var(--bd-default);background:var(--bg-surface);transition:all .14s}
+.pick:hover{background:var(--bg-hover)}
+.pick.on{border-color:var(--ac);background:var(--ac-soft)}
+.pick .t{flex:1;min-width:0}
+.pick .t b{display:block;font-size:12px;font-weight:500;color:var(--fg-default)}
+.pick .t span{font-size:10.5px;color:var(--fg-dim);font-family:var(--font-mono)}
+.pager{display:flex;align-items:center;gap:8px;padding:8px 10px;border-top:1px solid var(--bd-default);font-size:11px;color:var(--fg-dim)}
+
+/* ── 全局 Dock ───────────────────────────────────────────────── */
+.dock{grid-area:dock;display:flex;flex-direction:column;position:relative;background:var(--bg-surface);
+  border-top:1px solid var(--bd-strong);height:190px;min-height:34px;transition:height .16s var(--ease)}
+.dock.fold{height:34px}
+.dock-grip{position:absolute;top:-3px;left:0;right:0;height:6px;cursor:ns-resize;z-index:5}
+.dock.fold .dock-grip{cursor:default}
+.dock-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;background:var(--bg-raised)}
+.dock-h .car{width:12px;height:12px;color:var(--fg-dim);transition:transform .16s;cursor:pointer}
+.dock:not(.fold) .dock-h .car{transform:rotate(90deg)}
+.dock-h .dt{font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:8px}
+.dock-h .dtab{height:22px;padding:0 10px;border-radius:var(--radius-sm);font-size:11.5px;color:var(--fg-dim)}
+.dock-h .dtab:hover{color:var(--fg-default)}
+.dock-h .dtab.on{background:var(--bg-hover);color:var(--fg-default)}
+.dock-b{flex:1;min-height:0;overflow:auto;display:none}
+.dock:not(.fold) .dock-b{display:block}
+.dock .dv{display:none}
+.dock .dv.on{display:block}
+.dk-row{display:flex;align-items:center;gap:10px;padding:4px 14px;border-bottom:1px solid var(--bd-default);
+  font-family:var(--font-mono);font-size:11px}
+.dk-row:hover{background:var(--bg-hover)}
+.dk-row .tm{color:var(--fg-dim);flex:none;width:82px}
+.dk-row .src{flex:none;width:70px;color:var(--fg-dim)}
+.dk-row .hexv{color:var(--fg-subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.dir{display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:10px;font-weight:600;
+  width:30px;flex:none;padding:1px 0;border-radius:3px}
+.dir.tx{color:var(--tx);background:var(--tx-soft)}
+.dir.rx{color:var(--rx);background:var(--rx-soft)}
+.dir.ev{color:var(--info);background:var(--info-bg)}
+
+/* ── 状态栏 ──────────────────────────────────────────────────── */
+.statusbar{grid-area:status;display:flex;align-items:center;gap:14px;padding:0 12px;font-size:11px;
+  background:var(--bg-surface);border-top:1px solid var(--bd-default);color:var(--fg-dim);white-space:nowrap;overflow:hidden}
+.statusbar .kv{display:inline-flex;align-items:center;gap:5px}
+.statusbar .kv b{font-family:var(--font-mono);font-weight:500;color:var(--fg-muted)}
+.statusbar .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.statusbar .sp{flex:1}
+.statusbar .demo{opacity:.75}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══ 菜单栏 ═══ -->
+  <header class="menubar">
+    <div class="brand"><span class="logo">SC</span><b>侦听台改造 · 工作台</b></div>
+    <div class="menu" id="mSession">
+      <button>会话 <span style="font-size:9px">▾</span></button>
+      <div class="dd">
+        <button>串口会话管理…</button>
+        <button>Profile 一键应用（四槽）</button>
+        <div class="sep"></div>
+        <button id="miDisconnect">断开所有串口</button>
+      </div>
+    </div>
+    <div class="menu" id="mData">
+      <button>数据 <span style="font-size:9px">▾</span></button>
+      <div class="dd">
+        <button>导入日志文件…</button>
+        <button>建立解析索引</button>
+        <div class="sep"></div>
+        <button>导出帧快照…</button>
+        <button>导出抄表 Excel</button>
+      </div>
+    </div>
+    <div class="menu" id="mView">
+      <button>视图 <span style="font-size:9px">▾</span></button>
+      <div class="dd">
+        <button data-act="theme">切换主题（墨夜 / 晴昼）</button>
+        <button data-act="rail">折叠侧栏<span class="kb">Ctrl+B</span></button>
+        <button data-act="dock">折叠底部 Dock<span class="kb">Ctrl+J</span></button>
+      </div>
+    </div>
+    <div class="menu" id="mHelp">
+      <button>帮助 <span style="font-size:9px">▾</span></button>
+      <div class="dd">
+        <button>协议口径说明（02号代码卡 Fn=1）</button>
+        <button>键盘快捷键</button>
+        <div class="sep"></div>
+        <button>关于工作台…</button>
+      </div>
+    </div>
+    <span class="conn-chip on" id="connChip"><span class="dot"></span>COM3 · 9600,E · anhui</span>
+    <button class="icon-btn" id="btnTheme" title="切换主题" aria-label="切换主题">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
+  </header>
+
+  <!-- ═══ 侧栏：模块导航 ═══ -->
+  <aside class="side" aria-label="模块导航">
+    <nav class="nav">
+      <div class="nav-label">验证</div>
+      <button class="it" data-mod="workbench" data-tip="验证工作台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+        <span class="nm">验证工作台</span><span class="ct">Runs</span>
+      </button>
+      <div class="nav-label">设备</div>
+      <button class="it" data-mod="listener" data-tip="侦听台">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/></svg>
+        <span class="nm">侦听台</span><span class="dot ok" title="DLL 已连接"></span>
+      </button>
+      <button class="it" data-mod="modulelog" data-tip="模块日志">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
+        <span class="nm">模块日志</span><span class="ct">2</span>
+      </button>
+      <button class="it" data-mod="simcon" data-tip="模拟集中器">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>
+        <span class="nm">模拟集中器</span><span class="ct">4</span>
+      </button>
+      <button class="it" data-mod="serial" data-tip="串口配置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>
+        <span class="nm">串口配置</span><span class="ct">4槽</span>
+      </button>
+      <div class="nav-label">辅助</div>
+      <button class="it" data-mod="trace" data-tip="报文追踪">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span class="nm">报文追踪</span>
+      </button>
+      <button class="it" data-mod="dict" data-tip="协议字典">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <span class="nm">协议字典</span>
+      </button>
+      <button class="it" data-mod="scenario" data-tip="场景脚本">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span class="nm">场景脚本</span>
+      </button>
+      <div class="nav-label">维护</div>
+      <button class="it" data-mod="maintenance" data-tip="工作台状态">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+        <span class="nm">工作台状态</span>
+      </button>
+    </nav>
+    <div class="side-foot">
+      <button class="it" id="btnRail" data-tip="展开菜单 (Ctrl+B)" style="width:100%">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+        <span class="nm">收起菜单</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══ 主区：9 个模块 ═══ -->
+  <main class="main">
+
+    <!-- ── 验证工作台 ── -->
+    <section class="mod" id="mod-workbench">
+      <div class="ztabs"><span class="mod-name">验证工作台</span><span class="hint">场景编排 → 执行 Run → 证据下钻</span><span class="sp"></span><span class="chip chip--ghost">run-20260913-014</span></div>
+      <div class="zv on">
+        <div class="cols cols-3">
+          <div class="card">
+            <div class="card-h">① 场景与 Run 参数<span class="hint">ADR-5 语义化参数</span></div>
+            <div class="card-in" style="display:grid;gap:10px">
+              <div class="f-row"><span class="f-label">场景</span>
+                <select class="fld"><option>分钟采集 · 基本上报周期验证</option><option>并发抄表 · 20表满块</option><option>烧录 · image0 切换</option></select></div>
+              <div class="f-row"><span class="f-label">固件版本</span><input class="fld mono" value="V2.3.1-rc2"></div>
+              <div class="f-row"><span class="f-label">commit</span><input class="fld mono" value="4d4a4ba"></div>
+              <div class="f-row"><span class="f-label">日志目录</span><input class="fld mono" value="D:\logs\runs\0913"></div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox">跳过烧录</label>
+                <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox">跳过激励</label>
+                <label style="display:flex;gap:5px;align-items:center;font-size:12px"><input type="checkbox">跳过反馈</label>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:2px">
+                <button class="btn btn--primary" id="btnRun">▶ 执行 Run</button>
+                <button class="btn btn--sm">↻ 刷新场景</button>
+                <button class="btn btn--sm btn--danger" style="display:none">✕ 取消</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h">② Run 结果<span class="chip chip--ok">passed</span><span class="hint">run-20260913-014</span></div>
+            <div class="card-in">
+              <div class="timeline">
+                <div class="tl-row"><span class="tl-no">1</span><span>烧录</span><span class="chip chip--ok">ok</span><span class="tl-ms">42.1s</span></div>
+                <div class="tl-row"><span class="tl-no">2</span><span>激励 · 并发抄表下发</span><span class="chip chip--ok">ok</span><span class="tl-ms">1.2s</span></div>
+                <div class="tl-row"><span class="tl-no">3</span><span>反馈 · 应答配对</span><span class="chip chip--ok">ok</span><span class="tl-ms">0.9s</span></div>
+                <div class="tl-row"><span class="tl-no">4</span><span>证据归档</span><span class="chip chip--ok">ok</span><span class="tl-ms">0.3s</span></div>
+              </div>
+              <div class="card-h" style="margin:10px -12px -12px;border-left:none;border-right:none;border-bottom:none">④ 证据下钻<span class="hint">按来源分组 · 共 14 条</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h">③ 历史 Runs<span class="hint">终态后自动刷新</span></div>
+            <div class="col-list" style="padding:8px">
+              <button class="pick on"><span class="t"><b>分钟采集 · 基本上报周期验证</b><span>run-014 · passed · 09-13 21:47</span></span><span class="chip chip--ok">passed</span></button>
+              <button class="pick"><span class="t"><b>并发抄表 · 20表满块</b><span>run-013 · passed · 09-13 20:31</span></span><span class="chip chip--ok">passed</span></button>
+              <button class="pick"><span class="t"><b>烧录 · image0 切换</b><span>run-012 · failed · 09-13 19:02</span></span><span class="chip chip--fail">failed</span></button>
+              <button class="pick"><span class="t"><b>档案查询 · 全网 128 台</b><span>run-011 · passed · 09-13 18:44</span></span><span class="chip chip--ok">passed</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 侦听台（5 视图） ── -->
+    <section class="mod" id="mod-listener">
+      <div class="ztabs">
+        <span class="mod-name">侦听台<span class="chip chip--ok" style="margin-left:6px">GwHPLCAnalysis.dll</span></span>
+        <button class="zt on" data-z="lz-pro">新版帧浏览</button>
+        <button class="zt" data-z="lz-classic">帧浏览·经典</button>
+        <button class="zt" data-z="lz-minute">分钟采集分析</button>
+        <button class="zt" data-z="lz-task">任务配置统计</button>
+        <button class="zt" data-z="lz-load">网络承载评估</button>
+      </div>
+      <div class="mod-head">
+        <span class="lbl">全局筛选</span>
+        <input class="fld mono" style="width:150px" placeholder="NID" value="B4AC1200">
+        <input class="fld mono" style="width:130px" placeholder="起始时间" value="09-13 00:00">
+        <input class="fld mono" style="width:130px" placeholder="结束时间">
+        <button class="btn btn--sm btn--primary">应用筛选</button>
+        <span class="chip chip--ac">NID = B4AC1200</span>
+        <span class="chip chip--ghost">09-13 00:00 起</span>
+        <span class="hint">当前条件贯通全部 5 个视图</span>
+      </div>
+
+      <!-- 4A 新版帧浏览 -->
+      <div class="zv on" data-z="lz-pro" style="overflow:hidden">
+        <div class="threecol" style="height:100%">
+          <div class="card" style="display:flex;flex-direction:column">
+            <div class="card-h">列1 · 筛选</div>
+            <div class="card-in" style="display:grid;gap:9px;overflow-y:auto">
+              <div class="f-row"><span class="f-label">frm_type / 摘要</span><input class="fld mono" placeholder="如 0x39 / 信标"></div>
+              <div class="f-row"><span class="f-label">NID</span><input class="fld mono" value="B4AC1200"></div>
+              <div class="f-desc">数据入口：侦听台日志已建立索引 87,345 帧</div>
+              <button class="btn btn--sm">刷新索引</button>
+              <button class="btn btn--sm btn--ghost">打开报文追踪 →</button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0">
+            <div class="card-h">列2 · 帧索引<span class="chip chip--ghost" id="proCnt">12 / 87,345</span></div>
+            <div style="flex:1;overflow:auto">
+              <table class="ft"><thead><tr><th style="width:44px">#</th><th style="width:70px">时间</th><th>类型</th><th>NID</th><th style="width:74px">长度</th></tr></thead>
+              <tbody id="proIdx"></tbody></table>
+            </div>
+            <div class="pager"><button class="btn btn--sm btn--ghost">‹</button><span>第 1 / 7279 页</span><button class="btn btn--sm btn--ghost">›</button></div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0">
+            <div class="card-h">列3 · 深度解析<span class="chip chip--ac">数据帧 0x39</span><span class="spacer"></span><button class="btn btn--sm">feature_hint 送报文追踪 →</button></div>
+            <div class="card-in" style="overflow-y:auto;display:grid;gap:10px">
+              <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="chip chip--ac">基础解析</span><span class="chip chip--ghost">应用层展开</span><span class="chip chip--ghost">完整 JSON</span></div>
+              <div>
+                <div class="kv"><span class="k">帧类型</span><span class="v">0x39 数据帧</span></div>
+                <div class="kv"><span class="k">NID</span><span class="v">B4AC1200</span></div>
+                <div class="kv"><span class="k">源 → 目的</span><span class="v">STA 71 02 → CCO 00 00</span></div>
+                <div class="kv"><span class="k">信道</span><span class="v">3</span></div>
+                <div class="kv"><span class="k">解析分层</span><span class="v">MAC ✓ → NET ✓ → APP ✓（parse-stages）</span></div>
+              </div>
+              <div class="hex"><span class="s-68 hx">68</span> <span class="s-L hx">A0 23</span> <span class="s-C hx">04</span> <span class="s-R hx">00</span> <span class="s-A hx">68 8A 0A 10</span> <span class="s-AFN hx">71 02</span> <span class="s-DT hx">00 00 00 00</span> <span class="s-DU hx">9E 16</span></div>
+              <div style="display:flex;gap:8px"><button class="btn btn--sm">复制原始十六进制</button><button class="btn btn--sm btn--ghost">完整 JSON</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4B 帧浏览·经典 -->
+      <div class="zv" data-z="lz-classic">
+        <div class="cols cols-2">
+          <div class="card">
+            <div class="card-h">01 · 数据源<span class="hint">日志文件分析 / 串口实时监听</span></div>
+            <div class="card-in" style="display:grid;gap:9px">
+              <div class="seg"><button>日志文件分析</button><button class="on">串口实时监听</button></div>
+              <div style="display:flex;gap:8px"><input class="fld mono" value="\\\\COM3" style="flex:1"><button class="btn btn--sm">刷新</button></div>
+              <div style="display:flex;gap:8px"><select class="fld" style="width:90px"><option>9600</option></select><select class="fld" style="width:70px"><option>8</option></select><select class="fld" style="width:70px"><option>偶 E</option></select><button class="btn btn--sm btn--primary">启动采集</button><button class="btn btn--sm">停止</button></div>
+              <div class="f-row"><span class="f-label">单帧调试</span>
+                <textarea class="fld mono" rows="2" placeholder="十六进制粘贴，如 68 A0 23 04 …"></textarea></div>
+              <button class="btn btn--sm">解析这一帧</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h">02 · 帧索引<span class="hint">NID 列贯通全局筛选</span></div>
+            <div style="max-height:260px;overflow:auto">
+              <table class="ft"><thead><tr><th style="width:40px">#</th><th>日志时间</th><th>帧类型</th><th>NID</th><th>源→目的</th><th style="width:56px">长度</th><th style="width:60px">状态</th></tr></thead>
+              <tbody id="clsIdx"></tbody></table>
+            </div>
+            <div class="pager"><button class="btn btn--sm btn--ghost">上一页</button><span>第 1 / 7279 页</span><input class="fld mono" style="width:56px;height:22px" value="1"><button class="btn btn--sm btn--ghost">跳转</button><button class="btn btn--sm btn--ghost">下一页</button><span class="spacer"></span><span>缓存命中 500/页</span></div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <div class="card-h">03 · 深度解析<span class="chip chip--ac">基础解析</span><span class="chip chip--ghost">应用层展开</span><span class="spacer"></span><button class="btn btn--sm btn--ghost">复制</button></div>
+          <div class="card-in"><div class="hex"><span class="s-68 hx">68</span> <span class="s-L hx">A0 23</span> <span class="s-C hx">04</span> <span class="s-R hx">00</span> <span class="s-A hx">68 8A 0A 10 71 02 00 00 00 00</span> <span class="s-AFN hx">0C</span> <span class="s-DT hx">01 39</span> <span class="s-DU hx">00 39 00 71 02 00 00 07 8E 01 02 03 04 05 06 07</span> <span class="s-CS hx">5C</span> <span class="s-16 hx">16</span></div></div>
+        </div>
+      </div>
+
+      <!-- 4C 分钟采集分析 -->
+      <div class="zv" data-z="lz-minute">
+        <div class="banner">任务号来源：配置推导 · NID 提示：当前筛选 B4AC1200 · 统计范围 09-13 00:00 起</div>
+        <div class="cols cols-lm">
+          <div class="card">
+            <div class="card-h">查询条件</div>
+            <div class="card-in" style="display:grid;gap:9px">
+              <div class="f-row"><span class="f-label">来源</span><select class="fld"><option>配置推导</option><option>手工输入</option></select></div>
+              <div class="f-row"><span class="f-label">任务号</span><input class="fld mono" list="taskList" value="0x01"><datalist id="taskList"><option value="0x01"></option><option value="0x02"></option><option value="0x0A"></option></datalist></div>
+              <div class="f-row"><span class="f-label">周期（分钟 1~1440）</span><input class="fld mono" value="15"></div>
+              <div class="f-row"><span class="f-label">CCO TEI</span><input class="fld mono" value="00"></div>
+              <button class="btn btn--primary">查询</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h">任务周期统计<span class="hint">点击行查看该周期上报详情</span></div>
+            <table class="ft"><thead><tr><th>周期</th><th class="num">应到</th><th class="num">实收</th><th class="num">缺失</th><th style="width:80px">完整率</th></tr></thead>
+              <tbody>
+                <tr><td class="mono-cell">00:15</td><td class="num">64</td><td class="num">64</td><td class="num">0</td><td><span class="chip chip--ok">100%</span></td></tr>
+                <tr><td class="mono-cell">00:30</td><td class="num">64</td><td class="num">63</td><td class="num">1</td><td><span class="chip chip--wait">98.4%</span></td></tr>
+                <tr><td class="mono-cell">00:45</td><td class="num">64</td><td class="num">61</td><td class="num">3</td><td><span class="chip chip--fail">95.3%</td></td></tr>
+                <tr><td class="mono-cell">01:00</td><td class="num">64</td><td class="num">64</td><td class="num">0</td><td><span class="chip chip--ok">100%</span></td></tr>
+              </tbody></table>
+        </div>
+        </div>
+      </div>
+
+      <!-- 4D 任务配置统计 -->
+      <div class="zv" data-z="lz-task">
+        <div class="mod-head" style="border:1px solid var(--bd-default);border-radius:var(--radius-lg);margin-bottom:12px">
+          <span class="lbl">CCO TEI</span><input class="fld mono" style="width:70px" value="00">
+          <span class="lbl">任务号</span><select class="fld" style="width:110px"><option>0x01 分钟采集</option><option>0x02 日冻结</option></select>
+          <button class="btn btn--sm">刷新任务号</button>
+          <button class="btn btn--sm btn--primary">查询统计</button>
+          <span class="spacer"></span>
+          <span class="hint">图例</span><span class="chip chip--ok">成功</span><span class="chip chip--fail">失败·未应答</span><span class="chip chip--wait">等待处理</span>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <div class="statkv"><span class="k">下发 STA</span><span class="v">64</span></div>
+          <div class="statkv"><span class="k">应答成功</span><span class="v v-ok">61</span></div>
+          <div class="statkv"><span class="k">应答失败</span><span class="v v-fail">1</span></div>
+          <div class="statkv"><span class="k">未应答</span><span class="v v-fail">1</span></div>
+          <div class="statkv"><span class="k">等待应答</span><span class="v v-warn">1</span></div>
+          <div class="statkv"><span class="k">未下发上报</span><span class="v">0</span></div>
+        </div>
+        <div class="card">
+          <div class="card-h">STA 汇总<span class="hint">点击 STA MAC 排序 ↑</span><span class="spacer"></span>
+            <select class="fld" style="width:130px;height:24px;font-size:11.5px"><option>轮次分析：第 3 轮</option><option>第 2 轮</option><option>第 1 轮</option></select></div>
+          <div style="max-height:240px;overflow:auto">
+            <table class="ft"><thead><tr><th>STA MAC</th><th>方向</th><th>配置类型</th><th>最近下发</th><th>应答时间</th><th style="width:86px">状态</th><th>报文序号</th></tr></thead>
+              <tbody>
+                <tr><td class="mono-cell">71 02 00 00 07 8E</td><td>CCO→STA</td><td>分钟采集 15m</td><td class="mono-cell">21:45:02</td><td class="mono-cell">21:45:03</td><td><span class="chip chip--ok">成功</span></td><td class="mono-cell">0x1207</td></tr>
+                <tr><td class="mono-cell">71 02 00 00 07 A1</td><td>CCO→STA</td><td>分钟采集 15m</td><td class="mono-cell">21:45:02</td><td class="mono-cell">21:45:03</td><td><span class="chip chip--ok">成功</span></td><td class="mono-cell">0x1208</td></tr>
+                <tr><td class="mono-cell">71 02 00 00 07 C4</td><td>CCO→STA</td><td>分钟采集 15m</td><td class="mono-cell">21:45:02</td><td>—</td><td><span class="chip chip--fail">未应答</span></td><td class="mono-cell">0x1209</td></tr>
+                <tr><td class="mono-cell">71 02 00 00 07 D9</td><td>CCO→STA</td><td>分钟采集 15m</td><td class="mono-cell">21:45:02</td><td class="mono-cell">21:45:04</td><td><span class="chip chip--wait">等待</span></td><td class="mono-cell">0x120A</td></tr>
+              </tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4E 网络承载评估 -->
+      <div class="zv" data-z="lz-load">
+        <div style="display:flex;gap:8px;margin-bottom:12px"><button class="btn btn--sm btn--primary">刷新快照</button><button class="btn btn--sm">详细评估</button></div>
+        <div class="cols cols-4" style="margin-bottom:12px">
+          <div class="statkv"><span class="k">当前实测信标周期</span><span class="v">15.0s</span></div>
+          <div class="statkv"><span class="k">最近周期成功率</span><span class="v v-ok">98.4%</span></div>
+          <div class="statkv"><span class="k">最近周期评级</span><span class="v v-ok">A</span></div>
+          <div class="statkv"><span class="k">整体健康度</span><span class="v v-ok">优</span></div>
+        </div>
+        <div class="cols cols-2">
+          <div class="card">
+            <div class="card-h">周期成功率趋势<span class="hint">canvas</span></div>
+            <div class="card-in"><canvas id="loadChart" width="600" height="150" style="width:100%;height:150px"></canvas></div>
+          </div>
+          <div class="card">
+            <div class="card-h">周期明细<span class="hint">代理变更 / 帧率 / 评级</span></div>
+            <div style="max-height:210px;overflow:auto">
+              <table class="ft"><thead><tr><th>周期起止</th><th class="num">实测周期</th><th class="num">帧数</th><th class="num">代理变更</th><th style="width:60px">评级</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono-cell">21:30 ~ 21:45</td><td class="num">15.0s</td><td class="num">64</td><td class="num">0</td><td><span class="chip chip--ok">A</span></td></tr>
+                  <tr><td class="mono-cell">21:15 ~ 21:30</td><td class="num">15.0s</td><td class="num">64</td><td class="num">1</td><td><span class="chip chip--ok">A</span></td></tr>
+                  <tr><td class="mono-cell">21:00 ~ 21:15</td><td class="num">15.1s</td><td class="num">63</td><td class="num">0</td><td><span class="chip chip--wait">B</span></td></tr>
+                </tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 模块日志（3 页签） ── -->
+    <section class="mod" id="mod-modulelog">
+      <div class="ztabs">
+        <span class="mod-name">模块日志</span>
+        <button class="zt on" data-z="mz-live">实时日志</button>
+        <button class="zt" data-z="mz-parse">对照解析</button>
+        <button class="zt" data-z="mz-simcon">模拟集中器·内嵌</button>
+        <span class="sp"></span>
+        <span class="chip chip--ghost">会话 2 · 运行 1</span>
+      </div>
+
+      <div class="zv on" data-z="mz-live" style="overflow:hidden">
+        <div style="display:flex;flex-direction:column;height:100%;gap:10px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn btn--sm">＋新增页面</button>
+            <span class="chip chip--ac" style="height:24px;padding:0 10px"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 4px var(--ok)"></span>CCO · 主页面 · running</span>
+            <span class="chip" style="height:24px;padding:0 10px">STA · 备页面</span>
+            <span class="chip chip--fail" style="height:24px;padding:0 10px">STA · 压测页 ●</span>
+            <span class="spacer"></span>
+            <button class="btn btn--sm btn--ghost">关闭当前页</button>
+          </div>
+          <div class="card" style="flex:none">
+            <div class="card-in" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+              <div class="f-row" style="width:100px"><span class="f-label">模块类型</span><select class="fld"><option>CCO</option><option>STA</option></select></div>
+              <div class="f-row" style="width:120px"><span class="f-label">串口</span><select class="fld"><option>COM3</option><option>COM5</option></select></div>
+              <div class="f-row" style="width:90px"><span class="f-label">波特率</span><select class="fld"><option>921600</option><option>115200</option><option>9600</option></select></div>
+              <div class="f-row" style="width:80px"><span class="f-label">校验位</span><select class="fld"><option>偶 E</option><option>无 N</option><option>奇 O</option><option>M</option><option>S</option></select></div>
+              <div class="f-row" style="width:70px"><span class="f-label">数据位</span><select class="fld"><option>8</option><option>7</option><option>6</option><option>5</option></select></div>
+              <div class="f-row" style="width:70px"><span class="f-label">停止位</span><select class="fld"><option>1</option><option>2</option></select></div>
+              <button class="btn btn--primary">启动</button>
+              <span style="width:1px;height:26px;background:var(--bd-default)"></span>
+              <div class="f-row" style="flex:1;min-width:180px"><span class="f-label">固件 .bin</span>
+                <div style="display:flex;gap:6px"><input class="fld mono" value="D:\fw\cco_V2.3.1-rc2.bin" style="flex:1"><button class="btn btn--sm">选择…</button></div></div>
+              <div class="f-row" style="width:110px"><span class="f-label">Image</span><select class="fld"><option>image 0</option><option>image 1</option></select></div>
+              <label style="display:flex;gap:5px;align-items:center;font-size:12px;padding-bottom:5px"><input type="checkbox">烧录后不重启</label>
+              <button class="btn" style="margin-bottom:1px">开始烧录</button>
+            </div>
+            <div style="padding:0 12px 10px;display:flex;align-items:center;gap:10px">
+              <div class="cd-bar" style="flex:1"><i style="width:64%"></i></div>
+              <span class="hint mono">烧录 64% · 0x1F00/0x3000</span>
+              <span class="hint">日志：D:\logs\ccofw.log</span>
+              <label style="display:flex;gap:4px;align-items:center;font-size:11.5px;color:var(--fg-dim)"><input type="checkbox" checked>自动滚动</label>
+              <button class="btn btn--sm btn--ghost">清屏</button>
+            </div>
+          </div>
+          <div class="logbox" id="msLog" style="flex:1;min-height:0"></div>
+          <div class="card" style="flex:none" id="msSender">
+            <div class="card-in" style="display:flex;gap:8px;align-items:flex-start">
+              <textarea class="fld mono" rows="2" placeholder="串口发送 · Enter 发送 / Shift+Enter 换行" style="flex:1"></textarea>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <button class="btn btn--sm btn--primary" id="btnMsSend">发送</button>
+                <label style="display:flex;gap:4px;align-items:center;font-size:11px;color:var(--fg-dim)"><input type="checkbox" checked>自动补换行</label>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <button class="btn btn--sm">换行</button>
+                <button class="btn btn--sm btn--ghost">清空</button>
+              </div>
+              <button class="btn btn--sm btn--ghost">隐藏</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="zv" data-z="mz-parse">
+        <div class="cols cols-2" style="margin-bottom:12px">
+          <button class="pick on" style="height:auto;padding:12px"><span class="t"><b>🔌 实时串口解析</b><span>选择运行中的会话页，边收边解析</span></span><span class="chip chip--ok">✓</span></button>
+          <button class="pick" style="height:auto;padding:12px"><span class="t"><b>📂 导入日志文件</b><span>打开文件 / 目录，离线对照解析</span></span></button>
+        </div>
+        <div class="cols cols-lm">
+          <div class="card"><div class="card-h">配置</div><div class="card-in" style="display:grid;gap:9px">
+            <div class="f-row"><span class="f-label">模块分段</span><div class="seg"><button class="on">CCO</button><button>STA</button></div></div>
+            <div class="f-row"><span class="f-label">会话页</span><select class="fld"><option>CCO · 主页面（running）</option></select></div>
+            <div class="f-row"><span class="f-label">文件路径</span><input class="fld mono" value="D:\logs\ccofw.log"></div>
+            <div style="display:flex;gap:8px"><button class="btn btn--sm">打开文件</button><button class="btn btn--sm">打开目录</button><button class="btn btn--sm btn--primary">解析日志</button></div>
+          </div></div>
+          <div class="card"><div class="card-h">统计与结果</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--bd-default)">
+              <div class="statkv"><span class="k">事件</span><span class="v">412</span></div>
+              <div class="statkv"><span class="k">日志行</span><span class="v">8,904</span></div>
+              <div class="statkv"><span class="k">来源</span><span class="v">文件</span></div>
+              <div class="statkv"><span class="k">行号漂移</span><span class="v v-ok">0</span></div>
+            </div>
+            <div class="logbox" id="parseLog" style="margin:10px 12px 12px;max-height:200px"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="zv" data-z="mz-simcon">
+        <div class="banner">
+          内嵌版模拟集中器已并入左侧「模拟集中器」统一模块（四页签：构帧下发 / 并发抄表 / 数据观测 / 会话设置）。
+        </div>
+        <button class="btn btn--primary" data-goto-mod="simcon">前往统一模拟集中器模块 →</button>
+      </div>
+    </section>
+
+    <!-- ── 模拟集中器（4 页签，v3 方案降为页签） ── -->
+    <section class="mod" id="mod-simcon">
+      <div class="ztabs">
+        <span class="mod-name">模拟集中器<span class="chip chip--ghost" style="margin-left:6px">Q/GDW 1376.2</span></span>
+        <button class="zt on" data-z="sz-send">构帧下发</button>
+        <button class="zt" data-z="sz-batch">并发抄表</button>
+        <button class="zt" data-z="sz-obs">数据观测</button>
+        <button class="zt" data-z="sz-set">会话设置</button>
+        <span class="sp"></span>
+        <span class="hint">完整版交互见 simcon-ui-demo-v3.html</span>
+      </div>
+
+      <div class="zv on" data-z="sz-send" style="overflow:hidden">
+        <div class="cols cols-lmm" style="height:100%">
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">AFN 应用功能码<span class="chip chip--ghost ct">6</span></div>
+            <div class="col-list" style="padding:8px">
+              <button class="pick"><span class="t"><b>04H 设置参数</b><span>2 Fn</span></span></button>
+              <button class="pick"><span class="t"><b>05H 控制命令</b><span>4 Fn</span></span></button>
+              <button class="pick on"><span class="t"><b>10H 抄表/并发</b><span>5 Fn</span></span></button>
+              <button class="pick"><span class="t"><b>0CH 数据转发</b><span>3 Fn</span></span></button>
+              <button class="pick"><span class="t"><b>94H 任务数据</b><span>2 Fn</span></span></button>
+              <button class="pick"><span class="t"><b>0FH 中继命令</b><span>5 Fn</span></span></button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">Fn 命令<span class="chip chip--ghost ct">5</span></div>
+            <div class="col-list" style="padding:8px">
+              <button class="pick on"><span class="t"><b>F1 并发抄表</b><span>20 表/帧 · 分页型</span></span></button>
+              <button class="pick"><span class="t"><b>F2 抄读模块档案</b><span>临时档案</span></span></button>
+              <button class="pick"><span class="t"><b>F3 读在网信息</b><span>信号/中继</span></span></button>
+              <button class="pick"><span class="t"><b>F4 主动上报确认</b></span></button>
+              <button class="pick"><span class="t"><b>F5 上报数据重发</b></span></button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0">
+            <div class="card-h">参数与预览 · 10H-F1 并发抄表<span class="hint">send 只写业务参数，构帧自动完成（ADR-5）</span></div>
+            <div style="flex:1;overflow-y:auto;padding:12px;display:grid;gap:12px;align-content:start">
+              <div class="cols cols-2" style="gap:10px">
+                <div class="f-row"><span class="f-label">起始模块序号</span><input class="fld mono" value="0"></div>
+                <div class="f-row"><span class="f-label">读取条数（≤250）</span><input class="fld mono" value="200"></div>
+              </div>
+              <div class="f-row"><span class="f-label">档案类型</span>
+                <select class="fld"><option>全部档案</option><option>在网档案</option><option>正规档案</option></select></div>
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><b style="font-size:12px">构帧预览</b><span class="hint">17 B · CS 校验自动计算</span></div>
+                <div class="hex"><span class="s-68 hx">68</span> <span class="s-L hx">0C 00</span> <span class="s-C hx">68</span> <span class="s-R hx">8A 0A 10 71 02 00 00 00 00</span> <span class="s-AFN hx">10</span> <span class="s-DT hx">71 02</span> <span class="s-DU hx">00</span> <span class="s-CS hx">9E</span> <span class="s-16 hx">16</span></div>
+              </div>
+              <div class="card" style="overflow:hidden">
+                <div class="card-h">响应表格<span class="chip chip--ghost">自动全量 · 已收 56 条</span></div>
+                <div style="max-height:140px;overflow:auto">
+                  <table class="ft"><thead><tr><th style="width:40px">#</th><th>模块地址</th><th class="num">信号</th><th class="num">中继</th><th style="width:64px">在网</th></tr></thead>
+                  <tbody>
+                    <tr><td class="num">1</td><td class="mono-cell">30 21 04 00 92 16</td><td class="num">31</td><td class="num">0</td><td><span class="chip chip--ok">在线</span></td></tr>
+                    <tr><td class="num">2</td><td class="mono-cell">30 21 04 00 92 17</td><td class="num">27</td><td class="num">1</td><td><span class="chip chip--ok">在线</span></td></tr>
+                  </tbody></table>
+                </div>
+              </div>
+            </div>
+            <div style="flex:none;display:flex;align-items:center;gap:10px;padding:9px 13px;border-top:1px solid var(--bd-default);background:var(--bg-raised)">
+              <button class="btn btn--sm btn--ghost">刷新预览</button>
+              <span class="spacer"></span>
+              <span class="hint mono">帧长 17 B · AFN 10H · Fn 1 · CS 9E</span>
+              <button class="btn btn--sm btn--primary" id="btnSimconSend">下 发</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="zv" data-z="sz-batch">
+        <div class="steps">
+          <div class="step done"><span class="no">✓</span>① 获取模块档案</div><div class="step-link"></div>
+          <div class="step cur"><span class="no">2</span>② 勾选并下发</div><div class="step-link"></div>
+          <div class="step"><span class="no">3</span>③ 周期统计</div>
+        </div>
+        <div class="card">
+          <div class="card-h">模块档案<span class="chip chip--ghost">临时档案 · 复位不保存</span><span class="spacer"></span>
+            <button class="btn btn--sm btn--primary">① 查档案</button><button class="btn btn--sm">查在网</button>
+            <button class="btn btn--sm btn--ghost">导出 Excel</button>
+            <select class="fld" style="width:92px;height:24px;font-size:11.5px"><option>在网：全部</option></select>
+            <span class="hint">并发数</span><input class="fld mono" style="width:48px;height:24px;font-size:11.5px" value="5">
+            <button class="btn btn--sm btn--primary">② 下发并发抄表（勾选 5 台）</button></div>
+          <div style="max-height:220px;overflow:auto">
+            <table class="ft"><thead><tr><th style="width:34px"><input type="checkbox" checked></th><th style="width:42px">#</th><th>模块地址</th><th class="num">信号</th><th class="num">中继</th><th style="width:70px">在网</th></tr></thead>
+            <tbody id="bcTbl"></tbody></table>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <div class="statkv"><span class="k">最大并发</span><span class="v">5</span></div>
+          <div class="statkv"><span class="k">成功 / 失败</span><span class="v v-ok">412 / 18</span></div>
+          <div class="statkv"><span class="k">成功率</span><span class="v v-ok">95.8%</span></div>
+          <div class="statkv"><span class="k">平均耗时</span><span class="v">1.2s</span></div>
+          <div class="statkv"><span class="k">重复下发</span><span class="v v-fail">0</span></div>
+          <div class="statkv" style="display:flex;flex-direction:column;justify-content:center"><span class="k">统计周期</span>
+            <div style="display:flex;gap:8px;margin-top:3px"><select class="fld" style="width:100px;height:24px;font-size:11.5px"><option>15 分钟</option></select><button class="btn btn--sm">③ 刷新统计</button></div></div>
+        </div>
+      </div>
+
+      <div class="zv" data-z="sz-obs">
+        <div class="seg" style="margin-bottom:12px"><button class="on">收发配对</button><button>抄读汇总</button><button>并发任务</button><button>主动上报</button></div>
+        <div class="card">
+          <div class="card-h">收发配对<span class="chip chip--ghost">共 18 对 · 平均响应 1.2s</span></div>
+          <div style="max-height:320px;overflow:auto">
+            <table class="ft"><thead><tr><th style="width:110px">时间</th><th style="width:60px">方向</th><th style="width:90px">命令</th><th>下发摘要</th><th>应答摘要</th><th style="width:130px">配对结果</th></tr></thead>
+              <tbody>
+                <tr><td class="mono-cell">22:14:03</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">10H · F1</td><td>并发抄表 · 5 表块</td><td>4 成功 / 1 失败 · 1.2s</td><td><span class="chip chip--ok">配对成功 1.2s</span></td></tr>
+                <tr><td class="mono-cell">22:13:40</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">06H · F1</td><td>模块档案查询</td><td>56 台 · 0.5s</td><td><span class="chip chip--ok">配对成功 0.5s</span></td></tr>
+                <tr><td class="mono-cell">22:12:58</td><td><span class="chip chip--tx">下发</span></td><td class="mono-cell">10H · F3</td><td>读在网信息</td><td>—</td><td><span class="chip chip--fail">超时未应答</span></td></tr>
+              </tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="zv" data-z="sz-set">
+        <div class="cols cols-2">
+          <div class="card"><div class="card-h">串口参数<span class="hint">也可走菜单栏「会话」</span></div>
+            <div class="card-in" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div class="f-row"><span class="f-label">串口</span><select class="fld"><option>COM3</option><option>COM1</option></select></div>
+              <div class="f-row"><span class="f-label">波特率</span><select class="fld"><option>9600</option><option>2400</option></select></div>
+              <div class="f-row"><span class="f-label">校验位</span><select class="fld"><option>偶 E</option><option>无 N</option></select></div>
+              <div class="f-row"><span class="f-label">Profile</span><select class="fld"><option>anhui</option><option>test</option></select></div>
+              <div style="display:flex;gap:8px;grid-column:1/-1"><button class="btn btn--primary">打开串口</button><button class="btn">关闭串口</button></div>
+            </div>
+          </div>
+          <div class="card"><div class="card-h">内置应答<span class="chip chip--ghost">口径 02号代码卡 Fn=1</span></div>
+            <div style="display:flex;flex-direction:column">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--bd-default)">
+                <span class="chip chip--ac mono">10H F1</span><span style="flex:1;font-size:12px">并发抄表应答 · 延迟 300ms</span><button class="sw" role="switch" aria-checked="true"></button></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--bd-default)">
+                <span class="chip chip--ac mono">10H F2</span><span style="flex:1;font-size:12px">抄读模块档案 · 延迟 200ms</span><button class="sw" role="switch" aria-checked="true"></button></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 13px">
+                <span class="chip chip--ac mono">94H F10</span><span style="flex:1;font-size:12px">任务数据应答 · 待口径裁决</span><button class="sw" role="switch" aria-checked="false"></button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 串口配置（四槽） ── -->
+    <section class="mod" id="mod-serial">
+      <div class="ztabs"><span class="mod-name">串口配置</span><span class="hint">四槽运行 Profile 保存与一键应用（P6）</span><span class="sp"></span>
+        <button class="btn btn--sm">保存</button><button class="btn btn--sm btn--primary">一键应用</button><button class="btn btn--sm btn--ghost">刷新状态</button></div>
+      <div class="zv on">
+        <div class="banner" style="display:none"></div>
+        <div class="cols cols-4">
+          <div class="card"><div class="card-h">槽 A <span class="mono">slot-a</span><span class="spacer"></span><button class="sw" role="switch" aria-checked="true"></button></div>
+            <div class="card-in" style="display:grid;gap:8px">
+              <div class="f-row"><span class="f-label">用途</span><select class="fld"><option>侦听台监听</option></select></div>
+              <div class="f-row"><span class="f-label">串口</span><select class="fld"><option>COM1</option></select></div>
+              <div class="kv"><span class="k">运行状态</span><span class="v" style="color:var(--ok)">监听中 · 921600,E</span></div>
+              <span class="chip chip--ok">ok</span>
+            </div>
+          </div>
+          <div class="card"><div class="card-h">槽 B <span class="mono">slot-b</span><span class="spacer"></span><button class="sw" role="switch" aria-checked="true"></button></div>
+            <div class="card-in" style="display:grid;gap:8px">
+              <div class="f-row"><span class="f-label">用途</span><select class="fld"><option>模块日志 CCO</option></select></div>
+              <div class="f-row"><span class="f-label">串口</span><select class="fld"><option>COM3</option></select></div>
+              <div class="kv"><span class="k">运行状态</span><span class="v" style="color:var(--ok)">已打开 · 9600,E</span></div>
+              <span class="chip chip--ok">ok</span>
+            </div>
+          </div>
+          <div class="card"><div class="card-h">槽 C <span class="mono">slot-c</span><span class="spacer"></span><button class="sw" role="switch" aria-checked="false"></button></div>
+            <div class="card-in" style="display:grid;gap:8px">
+              <div class="f-row"><span class="f-label">用途</span><select class="fld"><option>模拟集中器</option></select></div>
+              <div class="f-row"><span class="f-label">串口</span><select class="fld"><option>COM2</option></select></div>
+              <div class="kv"><span class="k">运行状态</span><span class="v">未启用</span></div>
+              <span class="chip chip--ghost">idle</span>
+            </div>
+          </div>
+          <div class="card"><div class="card-h">槽 D <span class="mono">slot-d</span><span class="spacer"></span><button class="sw" role="switch" aria-checked="false"></button></div>
+            <div class="card-in" style="display:grid;gap:8px">
+              <div class="f-row"><span class="f-label">用途</span><select class="fld"><option>预留</option></select></div>
+              <div class="f-row"><span class="f-label">串口</span><select class="fld"><option>—</option></select></div>
+              <div class="kv"><span class="k">运行状态</span><span class="v">未启用</span></div>
+              <span class="chip chip--ghost">idle</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 报文追踪 ── -->
+    <section class="mod" id="mod-trace">
+      <div class="ztabs"><span class="mod-name">报文追踪</span>
+        <span class="seg" style="margin-left:6px"><button class="on">回放</button><button>Live</button></span>
+        <span class="sp"></span><button class="btn btn--sm">＋新建追踪</button><button class="btn btn--sm btn--ghost">刷新列表</button></div>
+      <div class="zv on" style="overflow:hidden">
+        <div class="threecol" style="height:100%">
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">追踪任务<span class="chip chip--ghost ct">5</span></div>
+            <div class="col-list" style="padding:8px">
+              <button class="pick on"><span class="t"><b>信标周期异常</b><span>TRACE-017 · 回放 · 3 段证据</span></span><span class="chip chip--ok">命中</span></button>
+              <button class="pick"><span class="t"><b>代理变更链路</b><span>TRACE-016 · 回放 · 已归档</span></span><span class="chip chip--ghost">—</span></button>
+              <button class="pick"><span class="t"><b>重复上报定位</b><span>TRACE-015 · Live · 监听中</span></span><span class="chip chip--wait">监听</span></button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">特征 · 新建追踪</div>
+            <div class="card-in" style="display:grid;gap:9px">
+              <div class="f-row"><span class="f-label">特征名</span><input class="fld" value="信标周期异常"></div>
+              <div class="f-row"><span class="f-label">frm_type</span><input class="fld mono" value="0x08 信标"></div>
+              <div class="f-row"><span class="f-label">字段匹配</span><input class="fld mono" placeholder="NID=*& 周期>15s"></div>
+              <button class="btn btn--primary">新建追踪</button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0"><div class="card-h">三段证据链<span class="hint">TRACE-017</span></div>
+            <div class="card-in" style="overflow-y:auto;display:grid;gap:10px">
+              <div class="card"><div class="card-h"><span class="chip chip--ac">证据 ①</span>特征触发</div><div class="card-in" style="font-size:12px">21:30:15.201 信标帧 0x08 · 实测周期 15.1s（阈值 &gt;15.0s 触发）</div></div>
+              <div style="text-align:center;color:var(--fg-dim)">↓</div>
+              <div class="card"><div class="card-h"><span class="chip chip--ac">证据 ②</span>上下文关联</div><div class="card-in" style="font-size:12px">前后 5 帧信标序列 · 代理变更 1 次（STA 71 02 换父）</div></div>
+              <div style="text-align:center;color:var(--fg-dim)">↓</div>
+              <div class="card"><div class="card-h"><span class="chip chip--ac">证据 ③</span>结论</div><div class="card-in" style="font-size:12px">周期漂移与代理切换相关 · 建议：查 21:29 路由冲突帧</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 协议字典 ── -->
+    <section class="mod" id="mod-dict">
+      <div class="ztabs"><span class="mod-name">协议字典</span><span class="hint">AFN/Fn · 数据标识 · 状态字</span></div>
+      <div class="zv on" style="overflow:hidden">
+        <div class="threecol" style="height:100%">
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">字典<span class="chip chip--ghost ct">3</span></div>
+            <div style="padding:8px"><input class="fld" placeholder="搜索 名称 / 键 / 描述…"></div>
+            <div class="col-list" style="padding:0 8px 8px">
+              <button class="pick on"><span class="t"><b>AFN-Fn 命令字典</b><span>14 AFN · 73 Fn</span></span></button>
+              <button class="pick"><span class="t"><b>数据标识字典</b><span>412 条目</span></span></button>
+              <button class="pick"><span class="t"><b>状态字字典</b><span>48 条目</span></span></button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">条目<span class="chip chip--ghost ct">5</span></div>
+            <div class="col-list" style="padding:8px">
+              <button class="pick on"><span class="t"><b>10H · F1 并发抄表</b><span>分页型 · 上行应答</span></span></button>
+              <button class="pick"><span class="t"><b>10H · F2 抄读档案</b></span></button>
+              <button class="pick"><span class="t"><b>10H · F3 在网信息</b></span></button>
+              <button class="pick"><span class="t"><b>04H · F1 写参数</b></span></button>
+              <button class="pick"><span class="t"><b>94H · F10 任务数据</b><span>存疑待真机裁决</span></span></button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0"><div class="card-h">条目详情<span class="chip chip--ac">10H F1</span></div>
+            <div class="card-in" style="overflow-y:auto">
+              <div class="kv"><span class="k">方向</span><span class="v">下行下发 → 上行应答（双向模板）</span></div>
+              <div class="kv"><span class="k">数据单元</span><span class="v">端口号 BIN·8 / 功能码 BIN·8 / 表序号块 BS8 / 表地址 BCD·48 ×N</span></div>
+              <div class="kv"><span class="k">应答</span><span class="v">表地址 + 信号品质 + 中继级别 + 在网标志</span></div>
+              <div class="kv"><span class="k">约束</span><span class="v">每帧 ≤20 表；并发上限 20，超限否认 109</span></div>
+              <div class="kv"><span class="k">口径</span><span class="v">02号代码卡（Fn=1）为权威；长度域小端</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 场景脚本 ── -->
+    <section class="mod" id="mod-scenario">
+      <div class="ztabs"><span class="mod-name">场景脚本</span><span class="sp"></span><button class="btn btn--sm btn--primary" data-goto-mod="workbench">去验证工作台执行 →</button></div>
+      <div class="zv on" style="overflow:hidden">
+        <div class="threecol" style="height:100%">
+          <div class="card" style="display:flex;flex-direction:column"><div class="card-h">场景<span class="chip chip--ghost ct">6</span></div>
+            <div class="col-list" style="padding:8px">
+              <button class="pick on"><span class="t"><b>分钟采集 · 基本上报周期验证</b><span>SCN-001 · 4 步 · 45s</span></span><span class="chip chip--ok">就绪</span></button>
+              <button class="pick"><span class="t"><b>并发抄表 · 20表满块</b><span>SCN-002 · 5 步 · 60s</span></span><span class="chip chip--ok">就绪</span></button>
+              <button class="pick"><span class="t"><b>烧录 · image0 切换</b><span>SCN-003 · 3 步 · 120s</span></span><span class="chip chip--wait">task 缺失</span></button>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0"><div class="card-h">步骤编排 · expected_flow</div>
+            <div class="timeline" style="overflow-y:auto">
+              <div class="tl-row"><span class="tl-no">1</span><span>烧录固件 image0</span><span class="chip chip--ghost">flash</span><span class="tl-ms">45000ms</span></div>
+              <div class="tl-row"><span class="tl-no">2</span><span>下发任务配置 0x01</span><span class="chip chip--ghost">04H.F1</span><span class="tl-ms">1000ms</span></div>
+              <div class="tl-row"><span class="tl-no">3</span><span>等待分钟采集上报</span><span class="chip chip--ghost">10H.F4</span><span class="tl-ms">15000ms</span></div>
+              <div class="tl-row"><span class="tl-no">4</span><span>校验周期 = 15m ±1s</span><span class="chip chip--ghost">assert</span><span class="tl-ms">500ms</span></div>
+            </div>
+          </div>
+          <div class="card" style="display:flex;flex-direction:column;min-height:0"><div class="card-h">步骤详情<span class="chip chip--ac">第 3 步</span></div>
+            <div class="card-in" style="overflow-y:auto;display:grid;gap:10px">
+              <div class="kv"><span class="k">语义化参数</span><span class="v">任务号 0x01 · 周期 15m · CCO TEI 00（ADR-5）</span></div>
+              <div class="kv"><span class="k">事件</span><span class="v">10H.F4 主动上报 · negate 🚫 无</span></div>
+              <div><div class="hint" style="margin-bottom:5px">JSON 原文</div>
+                <div class="hex" style="font-size:11px">{"step":3,"expect":{"afn":"0x10","fn":4,"timeout_ms":15000,"params":{"task_id":1,"period_min":15}}}</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 工作台状态 ── -->
+    <section class="mod" id="mod-maintenance">
+      <div class="ztabs"><span class="mod-name">工作台状态</span></div>
+      <div class="zv on">
+        <div class="cols cols-2" style="max-width:860px">
+          <div class="card"><div class="card-h">平台信息<span class="hint">/api/platform-version</span></div>
+            <div class="card-in">
+              <div class="kv"><span class="k">应用名</span><span class="v">统一集成程序 · 侦听台改造工作台</span></div>
+              <div class="kv"><span class="k">版本</span><span class="v">v3.0 · REQS-0030</span></div>
+              <div class="kv"><span class="k">模块日志</span><span class="v" style="color:var(--ok)">已挂载 ✓</span></div>
+              <div class="kv"><span class="k">侦听台</span><span class="v" style="color:var(--ok)">已挂载 ✓ · GwHPLCAnalysis.dll 已连接</span></div>
+            </div>
+          </div>
+          <div class="card"><div class="card-h">主题与外观</div>
+            <div class="card-in">
+              <div class="kv"><span class="k">当前主题</span><span class="v" id="themeName">墨夜 midnight</span></div>
+              <div class="kv"><span class="k">同步机制</span><span class="v">wb-theme-change 广播 → iframe 内实时跟随（REQS-0012）</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══ 全局 Dock ═══ -->
+  <section class="dock" id="dock">
+    <div class="dock-grip" id="dockGrip"></div>
+    <div class="dock-h">
+      <svg class="car" id="dockCar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      <span class="dt" id="dockTitle">全局面板</span>
+      <button class="dtab on" data-d="dFrame">帧日志</button>
+      <button class="dtab" data-d="dLog">日志流</button>
+      <button class="dtab" data-d="dEvent">事件</button>
+      <span class="spacer"></span>
+      <span class="chip chip--tx">发送 <b id="cTx">12</b></span>
+      <span class="chip chip--rx">接收 <b id="cRx">11</b></span>
+      <span class="hint">跨模块推送 · 拖顶边调高 · Ctrl+J 折叠</span>
+    </div>
+    <div class="dock-b">
+      <div class="dv on" id="dFrame"></div>
+      <div class="dv" id="dLog"></div>
+      <div class="dv" id="dEvent"></div>
+    </div>
+  </section>
+
+  <!-- ═══ 状态栏 ═══ -->
+  <footer class="statusbar">
+    <span class="kv"><span class="dot"></span>module_log ✓</span>
+    <span class="kv"><span class="dot"></span>listener ✓</span>
+    <span class="kv">COM3 · 9600,E · anhui</span>
+    <span class="kv">会话 <b>00:42:17</b></span>
+    <span class="kv">最新帧 <b id="sbFrame">22:14:03</b></span>
+    <span class="sp"></span>
+    <span class="kv">Dock <b id="sbDock">展开</b></span>
+    <span class="kv">主题 <b id="sbTheme">墨夜</b></span>
+    <span class="demo">演示原型 · 数据为模拟 · Ctrl+B 侧栏 / Ctrl+J Dock</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var $$=function(s){return Array.prototype.slice.call(document.querySelectorAll(s))};
+
+  /* ── 模块切换 ── */
+  var modNames={workbench:"验证工作台",listener:"侦听台",modulelog:"模块日志",simcon:"模拟集中器",
+    serial:"串口配置",trace:"报文追踪",dict:"协议字典",scenario:"场景脚本",maintenance:"工作台状态"};
+  function gotoMod(m){
+    $$(".mod").forEach(function(el){el.classList.toggle("on",el.id==="mod-"+m)});
+    $$(".nav .it[data-mod]").forEach(function(b){
+      var on=b.dataset.mod===m;
+      b.classList.toggle("on",on);
+      if(on)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");
+    });
+    try{location.hash=m}catch(e){}
+  }
+  $$(".nav .it[data-mod]").forEach(function(b){b.addEventListener("click",function(){gotoMod(b.dataset.mod)})});
+  $$("[data-goto-mod]").forEach(function(b){b.addEventListener("click",function(){gotoMod(b.dataset.gotoMod)})});
+  try{var h=location.hash.replace("#","");if(modNames[h])gotoMod(h);else gotoMod("listener")}catch(e){gotoMod("listener")}
+
+  /* ── 二级页签（通用：同一 .mod 内 data-z 切换） ── */
+  $$(".ztabs .zt").forEach(function(t){
+    t.addEventListener("click",function(){
+      var mod=t.closest(".mod");
+      $$(".zt",0).forEach(function(){});/*noop*/
+      Array.prototype.forEach.call(mod.querySelectorAll(".zt"),function(x){x.classList.toggle("on",x===t)});
+      Array.prototype.forEach.call(mod.querySelectorAll(".zv"),function(v){v.classList.toggle("on",v.dataset.z===t.dataset.z)});
+    });
+  });
+
+  /* ── 菜单栏 ── */
+  $$(".menu").forEach(function(m){
+    m.querySelector(":scope > button").addEventListener("click",function(e){
+      e.stopPropagation();
+      var was=m.classList.contains("open");
+      $$(".menu").forEach(function(x){x.classList.remove("open")});
+      if(!was)m.classList.add("open");
+    });
+  });
+  document.addEventListener("click",function(){$$(".menu").forEach(function(x){x.classList.remove("open")})});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")$$(".menu").forEach(function(x){x.classList.remove("open")})});
+
+  /* ── 主题 ── */
+  var moon='<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
+  var sun='<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>';
+  function setTheme(t){
+    document.documentElement.dataset.theme=t;
+    $("#btnTheme").innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(t==="midnight"?sun:moon)+'</svg>';
+    $("#sbTheme").textContent=t==="midnight"?"墨夜":"晴昼";
+    $("#themeName").textContent=(t==="midnight"?"墨夜":"晴昼")+" "+t;
+    try{localStorage.setItem("suite-demo-theme",t)}catch(e){}
+  }
+  function toggleTheme(){setTheme(document.documentElement.dataset.theme==="midnight"?"daylight":"midnight")}
+  $("#btnTheme").addEventListener("click",toggleTheme);
+  try{var st=localStorage.getItem("suite-demo-theme");if(st)setTheme(st);else setTheme("midnight")}catch(e){setTheme("midnight")}
+
+  /* ── 侧栏折叠 ── */
+  function setRail(on){document.body.classList.toggle("rail",on);try{localStorage.setItem("suite-demo-rail",on?"1":"0")}catch(e){}}
+  $("#btnRail").addEventListener("click",function(){setRail(!document.body.classList.contains("rail"))});
+  try{if(localStorage.getItem("suite-demo-rail")==="1")setRail(true)}catch(e){}
+
+  /* ── Dock：折叠 / 拖高 / 页签 ── */
+  var dock=$("#dock");
+  function setDock(fold){dock.classList.toggle("fold",fold);$("#sbDock").textContent=fold?"折叠":"展开"}
+  $("#dockCar").addEventListener("click",function(){setDock(!dock.classList.contains("fold"))});
+  $("#dockTitle").addEventListener("click",function(){setDock(!dock.classList.contains("fold"))});
+  (function(){
+    var sy=0,sh=0,dragging=false;
+    $("#dockGrip").addEventListener("mousedown",function(e){dragging=true;sy=e.clientY;sh=dock.offsetHeight;e.preventDefault()});
+    document.addEventListener("mousemove",function(e){if(!dragging)return;
+      var h=Math.min(Math.max(sh+(sy-e.clientY),34),Math.floor(window.innerHeight*0.7));
+      dock.style.height=h+"px";dock.classList.remove("fold");$("#sbDock").textContent="展开"});
+    document.addEventListener("mouseup",function(){dragging=false});
+  })();
+  $$(".dock-h .dtab").forEach(function(t){
+    t.addEventListener("click",function(){
+      $$(".dock-h .dtab").forEach(function(x){x.classList.toggle("on",x===t)});
+      $$(".dock .dv").forEach(function(v){v.classList.toggle("on",v.id===t.dataset.d)});
+    });
+  });
+  document.addEventListener("keydown",function(e){
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="b"){e.preventDefault();setRail(!document.body.classList.contains("rail"))}
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="j"){e.preventDefault();setDock(!dock.classList.contains("fold"))}
+  });
+
+  /* ── 全局 Dock 推送（演示跨模块联动） ── */
+  var txN=12,rxN=11;
+  function now(){var d=new Date();function p(n){return (n<10?"0":"")+n}
+    return p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds())}
+  function pushDock(src,dir,tag,hexv){
+    var map={frame:"dFrame",log:"dLog",event:"dEvent"};
+    var row=document.createElement("div");row.className="dk-row";
+    var dirHtml='<span class="dir '+dir+'">'+(dir==="tx"?"发送":dir==="rx"?"接收":"事件")+"</span>";
+    row.innerHTML='<span class="tm">'+now()+'</span>'+dirHtml+'<span class="src">'+src+'</span><span class="chip chip--ghost">'+tag+'</span><span class="hexv">'+hexv+"</span>";
+    var target=document.getElementById(map.frame);
+    target.insertBefore(row,target.firstChild);
+    if(dir==="tx"){txN++;$("#cTx").textContent=txN}else if(dir==="rx"){rxN++;$("#cRx").textContent=rxN}
+    $("#sbFrame").textContent=now();
+    /* 若当前不在帧日志页签，闪一下标题提示 */
+    var t=$('.dock-h .dtab[data-d="dFrame"]');
+    if(!t.classList.contains("on")){t.style.color="var(--ac)";setTimeout(function(){t.style.color=""},800)}
+  }
+  window.__pushDock=pushDock;
+
+  /* ── 模拟数据生成 ── */
+  /* 侦听台·新版帧索引 */
+  var types=["0x39","0x08","0x0C","0x13","0x39","0x0B"];
+  (function(){
+    var tb=$("#proIdx"),html="";
+    for(var i=1;i<=14;i++){
+      html+='<tr><td class="num">'+i+'</td><td class="mono-cell">21:47:0'+(i%10)+'</td><td class="mono-cell">'+types[i%types.length]+'</td><td class="mono-cell">B4AC1200</td><td class="num">'+(46+i*3)+" B</td></tr>";
+    }
+    tb.innerHTML=html;
+  })();
+  /* 侦听台·经典帧索引 */
+  (function(){
+    var tb=$("#clsIdx"),html="";
+    for(var i=1;i<=8;i++){
+      html+='<tr><td class="num">'+i+'</td><td class="mono-cell">21:47:0'+(i%10)+'</td><td class="mono-cell">'+types[i%types.length]+'</td><td class="mono-cell">B4AC1200</td><td class="mono-cell">71 02 → 00 00</td><td class="num">'+(46+i*3)+"</td><td>"+(i%5===0?'<span class="chip chip--fail">异常</span>':'<span class="chip chip--ok">正常</span>')+"</td></tr>";
+    }
+    tb.innerHTML=html;
+  })();
+  /* 模块日志·实时日志 */
+  (function(){
+    var lines=[
+      ["ev","[EV ] 会话启动 · CCO · COM3 @921600,E"],
+      ["rx","[RX ] 68 A0 23 04 00 68 8A 0A 10 71 02 00 00 00 00 9E 16"],
+      ["ev","[EV ] 帧解析 OK · 0x39 数据帧 · NID=B4AC1200"],
+      ["tx","[TX ] 68 11 00 68 8A 0A 10 00 00 00 00 00 33 16  ·  下一帧确认"],
+      ["rx","[RX ] 68 A0 24 04 00 68 8A 0A 10 71 02 00 00 01 00 3F 16"],
+      ["ev","[EV ] 网络快照 · 在网 63/64"],
+      ["err","[ERR ] 串口 overrun · 丢弃 1 字节（已自动重同步）"],
+      ["rx","[RX ] 68 A0 25 04 00 68 8A 0A 10 71 02 00 00 02 00 41 16"],
+      ["ev","[EV ] 烧录进度 64% · image0"],
+      ["tx","[TX ] 68 12 00 68 8A 0A 10 00 00 00 00 00 34 16"]
+    ];
+    var box=$("#msLog");
+    box.innerHTML=lines.map(function(l){return '<div class="lg-'+l[0]+'"><span class="lg-tm">21:47:0'+(Math.floor(Math.random()*9))+"</span>"+l[1]+"</div>"}).join("");
+    var pl=$("#parseLog");
+    pl.innerHTML=lines.slice(0,6).map(function(l){return '<div class="lg-'+l[0]+'"><span class="lg-tm">L'+(1000+Math.floor(Math.random()*900))+"</span>"+l[1]+"</div>"}).join("");
+  })();
+  /* Dock 初始数据 */
+  (function(){
+    var f=$("#dFrame");
+    var rows=[
+      ["rx","侦听台","0x39","68 A0 23 04 00 68 8A 0A 10 71 02 00 00 00 00 9E 16"],
+      ["tx","模拟集中器","10H-F1","68 0C 00 68 8A 0A 10 71 02 00 00 00 00 10 71 02 00 9E 16"],
+      ["rx","模拟集中器","10H-F1","68 61 00 68 8A 0A 10 71 02 00 00 00 00 10 71 02 56 …"],
+      ["tx","模块日志","烧录块","02 1F 00 30 44 6F 77 6E …（0x0800 B）"],
+      ["rx","侦听台","0x08","68 22 08 00 68 8A 0A 10 00 00 00 00 00 00 …"]
+    ];
+    f.innerHTML=rows.map(function(r){return '<div class="dk-row"><span class="tm">22:14:0'+Math.floor(Math.random()*9)+'</span><span class="dir '+r[0]+'">'+(r[0]==="tx"?"发送":"接收")+'</span><span class="src">'+r[1]+'</span><span class="chip chip--ghost">'+r[2]+'</span><span class="hexv">'+r[3]+"</span></div>"}).join("");
+    $("#dLog").innerHTML=Array.prototype.slice.call($("#msLog").children,0,6).map(function(n){return n.outerHTML.replace(/ class="lg-/g,'style="padding:4px 14px" class="lg-')}).join("");
+    $("#dEvent").innerHTML=[
+      '<div class="dk-row"><span class="tm">21:45:02</span><span class="dir ev">事件</span><span class="src">验证台</span><span class="chip chip--ok">passed</span><span class="hexv">run-20260913-014 分钟采集周期验证通过 · 4 步 / 44.5s</span></div>',
+      '<div class="dk-row"><span class="tm">21:30:15</span><span class="dir ev">事件</span><span class="src">报文追踪</span><span class="chip chip--warn">触发</span><span class="hexv">TRACE-017 信标周期异常命中 · 已归档 3 段证据</span></div>',
+      '<div class="dk-row"><span class="tm">21:12:40</span><span class="dir ev">事件</span><span class="src">模拟集中器</span><span class="chip chip--ghost">会话</span><span class="hexv">串口打开 COM3 · 9600,E · profile=anhui</span></div>'
+    ].join("");
+  })();
+  /* simcon 并发抄表档案表 */
+  (function(){
+    var tb=$("#bcTbl"),html="";
+    for(var i=1;i<=6;i++){
+      html+='<tr><td><input type="checkbox"'+(i<6?" checked":"")+'></td><td class="num">'+i+'</td><td class="mono-cell">30 21 04 00 92 '+(16+i)+'</td><td class="num">'+(30-i*3)+'</td><td class="num">'+(i%3)+'</td><td>'+(i===4?'<span class="chip chip--fail">离线</span>':'<span class="chip chip--ok">在线</span>')+"</td></tr>";
+    }
+    tb.innerHTML=html;
+  })();
+  /* 承载评估趋势图 */
+  (function(){
+    var c=$("#loadChart");if(!c)return;
+    var ctx=c.getContext("2d");
+    var w=c.width,h=c.height;
+    var dpr=window.devicePixelRatio||1;
+    var cs=getComputedStyle(document.documentElement);
+    var cGrid=cs.getPropertyValue("--bd-default").trim()||"rgba(255,255,255,.07)";
+    var cLine=cs.getPropertyValue("--ok").trim()||"#10b981";
+    var cTxt=cs.getPropertyValue("--fg-dim").trim()||"#888";
+    ctx.scale(1,1);
+    var data=[92,96,95,98,97,99,98.4,96,98,99,97,98.4];
+    ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle=cGrid;ctx.lineWidth=1;
+    for(var i=1;i<5;i++){ctx.beginPath();ctx.moveTo(0,h/5*i);ctx.lineTo(w,h/5*i);ctx.stroke()}
+    ctx.strokeStyle=cLine;ctx.lineWidth=2;ctx.beginPath();
+    data.forEach(function(v,i){
+      var x=8+(w-16)*(i/(data.length-1)),y=h-10-(h-24)*(v-90)/10;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    ctx.fillStyle=cTxt;ctx.font="10px sans-serif";
+    ctx.fillText("90%",4,12);ctx.fillText("100%",4,h-2);
+  })();
+
+  /* ── 开关 ── */
+  $$(".sw").forEach(function(sw){
+    sw.addEventListener("click",function(){sw.setAttribute("aria-checked",sw.getAttribute("aria-checked")!=="true")});
+  });
+
+  /* ── 下发 → Dock 推送演示 ── */
+  $("#btnSimconSend").addEventListener("click",function(){
+    pushDock("模拟集中器","tx","10H-F1","68 0C 00 68 8A 0A 10 71 02 00 00 00 00 10 71 02 00 9E 16");
+    setTimeout(function(){pushDock("模拟集中器","rx","10H-F1","68 61 00 68 8A 0A 10 71 02 00 00 00 00 10 71 02 56 30 21 04 … 3C 16")},900);
+  });
+  $("#btnMsSend").addEventListener("click",function(){
+    pushDock("模块日志","tx","透传","68 13 00 68 8A 0A 10 00 00 00 00 00 35 16");
+    var box=$("#msLog");
+    var d=document.createElement("div");d.className="lg-tx";
+    d.innerHTML='<span class="lg-tm">'+now()+"</span>[TX ] 68 13 00 68 8A 0A 10 00 00 00 00 00 35 16";
+    box.appendChild(d);box.scrollTop=box.scrollHeight;
+  });
+  $("#btnRun").addEventListener("click",function(){
+    pushDock("验证台","ev","Run","run-20260913-015 · 场景「分钟采集」已提交执行");
+  });
+})();
+</script>
+</body>
+</html>
