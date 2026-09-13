@@ -582,9 +582,12 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             app.state.simcon_step_state["seq"] += len(meters)
             seq_start = int(app.state.simcon_step_state["seq"])
         from sim_concentrator.batch import BatchReadJob
+        from sim_concentrator.deep_app import precheck_max_concurrent
+        max_concurrent = precheck_max_concurrent(
+            int(payload.get("max_concurrent") or 5))  # 否认 109 口径前置校验
         job = BatchReadJob(
             io, meters,
-            max_concurrent=int(payload.get("max_concurrent") or 5),
+            max_concurrent=max_concurrent,
             mode=str(payload.get("mode") or "single"),
             protocol_type=int(payload.get("protocol_type") or 2),
             timeout=(None if payload.get("timeout") is None else float(payload["timeout"])),
@@ -666,6 +669,106 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     async def report_buckets(limit: int = 500):
         """主动上报分类型计数（G6）：F1-F5 各桶 + 停复电子类单列。"""
         return _report_buckets(limit=limit)
+
+    # ---- REQS-0030：并发抄表周期统计 ---------------------------------------
+    def _batch_stats(period: str = "") -> dict:
+        """把各并发任务的明细行换成"尝试"后按周期聚合（默认 15 分钟）。"""
+        from datetime import datetime as _dt
+        from sim_concentrator.period_stats import aggregate
+        attempts = []
+        for snap in (j.snapshot() for j in app.state.simcon_batch_jobs.values()):
+            for row in snap.get("rows", []):
+                try:
+                    end = _dt.fromisoformat(row["ts"]).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    continue
+                elapsed = row.get("elapsed_ms") or 0
+                attempts.append({
+                    "meter": row.get("meter", ""),
+                    "start_epoch": end - elapsed / 1000.0,
+                    "end_epoch": end,
+                    "status": row.get("status", ""),
+                })
+        result = aggregate(attempts, period=period)
+        result["jobs_count"] = len(app.state.simcon_batch_jobs)
+        return result
+
+    @app.get(f"{prefix}/batch/stats")
+    async def batch_stats(period: str = ""):
+        """并发抄表周期统计：最大并发数/成功率/平均耗时/重复下发（period 如 15m/1h/900）。"""
+        return _batch_stats(period=period)
+
+    # ---- REQS-0030：深化应用（档案/在网，临时存储 + Excel 导出） ------------
+    from datetime import datetime as _now
+    from pathlib import Path as _P
+    def _archive_query(start: int, count: int, timeout: float) -> dict:
+        from sim_concentrator.deep_app import ArchiveSession, query_archive
+        io = _io()
+        if io is None:
+            raise LookupError("串口未打开，请先 open")
+        if not hasattr(app.state, "simcon_archive_session"):
+            app.state.simcon_archive_session = ArchiveSession()
+        result = query_archive(io, start=start, count=count, timeout=timeout,
+                               profile=load_profile("anhui"),
+                               session=app.state.simcon_archive_session)
+        result["session"] = app.state.simcon_archive_session.snapshot()
+        return result
+
+    def _archive_snapshot() -> dict:
+        sess = getattr(app.state, "simcon_archive_session", None)
+        if sess is None:
+            return {"fetched_at": None, "nodes": [], "total": 0}
+        return sess.snapshot()
+
+    def _archive_export() -> str:
+        sess = getattr(app.state, "simcon_archive_session", None)
+        if sess is None or not sess.snapshot()["nodes"]:
+            raise LookupError("档案为空，请先执行 archive/query")
+        from sim_concentrator.deep_app import ArchiveSession
+        path = str(_P("data/runtime") / f"archive_{_now.now():%Y%m%d_%H%M%S}.xlsx")
+        return sess.export_excel(path)
+
+    def _online_query(timeout: float) -> dict:
+        from sim_concentrator.deep_app import query_online
+        io = _io()
+        if io is None:
+            raise LookupError("串口未打开，请先 open")
+        return query_online(io, timeout=timeout, profile=load_profile("anhui"))
+
+    @app.get(f"{prefix}/archive/query")
+    async def archive_query(start: int = 0, count: int = 200, timeout: float = 5.0):
+        """查档案（10H-F2 构帧下发，模块实时获取，临时存储，复位不保存）。"""
+        try:
+            return _archive_query(start, count, timeout)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get(f"{prefix}/archive")
+    async def archive_snapshot():
+        """当前临时档案快照（前端表格/AI 读取）。"""
+        return _archive_snapshot()
+
+    @app.get(f"{prefix}/archive/export.xlsx")
+    async def archive_export():
+        """导出临时档案为 Excel。"""
+        from fastapi.responses import FileResponse
+        try:
+            path = _archive_export()
+        except LookupError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return FileResponse(path, filename=Path(path).name)
+
+    @app.get(f"{prefix}/online")
+    async def online_query(timeout: float = 5.0):
+        """查在网（10H-F1 网络规模口径）。"""
+        try:
+            return _online_query(timeout)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # ---- REQS-0013：1376.2 收发库查询（快照 + 上报事件） -------------------
     @app.get(f"{prefix}/store/snapshots")

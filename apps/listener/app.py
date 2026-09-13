@@ -587,6 +587,20 @@ def create_app(service: ParserService, log_service=None, serial_service=None) ->
             "fallback": None,
         }
 
+    @app.get("/api/concurrent/stats")
+    def concurrent_stats(period: str = Query("15m", max_length=8)):
+        """并发抄表只读统计（REQS-0030）：被动侦听帧库 AFN=F1/FN=F1，
+        按 period（15m/30s/1h/900）聚合：最大并发数/成功率/平均耗时/重复下发。
+        侦听台只识别不发帧。"""
+        from sim_concentrator.store import default_db_path
+        from listener.concurrent_readonly import concurrent_stats as _stats
+        path = default_db_path()
+        if not path.is_file():
+            return {"period_seconds": 900, "buckets": [], "attempts_total": 0,
+                    "frames_total": 0, "source": "listener_frame_log",
+                    "note": "收发库尚无数据"}
+        return _stats(str(path), period)
+
     @app.get("/api/logs/task-minute-analysis")
     def task_minute_analysis(task_no: str = Query(..., pattern=r"^\d{1,3}$"), period_minutes: int | None = Query(None, ge=1, le=1440), cco_tei: str = Query("001", pattern=r"^[0-9A-Fa-f]{3}$"), nid: str = Query("", max_length=16), start_time: str = Query("", max_length=12), end_time: str = Query("", max_length=12)):
         if log_service is None:

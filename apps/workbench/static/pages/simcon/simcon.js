@@ -891,11 +891,153 @@
     });
   }
 
+
+  /* ---- 深化应用（REQS-0030）：档案→在网→勾选→并发下发→周期统计 ---- */
+  var deepTimer = null, deepStatsPeriod = "15m";
+
+  function renderDeepPanel() {
+    $("#pBodyDeep").innerHTML =
+      '<div class="pbody-row">' +
+        '<button class="btn btn--sm btn--primary" id="dpQueryArchive">① 查档案</button>' +
+        '<button class="btn btn--sm btn--ghost" id="dpQueryOnline">查在网</button>' +
+        '<button class="btn btn--sm btn--ghost" id="dpExport">导出 Excel</button>' +
+        '<span class="chip chip--ghost" id="dpArchiveMeta">临时档案 · 每次从模块实时获取，复位不保存</span>' +
+      "</div>" +
+      '<div class="pbody-row">' +
+        '<span class="hint">勾选过滤</span>' +
+        '<select class="mini-in" id="dpFOnline"><option value="">在网：全部</option><option value="1">仅在线</option><option value="0">仅离线</option></select>' +
+        '<span class="hint">并发数</span><input class="mini-in" id="dpMax" value="5" style="width:52px" title="1~20；CCO 上限 20，超限否认 109（前端不拦截，后置校验）">' +
+        '<button class="btn btn--sm btn--primary" id="dpStart">② 下发并发抄表（勾选表）</button>' +
+        '<span class="chip chip--ghost" id="dpSelMeta">已选 0</span>' +
+      "</div>" +
+      '<div id="dpTable"><div class="empty" style="height:80px"><p>点击「① 查档案」后此处显示模块表格（地址/信号品质/中继级别/在网）</p></div></div>' +
+      '<div class="pbody-row" style="margin-top:9px">' +
+        '<span class="hint">统计周期</span>' +
+        '<select class="mini-in" id="dpPeriod"><option value="15m">15 分钟</option><option value="30s">30 秒</option><option value="5m">5 分钟</option><option value="1h">1 小时</option></select>' +
+        '<button class="btn btn--sm btn--ghost" id="dpStatsBtn">③ 刷新统计</button>' +
+        '<span class="chip chip--ghost">AI 接口：/api/simcon/batch/stats?period=…</span>' +
+      "</div>" +
+      '<div id="dpStats"><div class="empty" style="height:60px"><p>按周期聚合：最大并发数 / 成功数成功率 / 平均耗时 / 重复下发</p></div></div>';
+    $("#dpQueryArchive").addEventListener("click", queryDeepArchive);
+    $("#dpQueryOnline").addEventListener("click", queryDeepOnline);
+    $("#dpExport").addEventListener("click", exportDeepArchive);
+    $("#dpStart").addEventListener("click", startDeepBatch);
+    $("#dpStatsBtn").addEventListener("click", loadDeepStats);
+    $("#dpPeriod").addEventListener("change", function () {
+      deepStatsPeriod = this.value; loadDeepStats();
+    });
+  }
+
+  function deepNodes() { return state.deepNodes || []; }
+
+  function deepFiltered() {
+    var f = $("#dpFOnline") ? $("#dpFOnline").value : "";
+    return deepNodes().filter(function (n) {
+      return f === "" || String(n.online ? 1 : 0) === f;
+    });
+  }
+
+  function renderDeepTable() {
+    var nodes = deepFiltered();
+    var tbl = nodes.length
+      ? '<table class="rtab"><thead><tr><th><input type="checkbox" id="dpAll"></th><th>#</th><th>模块地址</th><th class="num">信号品质</th><th class="num">中继级别</th><th>在网</th></tr></thead><tbody>' +
+        nodes.map(function (n, i) {
+          return "<tr><td><input type='checkbox' class='dpChk' value='" + esc(n.addr) + "'></td>" +
+            "<td class='num'>" + (i + 1) + "</td><td class='mono'>" + esc(n.addr) + "</td>" +
+            "<td class='num'>" + n.signal + "</td><td class='num'>" + n.relay + "</td>" +
+            "<td>" + (n.online ? '<span class="badge badge--ok">在线</span>' : '<span class="badge badge--idle">离线</span>') + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="empty" style="height:60px"><p>无模块（先查档案，或调整在网过滤）</p></div>';
+    $("#dpTable").innerHTML = tbl;
+    updateDeepSel();
+    var all = $("#dpAll");
+    if (all) all.addEventListener("change", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".dpChk"), function (c) { c.checked = all.checked; });
+      updateDeepSel();
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".dpChk"), function (c) {
+      c.addEventListener("change", updateDeepSel);
+    });
+  }
+
+  function updateDeepSel() {
+    var m = $("#dpSelMeta");
+    if (m) m.textContent = "已选 " + document.querySelectorAll(".dpChk:checked").length + " / 共 " + deepFiltered().length;
+  }
+
+  function queryDeepArchive() {
+    $("#dpArchiveMeta").textContent = "查档案中…（10H-F2 构帧下发）";
+    api("/api/simcon/archive/query?count=200").then(function (d) {
+      state.deepNodes = d.nodes || [];
+      $("#dpArchiveMeta").textContent = "档案 " + (d.session ? d.session.total : state.deepNodes.length) +
+        " 个 · 获取于 " + (d.session && d.session.fetched_at ? d.session.fetched_at.slice(0, 19).replace("T", " ") : "—") + " · 临时存储";
+      renderDeepTable();
+    }).catch(function (e) {
+      $("#dpArchiveMeta").textContent = "查档案失败：" + e.message;
+    });
+  }
+
+  function queryDeepOnline() {
+    $("#dpArchiveMeta").textContent = "查在网中…（10H-F1）";
+    api("/api/simcon/online").then(function (d) {
+      $("#dpArchiveMeta").textContent = "在网规模 " + d.total + " / 容量 " + d.capacity + "（10H-F1 网络口径）";
+    }).catch(function (e) {
+      $("#dpArchiveMeta").textContent = "查在网失败：" + e.message;
+    });
+  }
+
+  function exportDeepArchive() {
+    window.open("/api/simcon/archive/export.xlsx", "_blank");
+    $("#dpArchiveMeta").textContent = "已触发导出（文件在 data/runtime/，浏览器直接下载）";
+  }
+
+  function startDeepBatch() {
+    var meters = Array.prototype.map.call(document.querySelectorAll(".dpChk:checked"), function (c) { return c.value; });
+    if (!meters.length) { banner("请先勾选模块（可按在网状态过滤）"); return; }
+    var maxc = parseInt($("#dpMax").value, 10) || 5;
+    var body = {
+      meters: meters, max_concurrent: maxc, mode: "batch",
+      protocol_type: 2, profile: $("#profileSel").value,
+    };
+    api("/api/simcon/batch_read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (j) {
+        banner(null);
+        batchJobId = j.job_id;
+        renderBatchStatus(j);
+        switchPanel("batch", true);
+        if (!batchTimer) batchTimer = setInterval(pollBatch, 1000);
+        loadDeepStats();
+      }).catch(function (e) { banner("下发失败：" + e.message); });
+  }
+
+  function renderDeepStats(d) {
+    var rows = (d.buckets || []).slice(-12).reverse();
+    var tbl = rows.length
+      ? '<table class="rtab"><thead><tr><th>周期起点</th><th class="num">下发</th><th class="num">成功</th><th class="num">成功率</th><th class="num">最大并发</th><th class="num">平均耗时ms</th><th class="num">重复下发</th></tr></thead><tbody>' +
+        rows.map(function (b) {
+          var rate = b.dispatch_count ? Math.round(b.success_count / b.dispatch_count * 100) + "%" : "—";
+          return "<tr><td class='mono'>" + esc(b.period_start.replace("T", " ").slice(0, 19)) + "</td>" +
+            "<td class='num'>" + b.dispatch_count + "</td><td class='num'>" + b.success_count + "</td>" +
+            "<td class='num'>" + rate + "</td><td class='num'>" + b.max_concurrent + "</td>" +
+            "<td class='num'>" + (b.avg_duration_ms != null ? b.avg_duration_ms : "—") + "</td>" +
+            "<td class='num'>" + b.duplicate_count + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="empty" style="height:52px"><p>暂无统计（下发并发抄表后按周期聚合）</p></div>';
+    $("#dpStats").innerHTML = '<span class="hint" style="display:block;margin:4px 0">任务数 ' + (d.jobs_count || 0) + " · 尝试 " + (d.attempts_total || 0) + " · 周期 " + (d.period_seconds || 900) + "s</span>" + tbl;
+  }
+
+  function loadDeepStats() {
+    api("/api/simcon/batch/stats?period=" + encodeURIComponent(deepStatsPeriod)).then(renderDeepStats).catch(function (e) {
+      $("#dpStats").innerHTML = '<div class="empty" style="height:52px"><p>统计读取失败：' + esc(e.message) + "</p></div>";
+    });
+  }
+
   /* ---- 面板页签 ---- */
   function stopPanelTimers() {
     if (readTimer) { clearInterval(readTimer); readTimer = null; }
     if (rptTimer) { clearInterval(rptTimer); rptTimer = null; }
     if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+    if (deepTimer) { clearInterval(deepTimer); deepTimer = null; }
   }
 
   function switchPanel(tab, force) {
@@ -908,12 +1050,19 @@
     $("#pBodyReadings").style.display = tab === "readings" ? "" : "none";
     $("#pBodyBatch").style.display = tab === "batch" ? "" : "none";
     $("#pBodyReports").style.display = tab === "reports" ? "" : "none";
+    $("#pBodyDeep").style.display = tab === "deep" ? "" : "none";
     stopPanelTimers();
     if (tab === "readings") { loadReadings(); readTimer = setInterval(loadReadings, 3000); }
     if (tab === "reports") { loadReports(); rptTimer = setInterval(loadReports, 5000); }
     if (tab === "batch") {
       if (!$("#bcMeters")) renderBatchForm();
       if (batchJobId && !batchTimer) { pollBatch(); batchTimer = setInterval(pollBatch, 1000); }
+    }
+    if (tab === "deep") {
+      if (!$("#dpTable")) renderDeepPanel();
+      if (deepNodes().length) renderDeepTable();
+      loadDeepStats();
+      if (!deepTimer) deepTimer = setInterval(loadDeepStats, 10000);
     }
   }
 
@@ -935,4 +1084,5 @@
   loadResponders();
   loadExpectRules();
   renderBatchForm();
+  renderDeepPanel();
 })();
