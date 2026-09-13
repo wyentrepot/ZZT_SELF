@@ -42,9 +42,14 @@ metadata:
   仅 `parsed_frame`/`frame_query`。
 - **token 分界**：v2 门面在 `local_full` + loopback 免 token；v1 业务端点
   （如 `/api/ai/v1/listener/indexes`）即使 local_full 也需 Bearer token。
-- **module stop**：普通 stop 遇活跃观察任务返回 409（非故障）→ `force:true`；v2 stop
-  job 可能停在 `waiting/running`（已知状态不收敛点）——物理串口已释放则以串口状态
-  （进程 fd 无 tty 节点 / 再次 ensure 校验）为准，别被 job_state 卡住。
+- **module stop**：普通 stop 遇活跃观察任务返回 409（非故障）→ `force:true`；
+  v2 stop job 正常一次收敛 succeeded（2026-09-14 修复，不再卡 waiting）。
+- **investigation 业务参数同步校验**：非法 window.mode、缺 match、未知 session_id、
+  minute_periods 缺 task_no、raw_hex 无收窄条件现在创建即 422（此前 202 后异步 error
+  且无原因）；仍走异步的 error 会在 evidence L2 `data.reason` 带原因。
+- **verify 总超时**：simcon verify 默认 240s 总看门狗（`WORKBENCH_VERIFY_TIMEOUT_S`
+  可覆盖），超时落 `error` 并复位运行守卫——后续提交不会再被 409 永久拒绝；
+  不可取消红线不变，耐心等到该终态即可。
 - **烧录文件选择**：升级/烧录用 `iap_{cco|ecu}_*.bin`（IAP 串口升级镜像），**禁止用 `flash_*.bin`**
   （生产烧录整片镜像，bootloader 升级路径不认，实测 ~24% 后模块中止）；先读 `firmware/readme.txt`。
 - **工作台启动**：`cd <WORKBENCH_ROOT>/apps && PYTHONPATH=apps:libs python -m workbench.run`
