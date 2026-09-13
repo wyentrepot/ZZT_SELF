@@ -1,4 +1,5 @@
-/* AI 闭环研发验证工作台 —— 页签式统一前端（纯静态，零构建）
+/* AI 闭环研发验证工作台 —— 软件化统一壳（REQS-0031 P1）
+   骨架：菜单栏 / 模块侧栏(可收缩) / 保活工作区 / 全局 Dock / 状态栏
    所有颜色/间距/排版值均引用 tokens-v2.css 中的 Token 变量 */
 
 /* ---- Reset ---- */
@@ -15,89 +16,142 @@ body {
   transition: background 0.3s, color 0.3s;
 }
 
-/* ---- Header（玻璃态效果）---- */
-.wb-header {
-  background: var(--header-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border-bottom: 1px solid var(--header-border);
-  padding: var(--header-padding);
+/* ============ 骨架布局 ============ */
+.wb-app {
   display: flex;
-  align-items: center;
-  gap: var(--header-gap);
-  flex-wrap: wrap;
-  transition: background 0.3s, border-color 0.3s;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.wb-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
 }
 
-/* ---- Brand ---- */
+/* ---- 菜单栏（36px 单行：品牌 + 全局菜单 + 主题/折叠） ---- */
+.wb-menubar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 40px;
+  padding: 0 var(--sp-3);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-strong);
+  position: relative;
+  z-index: 80;
+  transition: background 0.3s, border-color 0.3s;
+}
 .wb-brand {
   display: flex;
   align-items: center;
-  gap: var(--header-brand-gap);
+  gap: var(--sp-1-5);
+  margin-right: var(--sp-3);
+  white-space: nowrap;
 }
 .wb-logo {
-  width: var(--logo-size);
-  height: var(--logo-size);
-  border-radius: var(--logo-radius);
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-md);
   flex-shrink: 0;
   background: var(--logo-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: var(--fw-black);
+  font-size: 10px;
   color: var(--logo-color);
   transition: background 0.3s;
 }
 .wb-title {
-  font-size: var(--title-fs);
-  font-weight: var(--title-fw);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
-.wb-sub {
-  font-size: var(--sub-fs);
-  color: var(--sub-color);
-}
+.wb-sub { display: none; }  /* 服务健康迁至底部状态栏（REQS-0031） */
 
-/* ---- Tabs ---- */
-.wb-tabs {
+/* ---- 下拉菜单 ---- */
+.wb-menus {
   display: flex;
-  gap: var(--tab-gap);
-  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-0-5);
 }
-.wb-tab {
-  border: 1px solid transparent;
+.wb-menu { position: relative; }
+.wb-menu-btn {
+  height: 26px;
+  padding: 0 11px;
+  border: none;
   background: transparent;
-  color: var(--tab-fg);
-  padding: var(--tab-padding);
-  border-radius: var(--tab-radius);
+  color: var(--color-fg-muted);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: var(--tab-fs);
+  font-size: var(--fs-sm);
   font-family: inherit;
-  transition: color var(--dur-150) var(--ease-out),
-              border-color var(--dur-150) var(--ease-out);
+  transition: background var(--dur-150) var(--ease-out), color var(--dur-150) var(--ease-out);
 }
-.wb-tab:hover {
-  color: var(--tab-fg-hover);
+.wb-menu-btn:hover,
+.wb-menu.open .wb-menu-btn {
+  background: var(--color-bg-hover);
+  color: var(--color-fg-default);
 }
-.wb-tab.active {
-  color: var(--tab-fg-active);
-  border-color: var(--tab-border-active);
-  border-bottom-color: transparent;
-  background: var(--tab-bg-active);
-  backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
-  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
+.wb-menu-dd {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 210px;
+  z-index: 90;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--sh-lg, 0 8px 24px rgb(0 0 0 / 0.35));
+  padding: 5px;
+}
+.wb-menu.open .wb-menu-dd { display: block; }
+.wb-menu-dd button {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1-5);
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-fg-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+.wb-menu-dd button:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg-default);
+}
+.wb-menu-kb {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--color-fg-dim);
 }
 
-/* ---- Theme Switcher ---- */
+/* ---- 主题切换（机制沿用：--theme-registry 单一数据源） ---- */
+.wb-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
 .wb-themes {
   display: flex;
   gap: var(--sp-1);
-  margin-left: auto;
   padding-left: var(--sp-3);
-  border-left: 1px solid var(--glass-border);
+  border-left: 1px solid var(--color-border-default);
 }
 .theme-dot {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   border: 1px solid transparent;
   background: transparent;
@@ -124,10 +178,144 @@ body {
   transform: scale(1.1);
 }
 
-/* ---- Main ---- */
+/* ---- 侧栏（模块导航；折叠为 50px 图标轨） ---- */
+.wb-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--color-bg-surface);
+  border-right: 1px solid var(--color-border-default);
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: width 0.2s ease, background 0.3s, border-color 0.3s;
+}
+.wb-nav-groups {
+  padding: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.wb-nav-group-title {
+  font-size: 10px;
+  color: var(--color-fg-dim);
+  margin: var(--sp-2) 0 var(--sp-1) var(--sp-2);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+.wb-nav-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wb-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-fg-muted);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  white-space: nowrap;
+  position: relative;
+  transition: background var(--dur-150) var(--ease-out), color var(--dur-150) var(--ease-out);
+}
+.wb-nav-ico {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.wb-nav-txt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wb-nav-item:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg-default);
+}
+.wb-nav-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+.wb-nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 5px;
+  bottom: 5px;
+  width: 2.5px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-accent);
+}
+
+/* ---- 折叠为图标轨（悬浮提示经由 data-tip） ---- */
+.wb-sidebar-collapsed .wb-sidebar {
+  width: 50px;
+}
+.wb-sidebar-collapsed .wb-nav-group-title {
+  visibility: hidden;
+  height: 6px;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+}
+.wb-sidebar-collapsed .wb-nav-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+  gap: 0;
+}
+.wb-sidebar-collapsed .wb-nav-txt {
+  display: none;
+}
+.wb-sidebar-collapsed .wb-nav-item[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--color-bg-elevated);
+  color: var(--color-fg-default);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  z-index: 95;
+  box-shadow: var(--sh-lg, 0 8px 24px rgb(0 0 0 / 0.35));
+  pointer-events: none;
+}
+
+/* ---- 折叠按钮 ---- */
+.wb-collapse-btn {
+  border: 1px solid var(--color-border-default);
+  background: transparent;
+  color: var(--color-fg-dim);
+  border-radius: var(--radius-md);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: var(--fs-md);
+  line-height: 1;
+  transition: all var(--dur-150) var(--ease-out);
+}
+.wb-collapse-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg-default);
+}
+
+/* ---- 工作区（保活 iframe） ---- */
 .wb-main {
   flex: 1;
   display: flex;
+  min-width: 0;
   min-height: 0;
 }
 .wb-panels {
@@ -147,108 +335,191 @@ body {
   display: none;
 }
 
-
-/* ============ P5：左侧分组导航 / 抽屉 / 折叠 ============ */
-.wb-app {
+/* ============ 全局 Dock（跨模块"示波器"，REQS-0031 P1） ============ */
+.wb-dock {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
+  position: relative;
+  height: 180px;
+  min-height: 34px;
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border-strong);
+  transition: height 0.16s var(--ease-out);
 }
-.wb-header {
+.wb-dock.wb-dock-fold { height: 34px; }
+.wb-dock-grip {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  z-index: 5;
+}
+.wb-dock.wb-dock-fold .wb-dock-grip { cursor: default; }
+.wb-dock-h {
   flex-shrink: 0;
-}
-.wb-header-actions {
   display: flex;
   align-items: center;
-  gap: var(--header-gap);
-  margin-left: auto;
+  gap: var(--sp-1-5);
+  height: 34px;
+  padding: 0 var(--sp-3);
+  background: var(--color-bg-raised);
+  border-bottom: 1px solid var(--color-border-default);
 }
-.wb-body {
-  flex: 1;
+.wb-dock.wb-dock-fold .wb-dock-h { border-bottom: none; }
+.wb-dock-car {
   display: flex;
-  min-height: 0;
-}
-
-/* ---- Sidebar ---- */
-.wb-sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  background: var(--header-bg);
-  border-right: 1px solid var(--header-border);
-  overflow-y: auto;
-  transition: width 0.2s ease, background 0.3s, border-color 0.3s;
-}
-.wb-nav-groups {
-  padding: var(--header-padding);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-}
-.wb-nav-group-title {
-  font-size: var(--sub-fs);
-  color: var(--sub-color);
-  margin: 0 0 var(--sp-1) 0;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.wb-nav-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-0-5);
-}
-.wb-nav-item {
-  width: 100%;
-  text-align: left;
-  border: 1px solid transparent;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
   background: transparent;
-  color: var(--tab-fg);
-  padding: var(--tab-padding);
-  border-radius: var(--tab-radius);
+  color: var(--color-fg-dim);
   cursor: pointer;
-  font-size: var(--tab-fs);
-  font-family: inherit;
-  transition: color var(--dur-150) var(--ease-out),
-              border-color var(--dur-150) var(--ease-out);
+  border-radius: var(--radius-sm);
 }
-.wb-nav-item:hover {
-  color: var(--tab-fg-hover);
+.wb-dock-car svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.16s var(--ease-out);
 }
-.wb-nav-item.active {
-  color: var(--tab-fg-active);
-  border-color: var(--tab-border-active);
-  background: var(--tab-bg-active);
-}
-
-/* ---- 折叠为图标栏 ---- */
-.wb-sidebar-collapsed .wb-sidebar {
-  width: 56px;
-}
-.wb-sidebar-collapsed .wb-nav-group-title {
-  display: none;
-}
-.wb-sidebar-collapsed .wb-nav-item {
-  text-align: center;
-  padding-left: 0;
-  padding-right: 0;
-  overflow: hidden;
+.wb-dock:not(.wb-dock-fold) .wb-dock-car svg { transform: rotate(90deg); }
+.wb-dock-car:hover { color: var(--color-fg-default); background: var(--color-bg-hover); }
+.wb-dock-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
   white-space: nowrap;
 }
-
-/* ---- 折叠按钮 ---- */
-.wb-collapse-btn {
-  border: 1px solid var(--header-border);
+.wb-dock-tab {
+  height: 22px;
+  padding: 0 10px;
+  border: none;
   background: transparent;
-  color: var(--tab-fg);
-  border-radius: var(--tab-radius);
-  padding: var(--sp-1-5) var(--sp-2-5);
+  color: var(--color-fg-dim);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: var(--fs-xl);
-  line-height: 1;
+  font-size: var(--fs-sm);
+  font-family: inherit;
 }
+.wb-dock-tab:hover { color: var(--color-fg-default); }
+.wb-dock-tab.on {
+  background: var(--color-bg-hover);
+  color: var(--color-fg-default);
+}
+.wb-dock-sp { flex: 1; }
+.wb-dock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  border: 1px solid var(--color-border-default);
+  color: var(--color-fg-muted);
+  background: var(--color-bg-elevated);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.wb-dock-chip--tx { background: var(--color-dir-tx-soft); color: var(--color-dir-tx); border-color: var(--color-dir-tx); }
+.wb-dock-chip--rx { background: var(--color-dir-rx-soft); color: var(--color-dir-rx); border-color: var(--color-dir-rx); }
+.wb-dock-hint {
+  font-size: var(--fs-xs);
+  color: var(--color-fg-dim);
+  white-space: nowrap;
+}
+.wb-dock-b {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: none;
+}
+.wb-dock:not(.wb-dock-fold) .wb-dock-b { display: block; }
+.wb-dock-view {
+  display: none;
+  height: 100%;
+  overflow-y: auto;
+}
+.wb-dock-view.on { display: block; }
+.wb-dock-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 60px;
+  color: var(--color-fg-dim);
+  font-size: var(--fs-sm);
+}
+.wb-dock-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px var(--sp-3);
+  border-bottom: 1px solid var(--color-border-default);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.wb-dock-row:hover { background: var(--color-bg-hover); }
+.wb-dock-tm { color: var(--color-fg-dim); flex-shrink: 0; }
+.wb-dock-dir {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  padding: 1px 0;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.wb-dock-dir--tx { background: var(--color-dir-tx-soft); color: var(--color-dir-tx); }
+.wb-dock-dir--rx { background: var(--color-dir-rx-soft); color: var(--color-dir-rx); }
+.wb-dock-dir--ev { background: var(--color-status-info-bg); color: var(--color-status-info); }
+.wb-dock-src { color: var(--color-fg-dim); flex-shrink: 0; width: 72px; }
+.wb-dock-tag { color: var(--color-fg-subtle); flex-shrink: 0; }
+.wb-dock-text {
+  color: var(--color-fg-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ============ 底部状态栏（REQS-0031 P1） ============ */
+.wb-statusbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 26px;
+  padding: 0 var(--sp-3);
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border-default);
+  color: var(--color-fg-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.3s, border-color 0.3s;
+}
+.wb-sb-kv { display: inline-flex; align-items: center; gap: 5px; }
+.wb-sb-kv b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--color-fg-muted);
+}
+.wb-sb-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-status-pass);
+  box-shadow: 0 0 5px var(--color-status-pass);
+}
+.wb-sb-sp { flex: 1; }
+.wb-sb-demo { opacity: 0.75; }
 
 /* ---- 遮罩（窄屏抽屉） ---- */
 .wb-overlay {
@@ -282,10 +553,15 @@ body {
     width: 240px;
   }
   .wb-sidebar-collapsed .wb-nav-item {
-    text-align: left;
-    padding-left: var(--tab-padding);
+    justify-content: flex-start;
+    gap: 9px;
+  }
+  .wb-sidebar-collapsed .wb-nav-txt {
+    display: inline;
   }
   .wb-sidebar-collapsed .wb-nav-group-title {
-    display: block;
+    visibility: visible;
+    height: auto;
   }
+  .wb-dock-hint { display: none; }
 }

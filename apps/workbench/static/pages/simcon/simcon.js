@@ -508,6 +508,22 @@
 
   /* ================= 收发记录 ================= */
 
+  /* REQS-0031 P2：帧推送至外壳全局 Dock（跨模块"示波器"）。
+     postMessage 交给壳层（app.js 监听 wb-dock-push），本页不依赖壳存在。 */
+  function pushDockFrame(f) {
+    try {
+      if (!window.parent || window.parent === window) return;
+      window.parent.postMessage({
+        type: "wb-dock-push",
+        view: "frame",
+        dir: f.dir === "tx" ? "tx" : "rx",
+        source: "模拟集中器",
+        tag: (f.afn || "—") + " " + (f.fn || ""),
+        text: f.frame_hex || ""
+      }, "*");
+    } catch (e) { /* 非嵌套环境静默 */ }
+  }
+
   function refreshFrames() {
     var dir = $("#segF button.on").dataset.f || "";
     api("/api/simcon/frames?limit=200" + (dir ? "&direction=" + dir : "") + (state.lastSeq ? "&after_seq=" + state.lastSeq : ""))
@@ -523,6 +539,7 @@
           if (pending) pending.querySelector("p").textContent = "暂无帧记录";
           return;
         }
+        var firstBatch = !state.lastSeq;   // 首批为历史帧，不重复推送 Dock
         state.lastSeq = frames[frames.length - 1].seq || state.lastSeq;
         var empty = body.querySelector(".empty");
         if (empty) empty.remove();
@@ -539,6 +556,7 @@
             (f.updown ? '<div class="hint" style="margin-top:6px">CCO 主动上报（updown=' + esc(f.updown) + "）</div>" : "") + "</div>";
           row.querySelector(".tr-main").addEventListener("click", function () { row.classList.toggle("open"); });
           body.insertBefore(row, body.firstChild);
+          if (!firstBatch) pushDockFrame(f);   // REQS-0031 P2：增量帧 → 外壳全局 Dock
           // REQS-0013：上行响应帧 → 刷新响应表格（匹配当前选中 Fn）
           if (f.dir === "rx" && f.updown === "up" && f.resp && state.resp && f.afn === (state.afnList[state.curAfn] || {}).code && f.fn === (state.afnList[state.curAfn] || {}).fns[state.curFn].no) {
             renderRespTable(f.resp);

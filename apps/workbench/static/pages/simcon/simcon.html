@@ -56,11 +56,6 @@ input,select,textarea{font:inherit;color:inherit}
   border-bottom:1px solid var(--color-status-fail-border);color:var(--color-status-fail);font-size:12.5px}
 .banner.show{display:flex}
 .app{display:flex;flex-direction:column;height:100vh}
-.top{display:flex;align-items:center;gap:8px;height:50px;padding:0 16px;flex:none;
-  border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface)}
-.crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--color-fg-subtle);white-space:nowrap}
-.crumb b{color:var(--color-fg-default);font-weight:500;font-size:14px}
-.top .sp{margin-left:auto}
 .chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--radius-sm);
   font-size:11px;font-weight:500;background:var(--color-bg-elevated);color:var(--color-fg-muted);border:1px solid var(--color-border-default)}
 .chip--ac{background:var(--color-accent-soft);color:var(--color-accent);border-color:var(--color-border-focus)}
@@ -89,7 +84,23 @@ select.fld{appearance:none;cursor:pointer;
 .seg button{height:22px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--color-fg-subtle);transition:all .14s var(--ease-in-out)}
 .seg button:hover{color:var(--color-fg-default)}
 .seg button.on{background:var(--color-bg-hover);color:var(--color-fg-default)}
-.work{flex:1;display:grid;grid-template-columns:300px 236px 256px 1fr;min-height:0}
+
+/* ── REQS-0031 P2：软件化统一壳二级页签（一级=模块在外壳侧栏，二级=本页视图） ── */
+.ztabs{display:flex;align-items:center;gap:2px;height:38px;padding:0 10px;flex:none;
+  background:var(--color-bg-surface);border-bottom:1px solid var(--color-border-default)}
+.zt-brand{display:flex;align-items:center;gap:7px;padding:0 10px 0 2px;margin-right:4px;
+  border-right:1px solid var(--color-border-default);font-size:12.5px;font-weight:600;white-space:nowrap}
+.ztabs .zt{height:27px;padding:0 12px;font-size:12px;font-weight:500;color:var(--color-fg-dim);position:relative;
+  border-radius:var(--radius-sm) var(--radius-sm) 0 0;transition:color .14s var(--ease-in-out)}
+.ztabs .zt:hover{color:var(--color-fg-default)}
+.ztabs .zt.on{color:var(--color-accent)}
+.ztabs .zt.on::after{content:"";position:absolute;left:8px;right:8px;bottom:0;height:2px;border-radius:2px;background:var(--color-accent)}
+.ztabs .zsp{flex:1}
+.zviews{flex:1;display:flex;min-height:0}
+.zv{display:none;flex:1;min-height:0;flex-direction:column}
+.zv.on{display:flex}
+
+.work{flex:1;display:grid;grid-template-columns:236px 256px 1fr;min-height:0}
 .col{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--color-bg-surface)}
 .col+.col{border-left:1px solid var(--color-border-default)}
 .sec-h{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;flex:none;
@@ -149,7 +160,7 @@ select.fld{appearance:none;cursor:pointer;
   display:flex;align-items:center;gap:10px}
 .par-foot .sp{margin-left:auto}
 .par-foot .meta{font-size:11px;color:var(--color-fg-dim);font-family:var(--font-mono)}
-/* 收发记录 */
+/* 收发记录（底部横条，所有页签共用；帧同时推送外壳全局 Dock） */
 .traffic{flex:none;display:flex;flex-direction:column;background:var(--color-bg-surface);
   border-top:1px solid var(--color-border-strong);height:var(--th,240px);transition:height .22s var(--ease-in-out)}
 .traffic.fold{--th:37px}
@@ -214,7 +225,7 @@ select.fld{appearance:none;cursor:pointer;
 .p-body{flex:1;overflow:auto;min-height:0;padding:10px 12px}
 .p-body.p-col{display:none;flex-direction:column;gap:10px}
 .pbody-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-/* REQS-0030：左侧深化应用章节 */
+/* REQS-0030：深化应用章节（P2 起升级为「并发抄表」页签全宽内容） */
 .deep-sec{display:flex;flex-direction:column;min-height:100%}
 .deep-sec-h{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:12px;font-weight:500;
   color:var(--color-fg-default);border-bottom:1px solid var(--color-border-default);background:var(--color-bg-elevated);
@@ -255,96 +266,134 @@ select.fld{appearance:none;cursor:pointer;
 .bkt-card .cnt{font-family:var(--font-mono);font-size:12px;color:var(--color-accent);background:var(--color-bg-canvas);border-radius:10px;padding:0 8px}
 progress.inflight{width:160px;height:8px}
 
+/* ── REQS-0031 P2：页签容器适配 ── */
+#zt-send .work{border-top:none}
+.deep-col-full{flex:1;border-left:none}
+#zt-batch .col-body{padding:10px 14px 16px}
+#zt-obs .panel{flex:1;max-height:none;min-height:0;border-top:none}
+#zt-set{gap:14px;padding:14px 16px;overflow-y:auto;align-content:flex-start}
+.conn-card{flex:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);padding:13px 16px}
+.conn-card>b{font-size:12.5px;font-weight:600;margin-right:4px}
+#zt-set .card .resp-strip{border-top:1px solid var(--color-border-default);border-radius:0 0 var(--radius-lg) var(--radius-lg)}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="banner" id="banner"></div>
-  <header class="top">
-    <div class="crumb"><b>模拟集中器</b><span style="color:var(--color-fg-dim)">/</span><span>Q/GDW 1376.2 下发 · 语义化构帧（ADR-5）</span></div>
-    <div class="sp"></div>
-    <select class="fld" id="portSel" style="width:130px"><option>加载中…</option></select>
-    <select class="fld" id="baudSel" style="width:86px"><option>9600</option><option>2400</option><option>19200</option><option>115200</option></select>
-    <select class="fld" id="paritySel" style="width:74px"><option value="E">偶 E</option><option value="N">无 N</option><option value="O">奇 O</option></select>
-    <select class="fld" id="profileSel" style="width:110px"><option value="anhui">Profile anhui</option><option value="test">Profile test</option></select>
-    <button class="btn btn--sm btn--primary" id="btnOpen">打开串口</button>
-    <button class="btn btn--sm btn--ghost" id="btnClose">关闭</button>
+
+  <!-- REQS-0031 P2：二级页签（一级=模块在外壳侧栏，二级=本页视图）。
+       连接状态 chip 由 simcon.js refreshStatus 持续刷新。 -->
+  <header class="ztabs">
+    <span class="zt-brand">模拟集中器<span class="chip chip--ghost">Q/GDW 1376.2</span></span>
+    <button class="zt on" data-zv="zt-send">构帧下发</button>
+    <button class="zt" data-zv="zt-batch">并发抄表</button>
+    <button class="zt" data-zv="zt-obs">数据观测</button>
+    <button class="zt" data-zv="zt-set">会话设置</button>
+    <span class="zsp"></span>
     <span class="chip chip--ghost" id="stChip"><span class="dot" style="color:var(--color-fg-dim)"></span>未连接</span>
   </header>
 
-  <section class="work">
-    <!-- REQS-0030：左侧独立章节「深化应用」（并发抄表小节） -->
-    <div class="col">
-      <div class="sec-h"><h3>深化应用</h3><span class="sp"></span><span class="hint">业务向导</span></div>
-      <div class="col-body" id="deepCol">
-        <div class="deep-sec">
-          <div class="deep-sec-h">并发抄表 <span class="hint">10H-F2 档案 → 勾选 → F1H-F1 下发 → 周期统计</span></div>
-          <div id="dpBody" class="deep-body"></div>
+  <div class="zviews">
+    <!-- 页签① 构帧下发：AFN → Fn → 参数与预览（原四列布局移除「深化应用」列） -->
+    <section class="zv on" id="zt-send">
+      <section class="work">
+        <div class="col">
+          <div class="sec-h"><h3>AFN 应用功能码</h3><span class="sp"></span><span class="hint" id="afnCnt"></span></div>
+          <div class="col-body" id="afnCol"><div class="empty"><p>加载中…</p></div></div>
         </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="sec-h"><h3>AFN 应用功能码</h3><span class="sp"></span><span class="hint" id="afnCnt"></span></div>
-      <div class="col-body" id="afnCol"><div class="empty"><p>加载中…</p></div></div>
-    </div>
-    <div class="col">
-      <div class="sec-h"><h3>Fn 命令</h3><span class="sp"></span><span class="hint" id="fnCnt"></span></div>
-      <div class="col-body" id="fnCol"><div class="empty"><p>选择 AFN</p></div></div>
-    </div>
-    <div class="col">
-      <div class="sec-h"><h3>参数与下发</h3><span class="sp"></span><span class="hint">send 只写业务参数，构帧自动完成</span></div>
-      <div class="par-head" id="parHead"><div class="par-t2" style="padding:0">从左侧选择 AFN → Fn。</div></div>
-      <div class="col-body" id="parBody"><div class="empty"><p>未选择命令</p></div></div>
-      <!-- REQS-0013：响应表格区（分页型 Fn 才显示） -->
-      <div class="resp-grid" id="respGrid" style="display:none">
-        <div class="resp-grid-h">
-          <span class="ttl">响应表格</span>
-          <span class="chip chip--ghost" id="respMeta">—</span>
-          <span class="sp"></span>
-          <div class="seg" id="segMode">
-            <button data-m="manual">指定范围</button>
-            <button data-m="auto" class="on">自动全量</button>
+        <div class="col">
+          <div class="sec-h"><h3>Fn 命令</h3><span class="sp"></span><span class="hint" id="fnCnt"></span></div>
+          <div class="col-body" id="fnCol"><div class="empty"><p>选择 AFN</p></div></div>
+        </div>
+        <div class="col">
+          <div class="sec-h"><h3>参数与下发</h3><span class="sp"></span><span class="hint">send 只写业务参数，构帧自动完成</span></div>
+          <div class="par-head" id="parHead"><div class="par-t2" style="padding:0">从左侧选择 AFN → Fn。</div></div>
+          <div class="col-body" id="parBody"><div class="empty"><p>未选择命令</p></div></div>
+          <!-- REQS-0013：响应表格区（分页型 Fn 才显示） -->
+          <div class="resp-grid" id="respGrid" style="display:none">
+            <div class="resp-grid-h">
+              <span class="ttl">响应表格</span>
+              <span class="chip chip--ghost" id="respMeta">—</span>
+              <span class="sp"></span>
+              <div class="seg" id="segMode">
+                <button data-m="manual">指定范围</button>
+                <button data-m="auto" class="on">自动全量</button>
+              </div>
+              <input class="fld" id="rgStart" placeholder="起始序号" style="width:74px" value="0">
+              <input class="fld" id="rgCount" placeholder="条数" style="width:52px" value="16">
+              <button class="btn btn--sm" id="btnQuery">查询</button>
+              <button class="btn btn--sm btn--ghost" id="btnSnapshot">快照</button>
+              <button class="btn btn--sm btn--ghost" id="btnEvents" style="display:none">上报历史</button>
+            </div>
+            <div class="resp-grid-body" id="respGridBody"><div class="empty" style="height:100px"><p>查询后响应记录将显示在这里</p></div></div>
           </div>
-          <input class="fld" id="rgStart" placeholder="起始序号" style="width:74px" value="0">
-          <input class="fld" id="rgCount" placeholder="条数" style="width:52px" value="16">
-          <button class="btn btn--sm" id="btnQuery">查询</button>
-          <button class="btn btn--sm btn--ghost" id="btnSnapshot">快照</button>
-          <button class="btn btn--sm btn--ghost" id="btnEvents" style="display:none">上报历史</button>
+          <div class="par-foot">
+            <button class="btn btn--sm btn--ghost" id="btnBuild">刷新预览</button>
+            <span class="sp"></span>
+            <span class="meta" id="frameMeta">—</span>
+            <button class="btn btn--sm btn--primary" id="btnSend">下发</button>
+          </div>
         </div>
-        <div class="resp-grid-body" id="respGridBody"><div class="empty" style="height:100px"><p>查询后响应记录将显示在这里</p></div></div>
-      </div>
-      <div class="par-foot">
-        <button class="btn btn--sm btn--ghost" id="btnBuild">刷新预览</button>
-        <span class="sp"></span>
-        <span class="meta" id="frameMeta">—</span>
-        <button class="btn btn--sm btn--primary" id="btnSend">下发</button>
-      </div>
-    </div>
-  </section>
+      </section>
+    </section>
 
-  <div class="resp-strip" id="respStrip"><span class="lbl">内置应答</span><span class="hint" style="padding-top:2px">加载中…</span></div>
-
-  <!-- REQS-0027：结果面板（收发配对 / 抄读汇总 / 并发抄表 / 主动上报） -->
-  <section class="panel" id="panel">
-    <div class="p-h">
-      <div class="seg" id="segPanel">
-        <button class="on" data-p="pair">收发配对</button>
-        <button data-p="readings">抄读汇总</button>
-        <button data-p="batch">并发抄表</button>
-        <button data-p="reports">主动上报</button>
+    <!-- 页签② 并发抄表（REQS-0030 深化应用，原窄列升级为全宽） -->
+    <section class="zv" id="zt-batch">
+      <div class="col deep-col-full">
+        <div class="sec-h"><h3>深化应用 · 并发抄表</h3><span class="sp"></span><span class="hint">业务向导</span></div>
+        <div class="col-body" id="deepCol">
+          <div class="deep-sec">
+            <div class="deep-sec-h">并发抄表 <span class="hint">10H-F2 档案 → 勾选 → F1H-F1 下发 → 周期统计</span></div>
+            <div id="dpBody" class="deep-body"></div>
+          </div>
+        </div>
       </div>
-      <span class="sp"></span>
-      <span class="chip chip--ghost" id="panelMeta"></span>
-      <button class="btn btn--sm btn--ghost" id="btnPanelToggle" title="收起/展开">▾</button>
-    </div>
-    <div class="p-body" id="pBodyPair">
-      <div class="empty" style="height:96px"><p>下发后此处呈现「下发帧 ↔ 应答帧」配对结果</p></div>
-    </div>
-    <div class="p-body" id="pBodyReadings" style="display:none"></div>
-    <div class="p-body p-col" id="pBodyBatch" style="display:none"></div>
-    <div class="p-body" id="pBodyReports" style="display:none"></div>
-  </section>
+    </section>
 
+    <!-- 页签③ 数据观测（REQS-0027 结果面板：收发配对/抄读汇总/并发抄表/主动上报） -->
+    <section class="zv" id="zt-obs">
+      <section class="panel" id="panel">
+        <div class="p-h">
+          <div class="seg" id="segPanel">
+            <button class="on" data-p="pair">收发配对</button>
+            <button data-p="readings">抄读汇总</button>
+            <button data-p="batch">并发抄表</button>
+            <button data-p="reports">主动上报</button>
+          </div>
+          <span class="sp"></span>
+          <span class="chip chip--ghost" id="panelMeta"></span>
+          <button class="btn btn--sm btn--ghost" id="btnPanelToggle" title="收起/展开">▾</button>
+        </div>
+        <div class="p-body" id="pBodyPair">
+          <div class="empty" style="height:96px"><p>下发后此处呈现「下发帧 ↔ 应答帧」配对结果</p></div>
+        </div>
+        <div class="p-body" id="pBodyReadings" style="display:none"></div>
+        <div class="p-body p-col" id="pBodyBatch" style="display:none"></div>
+        <div class="p-body" id="pBodyReports" style="display:none"></div>
+      </section>
+    </section>
+
+    <!-- 页签④ 会话设置（串口连接 + 内置应答，原页首连接行与底部应答条迁此） -->
+    <section class="zv" id="zt-set">
+      <div class="conn-card">
+        <b>串口连接</b>
+        <select class="fld" id="portSel" style="width:180px"><option>加载中…</option></select>
+        <select class="fld" id="baudSel" style="width:86px"><option>9600</option><option>2400</option><option>19200</option><option>115200</option></select>
+        <select class="fld" id="paritySel" style="width:74px"><option value="E">偶 E</option><option value="N">无 N</option><option value="O">奇 O</option></select>
+        <select class="fld" id="profileSel" style="width:110px"><option value="anhui">Profile anhui</option><option value="test">Profile test</option></select>
+        <button class="btn btn--sm btn--primary" id="btnOpen">打开串口</button>
+        <button class="btn btn--sm btn--ghost" id="btnClose">关闭</button>
+        <span class="hint">无可用串口时自动选择 9600/E；显式指定可覆盖</span>
+      </div>
+      <div class="card">
+        <div class="card-h">内置应答<span class="hint">口径：02号代码卡（Fn=1）</span></div>
+        <div class="resp-strip" id="respStrip"><span class="lbl">内置应答</span><span class="hint" style="padding-top:2px">加载中…</span></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 收发记录：底部横条，所有页签共用；TX/RX 帧同步推送外壳全局 Dock（REQS-0031 P2） -->
   <section class="traffic" id="traffic">
     <div class="tr-h" id="trH">
       <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
@@ -361,6 +410,21 @@ progress.inflight{width:160px;height:8px}
     <div class="tr-body" id="trBody"><div class="empty" style="height:120px"><p>打开串口后，会话帧日志将显示在这里</p></div></div>
   </section>
 </div>
-<script src="simcon.js?v=simcon-v3-0030"></script>
+<script src="simcon.js?v=simcon-v4-0031"></script>
+<script>
+/* REQS-0031 P2：二级页签切换（壳侧一级导航；本页仅视图切换，元素 id 均未变更，
+   simcon.js 全部绑定继续生效） */
+(function () {
+  var tabs = document.querySelectorAll(".ztabs .zt");
+  Array.prototype.forEach.call(tabs, function (tab) {
+    tab.addEventListener("click", function () {
+      Array.prototype.forEach.call(tabs, function (x) { x.classList.toggle("on", x === tab); });
+      Array.prototype.forEach.call(document.querySelectorAll(".zviews .zv"), function (v) {
+        v.classList.toggle("on", v.id === tab.dataset.zv);
+      });
+    });
+  });
+})();
+</script>
 </body>
 </html>
