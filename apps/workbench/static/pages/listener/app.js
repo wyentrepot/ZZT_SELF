@@ -332,7 +332,13 @@ function updateStatus(status) {
     elements.load.disabled = false;
     if (status.state === "failed") {
       showError(status.message);
+      pushDock({ view: "event", dir: "ev", tag: "索引", text: `索引建立失败 · ${status.message || ""}` });
     } else {
+      // REQS-0031 P3：索引建立完成 → 外壳 Dock 事件
+      pushDock({
+        view: "event", dir: "ev", tag: "索引",
+        text: `索引建立完成 · ${Number(status.frame_count || 0).toLocaleString()} 帧 · ${state.loaderSourceName || status.source_path || ""}`,
+      });
       // 完成后稍候再强刷一次：避开索引落库的过渡窗口，保证末尾新增帧进入列表
       state.pageCache.clear();
       setTimeout(loadFrames, 500);
@@ -769,18 +775,29 @@ async function loadDetail(id, row) {
   }
 }
 
+/* ---------- REQS-0031 P3：推送外壳全局 Dock（跨模块"示波器"） ----------
+ * postMessage 交给壳层（app.js 监听 wb-dock-push），独立运行时静默跳过。 */
+function pushDock(message) {
+  try {
+    if (!window.parent || window.parent === window) return;
+    window.parent.postMessage(Object.assign({ type: "wb-dock-push", source: "侦听台" }, message), "*");
+  } catch (error) { /* 非嵌套环境静默 */ }
+}
+
 async function parseSingleFrame() {
   const button = $("#parse-button");
   const output = $("#single-output");
+  const rawHex = $("#frame-input").value;
   button.disabled = true;
   output.textContent = "正在解析…";
   try {
     const data = await request("/api/listener/parse", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({hex: $("#frame-input").value}),
+      body: JSON.stringify({hex: rawHex}),
     });
     output.textContent = JSON.stringify(data, null, 2);
+    pushDock({ view: "frame", dir: "ev", tag: "单帧调试", text: String(rawHex || "").trim() });
   } catch (error) {
     output.textContent = error.message;
   } finally {
@@ -1399,6 +1416,13 @@ function startSerialPolling() {
       state.pageCache.clear();
       loadFrames();
     }
+    // REQS-0031 P3：串口采集增量 → 外壳 Dock 事件（被动嗅探无方向语义，按事件推送）
+    if (nowCount > prevCount) {
+      pushDock({
+        view: "event", dir: "ev", tag: "串口采集",
+        text: `+${nowCount - prevCount} 帧 · 累计 ${Number(nowCount || 0).toLocaleString()}`,
+      });
+    }
   };
   tick();
   // 节流：安静期（无新帧）降低轮询频率，减少无效请求
@@ -1428,6 +1452,11 @@ async function startSerial() {
     });
     elements.serialMessage.textContent = `正在监听 ${port} (${baud}, ${parity}, ${bytesize}, ${stopbits})`;
     elements.serialRefresh.disabled = false;
+    // REQS-0031 P3：串口采集启动 → 外壳 Dock 事件
+    pushDock({
+      view: "event", dir: "ev", tag: "串口采集",
+      text: `串口采集启动 · ${port} (${baud}, ${parity}, ${bytesize}, ${stopbits})`,
+    });
     startSerialPolling();
   } catch (error) {
     elements.serialMessage.textContent = error.message;

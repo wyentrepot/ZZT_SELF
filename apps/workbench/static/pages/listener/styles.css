@@ -1484,3 +1484,56 @@ body[data-source="serial"] [data-mode="serial"] { display: block; }
   color: var(--color-status-info);
 }
 .cycle-drill:hover { background: var(--color-bg-input); }
+
+/* ---------- REQS-0031 P3：软件化统一壳 · 二级页签条 ----------
+   模块名 + 视图页签 + DLL 芯片合并为单行 38px 条；负 margin 挣脱壳 padding 通栏。
+   覆盖上方早期 hero 头部与胶囊页签样式（同为类选择器，靠后者胜出）。 */
+.app-header.zt-bar {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  gap: 10px;
+  height: 38px;
+  margin: -14px -18px 12px;
+  padding: 0 12px;
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-default);
+}
+.zt-bar .brand-mark { width: 22px; height: 22px; border-radius: 6px; font-size: 9px; }
+.zt-bar h1.zt-title { font-size: 12.5px; font-weight: 600; letter-spacing: 0; white-space: nowrap; }
+.zt-bar .view-tabs {
+  flex: 0 1 auto;
+  gap: 2px;
+  margin-top: 0;
+  padding: 0;
+  border-bottom: none;
+  overflow-x: auto;
+}
+.zt-bar .view-tab {
+  position: relative;
+  top: auto;
+  height: 27px;
+  padding: 0 12px;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-fg-dim);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  white-space: nowrap;
+}
+.zt-bar .view-tab:hover { color: var(--color-fg-default); background: transparent; }
+.zt-bar .view-tab.active {
+  color: var(--color-accent);
+  background: transparent;
+  border: none;
+}
+.zt-bar .view-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+.zt-bar .dll-status { margin-left: auto; flex-shrink: 0; }
