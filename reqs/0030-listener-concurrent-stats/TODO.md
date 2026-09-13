@@ -9,7 +9,9 @@
 - [x] 测试方式：1376.2 构帧/钩帧模拟（/build + responder + loghooks），不用真实日志
 - [x] 侦听台侧统计事件源：被动侦听的网络收发帧（tx/rx 都算）
 - [x] 样本以构帧为主（用户拍板 2026-09-13），303MB 原始日志不再依赖
-- [x] 已核对：AFN=F1H FN=F1H；识别逻辑见 libs/sim_concentrator/concurrent_match.py（10 单测绿）
+- [x] 已核对并实测确认（2026-09-13 空口抓包回放）：线上口径 AFN=F1H / Fn=1，
+      帧库 journal 按 F{n} 渲染落库为 "F1"；识别逻辑见 concurrent_match.py。
+      注意：《协议层/88》卡在知识库中不存在，口径权威为《CCO实现逻辑/02-并发抄表》
 - [x] 统计周期 = API 参数 period（15m/30s/1h/900），AI 可调 + 页面 UI（用户拍板）
 
 ### P1：模拟集中器——下发侧深化（应用层 1376.2）

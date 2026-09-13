@@ -184,8 +184,10 @@ class BatchReadJob:
             from sim_concentrator.frame_codec import build_13762_frame
             afn = 0x02 if self.mode == "single" else 0xF1
             self._seq += 1
+            # 数据单元 = 规约类型 + 保留 + 长度L(低字节在前, 02 卡
+            # datalen=(buff[3]<<8)+buff[2]) + 电表协议报文
             proto = bytes([self.protocol_type, 0x00]) \
-                + len(app_payload).to_bytes(2, "big") + app_payload
+                + len(app_payload).to_bytes(2, "little") + app_payload
             raw = build_13762_frame(afn=afn, fn=1, appdata=proto,
                                     direction="down", info={"seq": self._seq},
                                     address=self._address())

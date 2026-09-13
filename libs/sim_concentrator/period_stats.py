@@ -53,6 +53,7 @@ def aggregate(attempts: Iterable[Dict[str, Any]], *,
                 "start": start,
                 "end": float(end) if end is not None else None,
                 "status": str(a.get("status", "")),
+                "duplicate": bool(a.get("duplicate")),
             })
         except (KeyError, TypeError, ValueError):
             continue
@@ -75,7 +76,10 @@ def aggregate(attempts: Iterable[Dict[str, Any]], *,
             }
         return buckets[key]
 
-    # 每表未结清链：判定重复下发（上一次未结清又发同一表）
+    # 每表未结清链：判定重复下发（上一次未结清又发同一表）。
+    # attempts 可带显式 duplicate 标记（listener 侧 collect_attempts 在重发结清
+    # 时刻已把旧尝试关闭，open_until 条件对其永不成立，须靠标记计数）；
+    # simcon 下发侧无标记，沿用 open_until 时间线判定，行为不变。
     open_until: Dict[str, float] = {}
     for a in sorted(atts, key=lambda x: x["start"]):
         b = bucket_of(a["start"])
@@ -84,7 +88,8 @@ def aggregate(attempts: Iterable[Dict[str, Any]], *,
             b["success_count"] += 1
         else:
             b["failed_count"] += 1
-        if a["end"] is not None and open_until.get(a["meter"], 0) > a["start"]:
+        if a.get("duplicate") or (
+                a["end"] is not None and open_until.get(a["meter"], 0) > a["start"]):
             b["duplicate_count"] += 1
         if a["end"] is not None:
             open_until[a["meter"]] = a["end"]

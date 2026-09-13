@@ -20,16 +20,16 @@ class TestConcurrentMatch(unittest.TestCase):
             self.assertFalse(is_concurrent_frame(afn, fn), (afn, fn))
 
     def test_down_unit_has_reserved(self):
-        # 下行：规约类型=02(645-2007) 保留=00 长度=0x0004 内容4字节
-        r = parse_data_unit("down", "02 00 00 04 AA BB CC DD")
+        # 下行：规约类型=02(645-2007) 保留=00 长度=0x0004(低字节在前) 内容4字节
+        r = parse_data_unit("down", "02 00 04 00 AA BB CC DD")
         self.assertEqual(r["proto_type"], 0x02)
         self.assertEqual(r["proto_name"], "DL/T 645-2007")
         self.assertEqual(r["length"], 4)
         self.assertFalse(r["failed"])
 
     def test_up_unit_no_reserved_and_fail_L0(self):
-        # 上行无保留字节：规约类型=03 长度=0x0002
-        r = parse_data_unit("up", "03 00 02 AA BB")
+        # 上行无保留字节：规约类型=03 长度=0x0002(低字节在前)
+        r = parse_data_unit("up", "03 02 00 AA BB")
         self.assertEqual(r["length"], 2)
         self.assertFalse(r["failed"])
         # 失败：长度域=0 → failed=True（表地址由链路层 A1 补充）

@@ -58,9 +58,22 @@ def _link_addr(parsed: dict) -> Optional[str]:
 
 
 def _payload(parsed: dict, frame_hex: str) -> str:
-    """应用数据单元 hex：优先 parsed.raw_hex，退回 frame_hex。偏移 13（68 L2 C R6 AFN DT2）。"""
+    """应用数据单元 hex：按解析结构的地址域长度定位 AFN（4=68+L2+C，+信息域6B，
+    +地址域A 字节数），跳过 AFN+DT(3B) 后取到 CS/16 前。旧"偏移 13"只对无地址域
+    帧成立，真实下发帧（batch.py 带地址构帧）会切错位，故作回退路径保留。"""
     hex_str = (parsed.get("raw_hex") or frame_hex or "").replace(" ", "")
-    return hex_str[26:-4]  # 每字节2字符：前13字节、后CS+16
+    try:
+        raw = bytes.fromhex(hex_str)
+    except ValueError:
+        raw = b""
+    if len(raw) >= 15 and raw[0] == 0x68:
+        addr_hex = str((parsed.get("fields") or {}).get("地址域A", {}).get("hex") or "")
+        addr_hex = addr_hex.replace(" ", "").upper()
+        addr_len = len(addr_hex) // 2 if len(addr_hex) % 2 == 0 else 0
+        pos = 4 + 6 + addr_len  # AFN 起始
+        if 0 < pos < len(raw) - 3:
+            return raw[pos + 3:len(raw) - 2].hex().upper()
+    return hex_str[26:-4]  # 回退：每字节2字符，前13字节、后CS+16（无地址域合成帧）
 
 
 def _epoch(ts: str) -> Optional[float]:
@@ -72,9 +85,14 @@ def _epoch(ts: str) -> Optional[float]:
 
 
 def collect_attempts(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """frame_log 行 → 配对后的抄读尝试列表（供 aggregate）。"""
+    """frame_log 行 → 配对后的抄读尝试列表（供 aggregate）。
+
+    duplicate 标记：该尝试是"同表上一次未结清时再次下发"产生的
+    （CCO 否认 111 的业务底；由 period_stats 计入 duplicate_count）。
+    """
     attempts: List[Dict[str, Any]] = []
-    open_map: Dict[str, float] = {}  # addr -> start_epoch（最近一次未结清下发）
+    open_map: Dict[str, float] = {}   # addr -> start_epoch（最近一次未结清下发）
+    dup_flag: Dict[str, bool] = {}    # addr -> 在飞尝试是否为未结清重发
     for row in sorted(rows, key=lambda r: (r.get("ts") or "", r.get("id") or 0)):
         try:
             parsed = row.get("parsed")
@@ -89,10 +107,14 @@ def collect_attempts(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             addrs = _nested_addrs(parsed) or ["?"]
             for addr in addrs:
                 if addr in open_map:
-                    # 前一次未结清又下发：先把旧尝试按生命周期兜底结清
+                    # 前一次未结清又下发：旧尝试按生命周期兜底结清
                     attempts.append({
                         "meter": addr, "start_epoch": open_map.pop(addr),
-                        "end_epoch": ep, "status": "timeout"})
+                        "end_epoch": ep, "status": "timeout",
+                        "duplicate": dup_flag.get(addr, False)})
+                    dup_flag[addr] = True   # 本次下发即重复下发
+                else:
+                    dup_flag[addr] = False
                 open_map[addr] = ep
         elif d in ("rx", "up"):
             addr = _link_addr(parsed) or (_nested_addrs(parsed) or ["?"])[0]
@@ -101,13 +123,15 @@ def collect_attempts(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             start = open_map.pop(addr, None)
             attempts.append({
                 "meter": addr, "start_epoch": start if start is not None else ep,
-                "end_epoch": ep, "status": status})
+                "end_epoch": ep, "status": status,
+                "duplicate": bool(dup_flag.pop(addr, False)) if start is not None else False})
     # 兜底：超过 5 分钟生命周期仍未结清的下发按超时结清
     latest = max((a["end_epoch"] for a in attempts), default=0.0)
     for addr, start in list(open_map.items()):
         if latest - start >= LIFETIME_SECONDS:
             attempts.append({"meter": addr, "start_epoch": start,
-                             "end_epoch": start + LIFETIME_SECONDS, "status": "timeout"})
+                             "end_epoch": start + LIFETIME_SECONDS, "status": "timeout",
+                             "duplicate": dup_flag.pop(addr, False)})
     return attempts
 
 
