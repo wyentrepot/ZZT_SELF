@@ -5,7 +5,7 @@ argument-hint: "[task, e.g. 监控cco日志直到出现XX / 向sta发送... / �
 metadata:
   author: reasonix
   version: "2.4.0"
-  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF（WSL 权威仓库；Windows 侧见 D:\019-wy-tool\ZZT_SELF）
+  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF（WSL 权威仓库；Windows 侧见 D:\2-侦听台改造）
   source: 工作台仓库 .agents/skills/ai-control-plane（事实源，改动先改此处再回灌全局）
 ---
 
@@ -22,7 +22,7 @@ metadata:
 - `references/`、`scripts/`、`使用经验/` **相对本技能目录**——直接存在，无需外部依赖。
 - `apps/`、`docs/`、`tools/`、`data/`、`.build_plain/`、`DECISIONS.md` **相对工作台仓库根
   `<WORKBENCH_ROOT>`**：权威路径 `/01-workfile-ai/01-zzt/ZZT_SELF`（WSL），Windows 侧
-  `D:\019-wy-tool\ZZT_SELF`；深读源码/决策前先向用户确认仓库路径，或按
+  `D:\2-侦听台改造`；深读源码/决策前先向用户确认仓库路径，或按
   `scripts/verify_api_inventory.py` 的候选列表探测。
 - 校验脚本 `scripts/verify_api_inventory.py` 已内置仓库根解析：`--repo-root` →
   `WORKBENCH_ROOT` 环境变量 → 候选路径探测；找不到时给出明确报错。只构造惰性
@@ -31,10 +31,12 @@ metadata:
 ## 实测校准（2026-09-10 全链 e2e 验证，与真实接口一致）
 
 - **investigation 信封恒为 `queued`**（即使同步历史路径已在返回前执行完）——
-  创建后**必须** `GET /jobs/{id}` 读终态；`verdict` 只用于观察/验证结论。
+  创建后**必须** `GET /jobs/{id}` 读终态；`verdict` 只用于 investigation 观察
+  （module_action/verification_run/flash_job 恒 null）。
 - **L3 ref 格式**：`listener:<index_id>:<frame_id>`（不是 `index_id:frame_id`），一次 ≤10 个。
 - **listener 历史查询**：`window.type` 仅支持 `cursor_range`，且 `mode` 必须为
-  `cursor_range`（写 `historic` 报「type 与 mode 不一致」）；需 `window.index_id` +
+  `cursor_range`（写 `historic` 实际报「window.mode 仅支持 live、time_range 或
+  cursor_range」）；需 `window.index_id` +
   `start_frame_id/end_frame_id`（索引边界内，可用只读 sqlite 查
   `apps/listener/runtime/indexes/idx-*.sqlite3` 的 `frames.id` 范围）；`match.kind`
   仅 `parsed_frame`/`frame_query`。
@@ -64,7 +66,8 @@ metadata:
 | 读取任务/证据 | `jobs/{id}` → `jobs/{id}/evidence?level=L1\|L2\|L3` | GET |
 
 v2 每次写任务带 `client_request_id`；默认 `cleanup=owned_only`。`job_state` 是执行状态，
-`verdict` 只用于观察/验证结论。先取 L1 摘要，再按需升级 L2/L3，避免把底层原始日志直接
+`verdict` 只用于 investigation 观察（module_action/verification_run/flash_job 恒 null）。
+先取 L1 摘要，再按需升级 L2/L3，避免把底层原始日志直接
 塞进 AI 上下文。历史观察保留 `index_id`；实时 `not_seen` 且无可信到达时间只能是
 `inconclusive`（`live_window_unverified`）。
 
