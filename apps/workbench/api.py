@@ -182,17 +182,39 @@ async def compare(body: dict):
 
     expected = body.get("expected_flow", [])
     events = body.get("events", [])
+    # 入口形状校验：拒绝 dict 误形（此前 500）与空对空比较（此前 vacuous pass）
+    if not isinstance(expected, list):
+        raise HTTPException(status_code=422, detail="expected_flow 必须是步骤数组")
+    if not isinstance(events, list):
+        raise HTTPException(status_code=422, detail="events 必须是事件数组")
+    if not expected and not events:
+        raise HTTPException(status_code=422, detail="无可比内容：expected_flow 与 events 均为空")
+    if not all(isinstance(step, dict) for step in expected):
+        raise HTTPException(status_code=422, detail="expected_flow 步骤必须是对象")
+    if not all(isinstance(event, dict) for event in events):
+        raise HTTPException(status_code=422, detail="events 事件必须是对象")
     return compare_flow(expected, events).model_dump()
 
 
 @router.post("/feedback")
 async def feedback(body: dict):
     """直接归因：根据比对结论 + 激励结论生成反馈（不落 Run）。"""
+    from pydantic import ValidationError
+
     from .orchestration.feedback import build_feedback
     from .orchestration.reporting import FlowCompare
 
-    fc = FlowCompare(**body.get("flow_compare", {}))
-    return build_feedback(fc, body.get("simcon_summary"), body.get("loghooks_drift", False))
+    flow_compare = body.get("flow_compare", {})
+    if not isinstance(flow_compare, dict):
+        raise HTTPException(status_code=422, detail="flow_compare 必须是对象")
+    try:
+        fc = FlowCompare(**flow_compare)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"flow_compare 字段非法：{exc}") from exc
+    simcon_summary = body.get("simcon_summary")
+    if simcon_summary is not None and not isinstance(simcon_summary, dict):
+        raise HTTPException(status_code=422, detail="simcon_summary 必须是对象")
+    return build_feedback(fc, simcon_summary, body.get("loghooks_drift", False))
 
 
 @router.get("/health")

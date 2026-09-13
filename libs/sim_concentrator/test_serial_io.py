@@ -179,3 +179,46 @@ def test_serial_io_respects_shared_backend_serial_registry():
 
     with pytest.raises(RuntimeError, match="模块日志会话 CCO"):
         io.open()
+
+
+def test_serial_io_passes_write_timeout_to_driver(monkeypatch):
+    """DEF-1 根因回归：open 必须给 pyserial 传 write_timeout。
+
+    部分虚拟/USB 串口驱动在写阻塞时会让 write() 无限期挂死（实测 COM4
+    首帧即挂死），不设超时会导致 verify 线程永久阻塞。
+    """
+    captured = {}
+
+    class _FakeSerial:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.is_open = True
+
+        def read(self, n):
+            return b""
+
+        def write(self, data):
+            return len(data)
+
+        def close(self):
+            self.is_open = False
+
+    class _FakeSerialModule:
+        Serial = _FakeSerial
+        PARITY_NONE = "N"
+        PARITY_EVEN = "E"
+        FIVEBITS = 5
+        SIXBITS = 6
+        SEVENBITS = 7
+        EIGHTBITS = 8
+        STOPBITS_ONE = 1
+        STOPBITS_TWO = 2
+
+    monkeypatch.setattr("sim_concentrator.serial_io.serial", _FakeSerialModule)
+    io = SerialIO(port="COM_TEST", baudrate=9600, parity="E")
+    io.open()
+    try:
+        assert io.write_timeout == 5.0
+        assert captured.get("write_timeout") == 5.0
+    finally:
+        io.close()

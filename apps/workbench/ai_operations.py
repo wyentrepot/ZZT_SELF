@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -51,6 +52,16 @@ def _iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _same_serial_port(left: Any, right: Any) -> bool:
+    """串口名归一比较：忽略 \\\\.\\ 前缀与大小写差异（COM1 与 com1 视为同口）。"""
+
+    def _norm(value: Any) -> str:
+        return str(value or "").strip().removeprefix("\\\\.\\").casefold()
+
+    left_norm = _norm(left)
+    return bool(left_norm) and left_norm == _norm(right)
+
+
 class AIControlService:
     """Uses in-process backend services; it never opens a second serial handle."""
 
@@ -66,6 +77,10 @@ class AIControlService:
         self.store = store or OperationStore()
         self._simcon_verify_gate = threading.Lock()
         self._simcon_verify_running = False
+        # verify 代次与看门狗登记：看门狗超时废弃卡死线程后，旧线程的
+        # 迟到结果不再复位守卫（以代次号为准）。
+        self._simcon_verify_generation = 0
+        self._simcon_verify_watchdogs: dict[int, threading.Timer] = {}
 
     def status(self, *, include_paths: bool = False) -> dict:
         sessions = []
@@ -168,10 +183,31 @@ class AIControlService:
                     self.store.audit(actor=actor, action="module_session.ensure", resource=mapping_id, result="reused")
                     return {"reused": True, "session": session}
 
+        port = str(request.get("port") or self._port_for_mapping(mapping_id) or "").strip()
+        # ensure「创建或复用」：同 module+port 已有会话（含空闲态）直接复用并确保
+        # 在目标口上运行。不复用会产生同口双会话（新建默认标题会话），且端口被
+        # 占用时新建也必然失败。
+        if port:
+            for session in sessions:
+                if str(session.get("module") or "").strip().lower() != module:
+                    continue
+                if not _same_serial_port(session.get("port"), port):
+                    continue
+                serial = request.get("serial") or {}
+                started = self.module_service.start_session(
+                    session["session_id"], port,
+                    baudrate=int(serial.get("baudrate", 115200)),
+                    bytesize=int(serial.get("bytesize", 8)),
+                    parity=str(serial.get("parity", "N")),
+                    stopbits=int(serial.get("stopbits", 1)),
+                )
+                self.store.audit(actor=actor, action="module_session.ensure",
+                                 resource=mapping_id or port, result="reused")
+                return {"reused": True, "session": started}
+
         created = self.module_service.create_session(
             title=str(request.get("title") or ""), module=module,
         )
-        port = str(request.get("port") or self._port_for_mapping(mapping_id) or "").strip()
         if not port:
             raise SourceUnavailable("无法解析串口映射；请提供已授权的映射 ID 或实际端口")
         serial = request.get("serial") or {}
@@ -730,6 +766,9 @@ class AIControlService:
         """异步执行模拟集中器验证任务：202 + operation_id，wait 轮询到终态。
 
         同一会话同一时刻只允许一个验证任务（并发返回 409）；任务不可取消。
+        底层 verify 可能在线程内永久阻塞（驱动级串口写挂死等），故另起
+        看门狗定时器：超时即落 error 终态并复位运行守卫，废弃卡死线程的
+        后续结果，避免 verify 车道被永久 409 毒化。
         """
         service = self._require_simcon()
         request = dict(request or {})
@@ -744,17 +783,60 @@ class AIControlService:
             if operation["state"] != "created":
                 return operation
             self._simcon_verify_running = True
+            self._simcon_verify_generation += 1
+            generation = self._simcon_verify_generation
             started = self.store.set_state(operation["operation_id"], "waiting")
         thread = threading.Thread(
             target=self._run_simcon_verify, name="ai-simcon-verify",
-            args=(operation["operation_id"], request, actor), daemon=True,
+            args=(operation["operation_id"], request, actor, generation), daemon=True,
         )
         thread.start()
+        timeout_s = self._verify_timeout_seconds()
+        watchdog = threading.Timer(
+            timeout_s, self._expire_simcon_verify,
+            args=(operation["operation_id"], actor, generation, timeout_s),
+        )
+        watchdog.daemon = True
+        watchdog.start()
+        with self._simcon_verify_gate:
+            self._simcon_verify_watchdogs[generation] = watchdog
         self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
                          result="waiting", operation_id=operation["operation_id"])
         return started
 
-    def _run_simcon_verify(self, operation_id: str, request: dict, actor: str) -> None:
+    @staticmethod
+    def _verify_timeout_seconds() -> float:
+        """验证总超时（秒）：环境变量 WORKBENCH_VERIFY_TIMEOUT_S 可覆盖，缺省 240s。"""
+        raw = str(os.environ.get("WORKBENCH_VERIFY_TIMEOUT_S") or "").strip()
+        try:
+            value = float(raw) if raw else 240.0
+        except ValueError:
+            return 240.0
+        return value if value > 0 else 240.0
+
+    def _expire_simcon_verify(self, operation_id: str, actor: str, generation: int,
+                              timeout_s: float) -> None:
+        """看门狗到期：底层线程未在时限内返回 → 落 error 终态并复位运行守卫。
+
+        卡死的旧线程无法强杀，只能标记废弃：代次不匹配后其结果不再被
+        接受（store 终态不可改），守卫复位后新的 verify 可以正常提交。
+        """
+        with self._simcon_verify_gate:
+            self._simcon_verify_watchdogs.pop(generation, None)
+            if generation != self._simcon_verify_generation or not self._simcon_verify_running:
+                return  # 正常路径已收尾，看门狗作废
+            self._simcon_verify_running = False
+        self.store.set_state(
+            operation_id, "error",
+            error=f"验证总超时 {int(timeout_s)}s：底层验证线程未在时限内返回，已废弃本次任务"
+                  "（卡死线程可能仍占用串口，请检查 /api/simcon/status 后重试）",
+        )
+        self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
+                         result="error", operation_id=operation_id)
+
+    def _run_simcon_verify(self, operation_id: str, request: dict, actor: str,
+                           generation: int) -> None:
+        watchdog: threading.Timer | None = None
         try:
             result = self.simcon_service.verify(request)
             self.store.set_state(operation_id, "succeeded", result=result)
@@ -765,7 +847,14 @@ class AIControlService:
             self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
                              result="error", operation_id=operation_id)
         finally:
-            self._simcon_verify_running = False
+            # 仅当本线程仍是当前代次才复位守卫并撤销看门狗；被看门狗废弃的
+            # 卡死线程迟返回时不触碰守卫，避免覆盖新任务的运行态。
+            with self._simcon_verify_gate:
+                if generation == self._simcon_verify_generation:
+                    self._simcon_verify_running = False
+                    watchdog = self._simcon_verify_watchdogs.pop(generation, None)
+            if watchdog is not None:
+                watchdog.cancel()
 
     def simcon_step(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
         """同步单步语义执行（下发指定 afn/fn 或等待一帧）。"""
@@ -856,6 +945,67 @@ class AIControlService:
             )
         if source != "module_log":
             raise InvalidObservation("source 仅支持 module_log 或 listener")
+        normalised = self._normalise_module_log_observation(request)
+        session_id = normalised["session_id"]
+        mode = normalised["mode"]
+        timeout = normalised["timeout"]
+        match = normalised["match"]
+        context = normalised["context"]
+        completion = normalised["completion"]
+        payload = {
+            "source": source,
+            "target": {"session_id": session_id, "mapping_id": normalised["mapping_id"]},
+            "module": normalised["module"],
+            "match": match,
+            "window": {"mode": mode,
+                       "start": "now" if mode == "live" else normalised["window_start"] if mode == "time_range" else None,
+                       "end": normalised["window_end"] if mode == "time_range" else None,
+                       "start_seq": normalised["start_seq"] if mode == "cursor_range" else None,
+                       "end_seq": normalised["end_seq"],
+                       "start_time_ms": normalised["start_time_ms"], "end_time_ms": normalised["end_time_ms"]},
+            "start_seq": normalised["start_seq"],
+            "deadline_monotonic": time.monotonic() + timeout if mode == "live" else None,
+            "context": context,
+            "completion": completion,
+            "log_path": normalised["log_path"],
+        }
+        fingerprint = self._observation_idempotency_fingerprint({
+            "semantic": {
+                "kind": "observation",
+                "source": source,
+                "resource": {"mapping_id": payload["target"]["mapping_id"], "session_id": session_id},
+                "match": match,
+                "window": {
+                    "mode": mode, "start": payload["window"]["start"], "end": payload["window"]["end"],
+                    "start_seq": payload["window"]["start_seq"], "end_seq": payload["window"]["end_seq"],
+                    "timeout_seconds": timeout,
+                },
+                "context": context,
+                "completion": completion,
+            },
+            "request": self._observation_request_identity(request),
+        })
+        operation = self.store.create(
+            "observation", actor, payload, client_request_id=client_request_id,
+            idempotency_fingerprint=fingerprint,
+            idempotency_replay_fingerprint=replay_fingerprint,
+        )
+        if operation["state"] != "created":
+            return operation
+        self.store.audit(
+            actor=actor, action="observation.create", resource=payload["target"]["mapping_id"],
+            result="waiting" if mode == "live" else "querying", operation_id=operation["operation_id"],
+        )
+        if mode != "live":
+            return self._refresh_module_observation(operation["operation_id"], complete=True)
+        return self.store.set_state(operation["operation_id"], "waiting")
+
+    def _normalise_module_log_observation(self, request: dict) -> dict:
+        """module_log 观察的完整业务校验与归一。
+
+        v1 执行与 v2 受理前校验共用同一实现，保证两条路径拒绝口径一致；
+        返回值是构建 observation payload 所需的全部归一化字段。
+        """
         target = request.get("target") or {}
         session_id = str(target.get("session_id") or "")
         if not session_id:
@@ -875,6 +1025,8 @@ class AIControlService:
         end_seq = None
         start_time_ms = None
         end_time_ms = None
+        window_start = None
+        window_end = None
         if mode == "live":
             if str(window.get("start") or "now") != "now":
                 raise InvalidObservation("module_log live 观察仅支持 start=now")
@@ -887,8 +1039,10 @@ class AIControlService:
             if not 1 <= timeout <= 3600:
                 raise InvalidObservation("timeout_seconds 必须在 1 到 3600 之间")
         elif mode == "time_range":
-            start_time_ms = self._line_timestamp_ms({"ts": window.get("start")})
-            end_time_ms = self._line_timestamp_ms({"ts": window.get("end")})
+            window_start = window.get("start")
+            window_end = window.get("end")
+            start_time_ms = self._line_timestamp_ms({"ts": window_start})
+            end_time_ms = self._line_timestamp_ms({"ts": window_end})
             if start_time_ms is None or end_time_ms is None or start_time_ms > end_time_ms:
                 raise InvalidObservation("time_range 必须提供递增的 ISO 8601 start/end")
             retained_times = [
@@ -921,53 +1075,49 @@ class AIControlService:
                 raise InvalidObservation("cursor_range 尚未闭合或超出当前内存缓冲")
         context = self._normalise_observation_context(request.get("context"))
         completion = self._normalise_observation_completion(request.get("completion"))
-        payload = {
-            "source": source,
-            "target": {"session_id": session_id, "mapping_id": self.session_resource(session_id)},
+        return {
+            "session_id": session_id,
             "module": module,
             "match": match,
-            "window": {"mode": mode,
-                       "start": "now" if mode == "live" else window.get("start") if mode == "time_range" else None,
-                       "end": window.get("end") if mode == "time_range" else None,
-                       "start_seq": start_seq if mode == "cursor_range" else None,
-                       "end_seq": end_seq,
-                       "start_time_ms": start_time_ms, "end_time_ms": end_time_ms},
+            "mode": mode,
+            "timeout": timeout,
             "start_seq": start_seq,
-            "deadline_monotonic": time.monotonic() + timeout if mode == "live" else None,
+            "end_seq": end_seq,
+            "start_time_ms": start_time_ms,
+            "end_time_ms": end_time_ms,
+            "window_start": window_start,
+            "window_end": window_end,
             "context": context,
             "completion": completion,
+            "mapping_id": self.session_resource(session_id),
             "log_path": session.get("log_file"),
         }
-        fingerprint = self._observation_idempotency_fingerprint({
-            "semantic": {
-                "kind": "observation",
-                "source": source,
-                "resource": {"mapping_id": payload["target"]["mapping_id"], "session_id": session_id},
-                "match": match,
-                "window": {
-                    "mode": mode, "start": payload["window"]["start"], "end": payload["window"]["end"],
-                    "start_seq": payload["window"]["start_seq"], "end_seq": payload["window"]["end_seq"],
-                    "timeout_seconds": timeout,
-                },
-                "context": context,
-                "completion": completion,
-            },
-            "request": self._observation_request_identity(request),
-        })
-        operation = self.store.create(
-            "observation", actor, payload, client_request_id=client_request_id,
-            idempotency_fingerprint=fingerprint,
-            idempotency_replay_fingerprint=replay_fingerprint,
-        )
-        if operation["state"] != "created":
-            return operation
-        self.store.audit(
-            actor=actor, action="observation.create", resource=payload["target"]["mapping_id"],
-            result="waiting" if mode == "live" else "querying", operation_id=operation["operation_id"],
-        )
-        if mode != "live":
-            return self._refresh_module_observation(operation["operation_id"], complete=True)
-        return self.store.set_state(operation["operation_id"], "waiting")
+
+    def validate_investigation_observation(self, request: dict) -> None:
+        """v2 investigation 受理前的业务级同步校验。
+
+        非法输入（未知会话、缺 match、非法窗口、minute_periods 缺 task_no、
+        raw_hex_contains 无收窄等）在此直接抛 InvalidObservation → HTTP 422，
+        不再受理后落异步 error。
+        """
+        self.validate_observation_request(request)
+        source = str(request.get("source") or "")
+        try:
+            if source == "module_log":
+                self._normalise_module_log_observation(request)
+                return
+            if source != "listener":
+                return  # simcon 帧过滤参数宽松，由查询侧自行校验
+            kind = str((request.get("match") or {}).get("kind") or "")
+            if kind == "trace_query":
+                self._normalise_listener_trace_query_observation(request)
+            elif kind == "minute_periods":
+                self._normalise_listener_minute_periods_observation(request)
+            else:
+                self._normalise_listener_frame_observation(request)
+        except KeyError as exc:
+            # 未知 session/index 等资源缺失：v1 走 404；v2 受理语义统一 422 可读
+            raise InvalidObservation(f"观察目标不存在：{exc.args[0] if exc.args else exc}") from exc
 
     def _listener_current_index_id(self, requested: str = "") -> str:
         service = self._listener_log_or_error()
@@ -1222,9 +1372,8 @@ class AIControlService:
             return {"mode": "cursor_range", "start_id": start_id, "end_id": end_id}, mode
         raise InvalidObservation("trace_query window.mode 仅支持 time_range 或 cursor_range")
 
-    def _create_listener_trace_query_observation(self, request: dict, *, actor: str,
-                                                 client_request_id: str = "",
-                                                 replay_fingerprint: str = "") -> dict:
+    def _normalise_listener_trace_query_observation(self, request: dict) -> dict:
+        """trace_query 观察的完整业务校验与归一（v1 执行与 v2 受理前共用）。"""
         if self.trace_service is None:
             raise SourceUnavailable("侦听台追踪服务不可用")
         self._listener_log_or_error()
@@ -1258,6 +1407,26 @@ class AIControlService:
             raise InvalidObservation("listener index_id 不存在") from exc
         completion = self._normalise_observation_completion(request.get("completion"))
         resource = self.listener_resource(str(target.get("mapping_id") or ""))
+        return {
+            "match": match,
+            "trace_feature": trace_feature,
+            "window_mode": window_mode,
+            "window": window,
+            "index_id": index_id,
+            "resource": resource,
+            "completion": completion,
+        }
+
+    def _create_listener_trace_query_observation(self, request: dict, *, actor: str,
+                                                 client_request_id: str = "",
+                                                 replay_fingerprint: str = "") -> dict:
+        normalised = self._normalise_listener_trace_query_observation(request)
+        window_mode = normalised["window_mode"]
+        window = normalised["window"]
+        match = normalised["match"]
+        index_id = normalised["index_id"]
+        resource = normalised["resource"]
+        completion = normalised["completion"]
         payload = {
             "source": "listener",
             "target": {"mapping_id": resource, "capture": "current"},
@@ -1271,7 +1440,7 @@ class AIControlService:
                 "end_frame_id": window.get("end_frame_id") if window_mode == "cursor_range" else None,
             },
             "match": match,
-            "trace_feature": trace_feature,
+            "trace_feature": normalised["trace_feature"],
             "completion": completion,
             "start_frame_id": 0,
             "deadline_monotonic": None,
@@ -1437,9 +1606,8 @@ class AIControlService:
             raise InvalidObservation("minute_periods time_range 必须提供 start 和 end")
         return start, end, "time_range"
 
-    def _create_listener_minute_periods_observation(self, request: dict, *, actor: str,
-                                                    client_request_id: str = "",
-                                                    replay_fingerprint: str = "") -> dict:
+    def _normalise_listener_minute_periods_observation(self, request: dict) -> dict:
+        """minute_periods 观察的完整业务校验与归一（v1 执行与 v2 受理前共用）。"""
         self._listener_log_or_error()
         target = request.get("target") or {}
         window = request.get("window") or {}
@@ -1451,6 +1619,26 @@ class AIControlService:
             raise InvalidObservation("listener index_id 不存在") from exc
         completion = self._normalise_observation_completion(request.get("completion"))
         resource = self.listener_resource(str(target.get("mapping_id") or ""))
+        return {
+            "match": match,
+            "start_time": start_time,
+            "end_time": end_time,
+            "window_mode": window_mode,
+            "index_id": index_id,
+            "resource": resource,
+            "completion": completion,
+        }
+
+    def _create_listener_minute_periods_observation(self, request: dict, *, actor: str,
+                                                    client_request_id: str = "",
+                                                    replay_fingerprint: str = "") -> dict:
+        normalised = self._normalise_listener_minute_periods_observation(request)
+        window_mode = normalised["window_mode"]
+        start_time = normalised["start_time"]
+        end_time = normalised["end_time"]
+        index_id = normalised["index_id"]
+        resource = normalised["resource"]
+        completion = normalised["completion"]
         payload = {
             "source": "listener",
             "target": {"mapping_id": resource, "capture": "current"},
@@ -1461,7 +1649,7 @@ class AIControlService:
                 "start": start_time if window_mode == "time_range" else None,
                 "end": end_time if window_mode == "time_range" else None,
             },
-            "match": match,
+            "match": normalised["match"],
             "completion": completion,
         }
         fingerprint = self._observation_idempotency_fingerprint({
@@ -1470,7 +1658,7 @@ class AIControlService:
                 "source": "listener",
                 "observation_kind": "minute_periods",
                 "resource": {"mapping_id": resource, "index_id": index_id, "capture": "current"},
-                "match": match,
+                "match": normalised["match"],
                 "window": payload["window"],
                 "completion": completion,
             },
@@ -1580,19 +1768,9 @@ class AIControlService:
             result["artifact_id"] = artifact["artifact_id"]
         return result
 
-    def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "",
-                                     replay_fingerprint: str = "") -> dict:
+    def _normalise_listener_frame_observation(self, request: dict) -> dict:
+        """listener frame_query/parsed_frame 观察的完整业务校验与归一（两路共用）。"""
         self._listener_log_or_error()
-        if str((request.get("match") or {}).get("kind") or "") == "trace_query":
-            return self._create_listener_trace_query_observation(
-                request, actor=actor, client_request_id=client_request_id,
-                replay_fingerprint=replay_fingerprint,
-            )
-        if str((request.get("match") or {}).get("kind") or "") == "minute_periods":
-            return self._create_listener_minute_periods_observation(
-                request, actor=actor, client_request_id=client_request_id,
-                replay_fingerprint=replay_fingerprint,
-            )
         target = request.get("target") or {}
         window = request.get("window") or {}
         window_type = window.get("type")
@@ -1661,6 +1839,40 @@ class AIControlService:
             raise InvalidObservation("listener 观察仅支持 parsed_frame 或 frame_query")
         self._select_listener_matches([], match)
         resource = self.listener_resource(str(target.get("mapping_id") or ""))
+        return {
+            "mode": mode,
+            "index_id": index_id,
+            "resource": resource,
+            "target_capture": target_capture,
+            "cursor_start": cursor_start,
+            "cursor_end": cursor_end,
+            "timeout": timeout,
+            "match": match,
+            "completion": request.get("completion") or {},
+            "context": request.get("context") or {},
+        }
+
+    def _create_listener_observation(self, request: dict, *, actor: str, client_request_id: str = "",
+                                     replay_fingerprint: str = "") -> dict:
+        if str((request.get("match") or {}).get("kind") or "") == "trace_query":
+            return self._create_listener_trace_query_observation(
+                request, actor=actor, client_request_id=client_request_id,
+                replay_fingerprint=replay_fingerprint,
+            )
+        if str((request.get("match") or {}).get("kind") or "") == "minute_periods":
+            return self._create_listener_minute_periods_observation(
+                request, actor=actor, client_request_id=client_request_id,
+                replay_fingerprint=replay_fingerprint,
+            )
+        normalised = self._normalise_listener_frame_observation(request)
+        mode = normalised["mode"]
+        index_id = normalised["index_id"]
+        resource = normalised["resource"]
+        cursor_start = normalised["cursor_start"]
+        cursor_end = normalised["cursor_end"]
+        timeout = normalised["timeout"]
+        match = normalised["match"]
+        window = request.get("window") or {}
         payload = {
             "source": "listener",
             "target": {"mapping_id": resource, "capture": "current"},
@@ -1674,7 +1886,7 @@ class AIControlService:
                 "end_frame_id": cursor_end,
             },
             "match": match,
-            "completion": request.get("completion") or {},
+            "completion": normalised["completion"],
             "start_frame_id": (
                 self._listener_last_frame_id(index_id) if mode == "live"
                 else cursor_start if mode == "cursor_range" else 0
@@ -1688,7 +1900,7 @@ class AIControlService:
                 "resource": {
                     "mapping_id": resource,
                     "index_id": index_id,
-                    "capture": target_capture or "current",
+                    "capture": normalised["target_capture"] or "current",
                 },
                 "match": match,
                 "window": {
@@ -1696,8 +1908,8 @@ class AIControlService:
                     "start_frame_id": cursor_start, "end_frame_id": cursor_end,
                     "timeout_seconds": timeout,
                 },
-                "completion": request.get("completion") or {},
-                "context": request.get("context") or {},
+                "completion": normalised["completion"],
+                "context": normalised["context"],
             },
             "request": self._observation_request_identity(request),
         })

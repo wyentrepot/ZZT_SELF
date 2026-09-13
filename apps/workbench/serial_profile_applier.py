@@ -30,6 +30,8 @@ SLOT_MODULE = {
     "module_log.sta": "sta",
 }
 
+_PARAM_KEYS = ("baudrate", "bytesize", "parity", "stopbits")
+
 
 class SimconProfileAdapter:
     """把 simcon 子应用暴露的 open/close 服务函数包装成 applier 期望的接口。
@@ -100,6 +102,18 @@ class SerialProfileApplier:
         }
 
     # ------------------------------------------------------------------
+    def _effective_params(self, profile: dict[str, Any], mapping_id: str) -> dict[str, Any]:
+        """槽参数显式 null（未配置）→ 回落映射缺省（auto 语义，与不传一致）。
+
+        module 的 start_session 会对 None 参数直接 int() 崩溃；listener 则会
+        沿用上次的运行参数，均不是期望的 auto 口径，故在此统一解析。
+        """
+        defaults = self.profile_store.mapping_params(mapping_id)
+        return {
+            key: profile.get(key) if profile.get(key) is not None else defaults[key]
+            for key in _PARAM_KEYS
+        }
+
     def _apply_slot(self, slot: str, profile: dict[str, Any]) -> dict[str, Any]:
         enabled = bool(profile.get("enabled", False))
         mapping_id = str(profile.get("mapping_id") or "")
@@ -127,12 +141,13 @@ class SerialProfileApplier:
             return _SlotResult(slot="listener.main", status="unchanged",
                                reason="已运行且端口一致",
                                current_state={"state": "running", "port": device})
+        params = self._effective_params(profile, str(profile.get("mapping_id") or ""))
         result = service.start(
             port=device,
-            baudrate=profile.get("baudrate"),
-            bytesize=profile.get("bytesize"),
-            parity=profile.get("parity"),
-            stopbits=profile.get("stopbits"),
+            baudrate=params["baudrate"],
+            bytesize=params["bytesize"],
+            parity=params["parity"],
+            stopbits=params["stopbits"],
         )
         return _SlotResult(slot="listener.main", status="started",
                            current_state=result or {"state": "running", "port": device})
@@ -140,6 +155,7 @@ class SerialProfileApplier:
     def _apply_module(self, slot: str, profile: dict[str, Any], device: str) -> dict[str, Any]:
         module = SLOT_MODULE[slot]
         managed = self._find_managed_session(slot, module)
+        params = self._effective_params(profile, str(profile.get("mapping_id") or ""))
         if managed:
             state = (managed.get("state") or self._module_state(managed))
             if state == "running":
@@ -152,8 +168,8 @@ class SerialProfileApplier:
             # 已存在但未运行 → 直接 start
             self.module_service.start_session(
                 managed["session_id"], port=device,
-                baudrate=profile.get("baudrate"), bytesize=profile.get("bytesize"),
-                parity=profile.get("parity"), stopbits=profile.get("stopbits"),
+                baudrate=params["baudrate"], bytesize=params["bytesize"],
+                parity=params["parity"], stopbits=params["stopbits"],
             )
             return _SlotResult(slot=slot, status="started",
                                current_state={"state": "running", "session_id": managed["session_id"],
@@ -164,8 +180,8 @@ class SerialProfileApplier:
         sid = created["session_id"]
         self.module_service.start_session(
             sid, port=device,
-            baudrate=profile.get("baudrate"), bytesize=profile.get("bytesize"),
-            parity=profile.get("parity"), stopbits=profile.get("stopbits"),
+            baudrate=params["baudrate"], bytesize=params["bytesize"],
+            parity=params["parity"], stopbits=params["stopbits"],
         )
         return _SlotResult(slot=slot, status="started",
                            current_state={"state": "running", "session_id": sid, "port": device})

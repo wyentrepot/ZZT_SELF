@@ -1,6 +1,9 @@
 """REQS-0021 P1：v2 capabilities HTTP/OpenAPI/访问边界测试。"""
 from __future__ import annotations
 
+import threading
+import time
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
@@ -630,3 +633,177 @@ def test_v2_listener_minute_periods_l2_exposes_freeze_time(monkeypatch, tmp_path
     assert frames[0]["log_time"] == "10:15:01.000"
     assert frames[0]["freeze_time"] == "10:14:00"
     assert "response_result" in frames[0]
+
+
+# ---------------------------------------------------------------------------
+# 运行时缺陷修复回归（DEF-1/2/7/9/10）
+# ---------------------------------------------------------------------------
+
+def test_v2_module_action_stop_job_converges_to_succeeded(monkeypatch, tmp_path):
+    """DEF-7：stop 返回会话 payload（state=idle），job 必须一次收敛 succeeded。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    module = _WriteModuleService()
+    client = TestClient(_write_app(module))
+
+    response = client.post("/api/ai/v2/module-actions", json={
+        "action": "stop", "session_id": "ms-cco", "force": True,
+    })
+
+    assert response.status_code == 202
+    body = response.json()
+    assert body["job_state"] == "succeeded"
+    assert body["result"]["underlying_state"] == "idle"
+    # DEF-9：写任务 summary 体现自身状态，不再误显 "investigation queued"
+    assert "module_action" in (body["summary"] or "")
+
+
+def test_v2_module_action_ensure_reuses_session_for_same_module_and_port(monkeypatch, tmp_path):
+    """DEF-10：ensure 对同 module+port 已有会话（含空闲态）复用，不再新建双会话。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    module = _WriteModuleService()
+    client = TestClient(_write_app(module))
+
+    first = client.post("/api/ai/v2/module-actions", json={
+        "action": "ensure", "module": "cco", "port": "COM8", "client_request_id": "reuse-1",
+    })
+    assert first.status_code == 202
+    body = first.json()
+    assert body["job_state"] == "succeeded"
+    assert body["result"]["owned"] is False
+    assert body["result"]["session_id"] == "ms-cco"
+    # 未新建默认标题会话
+    assert "ms-created" not in module.sessions
+
+
+def test_v2_investigation_business_validation_rejects_with_422(monkeypatch, tmp_path):
+    """DEF-2：业务级非法输入在受理前同步 422，不再 202 后异步 error。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    plain = TestClient(_app())
+    with_minute = TestClient(create_workbench_app(
+        module_log_factory=_module_factory, simcon_factory=_plain_simcon_factory,
+        listener_factory=_minute_periods_bundle_factory,
+    ))
+    with_trace = TestClient(create_workbench_app(
+        module_log_factory=_module_factory, simcon_factory=_plain_simcon_factory,
+        listener_factory=_trace_bundle_factory,
+    ))
+    cases = [
+        # window.mode=historic
+        (plain, {"observations": [{"source": "module_log", "target": {"session_id": "ms-cco"},
+                                    "window": {"mode": "historic"},
+                                    "match": {"kind": "literal", "value": "boot"}}]}),
+        # 缺 match
+        (plain, {"observations": [{"source": "module_log", "target": {"session_id": "ms-cco"}}]}),
+        # 未知 session_id
+        (plain, {"observations": [{"source": "module_log", "target": {"session_id": "ms-unknown"},
+                                    "match": {"kind": "literal", "value": "boot"}}]}),
+        # minute_periods 缺 task_no
+        (with_minute, {"observations": [{"source": "listener",
+                                          "match": {"kind": "minute_periods"}}]}),
+        # raw_hex_contains 无收窄条件
+        (with_trace, {"observations": [{"source": "listener",
+                                         "match": {"kind": "trace_query",
+                                                   "feature": {"raw_hex_contains": "68"}}}]}),
+    ]
+    for client, body in cases:
+        response = client.post("/api/ai/v2/investigations", json=body)
+        assert response.status_code == 422, (body, response.status_code, response.text)
+        assert response.json()["detail"]
+
+
+def test_v2_async_observation_error_carries_reason_in_job_and_evidence(monkeypatch, tmp_path):
+    """DEF-2：仍走异步的 error 路径，job result 与 evidence L2 的 reason 可读。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    client = TestClient(_app())  # simcon 服务缺失 → simcon 观察异步 error
+    created = client.post("/api/ai/v2/investigations", json={
+        "observations": [{"source": "simcon"}],
+    })
+    assert created.status_code == 202
+    job_id = created.json()["job_id"]
+
+    deadline = time.time() + 5
+    body = {}
+    while time.time() < deadline:
+        body = client.get(f"/api/ai/v2/jobs/{job_id}").json()
+        if body.get("verdict") is not None:
+            break
+        time.sleep(0.05)
+
+    assert body.get("verdict") == "error"
+    # 信封携带逐观察错误原因（此前 result=null 完全不可定位）
+    observations = (body.get("result") or {}).get("observations") or []
+    assert observations and observations[0]["error"]
+    assert "模拟集中器" in (body.get("summary") or "")
+    l2 = client.get(f"/api/ai/v2/jobs/{job_id}/evidence", params={"level": "L2"})
+    items = l2.json()["items"]
+    assert items and items[0]["data"]["reason"]
+
+
+def test_v2_cancelled_job_summary_reflects_terminal_state(monkeypatch, tmp_path):
+    """DEF-9：终态 job 重算 summary，cancelled 不再残留 "investigation queued"。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    client = TestClient(_app())
+    created = client.post("/api/ai/v2/investigations", json={
+        "observations": [{
+            "source": "module_log", "target": {"session_id": "ms-cco"},
+            "window": {"mode": "live", "timeout_seconds": 60},
+            "match": {"kind": "literal", "value": "never-appears"},
+        }],
+    })
+    assert created.status_code == 202
+    job_id = created.json()["job_id"]
+
+    cancelled = client.post(f"/api/ai/v2/jobs/{job_id}/cancel")
+    assert cancelled.status_code == 200
+    body = cancelled.json()
+    assert body["job_state"] == "cancelled"
+    summary = body["summary"] or ""
+    assert "cancelled" in summary
+    assert "queued" not in summary
+
+
+class _HangingSimconService:
+    """verify 永久阻塞的假 simcon（模拟驱动级挂死）。"""
+
+    def __init__(self):
+        self.release = threading.Event()
+
+    def verify(self, request):
+        self.release.wait()
+        return {"passed": True}
+
+
+def test_v2_verification_run_watchdog_converges_job_to_failed(monkeypatch, tmp_path):
+    """DEF-1：底层 verify 挂死超时后，v2 job 侧能读到 failed 终态与原因。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    monkeypatch.setenv("WORKBENCH_VERIFY_TIMEOUT_S", "0.3")
+    simcon = _HangingSimconService()
+    client = TestClient(_write_app(_WriteModuleService(), simcon=simcon))
+    created = client.post("/api/ai/v2/verification-runs", json={
+        "task": {"id": "hang"}, "client_request_id": "hang-verify-1",
+    })
+    assert created.status_code == 202
+    job_id = created.json()["job_id"]
+    try:
+        deadline = time.time() + 5
+        body = {}
+        while time.time() < deadline:
+            body = client.get(f"/api/ai/v2/jobs/{job_id}").json()
+            if body.get("job_state") in ("failed", "succeeded", "cancelled"):
+                break
+            time.sleep(0.05)
+        assert body.get("job_state") == "failed", body
+        assert "验证总超时" in str((body.get("result") or {}).get("error") or "")
+        # 守卫复位后可再次提交
+        again = client.post("/api/ai/v2/verification-runs", json={
+            "task": {"id": "retry"}, "client_request_id": "retry-verify-1",
+        })
+        assert again.status_code == 202
+    finally:
+        simcon.release.set()

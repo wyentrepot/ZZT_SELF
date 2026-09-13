@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from shared.serial_profile import (
     PROFILE_SLOTS,
+    UNSET,
     InvalidProfileError,
     SerialProfileStore,
     UnknownMappingError,
@@ -81,7 +82,11 @@ def create_serial_profile_router(
 
     @router.put("")
     def put_profile(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
-        """只保存：把提交的四槽配置写入 runtime（不操作任何串口）。"""
+        """只保存：把提交的四槽配置写入 runtime（不操作任何串口）。
+
+        串口参数显式传 null 视为"清除该参数"（存 null）；缺省不传则回填映射
+        缺省值 —— 两者语义不同，须用键存在性区分。
+        """
         submitted = payload.get("profiles") or payload
         store = _store()
         try:
@@ -93,10 +98,10 @@ def create_serial_profile_router(
                     slot,
                     mapping_id=entry.get("mapping_id"),
                     enabled=bool(entry.get("enabled", False)),
-                    baudrate=entry.get("baudrate"),
-                    parity=entry.get("parity"),
-                    bytesize=entry.get("bytesize"),
-                    stopbits=entry.get("stopbits"),
+                    baudrate=entry["baudrate"] if "baudrate" in entry else UNSET,
+                    parity=entry["parity"] if "parity" in entry else UNSET,
+                    bytesize=entry["bytesize"] if "bytesize" in entry else UNSET,
+                    stopbits=entry["stopbits"] if "stopbits" in entry else UNSET,
                 )
         except (UnknownMappingError, InvalidProfileError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -36,6 +36,11 @@ _SIMCON_AUTO_PARAMS = {"baudrate": 9600, "parity": "E", "bytesize": 8, "stopbits
 
 _PROFILE_FILENAME = "serial_profile.json"
 
+# update_slot 串口参数哨兵：UNSET = 未提供（回填映射/auto 缺省）；显式 None =
+# 保存 null（清除已存参数，apply 时由使用侧回落 auto 语义）。与"未传"区分开，
+# PUT 才能复原"从未配置"的 null 态（DEF-13）。
+UNSET = object()
+
 
 class UnknownMappingError(ValueError):
     """mapping_id 不在 serial_ports.json 中。"""
@@ -43,17 +48,6 @@ class UnknownMappingError(ValueError):
 
 class InvalidProfileError(ValueError):
     """Profile 参数非法（未知槽、非法串口参数等）。"""
-
-
-def _validate_serial_params(*, baudrate: int, parity: str, bytesize: int, stopbits: int) -> None:
-    if baudrate <= 0:
-        raise InvalidProfileError(f"非法波特率：{baudrate}")
-    if parity not in ("N", "E", "O", "M", "S"):
-        raise InvalidProfileError(f"非法校验位：{parity!r}")
-    if bytesize not in (5, 6, 7, 8):
-        raise InvalidProfileError(f"非法数据位：{bytesize}")
-    if stopbits not in (1, 1.5, 2):
-        raise InvalidProfileError(f"非法停止位：{stopbits}")
 
 
 class SerialProfileStore:
@@ -84,6 +78,18 @@ class SerialProfileStore:
     def device_for(self, mapping_id: str, platform_name: str | None = None) -> str:
         """解析 mapping_id 到可打开的串口设备/COM 名（P4 apply 用）。"""
         return self._mapping_by_id(mapping_id)["device"]
+
+    def mapping_params(self, mapping_id: str) -> dict[str, Any]:
+        """映射缺省串口参数（baudrate/parity/bytesize/stopbits）。
+
+        供 applier 对显式 null（未配置）的槽参数回落 auto 语义，与"从不保存
+        参数直接 apply"的取值口径一致。
+        """
+        mapping = self._mapping_by_id(mapping_id)
+        return {
+            "baudrate": mapping["baudrate"], "parity": mapping["parity"],
+            "bytesize": mapping["bytesize"], "stopbits": mapping["stopbits"],
+        }
 
     def _default_profile(self) -> dict[str, Any]:
         """四槽默认禁用，不落盘。"""
@@ -124,13 +130,16 @@ class SerialProfileStore:
         return profiles
 
     def update_slot(self, slot: str, *, mapping_id: str | None = None,
-                    enabled: bool = False, baudrate: int | None = None,
-                    parity: str | None = None, bytesize: int | None = None,
-                    stopbits: int | None = None) -> dict[str, Any]:
-        """更新单槽配置；从 serial_ports.json 回填未显式给出的默认参数。
+                    enabled: bool = False, baudrate: Any = UNSET,
+                    parity: Any = UNSET, bytesize: Any = UNSET,
+                    stopbits: Any = UNSET) -> dict[str, Any]:
+        """更新单槽配置。
 
-        mapping_id 显式传空串表示"自动"（仅 simcon.main 支持：自动选择可用
-        串口，参数用 1376.2 本地总线缺省值）。
+        - 串口参数未提供（UNSET）→ 从 serial_ports.json 回填默认参数（simcon
+          自动口用 1376.2 缺省）。
+        - 串口参数显式传 None → 保存 null（清除已存参数，可经 PUT 复原 null 态）。
+        - mapping_id 显式传空串表示"自动"（仅 simcon.main 支持：自动选择可用
+          串口，参数缺省用 1376.2 本地总线值）。
         """
         if slot not in PROFILE_SLOTS:
             raise InvalidProfileError(f"未知槽：{slot}")
@@ -144,29 +153,44 @@ class SerialProfileStore:
             raise InvalidProfileError(f"{slot} 必须选择映射")
         if chosen:
             mapping = self._mapping_by_id(chosen)
-            resolved_baudrate = mapping["baudrate"] if baudrate is None else baudrate
-            resolved_parity = mapping["parity"] if parity is None else parity
-            resolved_bytesize = mapping["bytesize"] if bytesize is None else bytesize
-            resolved_stopbits = mapping["stopbits"] if stopbits is None else stopbits
+            fallback = {
+                "baudrate": mapping["baudrate"], "parity": mapping["parity"],
+                "bytesize": mapping["bytesize"], "stopbits": mapping["stopbits"],
+            }
         else:
-            resolved_baudrate = _SIMCON_AUTO_PARAMS["baudrate"] if baudrate is None else baudrate
-            resolved_parity = _SIMCON_AUTO_PARAMS["parity"] if parity is None else parity
-            resolved_bytesize = _SIMCON_AUTO_PARAMS["bytesize"] if bytesize is None else bytesize
-            resolved_stopbits = _SIMCON_AUTO_PARAMS["stopbits"] if stopbits is None else stopbits
-        _validate_serial_params(
-            baudrate=int(resolved_baudrate),
-            parity=str(resolved_parity),
-            bytesize=int(resolved_bytesize),
-            stopbits=float(resolved_stopbits),
-        )
+            fallback = dict(_SIMCON_AUTO_PARAMS)
+        resolved: dict[str, Any] = {}
+        for name, value in (("baudrate", baudrate), ("parity", parity),
+                            ("bytesize", bytesize), ("stopbits", stopbits)):
+            if value is UNSET:
+                resolved[name] = fallback[name]
+            else:
+                # 显式 None（null）原样保存；显式值原样保存
+                resolved[name] = value
+        for name in ("baudrate", "bytesize", "stopbits"):
+            if resolved[name] is not None:
+                resolved[name] = int(resolved[name])
+        if resolved["parity"] is not None:
+            resolved["parity"] = str(resolved["parity"])
+        if resolved["stopbits"] is not None:
+            resolved["stopbits"] = float(resolved["stopbits"])
+        # 仅校验给出的值（null 字段已被清除，不参与校验）
+        if "baudrate" in resolved and resolved["baudrate"] is not None and resolved["baudrate"] <= 0:
+            raise InvalidProfileError(f"非法波特率：{resolved['baudrate']}")
+        if resolved["parity"] is not None and resolved["parity"] not in ("N", "E", "O", "M", "S"):
+            raise InvalidProfileError(f"非法校验位：{resolved['parity']!r}")
+        if resolved["bytesize"] is not None and resolved["bytesize"] not in (5, 6, 7, 8):
+            raise InvalidProfileError(f"非法数据位：{resolved['bytesize']}")
+        if resolved["stopbits"] is not None and resolved["stopbits"] not in (1, 1.5, 2):
+            raise InvalidProfileError(f"非法停止位：{resolved['stopbits']}")
         profiles[slot] = {
             "slot": slot,
             "mapping_id": chosen,
             "enabled": bool(enabled),
-            "baudrate": int(resolved_baudrate),
-            "parity": str(resolved_parity),
-            "bytesize": int(resolved_bytesize),
-            "stopbits": float(resolved_stopbits),
+            "baudrate": resolved["baudrate"],
+            "parity": resolved["parity"],
+            "bytesize": resolved["bytesize"],
+            "stopbits": resolved["stopbits"],
         }
         self._write(profiles)
         return profiles[slot]

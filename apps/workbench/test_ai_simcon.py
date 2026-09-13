@@ -30,6 +30,12 @@ class FakeSimconCore:
 
     def verify(self, task):
         self.verify_calls.append(task)
+        if task.get("hang"):
+            # 模拟底层永久阻塞（如驱动级串口写挂死）：事件不 set 就永不返回
+            self._slow.wait()
+            return {"task_id": task.get("id", "t"), "summary": {
+                "verdict": "pass", "total": 1, "pass": 1, "fail": 0,
+            }}
         if task.get("slow"):
             assert self._slow.wait(timeout=5)
         return {"task_id": task.get("id", "t"), "summary": {
@@ -179,6 +185,34 @@ class TestVerifyEndpoint:
                              json={"id": "t1", "client_request_id": "req-1", "steps": []},
                              headers=headers)
         assert replay.json()["operation_id"] == first.json()["operation_id"]
+
+    def test_verify_watchdog_times_out_releases_gate_and_marks_error(self, monkeypatch):
+        """DEF-1：底层 verify 永久阻塞时看门狗落 error 终态并复位守卫。"""
+        core = FakeSimconCore()
+        client, token, _ = _client(core)
+        monkeypatch.setenv("WORKBENCH_VERIFY_TIMEOUT_S", "0.3")
+        headers = _auth_header(token)
+        try:
+            first = client.post("/api/ai/v1/simcon/verify",
+                                json={"id": "hang", "hang": True, "steps": []}, headers=headers)
+            assert first.status_code == 202
+            operation_id = first.json()["operation_id"]
+
+            waited = client.get(f"/api/ai/v1/operations/{operation_id}/wait?timeout_seconds=5",
+                                headers=headers)
+            assert waited.status_code == 200
+            assert waited.json()["state"] == "error"
+            assert "验证总超时" in str(waited.json().get("error") or "")
+
+            # 守卫已复位：后续 verify 不再 409（车道毒化回归）
+            second = client.post("/api/ai/v1/simcon/verify",
+                                 json={"id": "t2", "steps": []}, headers=headers)
+            assert second.status_code == 202
+            done = client.get(f"/api/ai/v1/operations/{second.json()['operation_id']}/wait?timeout_seconds=5",
+                              headers=headers)
+            assert done.json()["state"] == "succeeded"
+        finally:
+            core._slow.set()  # 释放可能仍卡住的底层线程（其迟到结果被废弃）
 
 
 class TestStepEndpoint:

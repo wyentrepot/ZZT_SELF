@@ -100,6 +100,12 @@ class AICapabilityService:
         observations = [dict(item, _ordinal=index) for index, item in enumerate(payload.get("observations") or [])]
         if not 1 <= len(observations) <= 3:
             raise InvalidObservation("investigation 至少需要 1 个、最多 3 个 observation")
+        # 业务级校验前移：在落 job 之前同步执行（v1/v2 同一拒绝口径），
+        # 非法输入直接 422，不再受理后落异步 error 且错误不可读。
+        for item in observations:
+            self.control.validate_investigation_observation(
+                {key: value for key, value in item.items() if key != "_ordinal"},
+            )
         resources = [self._resource_for(self.control, item) for item in observations]
         operation = self.control.store.create(
             "investigation", context.actor,
@@ -212,7 +218,9 @@ class AICapabilityService:
         compact.setdefault("underlying_operation_id", underlying.get("operation_id"))
         compact.setdefault("underlying_state", underlying.get("state"))
         state = str(underlying.get("state") or "error")
-        parent_state = "succeeded" if state in {"succeeded", "matched", "timed_out"} else (
+        # stop 返回的是会话 payload（state 取 module 通道值域 idle|running|error），
+        # stop_session 同步执行后必然 idle —— 不纳入会把 stop job 永久卡在 waiting。
+        parent_state = "succeeded" if state in {"succeeded", "matched", "timed_out", "idle"} else (
             "cancelled" if state == "cancelled" else "error" if state in {"error", "interrupted"} else "waiting"
         )
         stored = self.control.store.set_state(parent["operation_id"], parent_state, result=compact)
@@ -376,13 +384,22 @@ class AICapabilityService:
         result = operation.get("result") or {}
         observations = result.get("observations") or []
         refs = self._refs(observations)
-        verdict = None if operation.get("kind") in {"module_action", "verification_run", "flash_job"} else self._verdict(state, observations)
+        is_investigation = operation.get("kind") == "investigation"
+        verdict = None if not is_investigation else self._verdict(state, observations)
         source_health = result.get("source_health") or self._health(observations)
         summary = self._summary(operation, observations)
         underlying = [str(item["operation_id"]) for item in observations if item.get("operation_id")]
         if not underlying and result.get("underlying_operation_id"):
             underlying = [str(result["underlying_operation_id"])]
-        public_result = None if operation.get("kind") == "investigation" else _strip_paths(result)
+        if is_investigation:
+            # investigation 的结果平时经 evidence 分层下发；失败（整体 error 或
+            # 任一观察 error）时随信封携带，保证异步错误原因一次可读。
+            public_result = (
+                _strip_paths(result)
+                if verdict == Verdict.ERROR or state in {"error", "interrupted"} else None
+            )
+        else:
+            public_result = _strip_paths(result)
         return JobEnvelope(job_id=self._job_id(operation["operation_id"]),
                            job_state=state_map.get(state, JobState.RUNNING), verdict=verdict,
                            source_health=source_health, summary=summary,
@@ -407,7 +424,27 @@ class AICapabilityService:
     def _summary(operation: dict, results: list[dict]) -> str:
         if operation.get("error"):
             return str(operation["error"])[:3072]
+        state = str(operation.get("state") or "created")
+        kind = str(operation.get("kind") or "")
+        if kind != "investigation":
+            # 写任务（module_action/verification_run/flash_job）没有观察结果，
+            # summary 必须体现任务自身的状态，而不是误显 "investigation queued"。
+            return f"{kind} {state}"[:3072]
         bits = [f"{item.get('source')}: {item.get('state')}" for item in results]
+        if state in _JOB_TERMINAL or state in {"error", "timed_out"}:
+            # 终态重算 summary：体现真实终态与 verdict（如 trace_query 0 命中是
+            # fail 而非 succeeded；cancelled 不再残留 "investigation queued"）。
+            verdict = AICapabilityService._verdict(state, results)
+            label = verdict.value if verdict is not None else state
+            text = "investigation " + label
+            if bits:
+                text += ": " + ", ".join(bits)
+            first_error = next(
+                (str(item.get("error")) for item in results if item.get("error")), "",
+            )
+            if first_error:
+                text += f"；{first_error}"
+            return text[:3072]
         return ("investigation " + (", ".join(bits) if bits else "queued"))[:3072]
 
     @staticmethod
@@ -505,6 +542,10 @@ class AICapabilityService:
         else:
             data = result if level == EvidenceLevel.L2 else {"available": True}
             evidence_id = None
+        # 异步 error 路径：把异常原因写进证据 reason（此前 data.reason=null 无法定位）
+        error_text = item.get("error")
+        if error_text and not data.get("reason"):
+            data["reason"] = str(error_text)
         return EvidenceItem(source=source, evidence_id=evidence_id, data=_strip_paths(data))
 
     @staticmethod

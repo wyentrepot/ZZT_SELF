@@ -127,7 +127,11 @@ def run_step(io: SerialIO, responder: Optional[Responder],
 
     recv_only = step.get("recv_only", False)
     expect_history = step.get("expect_history", False)
+    # expect_timeout 显式传 null/非法值时回缺省，避免 recv_frame(timeout=None)
+    # 在静默串口上永久阻塞（任务总时长由 AI 层看门狗兜底，这里保证单步有界）。
     timeout = step.get("expect_timeout", 5.0)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        timeout = 5.0
     expect = step.get("expect")
     is_query = (expect is not None) and not expect_history
 

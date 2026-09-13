@@ -454,3 +454,28 @@ def test_nav_registers_scenario_simcon(client):
     assert '"/static/pages/simcon/simcon.html"' in r.text
     assert '"/static/pages/scenario/scenario.html"' in r.text
     assert '{ name: "设备", pages: ["serial-profile", "module", "listener", "simcon"] }' in r.text
+
+
+def test_compare_api_rejects_vacuous_and_malformed_input(client):
+    """DEF-6：空参 vacuous pass 与 dict 误形必须在入口 422 拒绝。"""
+    empty = client.post("/api/compare", json={})
+    assert empty.status_code == 422
+    assert "无可比内容" in empty.text
+
+    dict_flow = client.post(
+        "/api/compare", json={"expected_flow": {"steps": []}, "events": []})
+    assert dict_flow.status_code == 422
+
+    dict_events = client.post(
+        "/api/compare", json={"expected_flow": [], "events": {"a": 1}})
+    assert dict_events.status_code == 422
+
+
+def test_feedback_api_rejects_malformed_flow_compare(client):
+    """DEF-6：feedback 形状防护（此前 list 形状/坏字段类型 → 500）。"""
+    bad_shape = client.post("/api/feedback", json={"flow_compare": ["not", "a", "dict"]})
+    assert bad_shape.status_code == 422
+
+    bad_field = client.post(
+        "/api/feedback", json={"flow_compare": {"missing": "not-a-list", "verdict": "fail"}})
+    assert bad_field.status_code == 422
