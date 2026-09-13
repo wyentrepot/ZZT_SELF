@@ -166,3 +166,32 @@ class TestExecuteTask:
         out = execute_task(task, io=io)
         assert out["summary"]["verdict"] == "pass"
         assert out["steps"][0]["result"] == "pass"
+
+
+class TestExpectTimeoutCoercion:
+    """expect_timeout 显式 null/非法值必须回缺省，防 recv_frame(timeout=None) 无界阻塞。"""
+
+    def test_null_expect_timeout_falls_back_to_default(self):
+        import time as _time
+
+        from sim_concentrator.runner import run_step
+
+        recorded = []
+        io = FakeIO(responses=[_confirm_reply()])
+        original_recv = io.recv_frame
+
+        def _recv(timeout=None):
+            recorded.append(timeout)
+            return original_recv(timeout)
+
+        io.recv_frame = _recv
+        result = run_step(
+            io, None,
+            {"send": {"afn": 0, "fn": 1}, "expect": {"afn": 0, "fn": 1},
+             "expect_timeout": None},
+            0, profile=_PROFILE,
+        )
+        # 首次 recv 的等待时长应接近缺省 5s（有界），而不是 None（永不超时）
+        assert recorded and recorded[0] is not None
+        assert 4.0 < recorded[0] <= 5.0, recorded[0]
+        assert result["result"] == "pass"

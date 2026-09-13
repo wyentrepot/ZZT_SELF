@@ -451,4 +451,16 @@ def create_workbench_app(
 
 
 # ---------- 模块级装配（供 uvicorn "workbench.app:app" / PyInstaller 引用）----------
-app = create_workbench_app()
+# WORKBENCH_SKIP_DEFAULT_APP=1 时跳过全量默认构建（供 OpenAPI 校验等工具脚本
+# 惰性自建 app 用）；不设置该变量时行为与原先完全一致（导入即装配）。
+app: Optional[FastAPI] = None
+if os.environ.get("WORKBENCH_SKIP_DEFAULT_APP") != "1":
+    app = create_workbench_app()
+
+
+def get_app() -> FastAPI:
+    """返回默认 app 单例；被跳过时首次调用再构建（工具脚本路径）。"""
+    global app
+    if app is None:
+        app = create_workbench_app()
+    return app

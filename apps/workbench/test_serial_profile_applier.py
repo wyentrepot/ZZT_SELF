@@ -308,3 +308,47 @@ def test_apply_reads_saved_profile_only(profile_store):
                       simcon=FakeSimcon()).apply()
     assert result["slots"][0]["status"] == "started"
     assert listener.started == 1
+
+
+class _RecordingListenerService(FakeListenerService):
+    """记录 start 参数的 fake listener（验证 null → 映射缺省回落）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.start_params: dict = {}
+
+    def start(self, port=None, baudrate=None, bytesize=None, parity=None, stopbits=None):
+        self.start_params = {"baudrate": baudrate, "bytesize": bytesize,
+                             "parity": parity, "stopbits": stopbits}
+        return super().start(port=port, baudrate=baudrate, bytesize=bytesize,
+                             parity=parity, stopbits=stopbits)
+
+
+def test_apply_with_null_params_falls_back_to_mapping_defaults(profile_store):
+    """DEF-13：显式 null 的槽参数 apply 时回落映射缺省（auto 语义），不传 None。"""
+    profile_store.update_slot("listener.main", mapping_id="listener", enabled=True,
+                              baudrate=None, parity=None, bytesize=None, stopbits=None)
+    listener = _RecordingListenerService()
+    applier = _applier(profile_store, listener=listener)
+
+    result = applier.apply()
+
+    by_slot = {s["slot"]: s for s in result["slots"]}
+    assert by_slot["listener.main"]["status"] == "started"
+    assert listener.start_params == {
+        "baudrate": 115200, "bytesize": 8, "parity": "E", "stopbits": 1,
+    }
+
+
+def test_apply_module_with_null_param_uses_mapping_default_not_none(profile_store):
+    """DEF-13：module 槽 null 参数回落映射缺省（此前 int(None) 会崩）。"""
+    profile_store.update_slot("module_log.cco", mapping_id="cco-main", enabled=True,
+                              baudrate=None)
+    module = FakeModuleService()
+    applier = _applier(profile_store, module=module)
+
+    result = applier.apply()
+
+    by_slot = {s["slot"]: s for s in result["slots"]}
+    assert by_slot["module_log.cco"]["status"] == "started"
+    assert module.started and module.started[0]["baudrate"] == 115200

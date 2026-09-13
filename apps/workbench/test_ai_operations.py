@@ -957,3 +957,24 @@ def test_listener_trace_query_warm_p95_under_500ms():
         durations.append((time.perf_counter() - start) * 1000.0)
     p95 = sorted(durations)[int(len(durations) * 0.95) - 1]
     assert p95 <= 500.0, f"trace_query 适配层 P95 {p95:.1f}ms 超过 500ms"
+
+
+def test_ensure_reuses_idle_session_on_same_module_and_port():
+    """DEF-10：ensure「创建或复用」——同 module+port 的空闲会话直接复用并拉起。"""
+    module = FakeModuleService()
+    module.sessions["ms-idle"] = {
+        "session_id": "ms-idle", "title": "旧会话", "module": "cco",
+        "state": "idle", "port": "COM1", "port_identity": {"mapping_id": ""},
+        "log_file": "/tmp/old.log",
+        "flash": {"flashing": False, "phase": "idle", "message": ""},
+    }
+    control = AIControlService(module_service=module)
+
+    result = control.ensure_module_session({"module": "cco", "port": "COM1"})
+
+    assert result["reused"] is True
+    assert result["session"]["session_id"] == "ms-idle"
+    # 复用并在目标口上运行，而不是新建默认标题会话
+    assert "ms-created" not in module.sessions
+    assert result["session"]["state"] == "running"
+    assert result["session"]["port"] == "COM1"

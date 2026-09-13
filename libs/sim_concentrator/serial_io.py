@@ -304,6 +304,7 @@ class SerialIO:
 
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.2,
                  bytesize: int = 8, parity: str = "N", stopbits: int = 1,
+                 write_timeout: float = 5.0,
                  port_identity: dict[str, Any] | None = None,
                  resource_registry: SerialResourceRegistry | None = None,
                  journal=None,
@@ -313,6 +314,10 @@ class SerialIO:
         协议约定：集中器任何时刻收到模块主动上报帧都应回确认（如 06H-F230 →
         00H-F1），与测试步骤/期待无关。该应答挂在读线程，收到完整帧即判定，
         不依赖 step/verify 执行窗口。
+
+        write_timeout：单次 write 的驱动级超时。部分虚拟/USB 串口驱动在
+        对端未接收时会让 write 永久阻塞（实测 COM4 首帧即挂死），不设
+        超时会让 verify/step 线程无界挂起。
         """
         if not _SERIAL_AVAILABLE:
             raise RuntimeError("缺少 pyserial 依赖，请先安装：pip install pyserial")
@@ -322,6 +327,7 @@ class SerialIO:
         self.bytesize = bytesize
         self.parity = parity
         self.stopbits = stopbits
+        self.write_timeout = write_timeout
         self.port_identity = dict(port_identity or {
             "mapping_id": "", "device": port, "label": "", "usage": "", "module": "",
         })
@@ -387,6 +393,7 @@ class SerialIO:
                 parity=self._PARITY_MAP.get(self.parity.upper(), serial.PARITY_NONE),
                 stopbits=self._STOPBITS_MAP.get(self.stopbits, serial.STOPBITS_ONE),
                 timeout=self.timeout,
+                write_timeout=self.write_timeout,
             )
             self._open = True
             self._read_stop.clear()

@@ -166,3 +166,24 @@ def test_status_503_when_applier_unset(profile_store):
     app.include_router(create_serial_profile_router(profile_store=profile_store))
     resp = TestClient(app).get("/api/serial-profile/status")
     assert resp.status_code == 503
+
+
+def test_put_explicit_null_clears_params_and_omitted_backfills_defaults(client):
+    """DEF-13：PUT 显式 null 存 null（可复原未配置态）；缺省不传回填映射缺省。"""
+    c, _ = client
+    # 显式 null：清除 baudrate/parity；未提供的 bytesize/stopbits 回填映射缺省
+    saved = c.put("/api/serial-profile", json={"profiles": {
+        "listener.main": {"mapping_id": "listener", "enabled": True,
+                          "baudrate": None, "parity": None},
+    }}).json()["profiles"]
+    assert saved["listener.main"]["baudrate"] is None
+    assert saved["listener.main"]["parity"] is None
+    assert saved["listener.main"]["bytesize"] == 8
+    assert saved["listener.main"]["stopbits"] == 1
+
+    # 再次 PUT 不带这两个键：回填映射缺省（UNSET 语义）
+    saved = c.put("/api/serial-profile", json={"profiles": {
+        "listener.main": {"mapping_id": "listener", "enabled": True},
+    }}).json()["profiles"]
+    assert saved["listener.main"]["baudrate"] == 115200
+    assert saved["listener.main"]["parity"] == "E"

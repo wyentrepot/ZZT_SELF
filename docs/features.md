@@ -94,7 +94,7 @@
 | 侦听台控制/查询 | `listener/ensure·stop`、`listener/schema`、`listener/indexes…`、`listener/traces…` | 通信流追踪 202 → operation → result.report |
 | 侦听台语义查询与分层证据（REQS-0022） | v2 `investigations` 的 `match.kind=trace_query`（复用 TraceService）/ `minute_periods`（复用 list_task_minute_periods）；`jobs/{id}/evidence?level=L1\|L2\|L3` | L1 摘要 ≤3KiB 无 raw_hex；L2 解析投影 ≤16KiB/50 条；L3 同 job `ref=listener:<index_id>:<frame_id>` 回传完整帧（越权 403/格式错 422） |
 | 模拟集中器 | `simcon/verify·step·frames·session·open·close` | resource 固定 simcon，帧列表 `entries` 键 |
-| 使用文档 | `.agents/skills/ai-control-plane/SKILL.md`（v2.0.0：路由器 + references 按需加载）+ `docs/16-AI操作指南.md` | 错误码语义 401/403/404/409/422/503 见技能主文件 |
+| 使用文档 | `.agents/skills/ai-control-plane/SKILL.md`（v2.4.0：路由器 + references 按需加载）+ `docs/16-AI操作指南.md` | 错误码语义 401/403/404/409/422/503 见技能主文件 |
 
 ## 9. 支撑工具链
 
@@ -112,5 +112,5 @@
 | --- | --- |
 | `docs/api-contract.md` | 接口契约总表（路由/参数/响应键/状态码/前缀映射/契约红线） |
 | `docs/16-AI操作指南.md` | AI 控制面完整操作手册 |
-| `.agents/skills/ai-control-plane/SKILL.md` | AI 控制面执行步骤（v2.0.0：路由器 + references 按需加载） |
+| `.agents/skills/ai-control-plane/SKILL.md` | AI 控制面执行步骤（v2.4.0：路由器 + references 按需加载） |
 | `REQS-INDEX.md` / `DECISIONS.md` | 需求索引 / ADR 决策记录 |

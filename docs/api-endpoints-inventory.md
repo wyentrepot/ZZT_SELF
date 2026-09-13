@@ -1,5 +1,9 @@
 # 后端 API 接口总清单
 
+> ⚠️⚠️ **历史快照（2026-09-02 基线），现况以 [`docs/api-contract.md`](api-contract.md) 为准** ⚠️⚠️
+> 本文缺 2026-09-02 之后入库的 `/api/ai/v2` 任务门面（8 条）等路由；部分计数与挂载描述已过期
+> （已在 2026-09-13 对账中就地修正 listener/dict/simcon 缺记与内部矛盾）。排查现网路由请先读 api-contract。
+>
 > 统计时间：2026-09-02
 > 代码基线：`4ed9384`（pull `origin/master`，Fast-forward 自 `4fecd6a`）
 > 统计范围：**全部后端 HTTP 接口**（不只 AI 专用接口）
@@ -16,14 +20,20 @@
 | 3 | 协议字典 | `/api/dict` | 5 | 无 | 页面 + AI 查询 |
 | 4 | 串口配置 | `/api/serial-profile`、`/api/serial-tags` | 5 | 无 | 页面 |
 | 5 | workbench 平台自身 | `/`、`/api` | 3 | 无 | 运维 |
-| 6 | listener 子应用 | `/api/*`（挂载后 `/api/listener/*`） | 31 | 无 | 页面 |
+| 6 | listener 子应用 | `/api/*`（挂载后 `/api/listener/*`） | 37 | 无 | 页面 |
 | 7 | module_log 子应用 | `/api/module-serial/*` | 31 | 无 | 页面 |
-| 8 | simcon 子应用 | `/api/simcon/*` | 13 | 无 | 页面 |
+| 8 | simcon 子应用 | `/api/simcon/*` | 20 | 无 | 页面 |
 | 9 | parser_service（新） | `/health`、`/api/*` | 3 | 无 | 跨机解析 |
-| | **合计** | | **138** | | |
+| | **合计** | | **153** | | |
 
-**一句话结论**：真正"为 AI 专门准备"的只有第 1 层 `/api/ai/v1`（34 个，带 token + scope 细粒度授权）；
-其余 104 个是页面/服务间接口，AI 若要调用需用同一套 HTTP 但**无鉴权保护**。
+> 2026-09-13 对账修订：listener 补组网观测 5 条 + concurrent/stats（31→37）、dict 补用例库 2 条（5→7）、
+> simcon 补 REQS-0027 7 条（13→20），合计 138→153。**`/api/ai/v2` 任务门面（8 条）未计入本快照**，
+> 为快照后的默认 AI 入口，见 `docs/api-contract.md` §6。
+
+**一句话结论（2026-09-02 快照口径，已被 v2 取代）**：本文统计时"为 AI 专门准备"的只有第 1 层
+`/api/ai/v1`（34 个，带 token + scope 细粒度授权）；其余是页面/服务间接口，AI 若要调用需用同一套
+HTTP 但**无鉴权保护**。**现况默认 AI 入口是 `/api/ai/v2` 任务门面（8 条，低 token 任务流），
+v1 保留为专家兼容层——现况以 `docs/api-contract.md` §6/§6.1 为准。**
 
 ---
 
@@ -106,7 +116,7 @@
 | POST | `/api/ai/v1/listener/traces` | 创建追踪：`live` 注册句柄（持续更新快照）/ 回放模式直接出报告（202） | `listener:trace` |
 | GET | `/api/ai/v1/listener/traces/{trace_id}` | 读取追踪当前快照 | `evidence:read` |
 
-### 1.10 模拟集中器 simcon（11 个）
+### 1.10 模拟集中器 simcon（9 个）
 
 | 方法 | 路径 | 功能 | scope |
 | --- | --- | --- | --- |
@@ -147,7 +157,7 @@
 
 ---
 
-## 3. 协议字典 `/api/dict`（5 个，无鉴权）
+## 3. 协议字典 `/api/dict`（7 个，无鉴权）
 
 **定义文件**：`apps/workbench/dict_api.py`
 数据直接读仓库真实字典文件，无拷贝加工 —— 改字典文件即刻生效。
@@ -159,6 +169,8 @@
 | GET | `/api/dict/di` | 645-2007 DI 字典 |
 | GET | `/api/dict/afn-fn` | 1376.2 AFN/Fn 字典（含安徽扩展） |
 | GET | `/api/dict/rules` | 模块日志事件识别规则（loghooks） |
+| GET | `/api/dict/cases` | 检测用例库（REQS-0025：`?category=&type=&q=` 过滤，返回 declared_total/categories/items） |
+| GET | `/api/dict/cases/{entry_id}` | 单条用例/参数表行详情（404 不存在） |
 
 ---
 
@@ -184,7 +196,7 @@
 
 ---
 
-## 6. listener 子应用（31 个，无鉴权）
+## 6. listener 子应用（37 个，无鉴权）
 
 **定义文件**：`apps/listener/app.py`
 **双部署**：独立运行时路径即下表"独立路径"；挂载进 workbench 后走"工作台路径"。
@@ -208,6 +220,12 @@
 | GET | `/api/logs/task-config-lifecycle` | 同左加前缀 | 任务配置：生命周期 |
 | GET | `/api/network/assessment` | `/api/listener/network/assessment` | 网络承载评估（周期明细 + 汇总） |
 | GET | `/api/network/status` | `/api/listener/network/status` | 网络评估轻量快照 |
+| GET | `/api/network/events` | `/api/listener/network/events` | 组网事件流（REQS-0024/0026：group/direction/level/limit 过滤，首调触发增量扫描） |
+| GET | `/api/network/digest` | `/api/listener/network/digest` | 组网印象结论包（≤4KB：verdict + 异常清单 + 时间桶） |
+| GET | `/api/network/events/{frame_id}/brief` | `/api/listener/network/events/{frame_id}/brief` | 单帧粗略解析（≤2KB，404/422） |
+| GET | `/api/network/overview` | `/api/listener/network/overview` | 组网总览（网络/站点/事件计数/链路计数器） |
+| GET | `/api/network/beacons` | `/api/listener/network/beacons` | 信标明细（bcn_type 过滤，四时段重建） |
+| GET | `/api/concurrent/stats` | `/api/listener/concurrent/stats` | 并发抄表只读统计（REQS-0030：被动侦听帧库 AFN=F1，period=15m/30s/1h/900） |
 | GET | `/api/fs/roots` | `/api/listener/fs/roots` | 盘符列表 |
 | GET | `/api/fs/list` | `/api/listener/fs/list` | 列目录 |
 | GET | `/api/fs/last` | `/api/listener/fs/last` | 上次打开的目录 |
@@ -227,7 +245,7 @@
 | POST | `/api/serial/start` | `/api/listener/serial/start` | 开始串口采集（202） |
 | POST | `/api/serial/stop` | `/api/listener/serial/stop` | 停止串口采集 |
 
-> 去重后计数 31（含首页）；上表列出 35 行是因为把"别名路径"也摊开了，便于对照。
+> 去重后计数 37（含首页；2026-09-13 修订：31→37，补组网观测 5 条 + concurrent/stats）；上表列出 41 行是因为把"别名路径"也摊开了，便于对照。
 > **AI 提示**：工作台下追踪请优先用 `/api/ai/v1/listener/traces`（带鉴权、带幂等），不要走这里的别名路径。
 
 ---
@@ -288,10 +306,11 @@
 
 ---
 
-## 8. simcon 子应用（13 个，无鉴权）
+## 8. simcon 子应用（20 个，无鉴权）
 
 **定义文件**：`libs/sim_concentrator/api.py`
-**挂载**：module_log 内挂 `/api/simcon`（`prefix=""`）；workbench 透传，路径一致。
+**挂载**：workbench **平级顶层 mount `/api/simcon`**（REQS-0023，独立子应用，不经过 module_log）；
+独立版 `python -m sim_concentrator.api` 路由相同。
 
 | 方法 | 路径 | 功能 |
 | --- | --- | --- |
@@ -308,6 +327,13 @@
 | GET | `/api/simcon/store/snapshots` | 查询快照列表（临时层） |
 | GET | `/api/simcon/store/snapshots/{snapshot_id}` | 快照明细行 |
 | GET | `/api/simcon/store/events` | 06H 主动上报事件（持久层） |
+| GET | `/api/simcon/expect_rules` | 应答预期规则库（REQS-0027：deny_codes/timeout_tiers/rules/no_expect_afn） |
+| POST | `/api/simcon/batch_read` | 创建并发抄表任务（REQS-0027 G5：滑窗调度，回快照） |
+| GET | `/api/simcon/batch_read` | 并发任务列表 |
+| GET | `/api/simcon/batch_read/{job_id}` | 单任务快照 |
+| POST | `/api/simcon/batch_read/{job_id}/stop` | 停止并发任务 |
+| GET | `/api/simcon/readings` | 统一抄读表格（G4：source/result/since/limit 过滤 + 成功率统计） |
+| GET | `/api/simcon/report_buckets` | 主动上报分桶（G6：F1-F5 各桶 + 停复电子类） |
 
 ---
 
@@ -336,7 +362,7 @@ workbench 用 `_PrefixProxy` 剥前缀重写 `scope["path"]`，使子应用看�
 | module_log | `/api/module-serial` | `/api/module-serial` | 透传（不变） | 外部与内部一致 |
 | module_log(fs) | `/api/fs` | `/api/fs` | 透传 | 一致 |
 | module_log(loghooks) | `/api/loghooks` | `/api/loghooks` | 透传 | 一致 |
-| module_log(simcon) | `/api/simcon` | `/api/simcon` | 透传 | 一致 |
+| simcon | `/api/simcon` | —（**平级顶层 mount**，REQS-0023） | 无剥前缀，内部路径原样 | 一致 |
 
 **为什么 listener 里同一函数挂两个路径**（如 `/api/indexes` 与 `/api/listener/indexes`）？
 因为挂载后外部 `/api/listener/indexes` 会被重写成 `/api/indexes`，而**独立运行时**前端直接用 `/api/indexes`；

@@ -1,0 +1,1076 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="midnight">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模拟集中器 · 软件化改版 Demo v3（假数据）</title>
+<style>
+/* ============================================================
+   模拟集中器 软件化改版 Demo v3 —— 单文件假数据，双击即开
+   Token 与生产 tokens-v2.css 同源（midnight / daylight 两套全兼容）
+   ============================================================ */
+
+/* ---- L1 primitive（节选） ---- */
+:root{
+  --p-slate-950:#05080f; --p-slate-900:#0a1628; --p-slate-850:#0d1a30; --p-slate-800:#0f1f3d;
+  --p-slate-750:#152a4a; --p-slate-50:#f4f6f9; --p-slate-0:#ffffff;
+  --p-cyan-600:#0891b2; --p-cyan-500:#06b6d4; --p-cyan-400:#22d3ee; --p-cyan-700:#0e7490;
+  --p-cyan-ink:#04202e;
+  --p-teal-500:#2dd4bf; --p-teal-700:#0f766e; --p-amber-500:#f0b429; --p-amber-700:#b45309;
+  --p-green-500:#10b981; --p-green-700:#15803d; --p-orange-500:#f59e0b; --p-orange-700:#b45309;
+  --p-red-500:#ef4444; --p-red-700:#b91c1c; --p-blue-500:#5a94ff; --p-blue-700:#1d4ed8;
+  --p-purple-500:#a371f7; --p-purple-700:#7c3aed;
+  --font-sans:"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Mono",Consolas,ui-monospace,monospace;
+  --radius-sm:.25rem; --radius-md:.5rem; --radius-lg:.75rem;
+  --ease:cubic-bezier(.65,0,.35,1);
+}
+/* ---- L2 semantic · midnight（默认） ---- */
+:root, html[data-theme="midnight"]{
+  color-scheme:dark;
+  --color-bg-canvas:var(--p-slate-900); --color-bg-surface:var(--p-slate-800);
+  --color-bg-raised:var(--p-slate-750); --color-bg-elevated:#1b3555; --color-bg-overlay:#22406a;
+  --color-bg-input:var(--p-slate-850);
+  --color-bg-hover:rgb(255 255 255/.05); --color-bg-active:rgb(255 255 255/.10);
+  --color-fg-default:var(--p-slate-100); --color-fg-muted:var(--p-slate-150,#a8b6c8);
+  --color-fg-subtle:#94a3b8; --color-fg-dim:#8296ad;
+  --color-border-default:rgb(255 255 255/.07); --color-border-strong:rgb(255 255 255/.14);
+  --color-border-emphasis:rgb(255 255 255/.24); --color-border-focus:var(--p-cyan-500);
+  --color-accent:var(--p-cyan-500); --color-accent-hover:var(--p-cyan-400);
+  --color-accent-active:var(--p-cyan-600); --color-accent-emphasis:var(--p-cyan-400);
+  --color-accent-fg:var(--p-cyan-ink);
+  --color-accent-soft:color-mix(in srgb,var(--p-cyan-500) 14%,transparent);
+  --color-dir-rx:var(--p-teal-500); --color-dir-rx-soft:color-mix(in srgb,var(--p-teal-500) 14%,transparent);
+  --color-dir-tx:var(--p-amber-500); --color-dir-tx-soft:color-mix(in srgb,var(--p-amber-500) 14%,transparent);
+  --color-status-pass:var(--p-green-500); --color-status-pass-bg:color-mix(in srgb,var(--p-green-500) 15%,transparent);
+  --color-status-pass-border:color-mix(in srgb,var(--p-green-500) 35%,transparent);
+  --color-status-warn:var(--p-orange-500); --color-status-warn-bg:color-mix(in srgb,var(--p-orange-500) 15%,transparent);
+  --color-status-warn-border:color-mix(in srgb,var(--p-orange-500) 35%,transparent);
+  --color-status-fail:var(--p-red-500); --color-status-fail-bg:color-mix(in srgb,var(--p-red-500) 15%,transparent);
+  --color-status-fail-border:color-mix(in srgb,var(--p-red-500) 35%,transparent);
+  --color-status-inconclusive:var(--p-purple-500);
+  --color-status-inconclusive-bg:color-mix(in srgb,var(--p-purple-500) 15%,transparent);
+  --color-status-special:var(--p-purple-500);
+  --shadow-menu:0 10px 24px rgb(0 0 0/.45),0 2px 6px rgb(0 0 0/.3);
+}
+/* ---- L2 semantic · daylight ---- */
+html[data-theme="daylight"]{
+  color-scheme:light;
+  --color-bg-canvas:var(--p-slate-50); --color-bg-surface:var(--p-slate-0);
+  --color-bg-raised:#eef2f7; --color-bg-elevated:#e6ecf4; --color-bg-overlay:#dbe4ef;
+  --color-bg-input:var(--p-slate-0);
+  --color-bg-hover:rgb(15 23 42/.05); --color-bg-active:rgb(15 23 42/.09);
+  --color-fg-default:#0f172a; --color-fg-muted:#334155; --color-fg-subtle:#475569; --color-fg-dim:#5a6b80;
+  --color-border-default:rgb(15 23 42/.10); --color-border-strong:rgb(15 23 42/.20);
+  --color-border-emphasis:rgb(15 23 42/.30); --color-border-focus:var(--p-cyan-700);
+  --color-accent:var(--p-cyan-500); --color-accent-hover:var(--p-cyan-600);
+  --color-accent-active:var(--p-cyan-700); --color-accent-emphasis:var(--p-cyan-700);
+  --color-accent-fg:var(--p-cyan-ink);
+  --color-accent-soft:color-mix(in srgb,var(--p-cyan-500) 12%,transparent);
+  --color-dir-rx:var(--p-teal-700); --color-dir-rx-soft:color-mix(in srgb,var(--p-teal-700) 12%,transparent);
+  --color-dir-tx:var(--p-amber-700); --color-dir-tx-soft:color-mix(in srgb,var(--p-amber-700) 12%,transparent);
+  --color-status-pass:var(--p-green-700); --color-status-pass-bg:color-mix(in srgb,var(--p-green-700) 12%,transparent);
+  --color-status-pass-border:color-mix(in srgb,var(--p-green-700) 30%,transparent);
+  --color-status-warn:var(--p-orange-700); --color-status-warn-bg:color-mix(in srgb,var(--p-orange-700) 12%,transparent);
+  --color-status-warn-border:color-mix(in srgb,var(--p-orange-700) 30%,transparent);
+  --color-status-fail:var(--p-red-700); --color-status-fail-bg:color-mix(in srgb,var(--p-red-700) 12%,transparent);
+  --color-status-fail-border:color-mix(in srgb,var(--p-red-700) 30%,transparent);
+  --color-status-inconclusive:var(--p-purple-700);
+  --color-status-inconclusive-bg:color-mix(in srgb,var(--p-purple-700) 12%,transparent);
+  --color-status-special:var(--p-purple-700);
+  --shadow-menu:0 10px 24px rgb(15 23 42/.18),0 2px 6px rgb(15 23 42/.10);
+}
+
+/* ---- 基础 ---- */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--color-fg-default);
+  background:var(--color-bg-canvas);overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--color-border-emphasis);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select{font:inherit;color:inherit}
+.mono{font-family:var(--font-mono);font-variant-ligatures:none}
+svg.i{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---- 通用元件 ---- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 12px;
+  border-radius:var(--radius-md);border:1px solid var(--color-border-strong);background:var(--color-bg-elevated);
+  color:var(--color-fg-muted);font-size:12.5px;font-weight:500;transition:all .14s var(--ease);white-space:nowrap}
+.btn:hover{background:var(--color-bg-hover);color:var(--color-fg-default);border-color:var(--color-border-emphasis)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:linear-gradient(180deg,var(--color-accent),var(--color-accent-active));
+  color:var(--color-accent-fg);border-color:var(--color-border-focus)}
+.btn--sm{height:25px;padding:0 9px;font-size:12px}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--color-fg-subtle)}
+.btn--ghost:hover{background:var(--color-bg-elevated);color:var(--color-fg-default)}
+.fld{height:28px;padding:0 8px;border-radius:var(--radius-md);background:var(--color-bg-input);
+  border:1px solid var(--color-border-strong);color:var(--color-fg-default);font-size:12.5px}
+.fld:focus{outline:none;border-color:var(--color-accent);box-shadow:0 0 0 3px var(--color-accent-soft)}
+select.fld{appearance:none;cursor:pointer;padding-right:24px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='%238296ad' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 8px center}
+.chip{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px;border-radius:var(--radius-sm);
+  font-size:11px;font-weight:500;background:var(--color-bg-elevated);color:var(--color-fg-muted);border:1px solid var(--color-border-default)}
+.chip--ac{background:var(--color-accent-soft);color:var(--color-accent-emphasis);border-color:var(--color-border-focus)}
+.chip--tx{background:var(--color-dir-tx-soft);color:var(--color-dir-tx);border-color:var(--color-dir-tx)}
+.chip--rx{background:var(--color-dir-rx-soft);color:var(--color-dir-rx);border-color:var(--color-dir-rx)}
+.chip--ok{background:var(--color-status-pass-bg);color:var(--color-status-pass);border-color:var(--color-status-pass-border)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:10px;font-size:11px;font-weight:500}
+.badge--ok{background:var(--color-status-pass-bg);color:var(--color-status-pass);border:1px solid var(--color-status-pass-border)}
+.badge--deny{background:var(--color-status-fail-bg);color:var(--color-status-fail);border:1px solid var(--color-status-fail-border)}
+.badge--idle{background:var(--color-bg-elevated);color:var(--color-fg-subtle);border:1px solid var(--color-border-default)}
+.seg{display:flex;background:var(--color-bg-input);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);padding:2px;gap:2px}
+.seg button{height:21px;padding:0 9px;border-radius:5px;font-size:11.5px;color:var(--color-fg-subtle)}
+.seg button:hover{color:var(--color-fg-default)}
+.seg button.on{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.card{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--color-bg-elevated);
+  border-bottom:1px solid var(--color-border-default);font-size:12.5px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--color-fg-dim);font-weight:400}
+.card-in{padding:11px 12px}
+.hint{font-size:11px;color:var(--color-fg-dim)}
+.rtab{width:100%;border-collapse:collapse;font-size:11.5px;font-family:var(--font-mono)}
+.rtab th{position:sticky;top:0;background:var(--color-bg-elevated);text-align:left;font-weight:500;font-size:10.5px;
+  letter-spacing:.05em;color:var(--color-fg-muted);padding:6px 9px;border-bottom:1px solid var(--color-border-default);white-space:nowrap}
+.rtab td{padding:5px 9px;border-bottom:1px solid var(--color-border-default);white-space:nowrap}
+.rtab td.num,.rtab th.num{text-align:right}
+.rtab tbody tr:hover td{background:var(--color-bg-hover)}
+.empty{display:grid;place-items:center;text-align:center;color:var(--color-fg-dim);font-size:12px;padding:18px}
+
+/* ---- 帧着色（与生产 simcon 同规则） ---- */
+.hex{font-family:var(--font-mono);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all}
+.hx{padding:1px 3px;border-radius:3px}
+.s-68,.s-16,.s-L{color:var(--color-status-special)}
+.s-C{color:var(--color-status-warn)}.s-R{color:var(--color-fg-subtle)}.s-A{color:var(--color-dir-rx)}
+.s-AFN{color:var(--color-accent);font-weight:500}.s-DT{color:var(--color-status-inconclusive)}
+.s-DU{color:var(--color-fg-default)}.s-CS{color:var(--color-status-warn)}
+.hexlg{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px;padding-top:8px;border-top:1px solid var(--color-border-default)}
+.hexlg span{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--color-fg-dim)}
+.hexlg i{width:8px;height:8px;border-radius:2px;font-style:normal;background:currentColor}
+
+/* ============================================================
+   整体骨架：菜单栏 / 侧栏+工作区 / 底部Dock / 状态栏
+   ============================================================ */
+.app{display:flex;flex-direction:column;height:100vh}
+
+/* ---- 菜单栏 ---- */
+.menubar{display:flex;align-items:center;gap:2px;height:36px;padding:0 10px;flex:none;position:relative;z-index:60;
+  background:var(--color-bg-surface);border-bottom:1px solid var(--color-border-default);user-select:none}
+.mb-logo{display:flex;align-items:center;gap:8px;margin-right:10px}
+.mb-logo .lg{width:20px;height:20px;border-radius:5px;display:grid;place-items:center;font-size:10px;font-weight:700;
+  background:linear-gradient(135deg,var(--color-accent),var(--color-accent-active));color:var(--color-accent-fg)}
+.mb-logo .nm{font-size:12.5px;font-weight:600;letter-spacing:.02em}
+.mb-item{position:relative;height:24px;padding:0 10px;display:flex;align-items:center;border-radius:5px;
+  font-size:12.5px;color:var(--color-fg-muted);cursor:pointer}
+.mb-item:hover,.mb-item.open{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.mb-item.open{background:var(--color-bg-elevated);box-shadow:inset 0 -2px 0 var(--color-accent)}
+.mb-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.mb-drop{position:absolute;top:32px;left:0;min-width:216px;padding:5px;display:none;
+  background:var(--color-bg-overlay);border:1px solid var(--color-border-emphasis);border-radius:var(--radius-md);
+  box-shadow:var(--shadow-menu)}
+.mb-item.open .mb-drop{display:block}
+.mi{display:flex;align-items:center;gap:9px;width:100%;height:28px;padding:0 9px;border-radius:5px;
+  font-size:12.5px;color:var(--color-fg-default);text-align:left}
+.mi:hover{background:var(--color-bg-hover)}
+.mi .k{margin-left:auto;font-size:10.5px;font-family:var(--font-mono);color:var(--color-fg-dim)}
+.mi .ck{width:14px;flex:none;display:inline-flex;color:var(--color-accent);visibility:hidden}
+.mi.on .ck{visibility:visible}
+.mi-sep{height:1px;margin:4px 6px;background:var(--color-border-default)}
+.mi-dis{padding:3px 9px 4px;font-size:10.5px;color:var(--color-fg-dim)}
+
+/* ---- 中段：侧栏 + 工作区 ---- */
+.mid{flex:1;display:flex;min-height:0}
+.side{width:220px;flex:none;display:flex;flex-direction:column;min-height:0;
+  background:var(--color-bg-surface);border-right:1px solid var(--color-border-default);
+  transition:width .18s var(--ease);overflow:hidden}
+.app.side-min .side{width:52px}
+.side-conn{margin:10px 10px 4px;padding:9px 11px;border-radius:var(--radius-lg);flex:none;
+  background:var(--color-bg-raised);border:1px solid var(--color-border-default)}
+.sc-t{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:500}
+.sc-t .dot{color:var(--color-status-pass)}
+.app.off .sc-t .dot{color:var(--color-fg-dim)}
+.sc-meta{margin-top:5px;font-size:11px;color:var(--color-fg-dim);font-family:var(--font-mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-btns{display:flex;gap:6px;margin-top:8px}
+.side-nav{padding:8px;display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto}
+.snav{display:flex;align-items:center;gap:9px;height:32px;padding:0 9px;border-radius:var(--radius-md);
+  font-size:12.5px;color:var(--color-fg-muted);width:100%;text-align:left;position:relative;flex:none}
+.snav:hover{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.snav.on{background:var(--color-accent-soft);color:var(--color-accent-emphasis)}
+.snav.on::before{content:"";position:absolute;left:-8px;top:6px;bottom:6px;width:2.5px;border-radius:2px;background:var(--color-accent)}
+.snav .k{margin-left:auto;font-size:9.5px;font-family:var(--font-mono);color:var(--color-fg-dim);border:1px solid var(--color-border-default);
+  border-radius:4px;padding:0 4px}
+.side-foot{flex:none;padding:8px;border-top:1px solid var(--color-border-default);display:flex;gap:2px}
+.side-foot .btn{flex:1}
+/* 收缩态：藏文字 */
+.app.side-min .sc-meta,.app.side-min .sc-btns,.app.side-min .snav span,.app.side-min .snav .k,
+.app.side-min .side-foot .btn span{display:none}
+.app.side-min #scState{display:none}
+.app.side-min .sc-t{justify-content:center}
+.app.side-min .side-foot{flex-direction:column;align-items:center;gap:4px}
+.app.side-min .side-foot .btn{width:32px;padding:0}
+.app.side-min .side-conn{margin:10px 8px 4px;padding:8px 0;display:grid;place-items:center}
+.app.side-min .side-nav{padding:8px 6px}
+.app.side-min .snav{justify-content:center;padding:0}
+.app.side-min .snav.on::before{left:-6px}
+
+/* ---- 主工作区 ---- */
+.main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--color-bg-canvas)}
+.ws{display:none;flex:1;min-height:0;flex-direction:column}
+.ws.on{display:flex}
+.ws-head{display:flex;align-items:center;gap:10px;height:40px;padding:0 14px;flex:none;
+  border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface)}
+.ws-head h2{font-size:14px;font-weight:600;letter-spacing:.02em}
+.ws-head .sub{font-size:11.5px;color:var(--color-fg-dim)}
+.ws-head .sp{margin-left:auto}
+
+/* 工作区① 构帧下发 */
+.ws-build-body{flex:1;display:grid;grid-template-columns:198px 232px 1fr;min-height:0}
+.bcol{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--color-bg-surface)}
+.bcol+.bcol{border-left:1px solid var(--color-border-default)}
+.bcol-h{display:flex;align-items:center;gap:8px;height:32px;padding:0 11px;flex:none;
+  border-bottom:1px solid var(--color-border-default);background:var(--color-bg-raised);
+  font-size:11.5px;font-weight:500;letter-spacing:.06em;color:var(--color-fg-muted)}
+.bcol-h .sp{margin-left:auto}
+.bcol-b{flex:1;overflow-y:auto;min-height:0}
+.afn-h{display:flex;align-items:center;gap:8px;width:100%;padding:8px 11px;text-align:left;position:relative}
+.afn-h:hover{background:var(--color-bg-raised)}
+.afn-item.sel .afn-h{background:linear-gradient(90deg,var(--color-accent-soft),transparent)}
+.afn-item.sel .afn-h::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-accent)}
+.afn-code{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--color-accent);flex:none;min-width:30px;
+  padding:1px 5px;border-radius:4px;background:var(--color-bg-elevated);text-align:center}
+.afn-name{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.afn-meta{font-size:10px;color:var(--color-fg-dim);font-family:var(--font-mono);flex:none}
+.fn-item{display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;text-align:left;
+  border-bottom:1px solid var(--color-border-default);position:relative}
+.fn-item:hover{background:var(--color-bg-raised)}
+.fn-item.on{background:linear-gradient(90deg,var(--color-accent-soft),transparent)}
+.fn-item.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-accent)}
+.fn-no{font-family:var(--font-mono);font-size:11.5px;color:var(--color-fg-subtle);flex:none;min-width:32px}
+.fn-item.on .fn-no{color:var(--color-accent)}
+.fn-nm{flex:1;min-width:0;font-size:12.5px;color:var(--color-fg-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fn-item.on .fn-nm{color:var(--color-fg-default)}
+.pcol-b{flex:1;overflow-y:auto;min-height:0;padding:12px 14px;display:flex;flex-direction:column;gap:11px}
+.pcol-b>*{flex:none}
+.par-t1{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.par-t1 b{font-size:15px;font-weight:600}
+.ff-row{display:flex;align-items:center;gap:8px}
+.ff-row .lb{flex:none;width:96px;font-size:12px;color:var(--color-fg-muted)}
+.ff-row .unit{flex:none;font-size:11px;font-family:var(--font-mono);color:var(--color-fg-dim)}
+.hexwrap{background:var(--color-bg-canvas);border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:10px 12px}
+.pcol-foot{flex:none;display:flex;align-items:center;gap:9px;padding:9px 14px;
+  border-top:1px solid var(--color-border-default);background:var(--color-bg-raised)}
+.pcol-foot .meta{margin-left:auto;font-size:11px;color:var(--color-fg-dim);font-family:var(--font-mono)}
+.resp-sec{border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden}
+.resp-sec-h{display:flex;align-items:center;gap:8px;padding:7px 11px;cursor:pointer;user-select:none;
+  background:var(--color-bg-elevated);font-size:12px;font-weight:500}
+.resp-sec-h .car{transition:transform .18s var(--ease)}
+.resp-sec.open .resp-sec-h .car{transform:rotate(90deg)}
+.resp-sec-b{display:none;border-top:1px solid var(--color-border-default)}
+.resp-sec.open .resp-sec-b{display:block}
+.resp-tools{display:flex;align-items:center;gap:7px;padding:8px 11px;flex-wrap:wrap;background:var(--color-bg-raised)}
+
+/* 工作区② 并发抄表 */
+.steps{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.step{display:flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:13px;font-size:12px;
+  color:var(--color-fg-subtle);border:1px solid var(--color-border-default);background:var(--color-bg-elevated)}
+.step .no{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-family:var(--font-mono);
+  background:var(--color-bg-canvas);border:1px solid var(--color-border-strong)}
+.step.done{color:var(--color-status-pass);border-color:var(--color-status-pass-border)}
+.step.done .no{background:var(--color-status-pass-bg);border-color:var(--color-status-pass-border)}
+.step.act{color:var(--color-accent-emphasis);border-color:var(--color-border-focus);background:var(--color-accent-soft)}
+.step-arrow{color:var(--color-fg-dim);font-size:11px}
+.batch-tools{display:flex;align-items:center;gap:8px;padding:9px 14px;flex-wrap:wrap;flex:none;
+  background:var(--color-bg-surface);border-bottom:1px solid var(--color-border-default)}
+.batch-body{flex:1;min-height:0;display:grid;grid-template-rows:1fr auto;min-height:0}
+.batch-left{overflow:auto;min-height:0;border-right:1px solid var(--color-border-default)}
+.batch-stats{flex:none;height:198px;display:flex;flex-direction:column}
+.stat-h{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;flex:none;
+  background:var(--color-bg-raised);border-bottom:1px solid var(--color-border-default);font-size:12px;font-weight:500}
+.stat-b{flex:1;overflow:auto;min-height:0}
+.prog{width:200px;height:6px;border-radius:3px;background:var(--color-bg-elevated);overflow:hidden}
+.prog i{display:block;height:100%;width:68%;background:var(--color-accent);border-radius:3px}
+
+/* 工作区③ 数据观测 */
+.ob-tabs{display:flex;gap:2px;align-items:center}
+.ob-tab{height:27px;padding:0 12px;border-radius:6px 6px 0 0;font-size:12.5px;color:var(--color-fg-subtle)}
+.ob-tab:hover{color:var(--color-fg-default)}
+.ob-tab.on{background:var(--color-bg-canvas);color:var(--color-accent-emphasis);font-weight:500;
+  box-shadow:inset 0 -2px 0 var(--color-accent)}
+.ob-body{flex:1;overflow:auto;min-height:0;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.ob-body>*{flex:none}
+.pair-card{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden}
+.pair-row{display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:1px solid var(--color-border-default)}
+.pair-row:last-child{border-bottom:none}
+.pair-dir{font-family:var(--font-mono);font-size:10.5px;font-weight:500;width:30px;flex:none;text-align:center;
+  padding:1px 0;border-radius:3px}
+.pair-dir.tx{color:var(--color-dir-tx);background:var(--color-dir-tx-soft)}
+.pair-dir.rx{color:var(--color-dir-rx);background:var(--color-dir-rx-soft)}
+.statrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.statkv{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-md);padding:5px 12px;min-width:74px}
+.statkv .k{font-size:10.5px;color:var(--color-fg-dim)}
+.statkv .v{font-size:16px;font-family:var(--font-mono);font-weight:500;color:var(--color-accent-emphasis)}
+.statkv .v.v-ok{color:var(--color-status-pass)}.statkv .v.v-fail{color:var(--color-status-fail)}
+
+/* 工作区④ 会话设置 */
+.setup-grid{flex:1;overflow:auto;min-height:0;padding:12px 14px;display:grid;gap:12px;align-content:start;
+  grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.rsp-row{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--color-border-default);font-size:12.5px}
+.rsp-row:last-child{border-bottom:none}
+.switch{width:30px;height:17px;border-radius:9px;background:var(--color-bg-canvas);border:1px solid var(--color-border-strong);
+  position:relative;flex:none;cursor:pointer;transition:background .15s var(--ease)}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:11px;height:11px;border-radius:50%;
+  background:var(--color-fg-subtle);transition:all .15s var(--ease)}
+.switch.on{background:var(--color-accent-soft);border-color:var(--color-border-focus)}
+.switch.on::after{left:15px;background:var(--color-accent)}
+
+/* ---- 底部 Dock ---- */
+.dock{flex:none;display:flex;flex-direction:column;position:relative;background:var(--color-bg-surface);
+  border-top:1px solid var(--color-border-strong);height:var(--dock-h,218px);min-height:30px;transition:height .18s var(--ease)}
+.dock.fold{height:30px}
+.dock-grip{position:absolute;top:-3px;left:0;right:0;height:6px;cursor:ns-resize;z-index:5}
+.dock.fold .dock-grip{cursor:default}
+.dock-h{display:flex;align-items:center;gap:9px;height:30px;padding:0 12px;flex:none;cursor:pointer;user-select:none;
+  background:var(--color-bg-raised);border-bottom:1px solid var(--color-border-default)}
+.dock.fold .dock-h{border-bottom:none}
+.dock-h .car{transition:transform .18s var(--ease)}
+.dock:not(.fold) .dock-h .car{transform:rotate(90deg)}
+.dock-h .sp{margin-left:auto}
+.dock-tab{height:21px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--color-fg-subtle);display:inline-flex;align-items:center;gap:6px}
+.dock-tab:hover{color:var(--color-fg-default)}
+.dock-tab.on{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.dock-tab .cnt{min-width:15px;height:14px;padding:0 4px;border-radius:7px;background:var(--color-accent);color:var(--color-accent-fg);
+  font-size:9.5px;font-family:var(--font-mono);display:grid;place-items:center;font-weight:600}
+.dock-b{flex:1;overflow:auto;min-height:0;display:none}
+.dock:not(.fold) .dock-b.on{display:block}
+.tr-row{border-bottom:1px solid var(--color-border-default)}
+.tr-main{display:flex;align-items:center;gap:9px;padding:4px 12px;width:100%;text-align:left}
+.tr-main:hover{background:var(--color-bg-raised)}
+.tm{font-family:var(--font-mono);font-size:11px;color:var(--color-fg-dim);flex:none;width:70px}
+.dir{display:inline-flex;justify-content:center;font-family:var(--font-mono);font-size:10.5px;font-weight:500;width:34px;
+  flex:none;padding:1px 0;border-radius:3px}
+.dir.tx{color:var(--color-dir-tx);background:var(--color-dir-tx-soft)}
+.dir.rx{color:var(--color-dir-rx);background:var(--color-dir-rx-soft)}
+.afn-tag{font-family:var(--font-mono);font-size:11px;color:var(--color-accent);flex:none;background:var(--color-bg-elevated);border-radius:3px;padding:0 5px}
+.sum{flex:1;min-width:0;font-size:11.5px;color:var(--color-fg-subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tr-det{display:none;padding:2px 12px 10px 44px}
+.tr-row.open .tr-det{display:block}
+.pair-mini{padding:8px 12px;border-bottom:1px solid var(--color-border-default);display:flex;flex-direction:column;gap:5px}
+
+/* ---- 状态栏 ---- */
+.statusbar{display:flex;align-items:center;gap:14px;height:26px;padding:0 12px;flex:none;
+  background:var(--color-bg-surface);border-top:1px solid var(--color-border-default);
+  font-size:11px;color:var(--color-fg-dim);font-family:var(--font-mono);white-space:nowrap;overflow:hidden}
+.statusbar .sb-conn{display:flex;align-items:center;gap:5px;color:var(--color-fg-muted)}
+.statusbar .sb-conn .dot{color:var(--color-status-pass)}
+.app.off .statusbar .sb-conn .dot{color:var(--color-fg-dim)}
+.statusbar .sb-hint{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--color-fg-dim)}
+.statusbar .sb-hint.flash{color:var(--color-accent-emphasis)}
+
+/* ---- 全局横幅 ---- */
+.banner{display:none;align-items:center;gap:9px;padding:7px 14px;flex:none;font-size:12.5px;
+  background:var(--color-status-fail-bg);border-bottom:1px solid var(--color-status-fail-border);color:var(--color-status-fail)}
+.banner.show{display:flex}
+
+@media (max-width:1100px){
+  .ws-build-body{grid-template-columns:170px 200px 1fr}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ═══════ 菜单栏 ═══════ -->
+  <div class="menubar">
+    <div class="mb-logo"><span class="lg">SC</span><span class="nm">模拟集中器</span></div>
+    <div class="mb-item" data-m>
+      会话
+      <div class="mb-drop">
+        <button class="mi" id="mOpen"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>打开串口</button>
+        <button class="mi" id="mClose"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>关闭串口</button>
+        <button class="mi" id="mAuto"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>自动选择串口<span class="k">9600·E</span></button>
+        <div class="mi-sep"></div>
+        <button class="mi" id="mReload"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>重新加载端口<span class="k">F5</span></button>
+        <div class="mi-dis">无可用端口时自动选择可用串口</div>
+      </div>
+    </div>
+    <div class="mb-item" data-m>
+      数据
+      <div class="mb-drop">
+        <button class="mi" id="mExport"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>导出档案 Excel</button>
+        <button class="mi" id="mSnap"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>响应快照查询</button>
+        <button class="mi" id="mEvents"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>06H 上报历史</button>
+      </div>
+    </div>
+    <div class="mb-item" data-m>
+      视图
+      <div class="mb-drop">
+        <button class="mi on" id="mSide"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>显示侧边栏<span class="k">Ctrl+B</span></button>
+        <button class="mi on" id="mDock"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>收发记录面板</button>
+        <button class="mi" id="mTheme"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>晴昼浅色主题</button>
+        <div class="mi-sep"></div>
+        <div class="mi-dis">收发记录过滤</div>
+        <button class="mi on" data-tf=""><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>全部帧</button>
+        <button class="mi" data-tf="tx"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>仅发送</button>
+        <button class="mi" data-tf="rx"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>仅接收</button>
+      </div>
+    </div>
+    <div class="mb-item" data-m>
+      帮助
+      <div class="mb-drop">
+        <button class="mi" id="mApi"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>接口文档<span class="k">/api/simcon/*</span></button>
+        <button class="mi" id="mFeat"><svg class="ck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>功能清单</button>
+        <div class="mi-sep"></div>
+        <div class="mi-dis">模拟集中器 · 软件化改版 Demo v3<br>设计思路见 ui-demo/simcon-redesign-设计思路.md</div>
+      </div>
+    </div>
+    <div class="mb-right">
+      <span class="chip chip--ok" id="mbConn"><span class="dot"></span><span id="mbConnTxt">COM3 已连接</span></span>
+    </div>
+  </div>
+
+  <div class="banner" id="banner"></div>
+
+  <!-- ═══════ 中段：侧栏 + 工作区 ═══════ -->
+  <div class="mid">
+    <aside class="side">
+      <div class="side-conn">
+        <div class="sc-t"><span class="dot"></span><span id="scState">已连接</span></div>
+        <div class="sc-meta" id="scMeta">COM3 · 9600 E · anhui</div>
+        <div class="sc-btns">
+          <button class="btn btn--sm btn--primary" id="scOpen">打开</button>
+          <button class="btn btn--sm" id="scClose">关闭</button>
+        </div>
+      </div>
+      <nav class="side-nav">
+        <button class="snav on" data-ws="build" title="构帧下发 (Alt+1)">
+          <svg class="i" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          <span>构帧下发</span><span class="k">1</span>
+        </button>
+        <button class="snav" data-ws="batch" title="并发抄表 (Alt+2)">
+          <svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>并发抄表</span><span class="k">2</span>
+        </button>
+        <button class="snav" data-ws="observe" title="数据观测 (Alt+3)">
+          <svg class="i" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <span>数据观测</span><span class="k">3</span>
+        </button>
+        <button class="snav" data-ws="setup" title="会话设置 (Alt+4)">
+          <svg class="i" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/></svg>
+          <span>会话设置</span><span class="k">4</span>
+        </button>
+      </nav>
+      <div class="side-foot">
+        <button class="btn btn--sm btn--ghost" id="btnTheme" title="切换主题（墨夜/晴昼）">
+          <svg class="i" id="thIcon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><span>晴昼</span>
+        </button>
+        <button class="btn btn--sm btn--ghost" id="btnSide" title="折叠侧栏（Ctrl+B）">
+          <svg class="i" viewBox="0 0 24 24"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg><span>折叠</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- ═══ 工作区① 构帧下发 ═══ -->
+      <section class="ws on" id="ws-build">
+        <div class="ws-head">
+          <h2>构帧下发</h2><span class="sub">send 只写业务参数，构帧自动完成（ADR-5）</span>
+          <span class="sp"></span>
+          <span class="chip chip--ac" id="curChip">10H · F2 模块档案查询</span>
+        </div>
+        <div class="ws-build-body">
+          <div class="bcol">
+            <div class="bcol-h">AFN 应用功能码<span class="sp" id="afnCnt">4 类</span></div>
+            <div class="bcol-b" id="afnCol"></div>
+          </div>
+          <div class="bcol">
+            <div class="bcol-h">Fn 命令<span class="sp" id="fnCnt"></span></div>
+            <div class="bcol-b" id="fnCol"></div>
+          </div>
+          <div class="bcol">
+            <div class="bcol-h">参数与帧预览<span class="sp">语义化构帧 · 假数据</span></div>
+            <div class="pcol-b">
+              <div class="par-t1"><b id="parTitle">10H-F2 模块档案查询</b><span class="hint">读取模块路由档案（临时档案 · 复位不保存）</span></div>
+              <div class="card">
+                <div class="card-h">业务参数<span class="hint">表单化输入（REQS-0015）</span></div>
+                <div class="card-in" style="display:flex;flex-direction:column;gap:9px">
+                  <div class="ff-row"><span class="lb">起始模块序号</span><input class="fld mono" style="width:110px" value="0"><span class="unit">—</span></div>
+                  <div class="ff-row"><span class="lb">读取条数</span><input class="fld mono" style="width:110px" value="200"><span class="unit">条 · ≤250</span></div>
+                  <div class="ff-row"><span class="lb">档案类型</span>
+                    <select class="fld" style="width:150px"><option>全部档案</option><option>仅在网模块</option><option>新增模块</option></select>
+                  </div>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-h">构帧预览<span class="hint">68 帧头 · 16 帧尾 · CS 校验自动计算</span></div>
+                <div class="card-in">
+                  <div class="hexwrap">
+                    <div class="hex" id="frameHex">
+                      <span class="hx s-68">68</span> <span class="hx s-A">A0 23 04 00</span> <span class="hx s-68">68</span> <span class="hx s-C">8A</span> <span class="hx s-L">0A</span> <span class="hx s-AFN">10</span> <span class="hx s-DT">71 02</span> <span class="hx s-DU">00 00 00 00 00</span> <span class="hx s-CS">9E</span> <span class="hx s-16">16</span>
+                    </div>
+                    <div class="hexlg">
+                      <span><i style="color:var(--color-status-special)"></i>68/16 帧头尾</span>
+                      <span><i style="color:var(--color-dir-rx)"></i>A 地址域</span>
+                      <span><i style="color:var(--color-status-warn)"></i>C 控制码 / CS</span>
+                      <span><i style="color:var(--color-accent)"></i>AFN</span>
+                      <span><i style="color:var(--color-status-inconclusive)"></i>DT 数据标识</span>
+                      <span><i style="color:var(--color-fg-default)"></i>DU 数据</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="resp-sec open" id="respSec">
+                <div class="resp-sec-h" id="respSecH">
+                  <svg class="i car" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>响应表格
+                  <span class="chip chip--ghost">分页型 Fn 自动展开</span>
+                  <span class="sp hint" style="margin-left:auto">56 条 · 临时</span>
+                </div>
+                <div class="resp-sec-b">
+                  <div class="resp-tools">
+                    <div class="seg" id="segMode"><button data-m="manual">指定范围</button><button data-m="auto" class="on">自动全量</button></div>
+                    <input class="fld mono" id="rgStart" value="0" style="width:66px" title="起始序号">
+                    <input class="fld mono" id="rgCount" value="16" style="width:52px" title="条数">
+                    <button class="btn btn--sm" id="btnQuery">查询</button>
+                    <button class="btn btn--sm btn--ghost" id="btnSnap">快照</button>
+                    <button class="btn btn--sm btn--ghost" id="btnEvents">上报历史</button>
+                  </div>
+                  <table class="rtab"><thead><tr><th>#</th><th>模块地址</th><th class="num">信号</th><th class="num">中继</th><th>在网</th></tr></thead><tbody>
+                    <tr><td>1</td><td>30 21 04 00 92 16</td><td class="num">31</td><td class="num">0</td><td><span class="badge badge--ok">在线</span></td></tr>
+                    <tr><td>2</td><td>30 21 04 00 87 25</td><td class="num">28</td><td class="num">1</td><td><span class="badge badge--ok">在线</span></td></tr>
+                    <tr><td>3</td><td>30 21 04 00 91 08</td><td class="num">19</td><td class="num">2</td><td><span class="badge badge--idle">离线</span></td></tr>
+                  </tbody></table>
+                </div>
+              </div>
+            </div>
+            <div class="pcol-foot">
+              <button class="btn btn--sm btn--ghost" id="btnBuild">刷新预览</button>
+              <span class="meta" id="frameMeta">17 B · CS 9E</span>
+              <button class="btn btn--sm btn--primary" id="btnSend">
+                <svg class="i" style="width:13px;height:13px" viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>下发
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ 工作区② 并发抄表 ═══ -->
+      <section class="ws" id="ws-batch">
+        <div class="ws-head">
+          <h2>并发抄表</h2><span class="sub">档案 → 勾选 → 下发 → 周期统计（REQS-0030）</span>
+          <span class="sp"></span>
+          <div class="steps" id="steps">
+            <span class="step done"><span class="no">1</span>查档案 10H-F2</span>
+            <span class="step-arrow">▸</span>
+            <span class="step act"><span class="no">2</span>勾选下发 F1H-F1</span>
+            <span class="step-arrow">▸</span>
+            <span class="step" id="step3"><span class="no">3</span>周期统计</span>
+          </div>
+        </div>
+        <div class="batch-tools">
+          <button class="btn btn--sm btn--primary" id="dpArchive">① 查档案</button>
+          <button class="btn btn--sm" id="dpOnline">查在网</button>
+          <button class="btn btn--sm btn--ghost" id="dpExport">导出 Excel</button>
+          <span class="chip chip--ghost" id="dpMeta">档案 56 个 · 获取于 22:04:11 · 临时存储</span>
+          <span style="width:1px;height:18px;background:var(--color-border-default)"></span>
+          <select class="fld" id="dpFilter" style="width:96px"><option value="">在网：全部</option><option value="1">仅在线</option><option value="0">仅离线</option></select>
+          <span class="hint">并发数</span><input class="fld mono" id="dpMax" value="5" style="width:50px" title="1~20；CCO 上限 20，超限否认 109">
+          <button class="btn btn--sm btn--primary" id="dpStart">② 下发并发抄表（勾选表）</button>
+          <span class="chip chip--ac" id="dpSel">已选 0 / 共 56</span>
+        </div>
+        <div class="batch-body">
+          <div class="batch-left">
+            <table class="rtab" id="dpTable"><thead><tr>
+              <th style="width:34px"><input type="checkbox" id="dpAll"></th><th style="width:40px">#</th>
+              <th>模块地址</th><th class="num">信号品质</th><th class="num">中继级别</th><th>在网</th><th>最近读数</th>
+            </tr></thead><tbody id="dpBody"></tbody></table>
+          </div>
+          <div class="batch-stats">
+            <div class="stat-h">③ 周期统计<span class="sp" style="margin-left:auto;display:flex;align-items:center;gap:7px;font-weight:400">
+              <select class="fld" id="dpPeriod" style="height:24px;font-size:12px">
+                <option value="15m" selected>15 分钟</option><option value="30s">30 秒</option><option value="5m">5 分钟</option><option value="1h">1 小时</option>
+              </select>
+              <button class="btn btn--sm btn--ghost" id="dpStatsBtn">刷新</button>
+            </span></div>
+            <div class="stat-b">
+              <table class="rtab"><thead><tr><th>周期起点</th><th class="num">下发</th><th class="num">成功</th><th class="num">成功率</th><th class="num">最大并发</th><th class="num">平均耗时ms</th><th class="num">重复下发</th></tr></thead><tbody id="statBody"></tbody></table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ 工作区③ 数据观测 ═══ -->
+      <section class="ws" id="ws-observe">
+        <div class="ws-head">
+          <h2>数据观测</h2><span class="sub">配对 / 抄读 / 并发任务 / 主动上报（REQS-0027）</span>
+          <span class="sp"></span>
+          <span class="chip chip--ghost" id="obMeta">实时 · 轮询随页签启停</span>
+        </div>
+        <div style="display:flex;gap:2px;padding:6px 14px 0;flex:none;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface)">
+          <button class="ob-tab on" data-ob="pair">收发配对</button>
+          <button class="ob-tab" data-ob="readings">抄读汇总</button>
+          <button class="ob-tab" data-ob="batch">并发任务</button>
+          <button class="ob-tab" data-ob="reports">主动上报</button>
+        </div>
+        <div class="ob-body">
+          <!-- 收发配对 -->
+          <div data-obp="pair" style="display:flex;flex-direction:column;gap:10px">
+            <div class="pair-card">
+              <div class="pair-row">
+                <span class="tm">22:14:03</span><span class="pair-dir tx">TX</span>
+                <span class="afn-tag">10H-F2</span><span class="sum">模块档案查询 · 起始0 · 200条</span>
+                <span class="badge badge--ok">配对成功</span><span class="hint mono">46 B · 312 ms</span>
+              </div>
+              <div class="pair-row" style="display:block">
+                <div class="hex" style="font-size:11.5px">
+                  <span class="hx s-68">68</span> <span class="hx s-A">A0 23 04 00</span> <span class="hx s-68">68</span> <span class="hx s-C">8A</span> <span class="hx s-L">0A</span> <span class="hx s-AFN">10</span> <span class="hx s-DT">71 02</span> <span class="hx s-DU">00 00 00 00 00</span> <span class="hx s-CS">9E</span> <span class="hx s-16">16</span>
+                </div>
+                <div class="hex" style="font-size:11.5px;margin-top:2px">
+                  <span class="hx s-68">68</span> <span class="hx s-A">A0 23 04 00</span> <span class="hx s-68">68</span> <span class="hx s-C">8A</span> <span class="hx s-L">66</span> <span class="hx s-AFN">10</span> <span class="hx s-DT">71 02</span> <span class="hx s-DU">30 21 04 00 92 16 1F …</span> <span class="hx s-CS">4B</span> <span class="hx s-16">16</span>
+                </div>
+              </div>
+            </div>
+            <div class="pair-card">
+              <div class="pair-row">
+                <span class="tm">22:13:40</span><span class="pair-dir tx">TX</span><span class="afn-tag">06H-F1</span>
+                <span class="sum">主动上报确认</span><span class="badge badge--ok">配对成功</span><span class="hint mono">18 B · 41 ms</span>
+              </div>
+            </div>
+            <div class="pair-card">
+              <div class="pair-row">
+                <span class="tm">22:12:58</span><span class="pair-dir tx">TX</span><span class="afn-tag">10H-F1</span>
+                <span class="sum">在网模块查询</span><span class="badge badge--deny">超时无应答</span><span class="hint mono">重发 1 次</span>
+              </div>
+            </div>
+          </div>
+          <!-- 抄读汇总 -->
+          <div data-obp="readings" style="display:none">
+            <div class="statrow" style="margin-bottom:9px">
+              <div class="statkv"><div class="k">已抄读表计</div><div class="v">34</div></div>
+              <div class="statkv"><div class="k">成功</div><div class="v v-ok">31</div></div>
+              <div class="statkv"><div class="k">失败</div><div class="v v-fail">3</div></div>
+              <div class="statkv"><div class="k">成功率</div><div class="v">91%</div></div>
+            </div>
+            <table class="rtab"><thead><tr><th>表地址</th><th>数据项</th><th class="num">示值</th><th>时间</th></tr></thead><tbody>
+              <tr><td>30 21 04 00 92 16</td><td>正向有功总电能</td><td class="num">1 284.67 kWh</td><td>22:14:05</td></tr>
+              <tr><td>30 21 04 00 87 25</td><td>正向有功总电能</td><td class="num">962.31 kWh</td><td>22:14:07</td></tr>
+              <tr><td>30 21 04 00 61 33</td><td>A 相电压</td><td class="num">221.4 V</td><td>22:14:09</td></tr>
+              <tr><td>30 21 04 00 55 47</td><td>正向有功总电能</td><td class="num">— 超时</td><td>22:14:11</td></tr>
+            </tbody></table>
+          </div>
+          <!-- 并发任务 -->
+          <div data-obp="batch" style="display:none">
+            <div class="statrow" style="margin-bottom:9px">
+              <div class="statkv"><div class="k">任务进度</div><div class="v">68%</div></div>
+              <div class="prog" style="align-self:center"></div>
+              <span class="chip chip--ac">job 9f2e1a · 运行中</span>
+              <span class="chip">并发 5</span><span class="chip chip--ok">成功 31</span><span class="chip" style="color:var(--color-status-fail)">失败 3</span>
+            </div>
+            <table class="rtab"><thead><tr><th>时间</th><th>模块地址</th><th>结果</th><th class="num">耗时ms</th><th>摘要</th></tr></thead><tbody>
+              <tr><td>22:14:06</td><td>30 21 04 00 92 16</td><td><span class="badge badge--ok">成功</span></td><td class="num">812</td><td>1 284.67 kWh</td></tr>
+              <tr><td>22:14:06</td><td>30 21 04 00 87 25</td><td><span class="badge badge--ok">成功</span></td><td class="num">934</td><td>962.31 kWh</td></tr>
+              <tr><td>22:14:07</td><td>30 21 04 00 91 08</td><td><span class="badge badge--deny">失败</span></td><td class="num">5 000</td><td>超时（离线）</td></tr>
+            </tbody></table>
+          </div>
+          <!-- 主动上报 -->
+          <div data-obp="reports" style="display:none">
+            <div class="statrow" style="margin-bottom:9px">
+              <span class="chip chip--ac">上报总数 × 42</span>
+              <span class="chip">F1 参数越限 × 6</span><span class="chip">F2 电压电流越限 × 11</span>
+              <span class="chip">F3 谐波越限 × 4</span><span class="chip">F4 电能表时钟超差 × 7</span>
+              <span class="chip chip--ac">F5 停复电 × 14</span>
+            </div>
+            <div class="card">
+              <div class="card-h">停复电事件（06H-F5 · 协议类型 04H）<span class="hint">14 条</span></div>
+              <table class="rtab"><thead><tr><th>时间</th><th>表地址</th><th>事件</th><th>摘要</th></tr></thead><tbody>
+                <tr><td>22:11:32</td><td>30 21 04 00 92 16</td><td><span class="badge badge--deny">停电</span></td><td>停电事件 · 上电时钟 22:11:31</td></tr>
+                <tr><td>22:12:01</td><td>30 21 04 00 92 16</td><td><span class="badge badge--ok">复电</span></td><td>复电事件</td></tr>
+                <tr><td>21:47:55</td><td>30 21 04 00 87 25</td><td><span class="badge badge--deny">停电</span></td><td>停电事件 · 上电时钟 21:47:54</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ 工作区④ 会话设置 ═══ -->
+      <section class="ws" id="ws-setup">
+        <div class="ws-head">
+          <h2>会话设置</h2><span class="sub">串口 · Profile · 内置应答（低频配置集中于此）</span>
+        </div>
+        <div class="setup-grid">
+          <div class="card">
+            <div class="card-h">串口会话<span class="hint">无端口时自动选择可用串口 9600·E</span></div>
+            <div class="card-in" style="display:flex;flex-direction:column;gap:9px">
+              <div class="ff-row"><span class="lb">端口</span>
+                <select class="fld" style="width:190px"><option>COM3 — ELTIMA Virtual Serial</option><option>COM7 — USB-Serial CH340</option><option>自动选择</option></select>
+              </div>
+              <div class="ff-row"><span class="lb">波特率</span>
+                <select class="fld" style="width:110px"><option>9600</option><option>2400</option><option>19200</option><option>115200</option></select>
+              </div>
+              <div class="ff-row"><span class="lb">校验位</span>
+                <select class="fld" style="width:110px"><option>偶 E</option><option>无 N</option><option>奇 O</option></select>
+              </div>
+              <div class="ff-row"><span class="lb">Profile</span>
+                <select class="fld" style="width:150px"><option>anhui</option><option>test</option></select>
+                <span class="hint">构帧方言档案</span>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:2px">
+                <button class="btn btn--sm btn--primary" id="suOpen">打开串口</button>
+                <button class="btn btn--sm" id="suClose">关闭</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h">内置应答<span class="hint">模块未在场时模拟其应答</span></div>
+            <div class="card-in" id="rspList">
+              <div class="rsp-row"><span class="mono" style="color:var(--color-accent)">10H-F2</span>模块档案查询<span class="switch on" style="margin-left:auto"></span></div>
+              <div class="rsp-row"><span class="mono" style="color:var(--color-accent)">10H-F1</span>在网模块查询<span class="switch on" style="margin-left:auto"></span></div>
+              <div class="rsp-row"><span class="mono" style="color:var(--color-accent)">06H-F5</span>停复电事件注入<span class="switch" style="margin-left:auto"></span></div>
+              <div class="rsp-row"><span class="mono" style="color:var(--color-accent)">04H-F1</span>参数设置确认<span class="switch on" style="margin-left:auto"></span></div>
+              <div class="hint" style="margin-top:6px">开关为示意；生产实现沿用现有 resp-strip 数据源。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ═══════ 底部 Dock ═══════ -->
+  <div class="dock" id="dock">
+    <div class="dock-grip" id="dockGrip" title="拖拽调高 · 双击折叠"></div>
+    <div class="dock-h" id="dockH">
+      <svg class="i car" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      <button class="dock-tab on" data-dt="log">收发记录</button>
+      <button class="dock-tab" data-dt="pair">最近配对<span class="cnt" id="pairCnt">0</span></button>
+      <span class="chip chip--tx">发送 <b id="cTx">12</b></span>
+      <span class="chip chip--rx">接收 <b id="cRx">11</b></span>
+      <span class="sp"></span>
+      <div class="seg" id="segF" title="帧过滤">
+        <button class="on" data-f="">全部</button><button data-f="tx">发送</button><button data-f="rx">接收</button>
+      </div>
+    </div>
+    <div class="dock-b on" id="dockLog">
+      <div id="trList"></div>
+    </div>
+    <div class="dock-b" id="dockPair">
+      <div id="pairList"><div class="empty" style="padding:26px"><p>点「下发」后此处追加「下发帧 ↔ 应答帧」配对卡片</p></div></div>
+    </div>
+  </div>
+
+  <!-- ═══════ 状态栏 ═══════ -->
+  <footer class="statusbar">
+    <span class="sb-conn"><span class="dot"></span><span id="sbConn">已连接 · COM3 · 9600 E · anhui</span></span>
+    <span>TX <b id="sbTx">12</b> · RX <b id="sbRx">11</b></span>
+    <span>最后帧 22:14:03</span>
+    <span class="sb-hint" id="sbHint">就绪 — Alt+1~4 切换工作区 · Ctrl+B 折叠侧栏 · 底部边条可拖拽调高</span>
+    <span>假数据 demo · v3</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+var $=function(s,el){return (el||document).querySelector(s)};
+var $$=function(s,el){return Array.prototype.slice.call((el||document).querySelectorAll(s))};
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+
+/* ================= 假数据 ================= */
+var AFNS=[
+ {code:"10H",name:"级联/模块管理",fns:[["F1","在网模块查询"],["F2","模块档案查询"],["F3","模块清档"],["F4","中继路径查询"]]},
+ {code:"06H",name:"主动上报",fns:[["F1","参数越限"],["F2","电压电流越限"],["F5","停复电事件"]]},
+ {code:"04H",name:"参数设置",fns:[["F1","通信参数设置"],["F2","抄表日设置"]]},
+ {code:"0AH",name:"控制命令",fns:[["F1","跳闸合闸"]]}
+];
+var METERS=[
+ ["30 21 04 00 92 16",31,0,1,"1 284.67 kWh"],
+ ["30 21 04 00 87 25",28,1,1,"962.31 kWh"],
+ ["30 21 04 00 61 33",24,1,1,"1 033.09 kWh"],
+ ["30 21 04 00 91 08",19,2,0,"—"],
+ ["30 21 04 00 55 47",15,2,0,"—"],
+ ["30 21 04 00 23 66",12,3,1,"517.83 kWh"],
+ ["30 21 04 00 08 71",9,3,1,"2 041.20 kWh"],
+ ["30 21 04 00 44 19",6,4,0,"—"]
+];
+var STATS=[
+ ["22:00",12,11,"92%",5,1042,1],["22:15",18,17,"94%",5,988,0],
+ ["22:30",20,19,"95%",5,964,2],["22:45",20,18,"90%",5,1103,3],
+ ["23:00",20,20,"100%",5,921,0],["23:15",18,17,"94%",5,977,1]
+];
+var TRAFFIC=[
+ ["22:14:03","tx","10H-F2","模块档案查询 · 起始0 · 200条","68 A0 23 04 00 68 8A 0A 10 71 02 00 00 00 00 00 9E 16"],
+ ["22:14:03","rx","10H-F2","档案应答 · 56 模块 · 46 B","68 A0 23 04 00 68 8A 66 10 71 02 30 21 04 00 92 16 1F 4B 16"],
+ ["22:13:40","tx","06H-F1","主动上报确认","68 A0 23 04 00 68 88 04 06 01 00 C1 16"],
+ ["22:13:39","rx","06H-F5","停复电事件上报 · 复电 · 92 16","68 41 08 31 00 68 C1 20 06 F5 04 30 21 04 00 92 16 … 16"],
+ ["22:12:58","tx","10H-F1","在网模块查询（重发1次）","68 A0 23 04 00 68 8A 08 10 71 01 00 5A 16"],
+ ["22:12:52","rx","10H-F1","在网应答 · 43 / 64","68 A0 23 04 00 68 8A 0B 10 71 01 2B 40 77 16"],
+ ["22:12:30","tx","04H-F2","抄表日设置 · 15日 00:00","68 A0 23 04 00 68 8A 0C 04 72 02 0F 00 44 16"],
+ ["22:12:30","rx","04H-F2","参数设置确认","68 A0 23 04 00 68 A0 08 04 72 02 15 16"]
+];
+
+/* ================= 状态栏提示 ================= */
+var hintTimer=null;
+function hint(msg,flash){
+  var el=$("#sbHint");el.textContent=msg;
+  el.classList.toggle("flash",!!flash);
+  clearTimeout(hintTimer);
+  if(flash)hintTimer=setTimeout(function(){el.classList.remove("flash")},1800);
+}
+
+/* ================= 菜单栏 ================= */
+$$(".mb-item").forEach(function(mi){
+  mi.addEventListener("click",function(e){
+    e.stopPropagation();
+    var was=mi.classList.contains("open");
+    $$(".mb-item").forEach(function(x){x.classList.remove("open")});
+    if(!was)mi.classList.add("open");
+  });
+});
+document.addEventListener("click",function(){$$(".mb-item").forEach(function(x){x.classList.remove("open")})});
+document.addEventListener("keydown",function(e){if(e.key==="Escape")$$(".mb-item").forEach(function(x){x.classList.remove("open")})});
+
+/* ================= 连接状态 ================= */
+var connected=true;
+function setConn(on){
+  connected=on;
+  $("#app").classList.toggle("off",!on);
+  $("#mbConn").className="chip "+(on?"chip--ok":"chip--ghost");
+  $("#mbConnTxt").textContent=on?"COM3 已连接":"未连接";
+  $("#scState").textContent=on?"已连接":"未连接";
+  $("#sbConn").textContent=(on?"已连接":"未连接")+" · COM3 · 9600 E · anhui";
+  var b=$("#banner");
+  if(on){b.classList.remove("show")}
+  else{b.textContent="串口已关闭：通过菜单「会话」或侧栏连接卡重新打开后可下发与查询。";b.classList.add("show")}
+}
+$("#scOpen").addEventListener("click",function(){setConn(true);hint("串口已打开 COM3 · 9600 E",true)});
+$("#scClose").addEventListener("click",function(){setConn(false);hint("串口已关闭")});
+$("#suOpen").addEventListener("click",function(){setConn(true);hint("串口已打开 COM3 · 9600 E",true)});
+$("#suClose").addEventListener("click",function(){setConn(false);hint("串口已关闭")});
+$("#mOpen").addEventListener("click",function(){setConn(true);hint("串口已打开 COM3 · 9600 E",true)});
+$("#mClose").addEventListener("click",function(){setConn(false);hint("串口已关闭")});
+$("#mAuto").addEventListener("click",function(){hint("自动选择：未显式指定端口时选可用串口 9600·E")});
+$("#mReload").addEventListener("click",function(){hint("已重新加载端口列表（demo 假数据）")});
+$("#mExport").addEventListener("click",function(){hint("导出档案 Excel → data/runtime/（demo 不下载）")});
+$("#mSnap").addEventListener("click",function(){hint("响应快照查询已就绪（demo）")});
+$("#mEvents").addEventListener("click",function(){hint("06H 上报历史（demo）")});
+$("#mApi").addEventListener("click",function(){hint("接口契约见 docs/api-contract.md（demo）")});
+$("#mFeat").addEventListener("click",function(){hint("S1–S12 功能映射见设计思路 §三")});
+
+/* ================= 视图：侧栏 / Dock / 主题 ================= */
+function setSide(min){
+  $("#app").classList.toggle("side-min",min);
+  $("#mSide").classList.toggle("on",!min);
+}
+function toggleSide(){setSide(!$("#app").classList.contains("side-min"))}
+$("#btnSide").addEventListener("click",toggleSide);
+$("#mSide").addEventListener("click",toggleSide);
+
+function setDock(fold){
+  $("#dock").classList.toggle("fold",fold);
+  $("#mDock").classList.toggle("on",!fold);
+}
+$("#mDock").addEventListener("click",function(){setDock(!$("#dock").classList.contains("fold"))});
+$("#dockH").addEventListener("dblclick",function(e){if(!e.target.closest(".dock-tab"))setDock(!$("#dock").classList.contains("fold"))});
+
+var theme="midnight";
+function setTheme(t){
+  theme=t;document.documentElement.dataset.theme=t;
+  $("#mTheme").classList.toggle("on",t==="daylight");
+  $("#btnTheme span").textContent=t==="daylight"?"墨夜":"晴昼";
+  $("#thIcon").innerHTML=t==="daylight"
+    ?'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    :'<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+}
+$("#btnTheme").addEventListener("click",function(){setTheme(theme==="midnight"?"daylight":"midnight")});
+$("#mTheme").addEventListener("click",function(){setTheme(theme==="midnight"?"daylight":"midnight")});
+
+/* Dock 拖拽调高 */
+(function(){
+  var grip=$("#dockGrip"),dragging=false;
+  grip.addEventListener("mousedown",function(e){
+    if($("#dock").classList.contains("fold"))return;
+    dragging=true;e.preventDefault();
+    var startY=e.clientY,startH=$("#dock").getBoundingClientRect().height;
+    function mv(ev){
+      var h=startH+(startY-ev.clientY);
+      h=Math.max(90,Math.min(window.innerHeight-200,h));
+      $("#dock").style.setProperty("--dock-h",h+"px");$("#dock").style.height=h+"px";
+    }
+    function up(){dragging=false;window.removeEventListener("mousemove",mv);window.removeEventListener("mouseup",up)}
+    window.addEventListener("mousemove",mv);window.addEventListener("mouseup",up);
+  });
+  grip.addEventListener("dblclick",function(){setDock(!$("#dock").classList.contains("fold"))});
+})();
+
+/* ================= 工作区切换 ================= */
+function setWs(id){
+  $$(".snav").forEach(function(b){b.classList.toggle("on",b.dataset.ws===id)});
+  $$(".ws").forEach(function(w){w.classList.toggle("on",w.id==="ws-"+id)});
+}
+$$(".snav").forEach(function(b){b.addEventListener("click",function(){setWs(b.dataset.ws)})});
+document.addEventListener("keydown",function(e){
+  if(e.ctrlKey&&e.key.toLowerCase()==="b"){e.preventDefault();toggleSide()}
+  if(e.altKey&&e.key>="1"&&e.key<="4"){e.preventDefault();setWs(["build","batch","observe","setup"][e.key-1])}
+});
+
+/* ================= 工作区① AFN/Fn ================= */
+var curAfn=0,curFn=0;
+function renderAfn(){
+  $("#afnCol").innerHTML=AFNS.map(function(a,i){
+    return '<div class="afn-item'+(i===curAfn?" sel":"")+'"><button class="afn-h" data-i="'+i+'">'+
+      '<span class="afn-code">'+a.code+'</span><span class="afn-name">'+esc(a.name)+'</span>'+
+      '<span class="afn-meta">'+a.fns.length+' Fn</span></button></div>';
+  }).join("");
+  $("#afnCnt").textContent=AFNS.length+" 类";
+  $$("#afnCol .afn-h").forEach(function(b){b.addEventListener("click",function(){curAfn=+b.dataset.i;curFn=0;renderAfn();renderFn()})});
+}
+function renderFn(){
+  var a=AFNS[curAfn];
+  $("#fnCol").innerHTML=a.fns.map(function(f,j){
+    return '<button class="fn-item'+(j===curFn?" on":"")+'" data-j="'+j+'"><span class="fn-no">'+f[0]+'</span><span class="fn-nm">'+esc(f[1])+'</span></button>';
+  }).join("");
+  $("#fnCnt").textContent=a.fns.length+" 条";
+  $$("#fnCol .fn-item").forEach(function(b){b.addEventListener("click",function(){curFn=+b.dataset.j;renderFn()})});
+  $("#curChip").textContent=a.code+" · "+a.fns[curFn][0]+" "+a.fns[curFn][1];
+  $("#parTitle").textContent=a.code+"-"+a.fns[curFn][0].replace("F","F")+" "+a.fns[curFn][1];
+}
+renderAfn();renderFn();
+$("#respSecH").addEventListener("click",function(){$("#respSec").classList.toggle("open")});
+$$("#segMode button").forEach(function(b){b.addEventListener("click",function(){
+  $$("#segMode button").forEach(function(x){x.classList.remove("on")});b.classList.add("on");
+})});
+$("#btnQuery").addEventListener("click",function(){hint("查询响应表格（demo 假数据）",true)});
+
+/* ================= 下发 → Dock 联动 ================= */
+var tx=12,rx=11,pairN=0;
+function hexHtml(h){
+  return h.split(" ").map(function(x,i){
+    var cls=i===0||x==="16"?"s-68":i<4?"s-A":i===4?"s-C":i===5?"s-AFN":i===6?"s-DT":i>=h.split(" ").length-2?"s-CS":"s-DU";
+    if(x==="68")cls="s-68";if(x==="16")cls="s-16";
+    return '<span class="hx '+cls+'">'+x+'</span>';
+  }).join(" ");
+}
+function trafficRow(t){
+  return '<div class="tr-row" data-dir="'+t[1]+'"><button class="tr-main">'+
+    '<span class="tm">'+t[0]+'</span><span class="dir '+t[1]+'">'+t[1].toUpperCase()+'</span>'+
+    '<span class="afn-tag">'+t[2]+'</span><span class="sum">'+esc(t[3])+'</span></button>'+
+    '<div class="tr-det"><div class="hexwrap"><div class="hex" style="font-size:11.5px">'+hexHtml(t[4])+'</div></div></div></div>';
+}
+$("#trList").innerHTML=TRAFFIC.map(trafficRow).join("");
+$$("#trList .tr-main").forEach(function(b){b.addEventListener("click",function(){b.parentElement.classList.toggle("open")})});
+function filterTraffic(f){
+  $$("#trList .tr-row").forEach(function(r){r.style.display=(f===""||r.dataset.dir===f)?"":"none"});
+}
+$$("#segF button").forEach(function(b){b.addEventListener("click",function(){
+  $$("#segF button").forEach(function(x){x.classList.remove("on")});b.classList.add("on");
+  filterTraffic(b.dataset.f);
+  $$("[data-tf]").forEach(function(mi){mi.classList.toggle("on",mi.dataset.tf===b.dataset.f)});
+})});
+$$("[data-tf]").forEach(function(mi){mi.addEventListener("click",function(){
+  var f=mi.dataset.tf;
+  $$("#segF button").forEach(function(x){x.classList.toggle("on",x.dataset.f===f)});
+  filterTraffic(f);
+})});
+
+function nowT(){var d=new Date();return [d.getHours(),d.getMinutes(),d.getSeconds()].map(function(n){return String(n).padStart(2,"0")}).join(":")}
+var PAIR_TX="68 A0 23 04 00 68 8A 0A 10 71 02 00 00 00 00 00 9E 16";
+var PAIR_RX="68 A0 23 04 00 68 8A 66 10 71 02 30 21 04 00 92 16 1F 4B 16";
+function doSend(){
+  var t=nowT();
+  $("#trList").insertAdjacentHTML("afterbegin",trafficRow([t,"tx","10H-F2","模块档案查询（本次会话下发）",PAIR_TX]));
+  $("#trList").firstElementChild.addEventListener("click",function(){this.classList.toggle("open")});
+  tx++;$("#cTx").textContent=tx;$("#sbTx").textContent=tx;
+  setTimeout(function(){
+    $("#trList").insertAdjacentHTML("afterbegin",trafficRow([nowT(),"rx","10H-F2","档案应答 · 56 模块 · 46 B",PAIR_RX]));
+    $("#trList").firstElementChild.addEventListener("click",function(){this.classList.toggle("open")});
+    rx++;$("#cRx").textContent=rx;$("#sbRx").textContent=rx;
+  },450);
+  pairN++;
+  $("#pairCnt").textContent=pairN;$("#pairCnt").style.display="";
+  var empty=$("#pairList .empty");if(empty)empty.remove();
+  $("#pairList").insertAdjacentHTML("afterbegin",
+    '<div class="pair-mini"><div style="display:flex;align-items:center;gap:9px">'+
+    '<span class="tm">'+t+'</span><span class="pair-dir tx">TX</span><span class="afn-tag">10H-F2</span>'+
+    '<span class="sum">模块档案查询</span><span class="badge badge--ok">配对成功</span><span class="hint mono">46 B · 312 ms</span></div>'+
+    '<div class="hex" style="font-size:11px">'+hexHtml(PAIR_TX)+'</div>'+
+    '<div class="hex" style="font-size:11px">'+hexHtml(PAIR_RX)+'</div></div>');
+  hint("下发成功 · Dock「最近配对」+1",true);
+}
+$("#btnSend").addEventListener("click",doSend);
+$("#btnBuild").addEventListener("click",function(){hint("构帧预览已刷新（demo 假数据）")});
+
+/* Dock 页签 */
+$$(".dock-tab").forEach(function(b){b.addEventListener("click",function(e){
+  e.stopPropagation();
+  $$(".dock-tab").forEach(function(x){x.classList.remove("on")});b.classList.add("on");
+  $("#dockLog").classList.toggle("on",b.dataset.dt==="log");
+  $("#dockPair").classList.toggle("on",b.dataset.dt==="pair");
+})});
+
+/* ================= 工作区② 并发抄表 ================= */
+function renderMeters(){
+  var f=$("#dpFilter").value;
+  var rows=METERS.filter(function(m){return f===""||String(m[3])===f});
+  $("#dpBody").innerHTML=rows.map(function(m,i){
+    return "<tr><td><input type='checkbox' class='dpChk' value='"+i+"'></td><td class='num'>"+(i+1)+"</td>"+
+      "<td class='mono'>"+m[0]+"</td><td class='num'>"+m[1]+"</td><td class='num'>"+m[2]+"</td>"+
+      "<td>"+(m[3]?'<span class="badge badge--ok">在线</span>':'<span class="badge badge--idle">离线</span>')+"</td>"+
+      "<td class='mono'>"+m[4]+"</td></tr>";
+  }).join("");
+  updSel();
+  $$(".dpChk").forEach(function(c){c.addEventListener("change",updSel)});
+}
+function updSel(){
+  var n=$$(".dpChk:checked").length;
+  $("#dpSel").textContent="已选 "+n+" / 共 "+METERS.length;
+}
+$("#dpAll").addEventListener("change",function(){
+  $$(".dpChk").forEach(function(c){c.checked=$("#dpAll").checked});updSel();
+});
+$("#dpFilter").addEventListener("change",renderMeters);
+renderMeters();
+$("#dpArchive").addEventListener("click",function(){
+  $("#dpMeta").textContent="档案 "+METERS.length+" 个 · 获取于 "+nowT()+" · 临时存储（10H-F2）";
+  hint("查档案完成 · 10H-F2",true);
+});
+$("#dpOnline").addEventListener("click",function(){hint("在网 5 / 容量 64（10H-F1 网络口径）")});
+$("#dpExport").addEventListener("click",function(){hint("导出 Excel（demo 不下载）")});
+$("#dpStart").addEventListener("click",function(){
+  var n=$$(".dpChk:checked").length;
+  if(!n){hint("请先勾选模块（可按在网状态过滤）");return}
+  $("#step3").classList.add("act");
+  var t=nowT();
+  ["tx","rx"].forEach(function(d,i){setTimeout(function(){
+    $("#trList").insertAdjacentHTML("afterbegin",trafficRow([nowT(),d,d==="tx"?"F1H-F1":"F1H-F1",
+      d==="tx"?"并发抄表下发 · "+n+" 表 · 并发5":"并发抄表应答 · 已受理",
+      d==="tx"?"68 A0 23 04 00 68 8A 10 F1 71 01 00 3C 16":"68 A0 23 04 00 68 8A 08 F1 71 01 01 2A 16"]));
+    var row=$("#trList").firstElementChild;row.addEventListener("click",function(){this.classList.toggle("open")});
+    if(d==="tx"){tx++;$("#cTx").textContent=tx;$("#sbTx").textContent=tx}else{rx++;$("#cRx").textContent=rx;$("#sbRx").textContent=rx}
+  },i*500)});
+  hint("并发抄表已下发 · "+n+" 表 · 并发数 "+$("#dpMax").value,true);
+});
+$("#statBody").innerHTML=STATS.map(function(s){
+  return "<tr><td class='mono'>2026-09-13 "+s[0]+"</td><td class='num'>"+s[1]+"</td><td class='num'>"+s[2]+
+  "</td><td class='num'>"+s[3]+"</td><td class='num'>"+s[4]+"</td><td class='num'>"+s[5]+"</td><td class='num'>"+s[6]+"</td></tr>";
+}).join("");
+$("#dpStatsBtn").addEventListener("click",function(){hint("统计已刷新 · 周期 "+$("#dpPeriod").value)});
+
+/* ================= 工作区③ 观测页签 ================= */
+$$(".ob-tab").forEach(function(b){b.addEventListener("click",function(){
+  $$(".ob-tab").forEach(function(x){x.classList.remove("on")});b.classList.add("on");
+  $$("[data-obp]").forEach(function(p){p.style.display=p.dataset.obp===b.dataset.ob?"":"none"});
+  $("#obMeta").textContent={pair:"实时 · 配对随下发自动追加",readings:"3s 轮询（demo 静态）",batch:"1s 轮询任务状态（demo 静态）",reports:"5s 轮询分桶（demo 静态）"}[b.dataset.ob];
+})});
+
+/* ================= 工作区④ 内置应答开关 ================= */
+$$("#rspList .switch").forEach(function(s){s.addEventListener("click",function(){s.classList.toggle("on")})});
+
+/* ================= 内置应答菜单快捷 ================= */
+hint("就绪 — Alt+1~4 切换工作区 · Ctrl+B 折叠侧栏 · 底部边条可拖拽调高");
+})();
+</script>
+</body>
+</html>

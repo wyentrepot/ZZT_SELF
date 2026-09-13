@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="midnight">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模拟集中器 · 软件化界面重设计 Demo</title>
+<!--
+  ══════════════════════════════════════════════════════════════
+  模拟集中器界面重设计 · 交互演示原型（纯前端，数据为模拟）
+  设计要点：
+  1. 软件化外壳：顶栏(48px) + 可收缩左侧菜单(208↔52px) + 工作区 + 底部状态栏(28px)
+  2. 一屏一事：原单页 7 类功能拆为 7 个视图，左侧菜单切换
+  3. 双态侧栏：展开(图标+文字+分组) / 收缩(图标轨+悬浮提示)，Ctrl+B 切换，记忆状态
+  4. 全局态上移：连接状态常驻顶栏；串口配置收进「连接设置」视图
+  5. 底部横条消失：收发记录/结果中心/内置应答各自独立成全高视图
+  6. 视觉沿用 tokens-v2.css 设计语言（midnight/daylight 双主题、cyan 主色）
+  快捷键：Ctrl+B 收缩/展开侧栏
+  ══════════════════════════════════════════════════════════════
+-->
+<style>
+/* ── L1 Primitive（摘自 tokens-v2.css）────────────────────────── */
+:root{
+  --p-slate-950:#05080f; --p-slate-900:#0a1628; --p-slate-850:#0d1a30; --p-slate-800:#0f1f3d;
+  --p-slate-750:#152a4a; --p-slate-700:#1d2c3b; --p-slate-600:#2a3d50; --p-slate-500:#536678;
+  --p-slate-400:#7e91a4; --p-slate-300:#8296ad; --p-slate-200:#94a3b8; --p-slate-150:#a8b6c8;
+  --p-slate-100:#e8f0f7; --p-slate-50:#f4f6f9;  --p-slate-0:#ffffff;
+  --p-cyan-600:#0891b2; --p-cyan-500:#06b6d4; --p-cyan-400:#22d3ee; --p-cyan-700:#0e7490; --p-cyan-ink:#04202e;
+  --p-teal-500:#2dd4bf; --p-teal-700:#0f766e; --p-amber-500:#f0b429; --p-amber-700:#b45309;
+  --p-green-500:#10b981; --p-green-700:#15803d; --p-orange-500:#f59e0b; --p-orange-700:#b45309;
+  --p-red-500:#ef4444; --p-red-700:#b91c1c; --p-blue-500:#5a94ff; --p-blue-700:#1d4ed8;
+  --p-purple-500:#a371f7; --p-purple-700:#7c3aed; --p-pink-500:#e879a8; --p-pink-700:#be3455;
+  --radius-sm:.25rem; --radius-md:.5rem; --radius-lg:.75rem;
+  --ease-out:cubic-bezier(.16,1,.3,1); --ease-in-out:cubic-bezier(.65,0,.35,1);
+  --font-sans:"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono","Cascadia Mono",Consolas,ui-monospace,monospace;
+}
+/* ── L2 Semantic · midnight（默认）───────────────────────────── */
+:root, html[data-theme="midnight"]{
+  color-scheme:dark;
+  --color-bg-canvas:var(--p-slate-900); --color-bg-surface:var(--p-slate-800);
+  --color-bg-raised:var(--p-slate-750); --color-bg-elevated:#1b3555; --color-bg-input:var(--p-slate-850);
+  --color-bg-hover:rgb(255 255 255/.05); --color-bg-active:rgb(255 255 255/.10);
+  --color-fg-default:var(--p-slate-100); --color-fg-muted:var(--p-slate-150);
+  --color-fg-subtle:var(--p-slate-200); --color-fg-dim:var(--p-slate-300); --color-fg-inverse:var(--p-slate-950);
+  --color-border-default:rgb(255 255 255/.07); --color-border-strong:rgb(255 255 255/.14);
+  --color-border-emphasis:rgb(255 255 255/.24); --color-border-focus:var(--p-cyan-500);
+  --color-accent:var(--p-cyan-500); --color-accent-hover:var(--p-cyan-400);
+  --color-accent-active:var(--p-cyan-600); --color-accent-fg:var(--p-cyan-ink);
+  --color-accent-soft:color-mix(in srgb,var(--p-cyan-500) 14%,transparent);
+  --color-dir-rx:var(--p-teal-500); --color-dir-rx-soft:color-mix(in srgb,var(--p-teal-500) 14%,transparent);
+  --color-dir-tx:var(--p-amber-500); --color-dir-tx-soft:color-mix(in srgb,var(--p-amber-500) 14%,transparent);
+  --color-status-pass:var(--p-green-500); --color-status-pass-bg:color-mix(in srgb,var(--p-green-500) 15%,transparent);
+  --color-status-pass-border:color-mix(in srgb,var(--p-green-500) 35%,transparent);
+  --color-status-warn:var(--p-orange-500); --color-status-warn-bg:color-mix(in srgb,var(--p-orange-500) 15%,transparent);
+  --color-status-warn-border:color-mix(in srgb,var(--p-orange-500) 35%,transparent);
+  --color-status-fail:var(--p-red-500); --color-status-fail-bg:color-mix(in srgb,var(--p-red-500) 15%,transparent);
+  --color-status-fail-border:color-mix(in srgb,var(--p-red-500) 35%,transparent);
+  --color-status-info:var(--p-blue-500); --color-status-info-bg:color-mix(in srgb,var(--p-blue-500) 15%,transparent);
+  --color-status-info-border:color-mix(in srgb,var(--p-blue-500) 35%,transparent);
+  --color-status-inconclusive:var(--p-purple-500);
+  --color-status-inconclusive-bg:color-mix(in srgb,var(--p-purple-500) 15%,transparent);
+  --shadow-pop:0 8px 24px rgb(0 0 0/.45);
+}
+/* ── L2 Semantic · daylight ──────────────────────────────────── */
+html[data-theme="daylight"]{
+  color-scheme:light;
+  --color-bg-canvas:var(--p-slate-50); --color-bg-surface:var(--p-slate-0);
+  --color-bg-raised:#eef2f7; --color-bg-elevated:#e6ecf4; --color-bg-input:var(--p-slate-0);
+  --color-bg-hover:rgb(15 23 42/.05); --color-bg-active:rgb(15 23 42/.09);
+  --color-fg-default:#0f172a; --color-fg-muted:#334155;
+  --color-fg-subtle:#475569; --color-fg-dim:#5a6b80; --color-fg-inverse:var(--p-slate-0);
+  --color-border-default:rgb(15 23 42/.10); --color-border-strong:rgb(15 23 42/.20);
+  --color-border-emphasis:rgb(15 23 42/.30); --color-border-focus:var(--p-cyan-700);
+  --color-accent:var(--p-cyan-500); --color-accent-hover:var(--p-cyan-600);
+  --color-accent-active:var(--p-cyan-700); --color-accent-fg:var(--p-cyan-ink);
+  --color-accent-soft:color-mix(in srgb,var(--p-cyan-500) 12%,transparent);
+  --color-dir-rx:var(--p-teal-700); --color-dir-rx-soft:color-mix(in srgb,var(--p-teal-700) 12%,transparent);
+  --color-dir-tx:var(--p-amber-700); --color-dir-tx-soft:color-mix(in srgb,var(--p-amber-700) 12%,transparent);
+  --color-status-pass:var(--p-green-700); --color-status-pass-bg:color-mix(in srgb,var(--p-green-700) 12%,transparent);
+  --color-status-pass-border:color-mix(in srgb,var(--p-green-700) 30%,transparent);
+  --color-status-warn:var(--p-orange-700); --color-status-warn-bg:color-mix(in srgb,var(--p-orange-700) 12%,transparent);
+  --color-status-warn-border:color-mix(in srgb,var(--p-orange-700) 30%,transparent);
+  --color-status-fail:var(--p-red-700); --color-status-fail-bg:color-mix(in srgb,var(--p-red-700) 12%,transparent);
+  --color-status-fail-border:color-mix(in srgb,var(--p-red-700) 30%,transparent);
+  --color-status-info:var(--p-blue-700); --color-status-info-bg:color-mix(in srgb,var(--p-blue-700) 12%,transparent);
+  --color-status-info-border:color-mix(in srgb,var(--p-blue-700) 30%,transparent);
+  --color-status-inconclusive:var(--p-purple-700);
+  --color-status-inconclusive-bg:color-mix(in srgb,var(--p-purple-700) 12%,transparent);
+  --shadow-pop:0 8px 24px rgb(15 23 42/.18);
+}
+
+/* ── 基础 ────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--color-fg-default);
+  background:var(--color-bg-canvas);overflow:hidden}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--color-border-strong);border-radius:9px;border:2px solid transparent;background-clip:content-box}
+:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px;border-radius:3px}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit}
+.mono{font-family:var(--font-mono);font-variant-ligatures:none}
+
+/* ── App 外壳：顶栏 / 侧栏 / 工作区 / 状态栏 ─────────────────── */
+.app{display:grid;grid-template-rows:48px 1fr 28px;grid-template-columns:auto 1fr;height:100vh;
+  grid-template-areas:"top top" "side main" "foot foot"}
+
+.top{grid-area:top;display:flex;align-items:center;gap:10px;padding:0 14px;
+  background:var(--color-bg-surface);border-bottom:1px solid var(--color-border-default)}
+.brand{display:flex;align-items:center;gap:9px;white-space:nowrap}
+.brand .logo{width:28px;height:28px;border-radius:var(--radius-md);display:grid;place-items:center;color:var(--color-accent-fg);
+  background:linear-gradient(135deg,var(--color-accent),var(--color-accent-active))}
+.brand b{font-size:14px;font-weight:600;letter-spacing:.02em}
+.brand .tag{font-size:10.5px;color:var(--color-fg-dim);border:1px solid var(--color-border-default);
+  border-radius:var(--radius-sm);padding:0 6px;font-family:var(--font-mono)}
+.crumb{display:flex;align-items:center;gap:7px;margin-left:10px;padding-left:14px;
+  border-left:1px solid var(--color-border-default);font-size:12.5px;color:var(--color-fg-dim);white-space:nowrap}
+.crumb b{color:var(--color-fg-default);font-weight:500}
+.top .sp{flex:1}
+.conn-chip{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:var(--radius-md);
+  background:var(--color-bg-raised);border:1px solid var(--color-border-default);font-size:12px;white-space:nowrap}
+.conn-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--color-status-fail);flex:none}
+.conn-chip.on .dot{background:var(--color-status-pass);box-shadow:0 0 6px var(--color-status-pass)}
+.conn-chip .meta{font-family:var(--font-mono);font-size:11.5px;color:var(--color-fg-muted)}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--radius-md);
+  color:var(--color-fg-dim);transition:all .14s var(--ease-in-out);border:1px solid transparent}
+.icon-btn:hover{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.icon-btn svg{width:16px;height:16px}
+
+.side{grid-area:side;display:flex;flex-direction:column;background:var(--color-bg-surface);
+  border-right:1px solid var(--color-border-default);width:208px;transition:width .22s var(--ease-in-out);overflow:hidden}
+.nav{flex:1;overflow-y:auto;overflow-x:hidden;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.nav-label{font-size:10.5px;letter-spacing:.12em;color:var(--color-fg-dim);padding:10px 8px 4px;white-space:nowrap;
+  transition:opacity .15s}
+.it{display:flex;align-items:center;gap:9px;width:100%;height:34px;padding:0 9px;border-radius:var(--radius-md);
+  color:var(--color-fg-muted);font-size:12.5px;white-space:nowrap;position:relative;
+  transition:background .14s var(--ease-in-out),color .14s var(--ease-in-out)}
+.it svg{width:17px;height:17px;flex:none}
+.it .nm{flex:1;overflow:hidden;text-overflow:ellipsis}
+.it .ct{font-family:var(--font-mono);font-size:10.5px;background:var(--color-bg-raised);color:var(--color-fg-dim);
+  border-radius:8px;padding:0 7px;min-width:20px;text-align:center;transition:opacity .15s}
+.it:hover{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.it.on{background:var(--color-accent-soft);color:var(--color-accent)}
+.it.on::before{content:"";position:absolute;left:-8px;top:5px;bottom:5px;width:2.5px;border-radius:0 2px 2px 0;background:var(--color-accent)}
+.it.on .ct{background:var(--color-accent);color:var(--color-accent-fg)}
+.side-foot{flex:none;padding:6px 8px;border-top:1px solid var(--color-border-default);display:flex;justify-content:flex-start}
+.side-foot .it{height:32px}
+/* 收缩态：图标轨 */
+body.rail .side{width:52px}
+body.rail .nav-label{opacity:0;height:6px;padding:0 8px;pointer-events:none}
+body.rail .it .nm,body.rail .it .ct{display:none}
+body.rail .it{justify-content:center;padding:0}
+body.rail .it.on::before{left:-8px}
+body.rail .it[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:calc(100% + 10px);top:50%;
+  transform:translateY(-50%);background:var(--color-bg-elevated);color:var(--color-fg-default);
+  border:1px solid var(--color-border-strong);border-radius:var(--radius-md);padding:4px 10px;font-size:12px;
+  white-space:nowrap;z-index:60;box-shadow:var(--shadow-pop);pointer-events:none}
+body.rail .side-foot{justify-content:center}
+body.rail #btnRail svg{transform:rotate(180deg)}
+
+.main{grid-area:main;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.view{display:none;flex:1;min-height:0;overflow-y:auto;padding:18px 20px 24px}
+.view.on{display:block}
+.view--flush{padding:0;display:none;flex-direction:column}
+.view--flush.on{display:flex}
+
+/* ── 状态栏 ──────────────────────────────────────────────────── */
+.foot{grid-area:foot;display:flex;align-items:center;gap:14px;padding:0 14px;font-size:11.5px;
+  background:var(--color-bg-surface);border-top:1px solid var(--color-border-default);color:var(--color-fg-dim);white-space:nowrap;overflow:hidden}
+.foot .kv{display:inline-flex;align-items:center;gap:5px}
+.foot .kv b{font-family:var(--font-mono);font-weight:500;color:var(--color-fg-muted)}
+.foot .dot{width:7px;height:7px;border-radius:50%;background:var(--color-status-pass);box-shadow:0 0 5px var(--color-status-pass)}
+.foot .sp{flex:1}
+.foot .demo{color:var(--color-fg-dim);opacity:.75}
+
+/* ── 通用组件 ───────────────────────────────────────────────── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 13px;
+  border-radius:var(--radius-md);border:1px solid var(--color-border-strong);background:var(--color-bg-elevated);
+  color:var(--color-fg-muted);font-size:12.5px;font-weight:500;transition:all .14s var(--ease-in-out);white-space:nowrap}
+.btn:hover{background:var(--color-bg-hover);color:var(--color-fg-default);border-color:var(--color-border-emphasis)}
+.btn:active{transform:translateY(1px)}
+.btn--primary{background:linear-gradient(180deg,var(--color-accent),var(--color-accent-active));
+  color:var(--color-accent-fg);border-color:var(--color-border-focus);font-weight:500}
+.btn--primary:hover{background:var(--color-accent-hover);color:var(--color-accent-fg)}
+.btn--sm{height:26px;padding:0 10px;font-size:12px}
+.btn--ghost{background:transparent;border-color:transparent;color:var(--color-fg-subtle)}
+.btn--ghost:hover{background:var(--color-bg-elevated);color:var(--color-fg-default)}
+.fld{width:100%;height:30px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-bg-input);
+  border:1px solid var(--color-border-strong);color:var(--color-fg-default);font-size:12.5px;transition:all .14s var(--ease-in-out)}
+.fld:hover{border-color:var(--color-border-emphasis)}
+.fld:focus{outline:none;border-color:var(--color-accent);box-shadow:0 0 0 3px var(--color-accent-soft)}
+select.fld{appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' fill='none' stroke='currentColor' stroke-width='1.4' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 9px center;padding-right:26px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--radius-sm);
+  font-size:11px;font-weight:500;background:var(--color-bg-elevated);color:var(--color-fg-muted);
+  border:1px solid var(--color-border-default);white-space:nowrap}
+.chip--ac{background:var(--color-accent-soft);color:var(--color-accent);border-color:var(--color-border-focus)}
+.chip--tx{background:var(--color-dir-tx-soft);color:var(--color-dir-tx);border-color:var(--color-dir-tx)}
+.chip--rx{background:var(--color-dir-rx-soft);color:var(--color-dir-rx);border-color:var(--color-dir-rx)}
+.chip--ok{background:var(--color-status-pass-bg);color:var(--color-status-pass);border-color:var(--color-status-pass-border)}
+.chip--fail{background:var(--color-status-fail-bg);color:var(--color-status-fail);border-color:var(--color-status-fail-border)}
+.chip--wait{background:var(--color-status-warn-bg);color:var(--color-status-warn);border-color:var(--color-status-warn-border)}
+.chip--ghost{background:transparent;color:var(--color-fg-dim)}
+.seg{display:inline-flex;background:var(--color-bg-input);border:1px solid var(--color-border-strong);
+  border-radius:var(--radius-md);padding:2px;gap:2px}
+.seg button{height:22px;padding:0 10px;border-radius:5px;font-size:11.5px;color:var(--color-fg-dim);
+  transition:all .14s var(--ease-in-out)}
+.seg button:hover{color:var(--color-fg-default)}
+.seg button.on{background:var(--color-bg-hover);color:var(--color-fg-default)}
+.seg--ac button.on{background:var(--color-accent);color:var(--color-accent-fg)}
+
+.card{background:var(--color-bg-surface);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);overflow:hidden}
+.card-h{display:flex;align-items:center;gap:9px;padding:10px 14px;background:var(--color-bg-raised);
+  border-bottom:1px solid var(--color-border-default);font-size:12.5px;font-weight:500}
+.card-h .hint{margin-left:auto;font-size:11px;color:var(--color-fg-dim);font-weight:400}
+.card-in{padding:14px}
+.sec-title{display:flex;align-items:baseline;gap:10px;margin:2px 0 12px}
+.sec-title h2{font-size:16px;font-weight:600;letter-spacing:.01em}
+.sec-title p{font-size:12px;color:var(--color-fg-dim)}
+.hint{font-size:11px;color:var(--color-fg-dim)}
+.spacer{flex:1}
+
+/* 表格 */
+.ft{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.ft th{text-align:left;font-weight:400;font-size:10.5px;letter-spacing:.08em;color:var(--color-fg-dim);
+  padding:7px 10px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-raised);
+  position:sticky;top:0;z-index:2;white-space:nowrap}
+.ft td{padding:7px 10px;border-bottom:1px solid var(--color-border-default);vertical-align:middle;
+  color:var(--color-fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ft tr:hover td{background:var(--color-bg-hover)}
+.ft .num{text-align:right;font-family:var(--font-mono)}
+.ft .mono-cell{font-family:var(--font-mono);font-size:11.5px;color:var(--color-fg-default)}
+.ft input[type=checkbox]{accent-color:var(--color-accent);width:14px;height:14px;cursor:pointer}
+.tbl-wrap{overflow:auto;max-height:100%}
+
+/* 概览 */
+.grid-dash{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+.dcard{background:var(--color-bg-surface);border:1px solid var(--color-border-default);border-radius:var(--radius-lg);padding:14px 16px;
+  display:flex;flex-direction:column;gap:8px;min-width:0}
+.dcard .k{font-size:11.5px;color:var(--color-fg-dim);display:flex;align-items:center;gap:7px}
+.dcard .k svg{width:14px;height:14px;color:var(--color-accent)}
+.dcard .v{font-size:22px;font-weight:600;font-family:var(--font-mono);line-height:1.2}
+.dcard .v small{font-size:12px;font-weight:400;color:var(--color-fg-dim);margin-left:6px;font-family:var(--font-sans)}
+.dcard .s{font-size:11.5px;color:var(--color-fg-dim)}
+.dcard .go{margin-top:auto;padding-top:6px}
+.dcard .go a{font-size:12px;color:var(--color-accent);text-decoration:none;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+.dcard .go a:hover{text-decoration:underline}
+.dcard.v-ok .v{color:var(--color-status-pass)}
+.dcard.v-ac .v{color:var(--color-accent)}
+.quickbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+
+/* 命令下发 */
+.console{flex:1;display:grid;grid-template-columns:210px 220px 1fr;min-height:0}
+.ccol{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--color-bg-surface)}
+.ccol+.ccol{border-left:1px solid var(--color-border-default)}
+.ccol-h{display:flex;align-items:center;gap:8px;height:42px;padding:0 12px;flex:none;
+  border-bottom:1px solid var(--color-border-default);background:var(--color-bg-raised)}
+.ccol-h h3{font-size:12px;font-weight:500;letter-spacing:.06em;color:var(--color-fg-muted)}
+.ccol-h .ct{margin-left:auto}
+.ccol-b{flex:1;overflow-y:auto;min-height:0}
+.afn-h{display:flex;align-items:center;gap:9px;width:100%;padding:9px 12px;text-align:left;position:relative;
+  transition:background .14s var(--ease-in-out)}
+.afn-h:hover{background:var(--color-bg-raised)}
+.afn-item.sel .afn-h{background:linear-gradient(90deg,var(--color-accent-soft),transparent)}
+.afn-item.sel .afn-h::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-accent)}
+.afn-code{font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--color-accent);flex:none;min-width:34px;
+  padding:1px 5px;border-radius:4px;background:var(--color-bg-input);text-align:center}
+.afn-name{flex:1;min-width:0;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.afn-meta{font-size:10px;color:var(--color-fg-dim);font-family:var(--font-mono);flex:none}
+.fn-item{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px 12px;text-align:left;position:relative;
+  border-bottom:1px solid var(--color-border-default);transition:background .14s var(--ease-in-out)}
+.fn-item:hover{background:var(--color-bg-raised)}
+.fn-item.on{background:linear-gradient(90deg,var(--color-accent-soft),transparent)}
+.fn-item.on::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2.5px;background:var(--color-accent)}
+.fn-no{font-family:var(--font-mono);font-size:11.5px;color:var(--color-fg-subtle);flex:none;min-width:30px;padding-top:1px}
+.fn-item.on .fn-no{color:var(--color-accent)}
+.fn-nm{flex:1;min-width:0;font-size:12.5px;color:var(--color-fg-muted);line-height:1.5}
+.fn-item.on .fn-nm{color:var(--color-fg-default)}
+.par-head{padding:12px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-raised);flex:none;
+  display:flex;align-items:center;gap:10px}
+.par-head b{font-size:14.5px;font-weight:600}
+.par-form{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+.f-row{display:flex;flex-direction:column;gap:4px;min-width:0}
+.f-row.full{grid-column:1/-1}
+.f-label{font-size:12px;font-weight:500;color:var(--color-fg-default);display:flex;align-items:center;gap:8px}
+.f-label .fmt{font-size:10px;color:var(--color-fg-dim);font-family:var(--font-mono)}
+.f-desc{font-size:11px;color:var(--color-fg-dim);line-height:1.5}
+textarea.fld{min-height:56px;resize:vertical;padding:8px 10px;font-family:var(--font-mono);font-size:12px;line-height:1.6}
+/* 构帧预览（可折叠卡片） */
+.fold-card{border-top:1px solid var(--color-border-default)}
+.fold-card>.card-h{cursor:pointer;user-select:none;background:var(--color-bg-surface)}
+.fold-card>.card-h .car{width:13px;height:13px;color:var(--color-fg-dim);transition:transform .18s var(--ease-in-out)}
+.fold-card.open>.card-h .car{transform:rotate(90deg)}
+.fold-card>.fold-body{display:none}
+.fold-card.open>.fold-body{display:block}
+.hexwrap{background:var(--color-bg-canvas);padding:12px 14px}
+.hex{font-family:var(--font-mono);font-size:12.5px;line-height:2;letter-spacing:.04em;word-break:break-all}
+.hx{padding:1px 3px;border-radius:3px}
+.s-68,.s-16,.s-L{color:var(--color-status-inconclusive)}.s-C{color:var(--color-status-warn)}
+.s-R{color:var(--color-fg-subtle)}.s-A{color:var(--color-dir-rx)}
+.s-AFN{color:var(--color-accent);font-weight:600}.s-DT{color:var(--color-status-info)}.s-DU{color:var(--color-fg-default)}.s-CS{color:var(--color-status-warn)}
+.hexlg{display:flex;flex-wrap:wrap;gap:5px 12px;margin-top:10px;padding-top:9px;border-top:1px solid var(--color-border-default)}
+.hexlg span{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--color-fg-dim)}
+.hexlg i{width:8px;height:8px;border-radius:2px;font-style:normal}
+.par-foot{flex:none;padding:11px 16px;border-top:1px solid var(--color-border-default);background:var(--color-bg-raised);
+  display:flex;align-items:center;gap:10px}
+.par-foot .meta{font-size:11px;color:var(--color-fg-dim);font-family:var(--font-mono)}
+
+/* 并发抄表：步骤条 */
+.steps{display:flex;align-items:center;gap:0;margin-bottom:16px}
+.step{display:flex;align-items:center;gap:9px;padding:8px 14px;border-radius:var(--radius-md);
+  font-size:12.5px;color:var(--color-fg-dim);background:var(--color-bg-surface);border:1px solid var(--color-border-default)}
+.step .no{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-mono);
+  font-size:11px;background:var(--color-bg-raised);border:1px solid var(--color-border-strong);color:var(--color-fg-dim);flex:none}
+.step.done{color:var(--color-fg-muted)}
+.step.done .no{background:var(--color-status-pass-bg);border-color:var(--color-status-pass-border);color:var(--color-status-pass)}
+.step.cur{color:var(--color-accent);border-color:var(--color-border-focus);background:var(--color-accent-soft)}
+.step.cur .no{background:var(--color-accent);border-color:var(--color-accent);color:var(--color-accent-fg)}
+.step-link{width:26px;height:1px;background:var(--color-border-strong);flex:none}
+.statkv{background:var(--color-bg-raised);border:1px solid var(--color-border-default);border-radius:var(--radius-md);
+  padding:8px 14px;min-width:96px}
+.statkv .k{display:block;font-size:10.5px;color:var(--color-fg-dim)}
+.statkv .v{font-size:17px;font-family:var(--font-mono);font-weight:500;color:var(--color-accent)}
+.statkv .v.v-ok{color:var(--color-status-pass)}.statkv .v.v-fail{color:var(--color-status-fail)}
+.cd-bar{height:5px;border-radius:3px;background:var(--color-bg-raised);overflow:hidden;min-width:140px}
+.cd-bar i{display:block;height:100%;background:var(--color-status-warn);border-radius:2px}
+
+/* 内置应答：开关 */
+.rule{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--color-border-default)}
+.rule:last-child{border-bottom:none}
+.rule .rn{min-width:0}
+.rule .rn b{font-size:13px;font-weight:500;display:block}
+.rule .rn span{font-size:11px;color:var(--color-fg-dim)}
+.sw{width:34px;height:19px;border-radius:10px;background:var(--color-bg-input);border:1px solid var(--color-border-strong);
+  position:relative;flex:none;transition:all .18s var(--ease-in-out)}
+.sw::after{content:"";position:absolute;left:2px;top:2px;width:13px;height:13px;border-radius:50%;
+  background:var(--color-fg-dim);transition:all .18s var(--ease-in-out)}
+.sw[aria-checked=true]{background:var(--color-accent);border-color:var(--color-border-focus)}
+.sw[aria-checked=true]::after{left:16px;background:var(--color-accent-fg)}
+
+/* 连接设置 */
+.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 14px}
+.kv-list{display:flex;flex-direction:column}
+.kv-list .row{display:flex;align-items:center;gap:12px;padding:8px 16px;border-bottom:1px solid var(--color-border-default);font-size:12.5px}
+.kv-list .row:last-child{border-bottom:none}
+.kv-list .k{width:110px;flex:none;color:var(--color-fg-dim)}
+.kv-list .v{font-family:var(--font-mono);color:var(--color-fg-default)}
+
+/* 收发记录（全高视图） */
+.traffic-bar{flex:none;display:flex;align-items:center;gap:10px;height:46px;padding:0 16px;
+  border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface)}
+.traffic-body{flex:1;min-height:0;overflow:auto}
+
+/* 页签 */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);padding:0 10px;flex:none}
+.tabs button{height:40px;padding:0 14px;font-size:12.5px;color:var(--color-fg-dim);position:relative;font-weight:500}
+.tabs button:hover{color:var(--color-fg-default)}
+.tabs button.on{color:var(--color-accent)}
+.tabs button.on::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:2px;border-radius:2px 2px 0 0;background:var(--color-accent)}
+.tabs .ct{margin-left:auto;display:flex;align-items:center;padding-right:10px}
+
+.empty{display:grid;place-items:center;height:100%;padding:32px 20px;text-align:center;color:var(--color-fg-dim)}
+.empty p{font-size:12.5px;line-height:1.8}
+.banner{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:9px 14px;border-radius:var(--radius-md);
+  background:var(--color-status-info-bg);border:1px solid var(--color-status-info-border);color:var(--color-fg-muted);font-size:12px}
+.banner svg{width:15px;height:15px;color:var(--color-status-info);flex:none}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══ 顶栏：品牌 / 面包屑 / 全局连接态 ═══ -->
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>
+      </span>
+      <b>模拟集中器</b>
+      <span class="tag">Q/GDW 1376.2</span>
+    </div>
+    <div class="crumb"><span>工作台</span><span style="opacity:.5">/</span><b id="crumbCur">概览</b></div>
+    <div class="sp"></div>
+    <span class="conn-chip on" id="connChip" title="串口连接状态">
+      <span class="dot"></span>COM3<span class="meta">9600,E · anhui</span>
+    </span>
+    <button class="btn btn--sm btn--primary" id="btnConn">断开串口</button>
+    <button class="icon-btn" id="btnTheme" title="切换主题（墨夜 / 日光）" aria-label="切换主题">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
+  </header>
+
+  <!-- ═══ 左侧可收缩菜单 ═══ -->
+  <aside class="side" aria-label="功能导航">
+    <nav class="nav">
+      <div class="nav-label">业务操作</div>
+      <button class="it on" data-view="dash" data-tip="概览">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        <span class="nm">概览</span>
+      </button>
+      <button class="it" data-view="console" data-tip="命令下发 · AFN/Fn 构帧">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>
+        <span class="nm">命令下发</span>
+      </button>
+      <button class="it" data-view="batch" data-tip="并发抄表 · 档案/下发/统计">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>
+        <span class="nm">并发抄表</span>
+      </button>
+
+      <div class="nav-label">数据观测</div>
+      <button class="it" data-view="results" data-tip="结果中心 · 配对/汇总/上报">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>
+        <span class="nm">结果中心</span><span class="ct">18</span>
+      </button>
+      <button class="it" data-view="traffic" data-tip="收发记录 · 会话帧日志">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+        <span class="nm">收发记录</span><span class="ct">44</span>
+      </button>
+      <button class="it" data-view="resp" data-tip="内置应答 · 应答规则">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+        <span class="nm">内置应答</span><span class="ct">5</span>
+      </button>
+
+      <div class="nav-label">系统</div>
+      <button class="it" data-view="settings" data-tip="连接设置 · 串口参数">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>
+        <span class="nm">连接设置</span>
+      </button>
+    </nav>
+    <div class="side-foot">
+      <button class="it" id="btnRail" data-tip="展开菜单 (Ctrl+B)" aria-label="收起/展开侧栏" style="width:100%">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+        <span class="nm">收起菜单</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══ 工作区 ═══ -->
+  <main class="main">
+
+    <!-- ── 视图1：概览 ── -->
+    <section class="view on" id="view-dash">
+      <div class="sec-title"><h2>概览</h2><p>串口会话、收发与并发抄表运行状态一览</p></div>
+      <div class="grid-dash">
+        <div class="dcard v-ok">
+          <span class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg>串口连接</span>
+          <span class="v">已连接<small>COM3 · 9600,E</small></span>
+          <span class="s">Profile anhui · 会话 00:42:17</span>
+          <span class="go"><a data-goto="settings">连接设置 →</a></span>
+        </div>
+        <div class="dcard v-ac">
+          <span class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>今日收发</span>
+          <span class="v">44<small>TX 23 · RX 21</small></span>
+          <span class="s">应答成功率 95.7% · 平均响应 1.2s</span>
+          <span class="go"><a data-goto="traffic">收发记录 →</a></span>
+        </div>
+        <div class="dcard">
+          <span class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>并发抄表</span>
+          <span class="v">92.4%<small>成功 412 / 446</small></span>
+          <span class="s">档案 128 台 · 在网 96 台 · 最大并发 5</span>
+          <span class="go"><a data-goto="batch">进入并发抄表 →</a></span>
+        </div>
+        <div class="dcard">
+          <span class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>内置应答</span>
+          <span class="v">5/6<small>条启用</small></span>
+          <span class="s">口径：02号代码卡（Fn=1）</span>
+          <span class="go"><a data-goto="resp">管理应答规则 →</a></span>
+        </div>
+      </div>
+      <div class="quickbar">
+        <button class="btn btn--sm btn--primary" data-goto="console">＋ 新建下发</button>
+        <button class="btn btn--sm" data-goto="batch">查询模块档案</button>
+        <button class="btn btn--sm">导出抄表 Excel</button>
+        <button class="btn btn--sm" data-goto="results">查看结果中心</button>
+        <span class="spacer"></span>
+        <span class="hint">上次会话归档 09-12 18:44 · 持续 3h12m · 帧数 1,204</span>
+      </div>
+      <div class="card">
+        <div class="card-h">最近活动<span class="hint">最近 8 条收发事件</span></div>
+        <div class="tbl-wrap" style="max-height:280px">
+          <table class="ft">
+            <thead><tr><th style="width:120px">时间</th><th style="width:70px">方向</th><th style="width:110px">命令</th><th>摘要</th><th style="width:150px">结果</th></tr></thead>
+            <tbody>
+              <tr><td class="mono-cell">14:32:07.725</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H · F1</td><td>并发抄表下发 · 5 表地址块</td><td><span class="chip chip--ok">应答 1.2s</span></td></tr>
+              <tr><td class="mono-cell">14:32:08.901</td><td><span class="chip chip--rx">接收</span></td><td class="mono-cell">10H · F1</td><td>并发抄表应答 · 4 成功 / 1 失败</td><td><span class="chip chip--ok">配对成功</span></td></tr>
+              <tr><td class="mono-cell">14:30:44.210</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H · F2</td><td>读模块档案 · 全网</td><td><span class="chip chip--ok">应答 0.8s</span></td></tr>
+              <tr><td class="mono-cell">14:30:45.037</td><td><span class="chip chip--rx">接收</span></td><td class="mono-cell">10H · F2</td><td>档案应答 · 128 台 · 在网 96</td><td><span class="chip chip--ok">配对成功</span></td></tr>
+              <tr><td class="mono-cell">14:28:12.856</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">04H · F1</td><td>写参数 · 互合时间 90s</td><td><span class="chip chip--ok">应答 0.3s</span></td></tr>
+              <tr><td class="mono-cell">14:26:58.104</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H · F3</td><td>读在网信息</td><td><span class="chip chip--fail">超时 3.0s</span></td></tr>
+              <tr><td class="mono-cell">14:25:31.482</td><td><span class="chip chip--rx">接收</span></td><td class="mono-cell">10H · F4</td><td>主动上报 · 日冻结数据</td><td><span class="chip chip--wait">待确认</span></td></tr>
+              <tr><td class="mono-cell">14:22:09.633</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H · F1</td><td>并发抄表下发 · 3 表地址块</td><td><span class="chip chip--ok">应答 1.1s</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 视图2：命令下发（AFN/Fn 主从 + 参数 + 构帧预览 + 响应表格） ── -->
+    <section class="view view--flush" id="view-console">
+      <div class="console">
+        <div class="ccol">
+          <div class="ccol-h"><h3>AFN 应用功能码</h3><span class="chip chip--ghost ct">14</span></div>
+          <div style="padding:8px"><input class="fld" placeholder="搜索 AFN / 名称…"></div>
+          <div class="ccol-b" id="afnList"></div>
+        </div>
+        <div class="ccol">
+          <div class="ccol-h"><h3>Fn 命令</h3><span class="chip chip--ghost ct">5</span></div>
+          <div class="ccol-b" id="fnList"></div>
+        </div>
+        <div class="ccol">
+          <div class="ccol-h"><h3>参数与下发</h3><span class="hint">send 只写业务参数，构帧自动完成</span></div>
+          <div class="par-head"><b>10H · F1 并发抄表</b><span class="chip chip--ac">分页型</span><span class="spacer"></span><span class="hint">最多 20 表地址/帧</span></div>
+          <div class="ccol-b" style="overflow-y:auto">
+            <div class="par-form">
+              <div class="f-row">
+                <span class="f-label">端口号 <span class="fmt">BIN·8</span></span>
+                <input class="fld mono" value="01">
+                <span class="f-desc">通信端口号，01=常规采集通道</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">功能码 <span class="fmt">BIN·8</span></span>
+                <select class="fld mono"><option>FF（并发专用）</option><option>01</option><option>02</option></select>
+                <span class="f-desc">FF = 并发抄表专用功能码</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">表序号块 <span class="fmt">BS8</span></span>
+                <input class="fld mono" value="01">
+                <span class="f-desc">块序号从 01 起，每块 20 表</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">超时时间 <span class="fmt">时间·s</span></span>
+                <input class="fld mono" value="3">
+                <span class="f-desc">应答超时 1~15s，默认 3s</span>
+              </div>
+              <div class="f-row full">
+                <span class="f-label">表地址清单 <span class="fmt">BCD·48</span></span>
+                <textarea class="fld" rows="3">3132333435363738 3132333435363739 3132333435363740 3132333435363741 3132333435363742</textarea>
+                <span class="f-desc">每行 6 字节 BCD 表地址，低位在前；超 20 表自动分块</span>
+              </div>
+            </div>
+            <div class="fold-card open" id="foldPreview">
+              <div class="card-h" id="foldPreviewH">
+                <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                构帧预览<span class="hint">57 字节 · CS 校验通过</span>
+              </div>
+              <div class="fold-body hexwrap">
+                <div class="hex"><span class="s-68 hx">68</span> <span class="s-L hx">34 00</span> <span class="s-C hx">43</span> <span class="s-R hx">02 89 01 00 00 00 00 00 00 00 00 00</span> <span class="s-AFN hx">10</span> <span class="s-DT hx">90 01 00 20</span> <span class="s-DU hx">01 FF 01 03 3132333435363738 3132333435363739 3132333435363740 3132333435363741 3132333435363742</span> <span class="s-CS hx">7A</span> <span class="s-16 hx">16</span></div>
+                <div class="hexlg">
+                  <span><i class="s-68"></i>起始/结束 68/16</span><span><i class="s-L"></i>长度域 L</span><span><i class="s-C"></i>控制域 C</span>
+                  <span><i class="s-R"></i>地址域 A（6B 终端 + 5B 中继/主站）</span><span><i class="s-AFN"></i>AFN</span>
+                  <span><i class="s-DT"></i>数据单元标识</span><span><i class="s-DU"></i>数据单元</span><span><i class="s-CS"></i>校验 CS</span>
+                </div>
+              </div>
+            </div>
+            <div class="fold-card open" id="foldResp">
+              <div class="card-h" id="foldRespH">
+                <svg class="car" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                响应表格<span class="hint">分页型 Fn 下发后在此呈现响应记录</span>
+                <span class="chip chip--ghost" style="margin-left:8px">自动全量 · 已收 96 条</span>
+              </div>
+              <div class="fold-body">
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--color-border-default)">
+                  <div class="seg" id="segMode"><button data-m="manual">指定范围</button><button data-m="auto" class="on">自动全量</button></div>
+                  <input class="fld" style="width:84px" value="0" placeholder="起始序号">
+                  <input class="fld" style="width:64px" value="16" placeholder="条数">
+                  <button class="btn btn--sm">查询</button>
+                  <span class="spacer"></span>
+                  <button class="btn btn--sm btn--ghost">快照</button>
+                  <button class="btn btn--sm btn--ghost">上报历史</button>
+                </div>
+                <div class="tbl-wrap" style="max-height:220px">
+                  <table class="ft">
+                    <thead><tr><th style="width:46px">#</th><th>模块地址</th><th class="num" style="width:90px">信号品质</th><th class="num" style="width:80px">中继级别</th><th style="width:70px">在网</th><th style="width:110px">抄读时间</th><th style="width:110px">结果</th></tr></thead>
+                    <tbody>
+                      <tr><td class="num">1</td><td class="mono-cell">31 32 33 34 35 36 37 38</td><td class="num">32</td><td class="num">0</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td><td><span class="chip chip--ok">成功</span></td></tr>
+                      <tr><td class="num">2</td><td class="mono-cell">31 32 33 34 35 36 37 39</td><td class="num">28</td><td class="num">1</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td><td><span class="chip chip--ok">成功</span></td></tr>
+                      <tr><td class="num">3</td><td class="mono-cell">31 32 33 34 35 36 37 40</td><td class="num">19</td><td class="num">2</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td><td><span class="chip chip--ok">成功</span></td></tr>
+                      <tr><td class="num">4</td><td class="mono-cell">31 32 33 34 35 36 37 41</td><td class="num">8</td><td class="num">3</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td><td><span class="chip chip--ok">成功</span></td></tr>
+                      <tr><td class="num">5</td><td class="mono-cell">31 32 33 34 35 36 37 42</td><td class="num">3</td><td class="num">3</td><td><span class="chip chip--fail">离线</span></td><td class="mono-cell">—</td><td><span class="chip chip--fail">失败 · 无应答</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="par-foot">
+            <button class="btn btn--sm btn--ghost">刷新预览</button>
+            <span class="spacer"></span>
+            <span class="meta">帧长 57 字节 · AFN 10H · Fn 1 · CS 7A</span>
+            <button class="btn btn--sm btn--primary">下 发</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 视图3：并发抄表（步骤化向导） ── -->
+    <section class="view" id="view-batch">
+      <div class="sec-title"><h2>并发抄表</h2><p>10H-F2 档案 → 勾选模块 → 10H-F1 下发 → 周期统计</p></div>
+      <div class="steps">
+        <div class="step done"><span class="no">✓</span>① 获取模块档案</div><div class="step-link"></div>
+        <div class="step cur"><span class="no">2</span>② 勾选并下发</div><div class="step-link"></div>
+        <div class="step"><span class="no">3</span>③ 周期统计</div>
+      </div>
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-h">
+          模块档案<span class="chip chip--ghost">临时档案 · 从模块实时获取，复位不保存</span>
+          <span class="spacer"></span>
+          <button class="btn btn--sm btn--primary">① 查档案</button>
+          <button class="btn btn--sm">查在网</button>
+          <button class="btn btn--sm btn--ghost">导出 Excel</button>
+          <select class="fld" style="width:96px;height:26px;font-size:12px"><option>在网：全部</option><option>仅在线</option><option>仅离线</option></select>
+          <span class="hint">并发数</span><input class="fld mono" style="width:52px;height:26px;font-size:12px" value="5">
+          <button class="btn btn--sm btn--primary">② 下发并发抄表（勾选 5 台）</button>
+        </div>
+        <div class="tbl-wrap" style="max-height:300px">
+          <table class="ft">
+            <thead><tr><th style="width:36px"><input type="checkbox" checked aria-label="全选"></th><th style="width:46px">#</th><th>模块地址</th><th class="num" style="width:90px">信号品质</th><th class="num" style="width:80px">中继级别</th><th style="width:80px">在网</th><th style="width:120px">最近抄读</th></tr></thead>
+            <tbody>
+              <tr><td><input type="checkbox" checked aria-label="选择"></td><td class="num">1</td><td class="mono-cell">31 32 33 34 35 36 37 38</td><td class="num">32</td><td class="num">0</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td></tr>
+              <tr><td><input type="checkbox" checked aria-label="选择"></td><td class="num">2</td><td class="mono-cell">31 32 33 34 35 36 37 39</td><td class="num">28</td><td class="num">1</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td></tr>
+              <tr><td><input type="checkbox" checked aria-label="选择"></td><td class="num">3</td><td class="mono-cell">31 32 33 34 35 36 37 40</td><td class="num">19</td><td class="num">2</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td></tr>
+              <tr><td><input type="checkbox" checked aria-label="选择"></td><td class="num">4</td><td class="mono-cell">31 32 33 34 35 36 37 41</td><td class="num">8</td><td class="num">3</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:32:08</td></tr>
+              <tr><td><input type="checkbox" aria-label="选择"></td><td class="num">5</td><td class="mono-cell">31 32 33 34 35 36 37 42</td><td class="num">3</td><td class="num">3</td><td><span class="chip chip--fail">离线</span></td><td class="mono-cell">—</td></tr>
+              <tr><td><input type="checkbox" checked aria-label="选择"></td><td class="num">6</td><td class="mono-cell">31 32 33 34 35 36 37 43</td><td class="num">26</td><td class="num">1</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:31:40</td></tr>
+              <tr><td><input type="checkbox" aria-label="选择"></td><td class="num">7</td><td class="mono-cell">31 32 33 34 35 36 37 44</td><td class="num">15</td><td class="num">2</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:31:40</td></tr>
+              <tr><td><input type="checkbox" aria-label="选择"></td><td class="num">8</td><td class="mono-cell">31 32 33 34 35 36 37 45</td><td class="num">21</td><td class="num">2</td><td><span class="chip chip--ok">在线</span></td><td class="mono-cell">14:31:40</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap">
+        <div class="statkv"><span class="k">本轮进行中</span><span class="v">3/12</span></div>
+        <div class="statkv"><span class="k">最大并发</span><span class="v">5</span></div>
+        <div class="statkv"><span class="k">成功 / 失败</span><span class="v v-ok">412 / 18</span></div>
+        <div class="statkv"><span class="k">成功率</span><span class="v v-ok">95.8%</span></div>
+        <div class="statkv"><span class="k">平均耗时</span><span class="v">1.2s</span></div>
+        <div class="statkv"><span class="k">重复下发</span><span class="v v-fail">0</span></div>
+        <div class="statkv" style="display:flex;flex-direction:column;justify-content:center;flex:1;min-width:220px">
+          <span class="k">统计周期</span>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+            <select class="fld" style="width:110px;height:26px;font-size:12px"><option>15 分钟</option><option>30 秒</option><option>5 分钟</option><option>1 小时</option></select>
+            <button class="btn btn--sm">③ 刷新统计</button>
+            <div class="cd-bar" style="flex:1"><i style="width:25%"></i></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 视图4：结果中心 ── -->
+    <section class="view view--flush" id="view-results">
+      <div class="tabs" id="resTabs">
+        <button class="on" data-t="pair">收发配对</button>
+        <button data-t="readings">抄读汇总</button>
+        <button data-t="batch">并发抄表</button>
+        <button data-t="reports">主动上报</button>
+        <span class="ct"><span class="chip chip--ghost">共 18 对 · 平均响应 1.2s</span></span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--color-border-default)">
+        <input class="fld" style="width:220px" placeholder="按地址 / 摘要过滤…">
+        <select class="fld" style="width:120px"><option>结果：全部</option><option>配对成功</option><option>超时</option></select>
+        <span class="spacer"></span>
+        <button class="btn btn--sm btn--ghost">导出 CSV</button>
+      </div>
+      <div class="tbl-wrap" style="flex:1">
+        <table class="ft" style="table-layout:auto">
+          <thead><tr><th style="width:120px">时间</th><th style="width:64px">方向</th><th style="width:100px">命令</th><th>下发摘要</th><th>应答摘要</th><th style="width:150px">配对结果</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-cell">14:32:08.901</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">10H · F1</td><td>并发抄表 · 5 表块 01</td><td>4 成功 / 1 失败 · 耗时 1.2s</td><td><span class="chip chip--ok">配对成功 1.2s</span></td></tr>
+            <tr><td class="mono-cell">14:30:45.037</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">10H · F2</td><td>读模块档案 · 全网</td><td>128 台 · 在网 96 · 0.8s</td><td><span class="chip chip--ok">配对成功 0.8s</span></td></tr>
+            <tr><td class="mono-cell">14:28:13.110</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">04H · F1</td><td>写参数 · 互合时间 90s</td><td>确认 · 0.3s</td><td><span class="chip chip--ok">配对成功 0.3s</span></td></tr>
+            <tr><td class="mono-cell">14:26:58.104</td><td><span class="chip chip--tx">下发</span></td><td class="mono-cell">10H · F3</td><td>读在网信息</td><td>—</td><td><span class="chip chip--fail">超时未应答</span></td></tr>
+            <tr><td class="mono-cell">14:25:31.482</td><td><span class="chip chip--rx">上报</span></td><td class="mono-cell">10H · F4</td><td>—</td><td>日冻结数据 · 96 台</td><td><span class="chip chip--wait">待确认</span></td></tr>
+            <tr><td class="mono-cell">14:22:10.811</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">10H · F1</td><td>并发抄表 · 3 表块 01</td><td>3 成功 / 0 失败 · 1.1s</td><td><span class="chip chip--ok">配对成功 1.1s</span></td></tr>
+            <tr><td class="mono-cell">14:18:47.295</td><td><span class="chip chip--rx">应答</span></td><td class="mono-cell">10H · F2</td><td>读模块档案 · 全网</td><td>128 台 · 在网 96 · 0.9s</td><td><span class="chip chip--ok">配对成功 0.9s</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── 视图5：收发记录（全高） ── -->
+    <section class="view view--flush" id="view-traffic">
+      <div class="traffic-bar">
+        <div class="seg" id="segFilter">
+          <button class="on" data-f="">全部</button><button data-f="tx">发送</button><button data-f="rx">接收</button>
+        </div>
+        <input class="fld" style="width:200px" placeholder="十六进制 / 关键字…">
+        <span class="spacer"></span>
+        <span class="chip chip--tx">发送 23</span><span class="chip chip--rx">接收 21</span>
+        <button class="btn btn--sm btn--ghost">暂停滚动</button>
+        <button class="btn btn--sm btn--ghost">清空</button>
+        <button class="btn btn--sm btn--ghost">导出</button>
+      </div>
+      <div class="traffic-body">
+        <table class="ft" style="table-layout:auto">
+          <thead><tr><th style="width:118px">时间</th><th style="width:60px">方向</th><th style="width:80px">AFN</th><th style="width:60px">Fn</th><th class="num" style="width:70px">长度</th><th>报文预览</th><th style="width:130px">状态</th></tr></thead>
+          <tbody>
+            <tr><td class="mono-cell">14:32:07.725</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H</td><td class="mono-cell">F1</td><td class="num">57 B</td><td class="mono-cell">68 34 00 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 01 00 20 01 FF … 7A 16</td><td><span class="chip chip--ok">应答 1.2s</span></td></tr>
+            <tr><td class="mono-cell">14:32:08.901</td><td><span class="chip chip--rx">接收</span></td><td class="mono-cell">10H</td><td class="mono-cell">F1</td><td class="num">186 B</td><td class="mono-cell">68 B5 00 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 01 00 61 01 … 3C 16</td><td><span class="chip chip--ok">4 成功 / 1 失败</span></td></tr>
+            <tr><td class="mono-cell">14:30:44.210</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H</td><td class="mono-cell">F2</td><td class="num">17 B</td><td class="mono-cell">68 0C 00 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 02 00 … 91 16</td><td><span class="chip chip--ok">应答 0.8s</span></td></tr>
+            <tr><td class="mono-cell">14:30:45.037</td><td><span class="chip chip--rx">接收</span></td><td class="mono-cell">10H</td><td class="mono-cell">F2</td><td class="num">1,924 B</td><td class="mono-cell">68 80 07 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 02 00 80 80 … 16</td><td><span class="chip chip--ok">128 台档案</span></td></tr>
+            <tr><td class="mono-cell">14:28:12.856</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">04H</td><td class="mono-cell">F1</td><td class="num">24 B</td><td class="mono-cell">68 13 00 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 04 90 01 00 … 16</td><td><span class="chip chip--ok">确认 0.3s</span></td></tr>
+            <tr><td class="mono-cell">14:26:58.104</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H</td><td class="mono-cell">F3</td><td class="num">16 B</td><td class="mono-cell">68 0B 00 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 03 00 … 16</td><td><span class="chip chip--fail">超时 3.0s</span></td></tr>
+            <tr><td class="mono-cell">14:25:31.482</td><td><span class="chip chip--rx">接收</span></td><td class="mono-cell">10H</td><td class="mono-cell">F4</td><td class="num">412 B</td><td class="mono-cell">68 97 01 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 04 00 1B … 16</td><td><span class="chip chip--wait">待确认</span></td></tr>
+            <tr><td class="mono-cell">14:22:09.633</td><td><span class="chip chip--tx">发送</span></td><td class="mono-cell">10H</td><td class="mono-cell">F1</td><td class="num">42 B</td><td class="mono-cell">68 25 00 43 02 89 01 00 00 00 00 00 00 00 00 00 00 00 10 90 01 00 20 01 … 16</td><td><span class="chip chip--ok">应答 1.1s</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── 视图6：内置应答 ── -->
+    <section class="view" id="view-resp">
+      <div class="sec-title"><h2>内置应答</h2><p>模拟集中器按口径自动应答主站/CCO 指令，规则可启停</p></div>
+      <div class="banner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        应答口径以 <b>&nbsp;02号代码卡（Fn=1）&nbsp;</b> 为权威；规则变更即时生效，无需重启会话。实测基线：空口抓包回放 87,345 帧对拍全 PASS。
+      </div>
+      <div class="card">
+        <div class="rule">
+          <div class="rn" style="flex:1"><b>10H · F1 并发抄表应答</b><span>按勾选表地址返回抄读结果，支持分块</span></div>
+          <span class="chip chip--ac mono">10H F1</span><span class="chip chip--ghost">延迟 300ms</span>
+          <span class="hint" style="width:150px">最近触发 14:32:08 · 12 次</span>
+          <button class="sw" role="switch" aria-checked="true" aria-label="启停规则"></button>
+        </div>
+        <div class="rule">
+          <div class="rn" style="flex:1"><b>10H · F2 抄读模块档案</b><span>返回临时档案（128 台），每次从模块实时获取</span></div>
+          <span class="chip chip--ac mono">10H F2</span><span class="chip chip--ghost">延迟 200ms</span>
+          <span class="hint" style="width:150px">最近触发 14:30:45 · 6 次</span>
+          <button class="sw" role="switch" aria-checked="true" aria-label="启停规则"></button>
+        </div>
+        <div class="rule">
+          <div class="rn" style="flex:1"><b>10H · F3 读在网信息</b><span>返回在网模块及其信号品质、中继级别</span></div>
+          <span class="chip chip--ac mono">10H F3</span><span class="chip chip--ghost">延迟 200ms</span>
+          <span class="hint" style="width:150px">最近触发 14:26:58 · 3 次</span>
+          <button class="sw" role="switch" aria-checked="true" aria-label="启停规则"></button>
+        </div>
+        <div class="rule">
+          <div class="rn" style="flex:1"><b>10H · F4 主动上报确认</b><span>对上报数据帧回确认帧</span></div>
+          <span class="chip chip--ac mono">10H F4</span><span class="chip chip--ghost">延迟 100ms</span>
+          <span class="hint" style="width:150px">最近触发 14:25:31 · 8 次</span>
+          <button class="sw" role="switch" aria-checked="true" aria-label="启停规则"></button>
+        </div>
+        <div class="rule">
+          <div class="rn" style="flex:1"><b>04H · F1 写参数应答</b><span>参数写入确认，校验通过回确认</span></div>
+          <span class="chip chip--ac mono">04H F1</span><span class="chip chip--ghost">延迟 150ms</span>
+          <span class="hint" style="width:150px">最近触发 14:28:13 · 2 次</span>
+          <button class="sw" role="switch" aria-checked="true" aria-label="启停规则"></button>
+        </div>
+        <div class="rule">
+          <div class="rn" style="flex:1"><b>94H · F10 任务数据应答</b><span>暂未启用：口径待真机帧裁决（10H-F104 存疑项）</span></div>
+          <span class="chip chip--ac mono">94H F10</span><span class="chip chip--ghost">延迟 250ms</span>
+          <span class="hint" style="width:150px">未触发</span>
+          <button class="sw" role="switch" aria-checked="false" aria-label="启停规则"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── 视图7：连接设置 ── -->
+    <section class="view" id="view-settings">
+      <div class="sec-title"><h2>连接设置</h2><p>串口参数与会话状态 · 无可用串口时自动选择 9600/E</p></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;max-width:960px">
+        <div class="card">
+          <div class="card-h">串口参数<span class="hint">显式指定可覆盖自动选择</span></div>
+          <div class="card-in">
+            <div class="form-grid">
+              <div class="f-row"><span class="f-label">串口</span>
+                <select class="fld mono"><option>COM3（ELTIMA 虚拟对）</option><option>COM1</option><option>COM2</option><option>COM19</option></select></div>
+              <div class="f-row"><span class="f-label">波特率</span>
+                <select class="fld mono"><option>9600</option><option>2400</option><option>19200</option><option>115200</option></select></div>
+              <div class="f-row"><span class="f-label">校验位</span>
+                <select class="fld mono"><option>偶 E</option><option>无 N</option><option>奇 O</option></select></div>
+              <div class="f-row"><span class="f-label">数据位</span>
+                <select class="fld mono"><option>8</option><option>7</option></select></div>
+              <div class="f-row"><span class="f-label">停止位</span>
+                <select class="fld mono"><option>1</option><option>2</option></select></div>
+              <div class="f-row"><span class="f-label">Profile</span>
+                <select class="fld mono"><option>anhui</option><option>test</option></select></div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:16px;align-items:center">
+              <button class="btn btn--primary" id="btnOpen2">打开串口</button>
+              <button class="btn">关闭串口</button>
+              <span class="hint">改动参数需先关闭当前串口</span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h">会话状态</div>
+          <div class="kv-list">
+            <div class="row"><span class="k">状态</span><span class="v" style="color:var(--color-status-pass)">● 已连接</span></div>
+            <div class="row"><span class="k">端口</span><span class="v">COM3 · 9600,E,8,1</span></div>
+            <div class="row"><span class="k">Profile</span><span class="v">anhui</span></div>
+            <div class="row"><span class="k">打开时间</span><span class="v">13:50:12</span></div>
+            <div class="row"><span class="k">会话时长</span><span class="v">00:42:17</span></div>
+            <div class="row"><span class="k">累计收发</span><span class="v">TX 23 · RX 21</span></div>
+            <div class="row"><span class="k">最后错误</span><span class="v">—</span></div>
+          </div>
+        </div>
+        <div class="card" style="grid-column:1/-1">
+          <div class="card-h">口径说明</div>
+          <div class="card-in" style="font-size:12px;color:var(--color-fg-dim);line-height:1.9">
+            并发抄表 = <span class="mono">10H-F1</span>（20 表地址/帧，CCO 上限并发 20，超限否认 109）；模块档案 = <span class="mono">10H-F2</span>（临时档案，复位不保存）；
+            在网信息 = <span class="mono">10H-F3</span>。长度域为小端，F1 下发口径以 02号代码卡（Fn=1）为权威。小端长度字段在真机侧尚未完成最终验证。
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══ 底部状态栏 ═══ -->
+  <footer class="foot">
+    <span class="kv"><span class="dot"></span>已连接 COM3 · 9600,E</span>
+    <span class="kv">会话 <b>00:42:17</b></span>
+    <span class="kv">TX <b>23</b></span>
+    <span class="kv">RX <b>21</b></span>
+    <span class="kv">应答成功率 <b>95.7%</b></span>
+    <span class="kv">最新帧 <b>14:32:08.901</b></span>
+    <span class="sp"></span>
+    <span class="kv">内置应答 <b>5/6</b></span>
+    <span class="demo">演示原型 · 数据为模拟 · Ctrl+B 收缩侧栏</span>
+  </footer>
+</div>
+
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var $$=function(s){return Array.prototype.slice.call(document.querySelectorAll(s))};
+  var crumbNames={dash:"概览",console:"命令下发",batch:"并发抄表",results:"结果中心",traffic:"收发记录",resp:"内置应答",settings:"连接设置"};
+
+  /* 视图切换 */
+  function goto(v){
+    $$(".view").forEach(function(el){el.classList.toggle("on",el.id==="view-"+v)});
+    $$(".nav .it[data-view]").forEach(function(b){
+      var on=b.dataset.view===v;
+      b.classList.toggle("on",on);
+      if(on)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");
+    });
+    $("#crumbCur").textContent=crumbNames[v]||v;
+  }
+  $$("[data-view]").forEach(function(b){b.addEventListener("click",function(){goto(b.dataset.view)})});
+  $$("[data-goto]").forEach(function(a){a.addEventListener("click",function(){goto(a.dataset.goto)})});
+
+  /* 侧栏收缩（记忆状态 + Ctrl+B） */
+  function setRail(on){
+    document.body.classList.toggle("rail",on);
+    try{localStorage.setItem("demo-rail",on?"1":"0")}catch(e){}
+  }
+  $("#btnRail").addEventListener("click",function(){setRail(!document.body.classList.contains("rail"))});
+  document.addEventListener("keydown",function(e){
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="b"){e.preventDefault();setRail(!document.body.classList.contains("rail"))}
+  });
+  try{if(localStorage.getItem("demo-rail")==="1")setRail(true)}catch(e){}
+
+  /* 主题切换（记忆状态） */
+  var moon='<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
+  var sun='<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>';
+  function setTheme(t){
+    document.documentElement.dataset.theme=t;
+    $("#btnTheme").innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(t==="midnight"?sun:moon)+'</svg>';
+    try{localStorage.setItem("demo-theme",t)}catch(e){}
+  }
+  $("#btnTheme").addEventListener("click",function(){
+    setTheme(document.documentElement.dataset.theme==="midnight"?"daylight":"midnight");
+  });
+  try{var st=localStorage.getItem("demo-theme");if(st)setTheme(st);else setTheme("midnight")}catch(e){}
+
+  /* 顶栏串口 mock 切换 */
+  var connOn=true;
+  $("#btnConn").addEventListener("click",function(){
+    connOn=!connOn;
+    $("#connChip").classList.toggle("on",connOn);
+    $("#btnConn").textContent=connOn?"断开串口":"打开串口";
+  });
+
+  /* AFN / Fn 列表（选中态演示） */
+  var afns=[["04H","设置参数","6"],["05H","控制命令","4"],["0AH","请求控制","2"],["0CH","数据转发","3"],["0FH","中继命令","5"],["10H","抄表/并发","5"],["11H","中继站命令","2"],["12H","身份认证","2"],["13H","密钥管理","2"],["14H","数据下发","3"],["15H","文件传输","4"],["16H","透明传输","2"],["17H","备份恢复","2"],["18H","用户指令","3"]];
+  var fns=[["F1","并发抄表（20 表/帧）"],["F2","抄读模块档案"],["F3","读在网信息"],["F4","主动上报确认"],["F5","上报数据重发"]];
+  $("#afnList").innerHTML=afns.map(function(a,i){
+    return '<div class="afn-item'+(a[0]==="10H"?" sel":"")+'"><button class="afn-h"><span class="afn-code">'+a[0]+'</span><span class="afn-name">'+a[1]+'</span><span class="afn-meta">'+a[2]+' Fn</span></button></div>';
+  }).join("");
+  $("#fnList").innerHTML=fns.map(function(f,i){
+    return '<button class="fn-item'+(i===0?" on":"")+'"><span class="fn-no">'+f[0]+'</span><span class="fn-nm">'+f[1]+'</span></button>';
+  }).join("");
+  $$("#afnList .afn-item").forEach(function(el){
+    el.addEventListener("click",function(){
+      $$("#afnList .afn-item").forEach(function(x){x.classList.remove("sel")});
+      el.classList.add("sel");
+    });
+  });
+  $$("#fnList .fn-item").forEach(function(el){
+    el.addEventListener("click",function(){
+      $$("#fnList .fn-item").forEach(function(x){x.classList.remove("on")});
+      el.classList.add("on");
+    });
+  });
+
+  /* 折叠卡片 */
+  [["#foldPreviewH","#foldPreview"],["#foldRespH","#foldResp"]].forEach(function(p){
+    $(p[0]).addEventListener("click",function(){$(p[1]).classList.toggle("open")});
+  });
+
+  /* seg 控件通用选中 */
+  $$(".seg").forEach(function(seg){
+    seg.addEventListener("click",function(e){
+      var b=e.target.closest("button");if(!b||!b.dataset.m&&!b.dataset.f&&!b.parentElement.id)return;
+      $$("#"+seg.id+" button").forEach(function(x){x.classList.remove("on")});
+      b.classList.add("on");
+    });
+  });
+  /* 结果中心页签 */
+  $("#resTabs").addEventListener("click",function(e){
+    var b=e.target.closest("button[data-t]");if(!b)return;
+    $$("#resTabs button[data-t]").forEach(function(x){x.classList.remove("on")});
+    b.classList.add("on");
+  });
+  /* 开关 */
+  $$(".sw").forEach(function(sw){
+    sw.addEventListener("click",function(){
+      sw.setAttribute("aria-checked",sw.getAttribute("aria-checked")!=="true");
+    });
+  });
+})();
+</script>
+</body>
+</html>

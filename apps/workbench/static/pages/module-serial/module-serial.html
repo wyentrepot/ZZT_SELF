@@ -254,22 +254,18 @@
 </style>
 </head><body data-api-base="/api">
   <div class="app-shell ms-shell">
-    <header class="app-header">
-      <div class="brand">
-        <span class="brand-mark"></span>
-        <div>
-          <p>模块日志 / 烧录串口</p>
-          <span class="brand-sub">ModuleSerialService · 动态会话 · 后端串口句柄独占</span>
-        </div>
-      </div>
+    <!-- REQS-0031 P3：软件化统一壳二级页签条（模块名 + 页签 + 服务状态单行；
+         会话页签/串口参数等元素 id 均未变更） -->
+    <header class="app-header zt-bar">
+      <span class="brand-mark" aria-hidden="true">MS</span>
+      <h1 class="zt-title">模块日志</h1>
+      <span class="brand-sub">烧录串口 · 动态会话 · 后端串口句柄独占</span>
+      <nav class="ms-tabs">
+        <button class="ms-tab active" data-tab="live" type="button">实时日志</button>
+        <button class="ms-tab" data-tab="compare" type="button">对照解析</button>
+      </nav>
       <div class="dll-status"><span id="ms-server-state">未连接</span></div>
     </header>
-
-    <!-- 页签栏：实时日志 / 对照解析 / 模拟集中器 -->
-    <nav class="ms-tabs">
-      <button class="ms-tab active" data-tab="live" type="button">实时日志</button>
-      <button class="ms-tab" data-tab="compare" type="button">对照解析</button>
-    </nav>
 
 <div id="ms-tab-live" class="ms-tabpane">
       <div class="ms-session-bar">

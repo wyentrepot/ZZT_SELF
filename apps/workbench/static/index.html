@@ -40,14 +40,48 @@
 </head>
 <body>
 <div class="wb-app">
-  <header class="wb-header">
+  <!-- REQS-0031 P1：菜单栏行（软件化统一壳骨架）。
+       会话/数据菜单 = 模块快捷入口；视图菜单 = 主题/侧栏/Dock；
+       主题圆点机制（--theme-registry 单一数据源）原样保留。 -->
+  <header class="wb-menubar">
     <div class="wb-brand">
       <span class="wb-logo">AI</span>
-      <div>
-        <div class="wb-title">AI 闭环研发验证工作台</div>
-        <div class="wb-sub" id="wb-status">统一集成程序 · 侦听台 / 模块日志 / 模拟集中器 / 验证工作台</div>
-      </div>
+      <span class="wb-title">AI 闭环研发验证工作台</span>
     </div>
+    <nav class="wb-menus" aria-label="主菜单">
+      <div class="wb-menu">
+        <button type="button" class="wb-menu-btn">会话</button>
+        <div class="wb-menu-dd">
+          <button type="button" data-goto-page="serial-profile">串口配置（四槽 Profile）</button>
+          <button type="button" data-goto-page="module">模块日志（烧录 / 实时日志）</button>
+          <button type="button" data-goto-page="simcon">模拟集中器会话</button>
+        </div>
+      </div>
+      <div class="wb-menu">
+        <button type="button" class="wb-menu-btn">数据</button>
+        <div class="wb-menu-dd">
+          <button type="button" data-goto-page="listener">侦听台分析</button>
+          <button type="button" data-goto-page="dict">协议字典</button>
+          <button type="button" data-goto-page="scenario">场景脚本</button>
+          <button type="button" data-goto-page="workbench">验证工作台（Runs）</button>
+        </div>
+      </div>
+      <div class="wb-menu">
+        <button type="button" class="wb-menu-btn">视图</button>
+        <div class="wb-menu-dd">
+          <button type="button" id="wbMenuTheme">切换主题（墨夜 / 晴昼）</button>
+          <button type="button" id="wbMenuRail">折叠侧栏<span class="wb-menu-kb">Ctrl+B</span></button>
+          <button type="button" id="wbMenuDock">折叠底部面板<span class="wb-menu-kb">Ctrl+J</span></button>
+        </div>
+      </div>
+      <div class="wb-menu">
+        <button type="button" class="wb-menu-btn">帮助</button>
+        <div class="wb-menu-dd">
+          <button type="button" id="wbMenuKeys">键盘快捷键</button>
+          <button type="button" id="wbMenuAbout">关于工作台…</button>
+        </div>
+      </div>
+    </nav>
     <div class="wb-header-actions">
       <!-- 主题切换按钮由 app.js 依据 tokens-v2.css 的 --theme-registry 动态生成。
            按钮携带的属性是 data-theme-key（不是 data-theme）——
@@ -65,6 +99,38 @@
       <div id="wb-panels" class="wb-panels" aria-live="polite"></div>
     </main>
   </div>
+  <!-- REQS-0031 P1：全局 Dock（跨模块"示波器"）。
+       子页面经 postMessage({type:"wb-dock-push", view, dir, source, tag, text}) 推送行；
+       帧日志 / 日志流 / 事件 三页签，可折叠（Ctrl+J）、拖顶边调高。 -->
+  <section class="wb-dock" id="wbDock" aria-label="全局面板">
+    <div class="wb-dock-grip" id="wbDockGrip" title="拖动调整高度"></div>
+    <div class="wb-dock-h">
+      <button type="button" class="wb-dock-car" id="wbDockCar" aria-label="折叠/展开全局面板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <span class="wb-dock-title">全局面板</span>
+      <button type="button" class="wb-dock-tab on" data-dock-view="frame">帧日志</button>
+      <button type="button" class="wb-dock-tab" data-dock-view="log">日志流</button>
+      <button type="button" class="wb-dock-tab" data-dock-view="event">事件</button>
+      <span class="wb-dock-sp"></span>
+      <span class="wb-dock-chip wb-dock-chip--tx">发送 <b id="wbDockTx">0</b></span>
+      <span class="wb-dock-chip wb-dock-chip--rx">接收 <b id="wbDockRx">0</b></span>
+      <span class="wb-dock-hint">跨模块推送 · 拖顶边调高 · Ctrl+J 折叠</span>
+    </div>
+    <div class="wb-dock-b">
+      <div class="wb-dock-view on" id="wbDockViewFrame"><div class="wb-dock-empty">子页面下发 / 接收的帧将实时显示在这里（simcon 已接入）</div></div>
+      <div class="wb-dock-view" id="wbDockViewLog"><div class="wb-dock-empty">模块日志流将显示在这里（第二步接入）</div></div>
+      <div class="wb-dock-view" id="wbDockViewEvent"><div class="wb-dock-empty">验证台 / 追踪事件将显示在这里</div></div>
+    </div>
+  </section>
+  <!-- REQS-0031 P1：底部状态栏（承接原 wb-sub 的服务健康展示）。 -->
+  <footer class="wb-statusbar">
+    <span class="wb-sb-kv" id="wb-status">统一集成程序</span>
+    <span class="wb-sb-sp"></span>
+    <span class="wb-sb-kv">Dock <b id="wbSbDock">展开</b></span>
+    <span class="wb-sb-kv">主题 <b id="wbSbTheme">—</b></span>
+    <span class="wb-sb-demo">软件化统一壳 · REQS-0031 · Ctrl+B 侧栏 / Ctrl+J 面板</span>
+  </footer>
 </div>
 <script src="/static/app.js"></script>
 </body>

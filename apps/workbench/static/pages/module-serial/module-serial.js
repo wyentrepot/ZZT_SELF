@@ -334,6 +334,15 @@
     }
   }
 
+  /* REQS-0031 P3：推送外壳全局 Dock（跨模块"示波器"）。
+     postMessage 交给壳层（app.js 监听 wb-dock-push），独立运行时静默跳过。 */
+  function pushDock(message) {
+    try {
+      if (!window.parent || window.parent === window) return;
+      window.parent.postMessage(Object.assign({ type: "wb-dock-push", source: "模块日志" }, message), "*");
+    } catch (error) { /* 非嵌套环境静默 */ }
+  }
+
   async function pollActiveLogs() {
     const session = currentSession();
     if (!session) return;
@@ -341,7 +350,18 @@
     try {
       const data = await request(api("/module-serial/sessions/" + session.session_id + "/logs?after=" + after));
       const view = viewState(session.session_id);
-      (data.lines || []).forEach(function (line) { view.lines.push(line); });
+      (data.lines || []).forEach(function (line) {
+        view.lines.push(line);
+        // REQS-0031 P3：增量 RX/TX 行 → 外壳 Dock「日志流」
+        if (line.dir === "RX" || line.dir === "TX") {
+          pushDock({
+            view: "log",
+            dir: line.dir === "TX" ? "tx" : "rx",
+            tag: session.title || session.module || "会话",
+            text: String(line.text || "").split(String.fromCharCode(13)).join("").split(String.fromCharCode(10)).join(""),
+          });
+        }
+      });
       while (view.lines.length > MAX_LOG_ROWS) view.lines.shift();
       if (typeof data.last_seq === "number") lastSeqBySessionId.set(session.session_id, data.last_seq);
       renderLog();
