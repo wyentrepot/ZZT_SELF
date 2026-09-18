@@ -97,6 +97,7 @@
 | GET | `/api/indexes` ＋ 别名 `/api/listener/indexes` | — | 索引清单（LogFileService.list_indexes()） | 503 |
 | GET | `/api/indexes/{index_id}/frames` ＋ 别名（同参数同 §3.1 帧参数） | 同上 | LogFileService.list_index_frames() | 404 / 422 / 503 |
 | GET | `/api/indexes/{index_id}/frames/{frame_id}` ＋ 别名 | — | 单帧详情 | 404 / 500 / 503 |
+| GET | `/api/concurrent/stats` | `period=15m\|30s\|1h\|900`（REQS-0030 侦听台只读统计） | 与 simcon `/batch/stats` 同口径：最大并发数/成功率/平均耗时/重复下发；来源=收发库 frame_log AFN=F1/FN=F1，tx/rx 均为侦听帧，**不发帧** | 200（空库返回空 buckets） |
 
 workbench 外部：`/api/indexes/... → /api/listener/indexes/...`；别名路由对应外部
 `/api/listener/indexes/... → /api/listener/listener/indexes/...`（两者均可用）。

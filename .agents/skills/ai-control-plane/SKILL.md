@@ -1,21 +1,76 @@
 ---
 name: ai-control-plane
-description: Control the HPLC meter-reading workbench over HTTP as an AI. Default to the bounded task facade at /api/ai/v2 for low-token investigations, module actions, verification, flashing, jobs, and evidence; retain /api/ai/v1 for expert diagnostics and legacy clients. Use when an AI agent needs to operate the 侦听台改造 workbench (serial ports, flash, log observation, evidence retrieval) programmatically, e.g. "用 AI 控制台向 cco/sta 发串口指令"、"AI 烧录固件并等结果"、"AI 观察日志并取证".
-argument-hint: "[task, e.g. 监控cco日志直到出现XX / 向sta发送... / 烧录固件 / 跑验证用例]"
+description: Control the HPLC meter-reading workbench over HTTP as an AI, plus an offline app-layer frame toolkit. Frame parse/build/verify (1376.2 nesting 698/645, e.g. 1103 concurrent meter reading) works WITHOUT the workbench via the daily lightweight path; the bounded task facade at /api/ai/v2 covers low-token investigations, module actions, verification, flashing, jobs, and evidence; /api/ai/v1 is retained for expert diagnostics and legacy clients. Use when an AI agent needs to parse/build/verify protocol frames offline or operate the 侦听台改造 workbench (serial ports, flash, log observation, evidence retrieval) programmatically, e.g. "解析这帧 68 开头的报文"、"构一帧 645 读电能"、"用 AI 控制台向 cco/sta 发串口指令"、"AI 烧录固件并等结果"、"AI 观察日志并取证".
+argument-hint: "[task, e.g. 解析这帧报文 / 构一帧645读电能 / 监控cco日志直到出现XX / 烧录固件]"
 metadata:
   author: reasonix
-  version: "2.4.0"
-  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF（WSL 权威仓库；Windows 侧见 D:\2-侦听台改造）
+  version: "2.6.0"
+  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF（WSL 权威仓库；Windows 侧见 D:\2-侦听台改造，解析网关明文区部署另见 D:\019-wy-tool\ZZT_SELF）
   source: 工作台仓库 .agents/skills/ai-control-plane（事实源，改动先改此处再回灌全局）
 ---
 
 # AI 控制面 Skill（ai-control-plane）
 
-驱动工作台（8790）的 HTTP 控制面。**默认按任务走 v2 最小路径：先发现能力，提交一个
+**先按用途路由（渐进式加载）：帧解析/构帧/回验 → 直接用下方「日常轻量档」，无需工作台；
+需要驱动工作台时，默认按任务走 v2 最小路径：先发现能力，提交一个
 任务，读取 job，按需取证；只读对应 reference，用完即止。** v2 不删除 v1；八步细节
 在下方 v1 references/*.md，完整手册为 `references/operation-guide.md`（自包含副本）。
 **例外**：下表「离线数据排查 / 漏点定位」是组合场景，允许一次读
 `offline-analysis.md` + `cco-log.md` + `listener.md` 三个 reference（多端交叉验证需要）。
+
+## 用途路由（渐进式加载：先看本表，只读所需，用完即止）
+
+| 当前用途 | 读什么 | 不必读 |
+| --- | --- | --- |
+| **用户给了帧要解析 / 要构帧 / 产帧要回验（TDD）** | **下方「日常轻量档」即可独立完成** | 全部 v1/v2 references |
+| 发现后端/逻辑资源、并行观察、取证 | v2 门面速查（下表） | 全部 v1 references |
+| 监控日志 / 盯帧取证 | references/observations.md | 其余 |
+| 发串口指令 / 烧录固件 | references/module-serial.md | 其余 |
+| 验证用例 / 单步 / 查帧 | references/simcon.md | 其余 |
+| 查已解析帧 / 业务流追踪 | references/listener.md | 其余 |
+| 组网排查（入网/离网/冲突/信标） | references/network-diagnostics.md | 其余 |
+| 离线数据排查 / 漏点定位 | offline-analysis.md（组合场景 +cco-log +listener） | 其余 |
+| 全链路场景 / 字典查询 / 8790 构帧预检 | references/helpers.md | 其余 |
+| 拿 token / 管授权 | references/auth.md（人来做） | 其余 |
+
+## 日常轻量档（应用层帧工具，免工作台，REQS-0032）
+
+> 适用：手头只有一帧报文要解析，或按知识库帧格式构帧做测试用例（TDD）、产帧要验收。
+> **不启工作台 8790、不启解析网关 8700、不需要 DLL / token / 串口**——
+> 纯 Python 解析库 `libs/parser_lib` 直用，JSON 打到 stdout。
+
+- **覆盖范围**：应用层帧 = **1376.2（内嵌 698/645 自动递归解出，典型如 1103 并发抄表
+  F1H-F1）、698.45、645-2007**。GW 封装/双模/网络层帧不在日常档（走上方全功能档）。
+- **双模式容错**：不指定协议 = 自动嗅探（严格：校验和参与打分，识别不了输出
+  `unrecognized` + 各协议得分 + 建议指定协议重试，**不硬解**）；`--protocol` 指定 =
+  宽容（**允许错误帧**：强制解析，CS/FCS 校验失败以 `warnings` 表达）。
+- 仓库根 `<WORKBENCH_ROOT>` 解析见下一节（启动器已自动注入 sys.path，免配 PYTHONPATH）。
+
+```bash
+# 1) 解析：hex → JSON（自动嗅探；1376.2 内嵌 645/698 进 frame.nested）
+python3 <WORKBENCH_ROOT>/tools/scripts/appframe.py parse --hex "68 12 34 ..."
+python3 <WORKBENCH_ROOT>/tools/scripts/appframe.py parse --hex "<错帧>" --protocol 645  # 指定=强解+warnings
+
+# 2) 构帧：语义参数 → 帧 hex（1376.2 透传 adapter_10376.build_frame_json 全量契约）
+python3 <WORKBENCH_ROOT>/tools/scripts/appframe.py build --protocol 645 \
+  --params '{"addr":"123456789012","control":"11","di":"00010000"}'
+python3 <WORKBENCH_ROOT>/tools/scripts/appframe.py build --protocol 698.45 \
+  --params '{"addr":"05353781090030","ca":"00","oad":"02010200"}'
+python3 <WORKBENCH_ROOT>/tools/scripts/appframe.py build --protocol 1376.2 \
+  --params '{"afn":"F1","fn":1,"data":{"raw":"<645/698帧hex，1103包裹场景>"}}'
+
+# 3) 回验：解析回验 + 意图字段比对（构帧产物 TDD 断言依据；verified=false 时看 diff）
+python3 <WORKBENCH_ROOT>/tools/scripts/appframe.py verify --hex "68 ..." \
+  --expect '{"地址域":"123456789012"}'
+```
+
+- 退出码：0 = 成功（verify 需 `verified:true`）；1 = 业务失败（JSON 内 `error` /
+  `verified:false`，含"无法识别"）；2 = 用法错误。
+- 库级 API（在脚本里 import）：`PYTHONPATH=libs` 后
+  `from parser_lib.facade import decode, build, verify`；单测样例见
+  `libs/parser_lib/test_facade.py`（含 1103 并发抄表构帧样本）。
+- 与全功能档的关系：真实下发/串口/烧录/取证仍走 v2/v1；8790 的 `POST
+  /api/listener/parse`（net48 DLL 深度解析）与本轻量档口径不同源，做对拍时才一起用。
 
 ## 路径根解析（全局可用前提）
 
