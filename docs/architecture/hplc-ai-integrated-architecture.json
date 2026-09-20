@@ -1,0 +1,260 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AI 一体化 HPLC 研发验证工程：全局架构",
+    "locale": "zh-CN",
+    "output": "hplc-ai-integrated-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [1680, 980],
+    "views": [
+      {
+        "id": "integrated-platform",
+        "label": "一体化平台",
+        "focus": ["zzt_workbench", "zzt_ai_control", "zzt_listener", "zzt_module_log", "zzt_simcon"],
+        "note": "Workbench 以统一 UI、FastAPI、AI 控制面和三个现场子系统组成一体化入口。"
+      },
+      {
+        "id": "verification-evidence",
+        "label": "验证与证据",
+        "focus": ["zzt_run_executor", "zzt_listener", "zzt_module_log", "zzt_simcon", "zzt_evidence"],
+        "note": "验证编排读取侦听索引和模块日志，并通过模拟集中器激励现场，统一形成可审计证据。"
+      },
+      {
+        "id": "hardware-resources",
+        "label": "硬件与资源",
+        "focus": ["zzt_resource_coord", "zzt_listener_device", "zzt_module_hw", "zzt_hplc_bus"],
+        "note": "物理串口登记与 Run 级逻辑租约分层，现场三条物理链路保持独立。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "zzt_workbench",
+      "type": "frontend",
+      "label": "AI 工作台（UI + FastAPI）",
+      "tag": "PORT 8790",
+      "pos": [200, 70],
+      "size": [950, 140]
+    },
+    {
+      "id": "zzt_ai_control",
+      "type": "security",
+      "label": "AI 控制面",
+      "tag": "IN-PROCESS FACADE",
+      "pos": [1300, 70],
+      "size": [350, 140]
+    },
+    {
+      "id": "zzt_listener",
+      "type": "backend",
+      "label": "侦听台",
+      "tag": "LISTENER :8765",
+      "pos": [200, 350],
+      "size": [340, 145]
+    },
+    {
+      "id": "zzt_module_log",
+      "type": "backend",
+      "label": "模块日志与烧录",
+      "tag": "MODULE SERIAL",
+      "pos": [560, 350],
+      "size": [340, 145]
+    },
+    {
+      "id": "zzt_simcon",
+      "type": "backend",
+      "label": "模拟集中器",
+      "tag": "SIMCON",
+      "pos": [920, 350],
+      "size": [340, 145]
+    },
+    {
+      "id": "zzt_run_executor",
+      "type": "backend",
+      "label": "验证编排 RunExecutor",
+      "tag": "RUN / THREAD",
+      "pos": [1300, 300],
+      "size": [350, 140]
+    },
+    {
+      "id": "zzt_evidence",
+      "type": "database",
+      "label": "Evidence → Assertion / Report / Artifact",
+      "tag": "AUDITABLE OUTPUT",
+      "pos": [1300, 520],
+      "size": [350, 140]
+    },
+    {
+      "id": "zzt_resource_coord",
+      "type": "database",
+      "label": "共享资源协调",
+      "tag": "PHYSICAL ≠ RUN LEASE",
+      "pos": [1300, 740],
+      "size": [350, 140]
+    },
+    {
+      "id": "zzt_listener_device",
+      "type": "external",
+      "label": "侦听设备",
+      "tag": "PASSIVE CAPTURE",
+      "pos": [200, 570],
+      "size": [340, 105]
+    },
+    {
+      "id": "zzt_module_hw",
+      "type": "external",
+      "label": "CCO / STA 模块",
+      "tag": "DEBUG SERIAL",
+      "pos": [560, 570],
+      "size": [340, 105]
+    },
+    {
+      "id": "zzt_hplc_bus",
+      "type": "external",
+      "label": "HPLC / 1376.2 物理总线",
+      "tag": "PHYSICAL BUS",
+      "pos": [920, 570],
+      "size": [340, 105]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "AI 一体化工作台进程内边界",
+      "wraps": ["zzt_workbench", "zzt_ai_control", "zzt_listener", "zzt_module_log", "zzt_simcon", "zzt_run_executor", "zzt_evidence", "zzt_resource_coord"],
+      "pad": 28
+    },
+    {
+      "kind": "region",
+      "label": "真实 HPLC 实验台",
+      "wraps": ["zzt_listener_device", "zzt_module_hw", "zzt_hplc_bus"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "workbench-to-ai-control",
+      "from": "zzt_workbench",
+      "to": "zzt_ai_control",
+      "label": "进程内 Python 调用",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelAt": [1225, 50]
+    },
+    {
+      "id": "workbench-to-listener",
+      "from": "zzt_workbench",
+      "to": "zzt_listener",
+      "label": "ASGI /api/listener",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[675, 280], [370, 280]],
+      "labelAt": [370, 275]
+    },
+    {
+      "id": "workbench-to-module-log",
+      "from": "zzt_workbench",
+      "to": "zzt_module_log",
+      "label": "ASGI /api/module-serial",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[675, 280], [730, 280]],
+      "labelAt": [830, 240]
+    },
+    {
+      "id": "workbench-to-simcon",
+      "from": "zzt_workbench",
+      "to": "zzt_simcon",
+      "label": "app.mount /api/simcon",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[675, 280], [1090, 280]],
+      "labelAt": [1090, 275]
+    },
+    {
+      "id": "ai-control-to-run",
+      "from": "zzt_ai_control",
+      "to": "zzt_run_executor",
+      "label": "验证任务 / Run",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1475, 255]
+    },
+    {
+      "id": "run-to-evidence",
+      "from": "zzt_run_executor",
+      "to": "zzt_evidence",
+      "label": "三源证据 → Evidence freeze → Report / Artifact",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1475, 480]
+    },
+    {
+      "id": "listener-to-device",
+      "from": "zzt_listener",
+      "to": "zzt_listener_device",
+      "label": "侦听串口 / 被动原始帧",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [370, 535]
+    },
+    {
+      "id": "module-log-to-module",
+      "from": "zzt_module_log",
+      "to": "zzt_module_hw",
+      "label": "CCO / STA 调试串口 · XMODEM",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [730, 535]
+    },
+    {
+      "id": "simcon-to-bus",
+      "from": "zzt_simcon",
+      "to": "zzt_hplc_bus",
+      "label": "HPLC / 1376.2 测试激励",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1090, 535]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "统一入口与控制面",
+      "items": [
+        "Workbench 聚合 UI、FastAPI、三个子应用与验证 API；AI API v1/v2 负责授权边界。",
+        "AIControlService 通过进程内注入复用 listener、module_log、simcon，UI 和 AI 不直接打开串口。"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "三类现场能力",
+      "items": [
+        "侦听台持续保留原始 LOG 与 SQLite frames；本地 .NET DLL → Windows 远程 parser_service 失败时仍可采集。",
+        "模块日志覆盖 CCO / STA 调试与 XMODEM；模拟集中器在 HPLC / 1376.2 总线上执行激励和自动应答。"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "验证证据闭环",
+      "items": [
+        "RunExecutor 的三源适配语义为：listener 只读 SQLite frames，loghooks 读取模块日志，simcon 调用 execute_task。",
+        "Evidence freeze 后形成 Assertion、Report、Artifact；证据和产物保持可追溯、可审计。"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "资源与台架边界",
+      "items": [
+        "SerialResourceRegistry 是进程级物理串口句柄登记；ResourceLeaseManager 是 Run 级逻辑租约，不能混为一谈。",
+        "实验台把侦听串口、CCO / STA 调试串口和 HPLC / 1376.2 物理总线分成三条链路。"
+      ]
+    }
+  ]
+}

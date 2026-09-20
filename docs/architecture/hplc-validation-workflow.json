@@ -1,0 +1,240 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "HPLC 抄表通信研发验证闭环",
+    "locale": "zh-CN",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "closed-loop",
+        "label": "研发验证闭环",
+        "focus": ["need", "case", "run", "lease", "collect", "evidence", "assertion", "report"],
+        "note": "从需求与故障进入异步 Run，经过三路采集与证据归一，形成可审计结论。"
+      },
+      {
+        "id": "evidence-path",
+        "label": "采集与证据",
+        "focus": ["collect", "evidence", "assertion", "report"],
+        "note": "侦听采集、模块日志/烧录、模拟集中器激励汇聚为统一 Evidence。"
+      },
+      {
+        "id": "outcomes",
+        "label": "结论与取消",
+        "focus": ["run", "report", "passed", "failed", "inconclusive", "error"],
+        "note": "结论区分通过、失败、证据不足与错误；取消采用协作式状态传播。"
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "intake", "label": "目标与编排" },
+    { "id": "sources", "label": "数据源与证据" },
+    { "id": "outcomes", "label": "结论与取消", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "intent", "label": "定义验证目标", "fromCol": 0, "toCol": 1 },
+    { "id": "execution", "label": "创建并执行 Run", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "judgement", "label": "证据到结论", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    {
+      "id": "run-control",
+      "label": "异步 Run 控制",
+      "lane": "intake",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "source-aggregation",
+      "label": "三路采集与归一",
+      "lane": "sources",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    },
+    {
+      "id": "terminal-outcomes",
+      "label": "可审计结论",
+      "lane": "outcomes",
+      "fromCol": 0,
+      "toCol": 2,
+      "variant": "security"
+    }
+  ],
+  "mainPath": ["need", "case", "run", "lease", "collect", "evidence", "assertion", "report"],
+  "semanticChecks": {
+    "allowedRoots": ["need"],
+    "allowedTerminals": ["passed", "failed", "inconclusive", "error"],
+    "requiredEdges": [
+      { "from": "need", "to": "case" },
+      { "from": "case", "to": "run" },
+      { "from": "run", "to": "lease" },
+      { "from": "lease", "to": "collect" },
+      { "from": "collect", "to": "evidence" },
+      { "from": "evidence", "to": "assertion" },
+      { "from": "assertion", "to": "report" },
+      { "from": "report", "to": "passed" },
+      { "from": "report", "to": "failed" },
+      { "from": "report", "to": "inconclusive" },
+      { "from": "report", "to": "error" }
+    ],
+    "requiredPaths": [
+      { "from": "need", "to": "passed" },
+      { "from": "need", "to": "failed" },
+      { "from": "need", "to": "inconclusive" },
+      { "from": "need", "to": "error" }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "need",
+      "lane": "intake",
+      "col": 0,
+      "type": "external",
+      "label": "需求 / 故障",
+      "width": 188
+    },
+    {
+      "id": "case",
+      "lane": "intake",
+      "col": 1,
+      "type": "backend",
+      "label": "用例与参数校验",
+      "width": 188
+    },
+    {
+      "id": "run",
+      "lane": "intake",
+      "col": 2,
+      "type": "backend",
+      "label": "创建异步 Run",
+      "tag": "running",
+      "width": 188
+    },
+    {
+      "id": "lease",
+      "lane": "intake",
+      "col": 3,
+      "type": "security",
+      "label": "资源租约",
+      "tag": "scope",
+      "width": 188
+    },
+    {
+      "id": "collect",
+      "lane": "sources",
+      "col": 4,
+      "type": "messagebus",
+      "label": "三路采集 / 激励",
+      "tag": "flash → monitor → stimulus",
+      "width": 224
+    },
+    {
+      "id": "evidence",
+      "lane": "sources",
+      "col": 5,
+      "type": "database",
+      "label": "Evidence 归一冻结",
+      "tag": "audit base",
+      "width": 204
+    },
+    {
+      "id": "assertion",
+      "lane": "sources",
+      "col": 5,
+      "type": "backend",
+      "label": "Assertion",
+      "yOffset": 142,
+      "width": 204
+    },
+    {
+      "id": "report",
+      "lane": "sources",
+      "col": 5,
+      "type": "backend",
+      "label": "Report / Artifact",
+      "yOffset": 284,
+      "tag": "traceable",
+      "width": 204
+    },
+    {
+      "id": "passed",
+      "lane": "outcomes",
+      "col": 2,
+      "type": "backend",
+      "label": "通过",
+      "yOffset": 310,
+      "width": 168
+    },
+    {
+      "id": "failed",
+      "lane": "outcomes",
+      "col": 2,
+      "type": "security",
+      "label": "失败",
+      "yOffset": 414,
+      "width": 168
+    },
+    {
+      "id": "inconclusive",
+      "lane": "outcomes",
+      "col": 1,
+      "type": "external",
+      "label": "证据不足",
+      "yOffset": 310,
+      "width": 168
+    },
+    {
+      "id": "error",
+      "lane": "outcomes",
+      "col": 0,
+      "type": "security",
+      "label": "错误",
+      "yOffset": 310,
+      "width": 168
+    }
+  ],
+  "edges": [
+    { "id": "need-case", "from": "need", "to": "case", "label": "定义验证目标", "role": "main" },
+    { "id": "case-run", "from": "case", "to": "run", "label": "创建可追踪实例", "role": "main", "variant": "emphasis" },
+    { "id": "run-lease", "from": "run", "to": "lease", "label": "申请资源", "role": "main", "variant": "security" },
+    { "id": "lease-collect", "from": "lease", "to": "collect", "label": "启动适配器", "role": "main", "variant": "emphasis" },
+    { "id": "collect-evidence", "from": "collect", "to": "evidence", "label": "采集原始数据并归一", "role": "main" },
+    { "id": "evidence-assertion", "from": "evidence", "to": "assertion", "label": "提供证据", "role": "main" },
+    { "id": "assertion-report", "from": "assertion", "to": "report", "label": "形成判定", "role": "main", "variant": "emphasis" },
+    { "id": "report-passed", "from": "report", "to": "passed", "label": "passed", "role": "return", "variant": "emphasis" },
+    { "id": "report-failed", "from": "report", "to": "failed", "label": "failed", "role": "error", "variant": "security" },
+    { "id": "report-inconclusive", "from": "report", "to": "inconclusive", "label": "inconclusive", "role": "branch", "variant": "dashed" },
+    { "id": "report-error", "from": "report", "to": "error", "label": "error", "role": "error", "variant": "security" },
+    { "id": "run-cancel", "from": "run", "to": "report", "label": "协作式取消：cancelling → cancelled", "role": "branch", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "route": "bottom-channel", "labelSegment": 1 }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "采集与解析事实",
+      "items": [
+        "WorkBench 通过 /api/listener 进行进程内 ASGI 前缀转发",
+        "PySerial 字节流按 0x7E 切帧，先写会话日志，再批量写入 SQLite frames / minute_reports",
+        "解析优先本地 .NET DLL，退化为远程 HTTP /api/version + /api/parse；均不可用仍继续采集入库"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "追踪与组网派生",
+      "items": [
+        "Frame 入库回调推动 TraceService live cursor / replay / ACK 配对",
+        "NwkService 对 frames 增量 decode_frame，生成 nwk_events / nwk_scan_state"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "结论边界",
+      "items": [
+        "Run 后台顺序：flash → monitor → stimulus → compare → feedback → evidence/report",
+        "无证据进入 inconclusive，不把证据不足误判为 failed；Report 是派生结果，Evidence 与 Artifact 清单是审计基础"
+      ]
+    }
+  ]
+}
