@@ -117,7 +117,7 @@
 - [x] listener.md「离线日志索引」节存在，含 8790 网关路径与 409 互斥说明（BR-6）。
 - [x] capabilities 响应每项带 call_examples，与 SKILL.md 速查表一致（BR-7，2026-09-21 实现：local_full/lan_scoped 双用例断言通过）。
 - [x] 单测全绿（test_ai_v2_api.py 27 passed；全量回归 344 passed / 7 failed 全为存量——store 查询 5 + profile_loading 2，均经 stash 基线验证与 BR-7 无关）。
-- [ ] 全局库 git 提交留痕；REQS-INDEX.md 0033 登记（登记已完成）；技能校验脚本通过（EXIT=0 已验，2026-09-21）。
+- [x] 全局库 git 提交留痕（skill-fc 4bb4d0f）；REQS-INDEX.md 0033 登记（已完成）；技能校验脚本通过（EXIT=0 已验，2026-09-21）；工作区提交 8e33b37。
 
 ## 6. 变更记录
 

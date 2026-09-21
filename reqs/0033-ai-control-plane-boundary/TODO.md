@@ -18,5 +18,5 @@
 
 ### P2：同步与登记
 - [x] 单测全绿（test_ai_v2_api.py 27 passed；全量回归 344 passed，7 failed 全为存量）
-- [ ] 技能校验 verify_api_inventory.py 通过
-- [ ] 全局库 git 提交留痕；REQS-INDEX.md 0033 登记（登记已完成，提交待 P1 收口）
+- [x] 技能校验 verify_api_inventory.py 通过（EXIT=0）
+- [x] 全局库 git 提交留痕（skill-fc 4bb4d0f）；REQS-INDEX.md 0033 登记；工作区提交 8e33b37
