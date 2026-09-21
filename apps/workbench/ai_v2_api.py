@@ -29,7 +29,12 @@ from .ai_store import IdempotencyConflict
 
 def _bearer_grant(authorization: str | None, auth_store: AuthorizationStore) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="缺少 Bearer token")
+        # REQS-0034 BR-1：缺 token 与缺环境变量是两回事——直接提示本机 loopback 免 token 姿势，
+        # 不再裸 401「缺少 Bearer token」；有 token 但无效/过期/撤销时走下方原文案。
+        raise HTTPException(
+            status_code=401,
+            detail="缺少 Bearer token；本机 loopback 可在启动时设 WORKBENCH_LOCAL_FULL_ACCESS=1 免 token",
+        )
     try:
         return auth_store.authenticate(authorization[7:].strip(), scope="status:read")
     except AuthorizationError as exc:

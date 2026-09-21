@@ -192,3 +192,6 @@ class JobEnvelope(_Contract):
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     underlying_refs: list[str] = Field(default_factory=list)
     result: dict[str, object] | None = None
+    # REQS-0034 BR-2：非终态 investigation 信封带「必读 job」提示，消除
+    # 「信封 queued + 又要轮询」的两步语义困惑；其他类型任务/终态为 null，旧客户端无影响。
+    follow_up: str | None = Field(default=None, max_length=256)

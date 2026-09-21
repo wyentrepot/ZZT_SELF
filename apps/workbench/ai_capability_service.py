@@ -400,11 +400,17 @@ class AICapabilityService:
             )
         else:
             public_result = _strip_paths(result)
-        return JobEnvelope(job_id=self._job_id(operation["operation_id"]),
-                           job_state=state_map.get(state, JobState.RUNNING), verdict=verdict,
+        job_id = self._job_id(operation["operation_id"])
+        job_state = state_map.get(state, JobState.RUNNING)
+        # REQS-0034 BR-2：非终态 investigation 信封带「必读 job」提示——客户端一眼可知
+        # 这只是受理回执，必须读 GET /jobs/{job_id} 拿终态；终态/非 investigation 为 null。
+        follow_up = None
+        if is_investigation and job_state in {JobState.QUEUED, JobState.RUNNING}:
+            follow_up = f"GET /api/ai/v2/jobs/{job_id}"
+        return JobEnvelope(job_id=job_id, job_state=job_state, verdict=verdict,
                            source_health=source_health, summary=summary,
                            evidence_refs=refs, underlying_refs=underlying,
-                           result=public_result)
+                           result=public_result, follow_up=follow_up)
 
     @staticmethod
     def _verdict(state: str, results: list[dict]) -> Verdict | None:
@@ -505,7 +511,11 @@ class AICapabilityService:
         for ref_text in refs:
             matched = _LISTENER_REF_RE.fullmatch(str(ref_text or "").strip())
             if matched is None:
-                raise InvalidObservation(f"L3 ref 格式错误：{ref_text}")
+                # REQS-0034 BR-3：格式错误直接给出合法示例，客户端不用翻文档。
+                raise InvalidObservation(
+                    f"L3 ref 格式错误：{ref_text}；合法格式 listener:<index_id>:<frame_id>，"
+                    f"如 listener:idx-xxx:123"
+                )
             if str(ref_text or "").strip() not in allowed:
                 raise EvidenceRefForbidden(f"L3 ref 不属于该 job：{ref_text}")
             index_id = matched.group("index_id")

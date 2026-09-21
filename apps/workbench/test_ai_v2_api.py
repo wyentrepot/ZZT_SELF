@@ -118,6 +118,31 @@ def test_v2_loopback_without_flag_requires_a_bearer_grant(monkeypatch, tmp_path)
     assert {"code", "message", "details", "request_id", "detail"} <= set(response.json())
 
 
+def test_v2_without_token_and_flag_401_hints_workbench_env_var(monkeypatch, tmp_path):
+    """REQS-0034 BR-1：缺 Bearer 且未开 local_full 时，401 detail 直接提示可设
+    WORKBENCH_LOCAL_FULL_ACCESS=1（本机 loopback 免 token），不再裸「缺少 Bearer token」。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.delenv("WORKBENCH_LOCAL_FULL_ACCESS", raising=False)
+
+    response = TestClient(_app()).get("/api/ai/v2/capabilities")
+
+    assert response.status_code == 401
+    assert "WORKBENCH_LOCAL_FULL_ACCESS" in response.json()["detail"]
+    assert "Bearer" in response.json()["detail"]
+
+
+def test_v2_with_invalid_token_keeps_original_401_message(monkeypatch, tmp_path):
+    """REQS-0034 BR-1：有 token 但无效/过期/撤销时保留原无效文案（不提示环境变量）。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.delenv("WORKBENCH_LOCAL_FULL_ACCESS", raising=False)
+
+    response = TestClient(_app()).get("/api/ai/v2/capabilities", headers=_bearer("not-a-valid-token"))
+
+    assert response.status_code == 401
+    assert "WORKBENCH_LOCAL_FULL_ACCESS" not in response.json()["detail"]
+    assert "Bearer" in response.json()["detail"]
+
+
 def test_v2_remote_peer_cannot_spoof_loopback_with_forwarded_headers(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
@@ -394,6 +419,53 @@ def _write_app(module, *, simcon=None, auth=None):
     )
 
 
+def _live_investigation():
+    """live 窗口 investigation：受理后异步执行，创建响应恒为非终态（queued）。
+
+    timeout_seconds 取小值（5s）：本用例只需断言创建信封，不等待终态；同时避免
+    后台 live worker 长时间存活拖慢解释器退出（ThreadPoolExecutor 非 daemon join）。"""
+    return {
+        "observations": [{
+            "source": "module_log", "target": {"session_id": "ms-cco"},
+            "window": {"mode": "live", "start": "now", "timeout_seconds": 5},
+            "match": {"kind": "not_seen", "matcher": {"kind": "literal", "value": "never"}},
+        }],
+        "client_request_id": "p2-follow-up-1",
+    }
+
+
+def test_v2_investigation_creation_envelope_carries_follow_up(monkeypatch, tmp_path):
+    """REQS-0034 BR-2：investigation 创建响应（非终态）带 follow_up「必读 job」提示。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
+                               listener_factory=_listener_bundle_factory)
+    client = TestClient(app)
+
+    created = client.post("/api/ai/v2/investigations", json=_live_investigation())
+
+    assert created.status_code == 202
+    body = created.json()
+    assert body["job_state"] == "queued"
+    assert body["follow_up"] == f"GET /api/ai/v2/jobs/{body['job_id']}"
+
+
+def test_v2_non_investigation_envelope_follow_up_is_null(monkeypatch, tmp_path):
+    """REQS-0034 BR-2：非 investigation 任务（module_action）信封 follow_up 为 null。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    module = _WriteModuleService()
+    client = TestClient(_write_app(module))
+
+    response = client.post("/api/ai/v2/module-actions", json={
+        "action": "stop", "session_id": "ms-cco", "force": True,
+    })
+
+    assert response.status_code == 202
+    assert response.json().get("follow_up") is None
+
+
 def test_v2_module_action_ensure_returns_owned_and_does_not_close_reused_session(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
@@ -597,6 +669,27 @@ def test_v2_listener_evidence_l3_accepts_job_refs_and_rejects_foreign(monkeypatc
     assert "raw_hex" in ok.text
     assert foreign.status_code == 403
     assert malformed.status_code == 422
+
+
+def test_v2_listener_evidence_l3_malformed_ref_422_carries_valid_format_example(monkeypatch, tmp_path):
+    """REQS-0034 BR-3：L3 ref 格式错误 422 的 detail 直接给出合法格式示例。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    app = create_workbench_app(module_log_factory=_module_factory,
+                               simcon_factory=_plain_simcon_factory,
+                               listener_factory=_trace_bundle_factory)
+    client = TestClient(app)
+    job_id = _create_trace_job(client)
+
+    malformed = client.get(
+        f"/api/ai/v2/jobs/{job_id}/evidence",
+        params={"level": "L3", "ref": "listener:not-a-frame"},
+    )
+
+    assert malformed.status_code == 422
+    detail = malformed.json()["detail"]
+    assert "listener:<index_id>:<frame_id>" in detail
+    assert "listener:idx-xxx:123" in detail
 
 
 class _MinutePeriodsLogService(FakeListenerLogService):

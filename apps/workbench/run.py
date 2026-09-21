@@ -78,6 +78,22 @@ def _ensure_serial_nodes() -> None:
         pass
 
 
+def _print_startup_preflight() -> None:
+    """启动前置检查横幅（REQS-0034 BR-1，工作台使用优化）。
+
+    纯 print 提示，不改变启动逻辑：列出环境变量门槛（缺省给出补救提示）
+    与健康检查地址，避免"启动成功但 v2 调用裸 401"后才去排查。
+    """
+    full_access = os.environ.get("WORKBENCH_LOCAL_FULL_ACCESS", "").strip()
+    full_hint = ("" if full_access else
+                 "（缺省：v2 调用将要求 Bearer token；本机 loopback 可在启动时设 =1 免 token）")
+    print(f"[workbench] WORKBENCH_LOCAL_FULL_ACCESS={full_access or '<unset>'}{full_hint}")
+    open_workbench = os.environ.get("HPLC_OPEN_WORKBENCH", "1").strip()
+    open_hint = "" if open_workbench == "0" else "（headless/无图形环境建议设 =0，免 xdg-open 噪音）"
+    print(f"[workbench] HPLC_OPEN_WORKBENCH={open_workbench}{open_hint}")
+    print(f"[workbench] 健康检查：GET http://127.0.0.1:{PORT}/api/health")
+
+
 def _open() -> None:
     if os.environ.get("HPLC_OPEN_WORKBENCH", "1") != "0":
         try:
@@ -90,6 +106,7 @@ def _open() -> None:
 
 if __name__ == "__main__":
     _ensure_serial_nodes()
+    _print_startup_preflight()
     Timer(1.0, _open).start()
     # 0.0.0.0：开放局域网监听（ADR-28），本机仍可 127.0.0.1 访问；页面接口无鉴权，仅限可信局域网。
     uvicorn.run("workbench.app:app", host="0.0.0.0", port=PORT)
