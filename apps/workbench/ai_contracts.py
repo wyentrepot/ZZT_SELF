@@ -26,6 +26,9 @@ class Capability(_Contract):
     allowed: bool
     resources: list[str] = Field(default_factory=list)
     reason: str | None = Field(default=None, max_length=240)
+    # REQS-0033 BR-7：每项能力的最小 HTTP 调用链示例（"一键小抄"）；可选字段，
+    # 旧客户端不读即无影响；口径与 ai-control-plane SKILL.md「任务 → 最小路径速查」一致。
+    call_examples: list[str] = Field(default_factory=list)
 
 
 class ResourceAlias(_Contract):

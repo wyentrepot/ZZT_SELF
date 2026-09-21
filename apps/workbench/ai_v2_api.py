@@ -96,6 +96,50 @@ def _resource_aliases(control: AIControlService, grant: dict | None) -> list[Res
     return [item for item in result if item.alias in granted_resources]
 
 
+# REQS-0033 BR-7：每项 v2 能力的最小 HTTP 调用链示例（"一键小抄"）。
+# 口径与 ai-control-plane SKILL.md「任务 → 最小路径速查」表逐条一致；
+# 缺省能力不在此表 → call_examples 为空数组。
+_CALL_EXAMPLES: dict[str, list[str]] = {
+    "capabilities.read": ["GET /api/ai/v2/capabilities"],
+    "investigations.create": [
+        "POST /api/ai/v2/investigations",
+        "GET /api/ai/v2/jobs/{id}",
+        "GET /api/ai/v2/jobs/{id}/evidence?level=L1",
+    ],
+    "module_actions.ensure": [
+        "POST /api/ai/v2/module-actions",
+        "GET /api/ai/v2/jobs/{id}",
+    ],
+    "module_actions.send": [
+        "POST /api/ai/v2/module-actions",
+        "GET /api/ai/v2/jobs/{id}",
+    ],
+    "module_actions.stop": [
+        "POST /api/ai/v2/module-actions",
+        "GET /api/ai/v2/jobs/{id}",
+    ],
+    "verification_runs.create": [
+        "POST /api/ai/v2/verification-runs",
+        "GET /api/ai/v2/jobs/{id}",
+        "GET /api/ai/v2/jobs/{id}/evidence?level=L1",
+    ],
+    "flash_jobs.create": [
+        "POST /api/ai/v2/flash-jobs",
+        "GET /api/ai/v2/jobs/{id}",
+    ],
+    "jobs.read": ["GET /api/ai/v2/jobs/{id}"],
+    "jobs.evidence.read": [
+        "GET /api/ai/v2/jobs/{id}/evidence?level=L1",
+        "GET /api/ai/v2/jobs/{id}/evidence?level=L2",
+        "GET /api/ai/v2/jobs/{id}/evidence?level=L3&ref=listener:{index_id}:{frame_id}",
+    ],
+    "jobs.cancel": [
+        "POST /api/ai/v2/jobs/{id}/cancel",
+        "GET /api/ai/v2/jobs/{id}",
+    ],
+}
+
+
 def capability_snapshot(*, context, control: AIControlService, grant: dict | None) -> CapabilitySnapshot:
     aliases = _resource_aliases(control, grant)
     capabilities: list[Capability] = []
@@ -106,7 +150,10 @@ def capability_snapshot(*, context, control: AIControlService, grant: dict | Non
         ]
         allowed = grant is None or (grant_allows_v2_capability(grant, name) and bool(resources))
         if allowed:
-            capabilities.append(Capability(name=name, allowed=True, resources=resources))
+            capabilities.append(Capability(
+                name=name, allowed=True, resources=resources,
+                call_examples=_CALL_EXAMPLES.get(name, []),
+            ))
 
     source_health = [
         (SourceKind.MODULE_LOG, SourceHealth(available=control.module_service is not None,

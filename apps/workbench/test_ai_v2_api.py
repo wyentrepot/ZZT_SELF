@@ -68,6 +68,45 @@ def test_v2_capabilities_local_full_is_typed_and_does_not_leak_secrets(monkeypat
     }
 
 
+def test_v2_capabilities_carry_call_examples_local_full(monkeypatch, tmp_path):
+    """REQS-0033 BR-7：capabilities 响应自带最小调用链示例（local_full，与 SKILL.md 速查表一致）。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    client = TestClient(_app())
+
+    body = client.get("/api/ai/v2/capabilities").json()
+
+    caps = {item["name"]: item for item in body["capabilities"]}
+    assert "investigations.create" in caps
+    examples = caps["investigations.create"]["call_examples"]
+    assert any(ex.startswith("POST /api/ai/v2/investigations") for ex in examples)
+    assert any("GET /api/ai/v2/jobs/{id}" in ex for ex in examples)
+    assert any("GET /api/ai/v2/jobs/{id}/evidence?level=L1" in ex for ex in examples)
+    # 每项 capability 都带 call_examples（键存在；无示例的能力为空数组）
+    assert all("call_examples" in item and isinstance(item["call_examples"], list)
+               for item in body["capabilities"])
+
+
+def test_v2_capabilities_carry_call_examples_lan_scoped(monkeypatch, tmp_path):
+    """REQS-0033 BR-7：lan_scoped（授权范围外）同样带 call_examples 键，格式一致。"""
+    monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
+    monkeypatch.setenv("WORKBENCH_LOCAL_FULL_ACCESS", "1")
+    auth = AuthorizationStore()
+    _, token = auth.create_grant(
+        scopes=["status:read", "module_session:ensure"], resources=["cco-main"],
+        ttl_seconds=60, created_by="human",
+    )
+    client = TestClient(_app(auth=auth), client=("192.168.1.20", 50001))
+
+    body = client.get("/api/ai/v2/capabilities", headers=_bearer(token)).json()
+
+    caps = {item["name"]: item for item in body["capabilities"]}
+    assert set(caps) == {"capabilities.read", "module_actions.ensure"}
+    assert caps["capabilities.read"]["call_examples"] == ["GET /api/ai/v2/capabilities"]
+    assert all("call_examples" in item and isinstance(item["call_examples"], list)
+               for item in body["capabilities"])
+
+
 def test_v2_loopback_without_flag_requires_a_bearer_grant(monkeypatch, tmp_path):
     monkeypatch.setenv("WORKBENCH_AI_STORAGE_DIR", str(tmp_path / "ai-control"))
     monkeypatch.delenv("WORKBENCH_LOCAL_FULL_ACCESS", raising=False)
