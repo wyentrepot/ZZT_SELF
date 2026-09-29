@@ -46,7 +46,9 @@ class TestResponder:
         # raw_hex 为小写 hex；R(6B) + AFN + DT1 + DT2 后为时间数据
         import re
         hexstr = d["raw_hex"].replace(" ", "")
-        m = re.search(r"68[0-9a-f]{6}14(?:[0-9a-f]{2}){2}([0-9a-f]{12})16$", hexstr)
+        # 帧布局：68 L(2hex) C(2) R(12) AFN(2) DT(4) 时间(12) CS(2) 16
+        m = re.search(r"68[0-9a-f]{18}14(?:[0-9a-f]{4})([0-9a-f]{12})[0-9a-f]{2}16$",
+                      hexstr)
         assert m, f"未找到时间数据: {hexstr}"
         time_hex = m.group(1)
         assert len(time_hex) == 12

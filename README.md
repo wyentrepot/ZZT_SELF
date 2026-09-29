@@ -2,7 +2,7 @@
 
 > HPLC 抄表通信报文侦听、解析与自动验证工作台
 
-项目由侦听分析、模块日志与烧录、日志事件、模拟集中器和自动验证编排组成；当前统一入口为 `apps/workbench`，各核心能力仍可独立测试与运行。
+项目由侦听分析、模块日志与烧录、日志事件、模拟集中器、模拟电表和自动验证编排组成；当前统一入口为 `apps/workbench`，各核心能力仍可独立测试与运行。
 
 ## 权威文档
 
@@ -21,6 +21,7 @@
 - 统一工作台：`python -m workbench.run`（默认端口 8790）
 - 侦听台：`python -m listener.run`（默认端口 8765）
 - 模块日志：`python -m module_log.run`（默认端口 8766）
+- 模拟电表（645 从站）：`PYTHONPATH=libs python -m sim_meter serve --port COM5 --api 8782`（默认 07 版、2400/E/8/1；详见 [libs/sim_meter/README.md](libs/sim_meter/README.md)）
 - Windows 一键入口：`启动工具.bat`
 
 ## 验证

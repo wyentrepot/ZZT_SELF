@@ -453,7 +453,7 @@ def test_nav_registers_scenario_simcon(client):
     assert r.status_code == 200
     assert '"/static/pages/simcon/simcon.html"' in r.text
     assert '"/static/pages/scenario/scenario.html"' in r.text
-    assert '{ name: "设备", pages: ["serial-profile", "module", "listener", "simcon"] }' in r.text
+    assert '{ name: "设备", pages: ["serial-profile", "module", "listener", "simcon", "simeter"] }' in r.text
 
 
 def test_compare_api_rejects_vacuous_and_malformed_input(client):

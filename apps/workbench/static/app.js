@@ -19,6 +19,7 @@
     { id: "module", title: "模块日志", src: "/static/pages/module-serial/module-serial.html", group: "设备" },
     { id: "listener", title: "侦听台", src: "/static/pages/listener/index.html", group: "设备" },
     { id: "simcon", title: "模拟集中器", src: "/static/pages/simcon/simcon.html", group: "设备" },
+    { id: "simeter", title: "模拟电表", src: "/static/pages/simeter/simeter.html", group: "设备" },
     { id: "trace", title: "报文追踪", src: "/static/pages/trace/trace.html", group: "辅助" },
     { id: "dict", title: "协议字典", src: "/static/pages/dict/dict.html", group: "辅助" },
     { id: "scenario", title: "场景脚本", src: "/static/pages/scenario/scenario.html", group: "辅助" },
@@ -27,7 +28,7 @@
 
   const GROUPS = [
     { name: "验证", pages: ["workbench"] },
-    { name: "设备", pages: ["serial-profile", "module", "listener", "simcon"] },
+    { name: "设备", pages: ["serial-profile", "module", "listener", "simcon", "simeter"] },
     { name: "辅助", pages: ["trace", "dict", "scenario"] },
     { name: "维护", pages: ["maintenance"] },
   ];
@@ -39,6 +40,7 @@
     module: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/>',
     listener: '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19.1"/>',
     simcon: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/>',
+    simeter: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/><path d="M10 10h4v4h-4z"/>',
     trace: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     dict: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
     scenario: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',

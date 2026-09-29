@@ -92,6 +92,8 @@ def _resource_aliases(control: AIControlService, grant: dict | None) -> list[Res
         aliases.append(ResourceAlias(alias="listener-main", source="listener"))
     if control.simcon_service is not None:
         aliases.append(ResourceAlias(alias="simcon", source="simcon"))
+    if control.simeter_service is not None:
+        aliases.append(ResourceAlias(alias="simeter", source="simeter"))
 
     unique = {(item.alias, item.source): item for item in aliases}
     result = sorted(unique.values(), key=lambda item: (item.alias, item.source))
@@ -142,6 +144,14 @@ _CALL_EXAMPLES: dict[str, list[str]] = {
         "POST /api/ai/v2/jobs/{id}/cancel",
         "GET /api/ai/v2/jobs/{id}",
     ],
+    # 模拟电表（REQS-0035）：AI 平面只读观察；写操作经工作台直连 HTTP 并
+    # 以 GET /api/simeter/_meta 自描述小抄为准（省 token、防调用迷路）。
+    "simeter_frames.read": [
+        "GET /api/simeter/_meta",
+        "GET /api/simeter/status",
+        "GET /api/simeter/frames?limit=50",
+        "POST /api/ai/v2/investigations  # body.observations=[{\"source\":\"simeter\"}]",
+    ],
 }
 
 
@@ -167,6 +177,8 @@ def capability_snapshot(*, context, control: AIControlService, grant: dict | Non
                      reason=None if control.listener_service is not None else "listener_service_unavailable")),
         (SourceKind.SIMCON, SourceHealth(available=control.simcon_service is not None,
                      reason=None if control.simcon_service is not None else "simcon_service_unavailable")),
+        (SourceKind.SIMETER, SourceHealth(available=control.simeter_service is not None,
+                     reason=None if control.simeter_service is not None else "simeter_service_unavailable")),
     ]
     return CapabilitySnapshot(
         capability_revision="ai-v2-p1", access=context, capabilities=capabilities,

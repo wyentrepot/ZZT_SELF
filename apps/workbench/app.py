@@ -177,6 +177,7 @@ def create_workbench_app(
     listener_factory=None,
     module_log_factory=None,
     simcon_factory=None,
+    simeter_factory=None,
     mount_listener: bool = True,
     ai_control_service=None,
     ai_auth_store=None,
@@ -292,6 +293,39 @@ def create_workbench_app(
         app.state.simcon_mounted = False
         app.state.simcon_error = str(exc)
 
+    # ---- 2.6 挂载 simeter（模拟电表，平级子应用，REQS-0035 实机联调）----
+    # 底座口（侦听台映射）由工作台统一接管：经共享资源注册表防双开，
+    # mapping_id 经串口目录（config/serial_ports.json）解析；独立 try/except 降级。
+    _simeter_sub = None
+    try:
+        if simeter_factory is None:
+            from sim_meter.api import create_simeter_app
+
+            def _simeter_resolver(*, mapping_id=None, port=None,
+                                  baudrate=None, bytesize=None, parity=None,
+                                  stopbits=None):
+                from sim_concentrator.serial_io import resolve_serial_config
+
+                if not mapping_id and not str(port or "").strip():
+                    raise ValueError(
+                        "模拟电表必须指定 mapping_id（如 listener）或 port")
+                return resolve_serial_config(
+                    port, mapping_id=mapping_id, baudrate=baudrate,
+                    bytesize=bytesize, parity=parity, stopbits=stopbits)
+
+            _simeter_sub = create_simeter_app(
+                prefix="",
+                resource_registry=app.state.serial_resource_registry,
+                port_resolver=_simeter_resolver,
+            )
+        else:
+            _simeter_sub = simeter_factory()
+        app.mount("/api/simeter", _simeter_sub, name="simeter")
+        app.state.simeter_mounted = True
+    except Exception as exc:  # pragma: no cover - 依赖缺失降级
+        app.state.simeter_mounted = False
+        app.state.simeter_error = str(exc)
+
     # ---- 3. AI 控制面：仅复用已挂载的后端服务，不经 HTTP 回调 ----
     from .ai_api import create_ai_router
     from .ai_auth import AuthorizationStore
@@ -331,12 +365,47 @@ def create_workbench_app(
         store_snapshot_items=_simcon_store_accessors["simcon_store_snapshot_items"],
         store_events=_simcon_store_accessors["simcon_store_events"],
     ) if all(_simcon_accessors.values()) else None
+
+    class SimeterAIService:
+        """AI 控制面 ↔ 模拟电表服务的进程内桥（只读观察，REQS-0035）。
+
+        包装挂载子应用 state 上的 SimMeterService；写操作（open/close/
+        config 等）不经 AI 平面，由 call_examples 引导直连 /api/simeter/*。
+        """
+
+        def __init__(self, svc):
+            self._svc = svc
+
+        def status(self) -> dict:
+            return self._svc.status()
+
+        def frames(self, **filters) -> dict:
+            journal = self._svc.journal
+            if journal is None:
+                return {"session": None, "entries": []}
+            info = journal.info()
+            clean = {k: v for k, v in filters.items()
+                     if k in ("dir", "after_seq", "limit", "session_id")
+                     and v is not None}
+            if clean.get("session_id") and clean["session_id"] != info.get("session_id"):
+                return {"session": info, "entries": []}
+            entries = journal.entries(direction=clean.get("dir"),
+                                      after_seq=int(clean.get("after_seq") or 0),
+                                      limit=int(clean.get("limit") or 200))
+            return {"session": info, "entries": entries}
+
+    _simeter_ai_service = None
+    _simeter_svc = getattr(getattr(_simeter_sub, "state", None), "simeter_service", None)
+    if _simeter_svc is not None:
+        _simeter_ai_service = SimeterAIService(_simeter_svc)
+
     app.state.ai_control_service = ai_control_service or AIControlService(
         module_service=getattr(app.state, "module_serial_service", None),
         listener_service=getattr(app.state, "listener_service", None),
         log_service=getattr(app.state, "listener_log_service", None),
         resource_registry=app.state.serial_resource_registry,
         simcon_service=simcon_service,
+        simeter_service=_simeter_ai_service,
         # 侦听台通信流追踪执行核心（需求 0009）：0008 层间进程内注入模式
         trace_service=getattr(getattr(_sub, "state", None), "trace_service", None),
         store=OperationStore(storage_path=storage_dir / "operations.json"),

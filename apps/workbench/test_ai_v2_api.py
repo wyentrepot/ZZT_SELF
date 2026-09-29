@@ -85,6 +85,13 @@ def test_v2_capabilities_carry_call_examples_local_full(monkeypatch, tmp_path):
     # 每项 capability 都带 call_examples（键存在；无示例的能力为空数组）
     assert all("call_examples" in item and isinstance(item["call_examples"], list)
                for item in body["capabilities"])
+    # REQS-0035：模拟电表只读观察能力 + 自描述小抄（防调用迷路）
+    assert "simeter_frames.read" in caps
+    simeter_examples = caps["simeter_frames.read"]["call_examples"]
+    assert any(ex.startswith("GET /api/simeter/_meta") for ex in simeter_examples)
+    assert any(ex.startswith("GET /api/simeter/frames") for ex in simeter_examples)
+    assert body["source_health"]["simeter"]["available"] is True
+    assert {"alias": "simeter", "source": "simeter"} in body["resource_aliases"]
 
 
 def test_v2_capabilities_carry_call_examples_lan_scoped(monkeypatch, tmp_path):
@@ -176,7 +183,7 @@ def test_v2_remote_grant_is_lan_scoped_and_only_lists_authorised_capabilities(mo
         "capabilities.read", "module_actions.ensure"
     }
     assert body["resource_aliases"] == [{"alias": "cco-main", "source": "module_log"}]
-    assert set(body["source_health"]) == {"module_log", "listener", "simcon"}
+    assert set(body["source_health"]) == {"module_log", "listener", "simcon", "simeter"}
     assert body["source_health"]["module_log"]["available"] is True
 
 
@@ -225,6 +232,7 @@ def test_v2_resource_aliases_reject_paths_and_physical_serial_handles(monkeypatc
         module_log_factory=lambda: module_app,
         simcon_factory=_plain_simcon_factory,
         listener_factory=_listener_factory,
+        simeter_factory=_plain_simcon_factory,
     )
 
     response = TestClient(app).get("/api/ai/v2/capabilities")

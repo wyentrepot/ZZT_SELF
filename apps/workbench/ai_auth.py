@@ -22,6 +22,7 @@ V2_CAPABILITY_SCOPES: dict[str, frozenset[str]] = {
     "capabilities.read": frozenset({"status:read"}),
     "investigations.create": frozenset({"observation:create", "evidence:read"}),
     "verification_runs.create": frozenset({"simcon:verify"}),
+    "simeter_frames.read": frozenset({"simeter:read"}),
     "module_actions.ensure": frozenset({"module_session:ensure"}),
     "module_actions.send": frozenset({"module_send:execute"}),
     "module_actions.stop": frozenset({"module_session:stop"}),
@@ -35,15 +36,16 @@ V2_CAPABILITY_SCOPES: dict[str, frozenset[str]] = {
 # mapping deliberately uses opaque resource IDs, never physical serial names.
 V2_CAPABILITY_SOURCES: dict[str, frozenset[str]] = {
     "capabilities.read": frozenset({"module_log", "listener", "simcon"}),
-    "investigations.create": frozenset({"module_log", "listener", "simcon"}),
+    "investigations.create": frozenset({"module_log", "listener", "simcon", "simeter"}),
     "verification_runs.create": frozenset({"simcon"}),
+    "simeter_frames.read": frozenset({"simeter"}),
     "module_actions.ensure": frozenset({"module_log"}),
     "module_actions.send": frozenset({"module_log"}),
     "module_actions.stop": frozenset({"module_log"}),
     "flash_jobs.create": frozenset({"module_log"}),
-    "jobs.read": frozenset({"module_log", "listener", "simcon"}),
-    "jobs.cancel": frozenset({"module_log", "listener", "simcon"}),
-    "jobs.evidence.read": frozenset({"module_log", "listener", "simcon"}),
+    "jobs.read": frozenset({"module_log", "listener", "simcon", "simeter"}),
+    "jobs.cancel": frozenset({"module_log", "listener", "simcon", "simeter"}),
+    "jobs.evidence.read": frozenset({"module_log", "listener", "simcon", "simeter"}),
 }
 
 

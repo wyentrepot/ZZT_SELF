@@ -45,6 +45,7 @@ class SourceKind(str, Enum):
     MODULE_LOG = "module_log"
     LISTENER = "listener"
     SIMCON = "simcon"
+    SIMETER = "simeter"
 
 
 class CapabilitySnapshot(_Contract):

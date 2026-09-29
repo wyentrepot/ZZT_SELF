@@ -38,6 +38,7 @@ def test_shell_defines_three_nav_groups():
     # 每组含预期页面
     assert "workbench" in js          # 验证组
     assert "module" in js and "listener" in js  # 设备组
+    assert "simcon" in js and "simeter" in js   # 设备组（REQS-0035 模拟电表专页）
     # 维护组有主题/状态工具入口
     assert "theme" in js.lower() or "主题" in js
     assert "wb-status" in html or "wb-status" in js

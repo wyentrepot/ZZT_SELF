@@ -92,6 +92,8 @@ class AICapabilityService:
             return str(target.get("mapping_id") or "")
         if source == SourceKind.LISTENER.value:
             return control.listener_resource(str(target.get("mapping_id") or ""))
+        if source == SourceKind.SIMETER.value:
+            return "simeter"
         return "simcon"
 
     def start_investigation(self, request: InvestigationRequest | dict,
@@ -157,6 +159,16 @@ class AICapabilityService:
         if source == SourceKind.SIMCON.value:
             try:
                 result = self.control.simcon_frames(filters=clean.get("match") or {})
+                return {"ordinal": ordinal, "source": source, "state": "succeeded",
+                        "operation_id": None, "result": result,
+                        "health": {"available": True}}
+            except Exception as exc:
+                return {"ordinal": ordinal, "source": source, "state": "error",
+                        "operation_id": None, "error": str(exc),
+                        "health": {"available": False, "reason": str(exc)[:240]}}
+        if source == SourceKind.SIMETER.value:
+            try:
+                result = self.control.simeter_frames(filters=clean.get("match") or {})
                 return {"ordinal": ordinal, "source": source, "state": "succeeded",
                         "operation_id": None, "result": result,
                         "health": {"available": True}}
@@ -476,6 +488,9 @@ class AICapabilityService:
                     refs.append(EvidenceRef(source=source, index_id=index_id, correlation=correlation))
             elif source == SourceKind.SIMCON.value:
                 refs.append(EvidenceRef(source=source, raw_ref="simcon:frames",
+                                        correlation=correlation))
+            elif source == SourceKind.SIMETER.value:
+                refs.append(EvidenceRef(source=source, raw_ref="simeter:frames",
                                         correlation=correlation))
         return refs
 

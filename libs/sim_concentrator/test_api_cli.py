@@ -13,6 +13,27 @@ def client():
     return TestClient(create_simcon_app())
 
 
+@pytest.fixture
+def client_without_simcon_mapping(monkeypatch, tmp_path):
+    """目录态隔离：本测试组语义是「simcon 无固定映射」，不应依赖仓库
+    实况 config/serial_ports.json 是否含该映射（2026-09-29 起实机联调
+    需要固定映射，测试须自建无映射目录）。"""
+    import shared.serial_mapping as serial_mapping
+
+    cfg = tmp_path / "serial_ports.json"
+    cfg.write_text(json.dumps({
+        "version": 1,
+        "ports": [{"id": "listener", "windows_com": "COM24",
+                   "linux_device": "/dev/ttyUSB1", "label": "侦听台",
+                   "usage": "listener", "module": "", "baudrate": 115200,
+                   "parity": "N", "bytesize": 8, "stopbits": 1,
+                   "enabled": True}],
+    }, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(serial_mapping, "default_config_path",
+                        lambda: cfg)
+    return TestClient(create_simcon_app())
+
+
 class TestAPI:
     def test_status_closed(self, client):
         r = client.get("/api/simcon/status")
@@ -24,7 +45,9 @@ class TestAPI:
         assert r.status_code == 200
         assert isinstance(r.json()["ports"], list)
 
-    def test_ports_list_unmapped_details_without_simcon_mapping(self, client):
+    def test_ports_list_unmapped_details_without_simcon_mapping(
+            self, client_without_simcon_mapping):
+        client = client_without_simcon_mapping
         r = client.get("/api/simcon/ports")
 
         assert r.status_code == 200
@@ -91,7 +114,9 @@ class TestAPI:
         assert len(rules) >= 5
         assert any("builtin.01xx_init" == x["id"] for x in rules)
 
-    def test_verify_with_removed_simcon_mapping_returns_409(self, client):
+    def test_verify_with_removed_simcon_mapping_returns_409(
+            self, client_without_simcon_mapping):
+        client = client_without_simcon_mapping
         # simcon 映射已移除：显式请求该 mapping_id 得到明确报错（不静默换端口）
         r = client.post("/api/simcon/verify", json={"mapping_id": "simcon", "steps": []})
 

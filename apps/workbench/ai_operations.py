@@ -67,12 +67,13 @@ class AIControlService:
 
     def __init__(self, *, module_service=None, listener_service=None, log_service=None,
                  store=None, resource_registry=None, simcon_service=None,
-                 trace_service=None):
+                 simeter_service=None, trace_service=None):
         self.module_service = module_service
         self.listener_service = listener_service
         self.log_service = log_service
         self.resource_registry = resource_registry
         self.simcon_service = simcon_service
+        self.simeter_service = simeter_service
         self.trace_service = trace_service
         self.store = store or OperationStore()
         self._simcon_verify_gate = threading.Lock()
@@ -883,6 +884,24 @@ class AIControlService:
             self.store.audit(actor=actor, action="simcon.step", resource=self._SIMCON_RESOURCE,
                              result="error", operation_id=action["operation_id"])
             raise SourceUnavailable(f"模拟集中器单步执行失败：{exc}") from exc
+
+    # -- 模拟电表（simeter）：只读观察（REQS-0035） ------------------------
+    _SIMETER_RESOURCE = "simeter"
+
+    def _require_simeter(self):
+        if self.simeter_service is None:
+            raise SourceUnavailable("模拟电表服务不可用")
+        return self.simeter_service
+
+    def simeter_frames(self, filters: dict | None = None) -> dict:
+        """模拟电表会话帧日志（dir=rx|tx|event、after_seq、limit）。"""
+        service = self._require_simeter()
+        clean = {k: v for k, v in dict(filters or {}).items()
+                 if k in ("dir", "after_seq", "limit", "session_id")}
+        return service.frames(**clean)
+
+    def simeter_status(self) -> dict:
+        return self._require_simeter().status()
 
     def simcon_frames(self, filters: dict | None = None) -> dict:
         """会话帧日志查询（本次下发过什么帧 / CCO 主动上报过什么帧 / 按 afn 过滤上行帧）。"""
