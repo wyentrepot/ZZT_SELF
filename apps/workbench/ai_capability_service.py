@@ -36,6 +36,8 @@ from .ai_store import TERMINAL_STATES
 
 
 _JOB_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+# operation store 的未终态（read_job wait_seconds 阻塞轮询的判定集）
+_OP_PENDING_STATES = frozenset({"created", "waiting", "running"})
 
 # REQS-0022：证据分层上限与 L3 ref 约束
 _L1_MAX_BYTES = 3 * 1024
@@ -381,9 +383,16 @@ class AICapabilityService:
         return self._envelope(self.control.store.get(parent["operation_id"]))
 
     def read_job(self, job_id: str, *, wait_seconds: int = 0) -> JobEnvelope:
-        # Deliberately ignore wait_seconds: this endpoint is a pure read. The
-        # worker above owns all state transitions.
+        # wait_seconds>0：阻塞等待到终态或超时（仅轮询 store 快照，不推进任务、
+        # 无副作用——状态流转仍由 worker 独占）；0 = 立即返回当前快照。
+        # 此前该参数被静默忽略（REQS-0036 修正）：AI 会把它当阻塞等待用，
+        # 拿到 running 后空转轮询浪费 token。
+        deadline = time.monotonic() + max(0, int(wait_seconds or 0))
         operation = self.control.store.get(self._operation_id(job_id))
+        while (str(operation.get("state") or "created") in _OP_PENDING_STATES
+               and time.monotonic() < deadline):
+            time.sleep(0.1)
+            operation = self.control.store.get(self._operation_id(job_id))
         return self._envelope(operation)
 
     def _envelope(self, operation: dict) -> JobEnvelope:
@@ -447,6 +456,15 @@ class AICapabilityService:
         if kind != "investigation":
             # 写任务（module_action/verification_run/flash_job）没有观察结果，
             # summary 必须体现任务自身的状态，而不是误显 "investigation queued"。
+            # verification_run 终态附底层步骤判定（pass/fail N/M）：job_state 只说明
+            # "任务跑完了"，AI 只读信封时不能把 succeeded 误当验证通过（REQS-0036）。
+            if kind == "verification_run" and not operation.get("error"):
+                vr = (operation.get("result") or {}).get("result") or {}
+                vs = vr.get("summary") if isinstance(vr, dict) else None
+                if isinstance(vs, dict) and vs.get("verdict"):
+                    return (f"verification_run {state}: "
+                            f"{vs.get('verdict')} ({vs.get('pass', 0)} pass/"
+                            f"{vs.get('fail', 0)} fail)")[:3072]
             return f"{kind} {state}"[:3072]
         bits = [f"{item.get('source')}: {item.get('state')}" for item in results]
         if state in _JOB_TERMINAL or state in {"error", "timed_out"}:

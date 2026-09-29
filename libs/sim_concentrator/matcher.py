@@ -5,8 +5,9 @@
 
 期望条件（expect）结构（对齐 loghooks 规则 match 的字段语义）：
     {
-      "afn": 0x02,                  # 期望 AFN（可选）
-      "fn": 230,                    # 期望 FN（可选）
+      "afn": "10",                  # 期望 AFN（可选）；字符串按 2 位 hex（协议记法 10H 写 "10"），
+                                    # 整数按原始字节值（0x10 即 16）——写 10 会变成 0x0A
+      "fn": "F230",                 # 期望 FN（可选）；"F230"/230/"230" 等价，均为十进制 Fn
       "dir": "up",                  # "up"(上行) | "down"(下行)（可选）
       "format": "standard",         # 兼容字段："local"/"standard" 均指向单68（可选）
       "nested": true,               # 期望含嵌套 645/698 帧（可选）
@@ -56,6 +57,21 @@ def _field_value(decoded: dict, name: str):
     return f.get("value")
 
 
+def _norm_fn(v) -> Optional[int]:
+    """fn 归一为十进制 Fn（与 scenario_codec._norm_fn 同口径）："F230"/230/"230"。"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    s = str(v).strip().upper()
+    if s.startswith("F"):
+        s = s[1:]
+    try:
+        return int(s, 10)
+    except ValueError:
+        return None
+
+
 def match_frame(raw: bytes, expect: Optional[dict]) -> Tuple[bool, dict, List[str]]:
     """对一帧做匹配。expect=None 视为任意 1376.2 帧。"""
     reasons: List[str] = []
@@ -88,9 +104,13 @@ def match_frame(raw: bytes, expect: Optional[dict]) -> Tuple[bool, dict, List[st
     # FN
     want_fn = expect.get("fn")
     if want_fn is not None:
+        want = _norm_fn(want_fn)
+        if want is None:
+            reasons.append(f"fn 记法非法: {want_fn!r}（应写 \"F230\"/230/\"230\"）")
+            return False, decoded, reasons
         got = _fn_of(decoded)
-        if got != int(want_fn):
-            reasons.append(f"FN 不匹配: 期望{int(want_fn)}, 实际{got}")
+        if got != want:
+            reasons.append(f"FN 不匹配: 期望{want}, 实际{got}")
             return False, decoded, reasons
 
     # 方向（控制域 DIR 位）

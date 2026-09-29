@@ -207,6 +207,7 @@ def run_step(io: SerialIO, responder: Optional[Responder],
     # 5) 期望接收一帧（主动下发后等待 CCO 回复；recv_only 则直接等待上报）
     deadline = time.time() + timeout
     bystanders = []  # REQS-0027：窗口内不匹配的旁听帧（CCO 插播主动上报等）
+    mismatch_samples = []  # REQS-0036：未匹配原因采样（去重，超时反馈给 AI 自纠）
     while time.time() < deadline:
         got = io.recv_frame(timeout=max(0.05, deadline - time.time()))
         if got is None:
@@ -246,10 +247,18 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             "afn": (f"{_afn_of(decoded):02X}" if _afn_of(decoded) is not None else None),
             "fn": _fn_of(decoded),
         })
+        if not matched and reasons:
+            sample = "; ".join(reasons)
+            if sample not in mismatch_samples:
+                mismatch_samples.append(sample)
         # 若 recv_only 也继续等；send+expect 同样跳过无关帧（修复：真实 CCO 插播主动帧）
     rx_count = len(result.get("received_hex", []) or [])
     result["reason"] = (f"超时({timeout}s)未收到期望帧"
                         + (f"，期间收到 {rx_count} 帧未匹配" if rx_count else ""))
+    if mismatch_samples:
+        # 把逐帧不匹配的原因透出（如 "AFN 不匹配: 期望0x0A, 实际0x10"），
+        # 调用方（AI）据此自纠 expect 记法，而不是只看到"超时"干等。
+        result["reason"] += "；未匹配原因: " + " | ".join(mismatch_samples[-3:])
     if bystanders:
         result["bystanders"] = bystanders
     return result

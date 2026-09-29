@@ -195,3 +195,49 @@ class TestExpectTimeoutCoercion:
         assert recorded and recorded[0] is not None
         assert 4.0 < recorded[0] <= 5.0, recorded[0]
         assert result["result"] == "pass"
+
+
+# ---------------------------------------------------------------------------
+# REQS-0036：expect 的 afn/fn 记法口径与超时原因透出
+#   afn：字符串按 2 位 hex（协议记法 10H 写 "10"），整数按原始字节值（0x10=16）；
+#   fn ："F2"/"F230"/2/230 等价（十进制 Fn）；非法记法与不匹配原因随超时透出。
+# ---------------------------------------------------------------------------
+
+_PROFILE_10F2_REPLY = build_13762_frame(afn=0x10, fn=2, appdata=b"\x00\x00\x10",
+                                        direction="up", info={"seq": 1})
+
+
+class TestExpectNotation:
+    def _task(self, expect, expect_timeout=0.3):
+        return {
+            "id": "t-notation",
+            "port": "COM_TEST",
+            "profile": "test",
+            "enable_responder": False,
+            "steps": [{"name": "s1", "send": {"afn": "10", "fn": 2,
+                                              "params": {"start": 0, "count": 16}},
+                       "expect": expect, "expect_timeout": expect_timeout}],
+        }
+
+    def test_hex_string_afn_and_f_prefix_fn_match(self):
+        """协议记法：afn "10"（10H）+ fn "F2" 应匹配 0x10/F2 回帧。"""
+        io = FakeIO(responses=[_PROFILE_10F2_REPLY])
+        out = execute_task(self._task({"afn": "10", "fn": "F2"}), io=io)
+        assert out["steps"][0]["result"] == "pass"
+
+    def test_numeric_afn_is_raw_byte_not_hex_notation(self):
+        """数值 afn=10 是 0x0A 而非协议记法 10H——必须判 fail（不得静默）。"""
+        io = FakeIO(responses=[_PROFILE_10F2_REPLY])
+        out = execute_task(self._task({"afn": 10, "fn": 2}), io=io)
+        step = out["steps"][0]
+        assert step["result"] == "fail"
+        # 超时原因必须带逐帧不匹配原因，调用方（AI）才能自纠记法
+        assert "期望0x0A" in step["reason"] and "实际0x10" in step["reason"]
+
+    def test_invalid_fn_notation_reported(self):
+        """fn 非法记法（如 "XX2"）给出可读原因，而不是抛异常炸整个任务。"""
+        io = FakeIO(responses=[_PROFILE_10F2_REPLY])
+        out = execute_task(self._task({"afn": "10", "fn": "XX2"}), io=io)
+        step = out["steps"][0]
+        assert step["result"] == "fail"
+        assert "fn 记法非法" in step["reason"]

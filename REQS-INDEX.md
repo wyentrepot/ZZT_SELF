@@ -42,6 +42,8 @@
 | 0032 | AI 日常应用层帧工具（1376.2/698/645 构建+解析+回验，免工作台脚本直用；自动模式严格/指定模式允许错误帧）+ ai-control-plane 技能范围瘦身（日常轻量档、按用途渐进式加载、三副本同步 v2.6.0） | 大需求 | ✅ 已完成（P0-P2 工具 24 用例回归 321 passed；P3 技能 v2.6.0 三副本一致，全局库 ad92506；验收 8/8） | master | 2026-09-17 |
 | 0033 | ai-control-plane 技能使用边界优化（在线/离线判定序、启动双环境、红线固化、使用经验定位、归档清单、离线日志索引，v2.7.0）+ v2 capabilities 自描述最小调用链（call_examples） | 大需求 | ✅ 已完成（P0 技能 v2.7.0 全局库 4bb4d0f；P1 call_examples 单测 27 passed；P2 工作区 8e33b37 + REQS-INDEX 登记） | master | 2026-09-21 |
 | 0034 | ai-control-plane / mclt 工具待办收口（启动前置检查、401 区分、job 终态提示、L3 ref 示例、mclt 三改进、README 首屏） | 大需求 | 🚧 进行中（基线 v1.1：P0 工作台使用优化 BR-1/2/3 已实施+单测通过；P1 mclt 三改进、P2 README 首屏暂缓另行排期） | master | 2026-09-21 |
+| 0035 | sim_meter 模拟电表（645-2007/1997 从站：应答地址/查询时间/抄表/波特率热切换/重庆即装即采 + 虚拟串口台架 vbench + 工作台 /api/simeter 专页与 AI 只读能力） | 小需求 | ✅ 已完成（libs/sim_meter + tools/vbench 17 用例 + /api/simeter 挂载 + AI v2 simeter_frames.read + 专页 UI；详见 docs/20 与 reqs/0035-sim-meter/） | master | 2026-09-28 |
+| 0036 | AI 控制台技能体检与实测收口（expect AFN/Fn 记法归一+超时原因透出、v2 job wait_seconds 阻塞读、summary 判定、技能 v2.8.0 补 simeter/并发抄表/auth scope、docs/16 与 KB 帧文档补正） | 小需求 | ✅ 已完成（matcher/runner/ai_capability_service 代码修复 + 7 用例新增；技能事实源 v2.8.0 落盘；审计实测口径见 REQS.md §1） | master | 2026-09-29 |
 
 ## 使用说明
 
