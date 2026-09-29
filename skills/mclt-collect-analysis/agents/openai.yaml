@@ -1,0 +1,15 @@
+name: mclt-collect-analysis
+description: >-
+  Use when 需求明确涉及 HPLC 分钟采集（MCLT，15 分钟冻结周期）分析：页面漏报/
+  缺报表三端对账定位、11E4 主动上报时序（jitter/重传）、11E3 补抄请求→响应延迟、
+  分钟采集两端时钟偏移、mclt_ut 校准参数提取（UT_STA_RSP_DELAY_MS/cco_offset_s/
+  UT_SSN_BASE），且已有（或可定位到）侦听台 7E 报文与 CCO 串口日志路径。纯离线
+  文件分析，只读日志。DO NOT load for 高频采集失败分析（用 hf-collect-analysis）、
+  协议帧/字段/状态机咨询（用 knowledge-lookup）、拉合闸/停复电/入网/升级、或要求
+  在线/实时分析。
+metadata:
+  author: reasonix
+  version: "1.0.0"
+  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF
+policy:
+  allow_implicit_invocation: false
