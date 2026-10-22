@@ -1,0 +1,13 @@
+name: serial-bridge
+description: >-
+  Default serial path for this repo: expose Windows COM ports to WSL through a pure-Python
+  serial-to-TCP bridge (no usbipd, no admin, no /dev/tty* hunting), start/stop the WSL PTY
+  supervisor, point the workbench at /run/hplc/serial/*, and verify the channel with
+  /api/serial-bridge/status and /api/serial-bridge/verify. Channel-only: one owner per port,
+  fixed physical parity (PTY side always N), app-driven 9600/115200 baud switching, no lease/preemption.
+metadata:
+  author: reasonix
+  version: "1.1.0"
+  applies-to: /01-workfile-ai/01-zzt/ZZT_SELF
+policy:
+  allow_implicit_invocation: false
