@@ -1,0 +1,4 @@
+interface:
+  display_name: "Technical Writing"
+  short_description: "Draft and review developer docs"
+  default_prompt: "Use $technical-writing to review this developer guide for structure, clarity, and sentence-level quality."

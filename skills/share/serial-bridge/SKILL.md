@@ -323,7 +323,32 @@ python3 skills/share/serial-bridge/scripts/verify_bridge.py --ports listener cco
 | 脚本从 WSL 复制到 Windows 后乱码/加密 | 用资源管理器人工复制；不要从 WSL 写 `/mnt/c` |
 | 状态 `stale=true` | 状态文件超过 10 秒未更新；`wsl status` 看进程，必要时 `wsl stop` 后重启 |
 
-## Windows 常驻（推荐）
+## 一键开关（推荐，已并入 WSL 环境部署菜单）
+
+`tools/scripts/wsl环境部署.bat`（或桌面上的 `01-wsl-.bat`）现在包含：
+
+- **[6] Python 串口桥开关**：启动 = 启动 WSL supervisor + Windows `pythonw` 桥；再按一次 =
+  停止 Windows 桥，立即释放 COM 给 Windows 工具。WSL supervisor 保持运行，下次 [6] 秒接管。
+- **[7] 查看 Python 串口桥状态**：Windows 侧 PID、WSL 侧 PID、每口 data/control/baud/PTY。
+- [1]/[2] 仍是 usbipd 旧方案；[4]/[5] 解析网关。
+
+非交互调用：
+
+```powershell
+powershell -File uart-map.ps1 -Action bridge-toggle
+powershell -File uart-map.ps1 -Action bridge-start
+powershell -File uart-map.ps1 -Action bridge-stop
+powershell -File uart-map.ps1 -Action bridge-status
+```
+
+脚本默认 WSL 仓库 `/01-workfile-ai/01-zzt/ZZT_SELF`；仓库搬家时改 `uart-map.ps1` 顶部的
+`$script:WslRepo`。桥本身不需要管理员；菜单因包含 usbipd 选项会请求 UAC。
+
+> **不用 usbipd 时不需要关 Hyper-V 防火墙**：桥走 Windows→WSL 的 TCP localhost。
+> [6]/[7] 不调用 usbipd；[3] 的 usbipd 视图有 3 秒超时，不会因防火墙卡死。
+> 前提是 COM 在 Windows 侧可用（设备 `Shared`/未 `Attached`）。
+
+## Windows 常驻（手工部署）
 
 把 `serial_bridge.py` 和 `serial_bridge.json` **人工复制**到
 `C:\Users\Public\serial-bridge\`，然后在 Windows 本地目录启动：
@@ -337,10 +362,24 @@ start "" pythonw.exe serial_bridge.py --log bridge.log windows --config serial_b
 从 WSL 直接运行 `python.exe ... windows` 只适合会话级调试，WSL 会话结束
 后 Windows 桥可能随之退出。
 
+## 烧录（与本桥的关系）
+
+- **工作台模块烧录**：走 `/api/ai/v2/flash-jobs`（v1 `/flash-operations`），
+  固件必须是 `iap_*.bin`，**不要用 `flash_*.bin`**；烧录不可取消，失败不自动重试。
+  桥只负责透明字节；XMODEM 的动态波特率会经控制通道生效，但切换瞬间有几十毫秒
+  中断，建议先用单档 baud（如 `--baud-plan 115200`）验证。
+- **EDBG / `splc-flash-loop` 闭环**：EDBG 用 Windows 侧 COM 直接烧录；如果目标口
+  正被本桥占用，先 `python3 tools/serial_bridge/serial_bridge.py wsl stop --config
+  config/serial_bridge.json` 释放，烧完再 `wsl start`。不要让桥和 EDBG 同时抢
+  同一个 COM。
+- 烧录前必须确认：目标（CCO/STA）、精确 COM、固件类型/路径、本次授权；
+  构建失败不得烧旧产物；串口“可枚举”不等于“属于目标板”。
+
 ## 停止与回退 usbipd
 
 ```bash
-# 停桥（同时释放 Windows COM）
+# 方式一（推荐）：菜单 [6] 停止 Windows 桥（只释放 COM，WSL supervisor 保留）
+# 方式二：停整座桥（同时释放所有 WSL listener）
 python3 tools/serial_bridge/serial_bridge.py wsl stop --config config/serial_bridge.json
 
 # 回退 usbipd
