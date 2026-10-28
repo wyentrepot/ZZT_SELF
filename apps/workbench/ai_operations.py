@@ -181,8 +181,21 @@ class AIControlService:
             for session in sessions:
                 identity = session.get("port_identity") or {}
                 if identity.get("mapping_id") == mapping_id:
+                    # 复用已有会话时必须确保它在目标口上运行：空闲会话若只返回
+                    # 不启动，PTY 无人读取，串口桥会把数据全部丢弃（实测 100%）。
+                    port = str(session.get("port") or self._port_for_mapping(mapping_id) or "").strip()
+                    started = session
+                    if port:
+                        serial = session.get("serial_config") or {}
+                        started = self.module_service.start_session(
+                            session["session_id"], port,
+                            baudrate=int(serial.get("baudrate", 115200)),
+                            bytesize=int(serial.get("bytesize", 8)),
+                            parity=str(serial.get("parity", "N")),
+                            stopbits=int(serial.get("stopbits", 1)),
+                        )
                     self.store.audit(actor=actor, action="module_session.ensure", resource=mapping_id, result="reused")
-                    return {"reused": True, "session": session}
+                    return {"reused": True, "session": started}
 
         port = str(request.get("port") or self._port_for_mapping(mapping_id) or "").strip()
         # ensure「创建或复用」：同 module+port 已有会话（含空闲态）直接复用并确保

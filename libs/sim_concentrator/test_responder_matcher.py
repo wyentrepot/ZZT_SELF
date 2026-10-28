@@ -138,3 +138,11 @@ class TestMatcher:
         # 只断言能匹配到嵌套帧
         ok, _, reasons = match_frame(raw, {"afn": 0x02, "nested": True})
         assert ok
+
+    def test_echo_rate_limit_breaks_loop(self):
+        """3s 内同 AFN/FN 回显超过 2 次即停止，防止与 CCO 形成应答回环。"""
+        r = Responder()
+        f = _up_frame(afn=0x03, seq=0x07)
+        assert r.reply_for(f) is not None
+        assert r.reply_for(f) is not None
+        assert r.reply_for(f) is None

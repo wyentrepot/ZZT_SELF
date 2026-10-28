@@ -30,6 +30,7 @@ reply 字段说明（构造应答帧的参数）：
 from __future__ import annotations
 
 import json
+import time
 from typing import Callable, Dict, List, Optional
 
 from sim_concentrator.frame_codec import (
@@ -118,6 +119,9 @@ class Responder:
         应答面的场景，排除内置查询 echo 规则以免对查询/主动查询帧引发应答回环）。"""
         self._overrides = [ReplyRule(r) for r in (override_rules or [])]
         self._builtin = [ReplyRule(r) for r in _BUILTIN_RULES] if builtin else []
+        # echo 回环保护：3s 内同一 AFN/FN 最多回显 2 次（CCO 会把 echo 当查询再答，
+        # 无限制会导致应答回环，见 2026-10-24 实测）
+        self._echo_window: Dict[tuple, List[float]] = {}
 
     def list_rules(self) -> List[dict]:
         """返回当前生效规则（覆盖 + 内置），供 API 展示。"""
@@ -150,6 +154,18 @@ class Responder:
                 return r
         return None
 
+    def _echo_allowed(self, decoded: dict) -> bool:
+        """echo 回环保护：3s 内同一 AFN/FN 最多回显 2 次。"""
+        fields = decoded.get("fields", {})
+        key = (fields.get("AFN", {}).get("raw"), fields.get("FN", {}).get("raw"))
+        now = time.monotonic()
+        recent = [t for t in self._echo_window.get(key, []) if now - t < 3.0]
+        if len(recent) >= 2:
+            return False
+        recent.append(now)
+        self._echo_window[key] = recent
+        return True
+
     def _build_reply(self, decoded: dict, rule: ReplyRule,
                      seq_override: Optional[int]) -> Optional[bytes]:
         r = rule.reply
@@ -166,6 +182,8 @@ class Responder:
             elif isinstance(ub, str) and ub == "confirm":
                 buff = b""
             elif isinstance(ub, str) and ub == "echo":
+                if not self._echo_allowed(decoded):
+                    return None
                 buff = decoded.get("buff", b"")
             elif isinstance(ub, str) and ub == "copy":
                 buff = decoded.get("buff", b"")
@@ -208,6 +226,8 @@ class Responder:
             elif ub == "deny":
                 userdata = b"\x01"
             elif ub == "echo":
+                if not self._echo_allowed(decoded):
+                    return None
                 userdata = bytes.fromhex(
                     decoded.get("raw_hex", ""))[4:-2] if decoded.get("raw_hex") else b""
             elif ub == "copy_rtsa":

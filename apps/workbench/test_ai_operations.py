@@ -978,3 +978,16 @@ def test_ensure_reuses_idle_session_on_same_module_and_port():
     assert "ms-created" not in module.sessions
     assert result["session"]["state"] == "running"
     assert result["session"]["port"] == "COM1"
+
+
+def test_ensure_starts_idle_session_matched_by_mapping_id():
+    """mapping_id 命中 idle 会话时也必须拉起（否则 PTY 无人读，日志全丢）。"""
+    module = FakeModuleService()
+    module.sessions["ms-cco"]["state"] = "idle"
+    control = AIControlService(module_service=module)
+
+    result = control.ensure_module_session({"mapping_id": "cco-main", "module": "cco"})
+
+    assert result["reused"] is True
+    assert result["session"]["session_id"] == "ms-cco"
+    assert result["session"]["state"] == "running"

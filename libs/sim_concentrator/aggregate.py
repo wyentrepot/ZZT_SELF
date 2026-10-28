@@ -80,7 +80,7 @@ def collect_readings(store: Optional[ListenerStore], jobs: Optional[Dict[str, An
                 "source_label": f"并发任务 {snap.get('job_id','')}（{snap.get('mode','')}）",
                 "meter": r.get("meter"),
                 "afn_fn": r.get("afn_fn"),
-                "item": "抄读数据" if r.get("status") == "success" else "—",
+                "item": r.get("item") or ("抄读数据" if r.get("status") == "success" else "—"),
                 "value": (r.get("reply_hex") or "")[:48],
                 "ts": r.get("ts"),
                 "elapsed_ms": r.get("elapsed_ms"),

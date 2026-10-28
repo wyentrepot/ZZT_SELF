@@ -169,11 +169,12 @@ class FakeWindowIO:
                 break
         if target is None or target in self.silent:
             return
-        t = threading.Timer(self.delay, self._reply, args=(target,))
+        req_afn = raw[10] if len(raw) > 10 else 0x02
+        t = threading.Timer(self.delay, self._reply, args=(target, req_afn))
         t.daemon = True
         t.start()
 
-    def _reply(self, meter):
+    def _reply(self, meter, req_afn=0x02):
         addr_le = bytes.fromhex(meter)[::-1]
         with self.lock:
             if meter in self.deny:
@@ -181,12 +182,12 @@ class FakeWindowIO:
                     afn=0x00, fn=2, appdata=bytes([0x6D]), direction="up",
                     info={"seq": 1}, address={"src": meter, "dst": "999999999999"}))
             else:
-                # 回 02H-F1 上行，嵌套 645 应答（帧内含表地址即可被归属）
+                # 回请求对应的 AFN（单抄 02H-F1 / 并抄 F1H-F1），嵌套 645 应答
                 from parser_lib.adapters.adapter_645 import build_frame
                 n645 = build_frame(addr_le, 0x91, bytes([0x33] * 4))
                 payload = bytes([2, 0]) + len(n645).to_bytes(2, "big") + n645
                 self.history.append(build_13762_frame(
-                    afn=0x02, fn=1, appdata=payload, direction="up"))
+                    afn=req_afn, fn=1, appdata=payload, direction="up"))
 
     def rx_history(self):
         with self.lock:
@@ -194,9 +195,40 @@ class FakeWindowIO:
 
 
 def test_meter_read_645_shape():
-    raw = meter_read_645("111111111111")
+    raw = meter_read_645("990042708102")  # 默认 A 相电压 + CCO 档案线上地址
     assert raw[0] == 0x68 and raw[-1] == 0x16
-    assert _addr_in_frame(raw, "111111111111")
+    assert raw[1:7].hex().upper() == "990024071820"
+    assert raw[7] == 0x68
+    assert raw[8] == 0x11                 # 读数据请求（不是 0x91 应答）
+    assert raw[9] == 0x04
+    assert raw[10:14].hex().upper() == "33343435"  # DI=02010100，+0x33 掩码
+    assert _addr_in_frame(raw, "990042708102")
+
+
+def test_meter_read_645_bcd_mode_and_custom_item():
+    raw = meter_read_645("990042708102", item="02020100", addr_mode="bcd")
+    assert raw[1:7].hex().upper() == "028170420099"  # 标准 645 BCD 反序
+    assert raw[8] == 0x11
+    assert raw[10:14].hex().upper() == "33343535"    # DI=02020100
+
+
+def test_addr_in_frame_accepts_wire_form():
+    # 真实 645 应答：地址域是 CCO 档案线上字节 99 00 24 07 18 20
+    raw = bytes.fromhex("689900240718206891063334343589561216")
+    assert _addr_in_frame(raw, "990042708102")
+
+
+def test_batch_job_carries_item_and_addr_mode():
+    meters = ["990042708102"]
+    io = FakeWindowIO(meters, delay=0.02)
+    job = BatchReadJob(io, meters, max_concurrent=1, mode="batch",
+                       item="02010100", addr_mode="wire", timeout=1.0)
+    snap = job.snapshot()
+    assert snap["item"] == "02010100" and snap["addr_mode"] == "wire"
+    job.run()
+    snap = job.snapshot()
+    assert snap["success"] == 1
+    assert snap["rows"][0]["item"] == "02010100"
 
 
 def test_sliding_window_keeps_max_concurrent():
@@ -273,3 +305,10 @@ def test_collect_readings_stats():
     # 过滤
     out2 = collect_readings(None, jobs, result="deny")
     assert len(out2["rows"]) == 1 and out2["stats"]["sent"] == 1
+
+
+def test_batch_job_never_uses_address_area_for_cco_local_frames():
+    """REQS-0020/0021：CCO 本地口不接受带地址域的下行帧，batch 必须不带地址域。"""
+    job = BatchReadJob(None, ["013300000001"], mode="batch",
+                       profile={"cco_addr": "020103040506"})
+    assert job._address() == {}

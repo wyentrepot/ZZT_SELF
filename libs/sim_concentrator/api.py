@@ -132,6 +132,8 @@ class BatchReadRequest(BaseModel):
     max_concurrent: int = 5
     mode: str = "single"            # single=02H-F1 单抄 / batch=F1H-F1 并发抄表
     protocol_type: int = 2          # 00 透明 / 02=645-2007 / 03=698.45
+    item: str = "02010100"          # 4 字节 DI（8 位 hex），默认 A 相电压
+    addr_mode: str = "wire"         # wire=CCO 档案/10H-F2 地址；bcd=标准 645 BCD
     timeout: Optional[float] = None  # 缺省按 expect_rules 档位（单抄59s/并抄99s）
     profile: Optional[str] = None
     port: Optional[str] = None
@@ -590,6 +592,8 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             max_concurrent=max_concurrent,
             mode=str(payload.get("mode") or "single"),
             protocol_type=int(payload.get("protocol_type") or 2),
+            item=str(payload.get("item") or "02010100"),
+            addr_mode=str(payload.get("addr_mode") or "wire"),
             timeout=(None if payload.get("timeout") is None else float(payload["timeout"])),
             profile=profile, seq_start=seq_start,
         )
