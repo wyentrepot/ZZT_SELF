@@ -201,6 +201,17 @@ def _config_freshness(config_path: Path,
 
     bridge_loaded_at = str(state.get("config_loaded_at") or "").strip()
     bridge_loaded_epoch = _parse_local_iso(bridge_loaded_at)
+    baseline_source = "reported"
+    if bridge_loaded_epoch is None:
+        # 桥版本较旧、不上报载入时刻时，退回「桥进程启动时刻」做保守推断：
+        # 配置文件的 mtime 晚于进程启动 ⇒ 该进程必然在用旧配置，结论可靠（只是更粗）。
+        # 这样旧桥在跑也能立刻报出「改了没生效」，不必等桥升级。
+        started_at = str(state.get("started_at") or "").strip()
+        started_epoch = _parse_local_iso(started_at)
+        if started_epoch is not None:
+            bridge_loaded_at = started_at
+            bridge_loaded_epoch = started_epoch
+            baseline_source = "process_start"
     if bridge_loaded_epoch is not None:
         loaded_at = bridge_loaded_at
         loaded_epoch: float | None = bridge_loaded_epoch
@@ -212,6 +223,7 @@ def _config_freshness(config_path: Path,
             if reported_epoch is not None:
                 mtime_iso, mtime_epoch = reported_iso, reported_epoch
     else:
+        baseline_source = "workbench_request"
         loaded_at = _iso_from_epoch(now)
         loaded_epoch = now
         mtime_iso, mtime_epoch = own_mtime_iso, own_mtime_epoch
@@ -248,8 +260,11 @@ def _config_freshness(config_path: Path,
                 "mtime": mtime_iso if bridge_known else "unknown",
                 "stale": stale if bridge_known else "unknown",
                 "mtime_error": observed_mtime_error if bridge_known else "",
+                "baseline_source": baseline_source,
                 "reason": "" if bridge_known else (
-                    "桥未上报配置载入时刻（桥未运行，或桥版本较旧；升级桥后重试）"
+                    "桥未上报配置载入时刻（桥未运行）；结论按工作台本次请求时刻推算，仅供参考"
+                ) if baseline_source != "process_start" else (
+                    "桥未上报配置载入时刻（版本较旧），已按桥进程启动时刻做保守推断"
                 ),
             },
             "windows_bridge": {

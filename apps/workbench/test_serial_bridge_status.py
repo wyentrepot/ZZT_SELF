@@ -233,14 +233,27 @@ def test_config_stale_hint_relayed_from_bridge(bridge):
     assert body["stale_hint"] == hint
 
 
-def test_config_freshness_unknown_without_bridge_report(bridge):
-    # 老版本桥不发 config_loaded_at：不许假装桥对自己新鲜，必须报 unknown
+def test_config_freshness_infers_stale_from_bridge_process_start(bridge):
+    # 老版本桥不发 config_loaded_at：退回「桥进程启动时刻」做保守推断。
+    # 配置 mtime 晚于进程启动 ⇒ 该进程必然在用旧配置 → 报 stale，并标出推断来源，
+    # 不等于"假装桥新鲜"，也不需要等桥升级才能发现「改了没生效」。
     body = bridge["client"]().get("/api/serial-bridge/status").json()
-    assert body["config_stale"] is False
+    assert body["config_stale"] is True
     assert body["config_loaded_at"]
     assert body["config_mtime"] != "unknown"
-    assert body["config_sources"]["wsl_bridge"]["known"] is False
-    assert body["config_sources"]["wsl_bridge"]["stale"] == "unknown"
+    assert body["stale_hint"]
+    wsl = body["config_sources"]["wsl_bridge"]
+    assert wsl["baseline_source"] == "process_start"
+    assert wsl["stale"] is True
+    # Windows 侧仍然取不到（跨主机），必须如实 unknown，不许假装正常
     windows = body["config_sources"]["windows_bridge"]
     assert windows["known"] is False
     assert windows["stale"] == "unknown"
+
+
+def test_config_freshness_no_false_positive_when_bridge_restarted_after_config(bridge):
+    # 桥进程启动晚于配置改动（正常重启过）→ 不得误报 stale
+    _patch_status(bridge, started_at="2099-01-01T00:00:00")
+    body = bridge["client"]().get("/api/serial-bridge/status").json()
+    assert body["config_stale"] is False
+    assert body["config_sources"]["wsl_bridge"]["baseline_source"] == "process_start"
