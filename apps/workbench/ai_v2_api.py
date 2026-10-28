@@ -1,8 +1,10 @@
 """P1 HTTP adapter for the typed, task-oriented AI v2 facade."""
 from __future__ import annotations
 
+import json
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request
@@ -24,7 +26,7 @@ from .ai_capability_service import AICapabilityService
 from .ai_capability_service import EvidenceRefForbidden
 from .ai_operations import AIControlService
 from .ai_operations import InvalidObservation, SessionBusy, SourceUnavailable
-from .ai_store import IdempotencyConflict
+from .ai_store import LIST_LIMIT_MAX, IdempotencyConflict
 
 
 def _bearer_grant(authorization: str | None, auth_store: AuthorizationStore) -> dict:
@@ -61,6 +63,72 @@ def _v2_grant(authorization: str | None, auth_store: AuthorizationStore,
             if resource and resource not in allowed:
                 raise HTTPException(status_code=403, detail=f"资源不在授权范围内：{resource}")
     return grant
+
+
+# ---------------------------------------------------------------------------
+# 烧录白名单与授权来源审计：v1（ai_api）与 v2 的唯一实现
+# ---------------------------------------------------------------------------
+
+_FLASH_ROOTS_ENV = "WORKBENCH_AI_FIRMWARE_ROOTS"
+
+
+@dataclass(frozen=True)
+class FlashAuthorization:
+    """一次烧录请求被放行的依据；只用于审计，不改变烧录输入。"""
+
+    bin_path: str
+    firmware_root: str
+    authorization_source: str  # grant | env | local_full_env
+
+
+def resolve_flash_authorization(
+    body: dict, grant: dict | None, *, local_full: bool = False,
+) -> FlashAuthorization:
+    """校验 bin_path 是否落在允许烧录目录内，并给出授权来源。
+
+    v1/v2 共用同一口径：grant.firmware_roots 优先 → WORKBENCH_AI_FIRMWARE_ROOTS
+    兜底 → 两者都为空 403 → 路径不在任一 root 内 403。此前 v1 缺 env 兜底，
+    同一台机器两条路径结论不一致，故收敛到本函数。
+    """
+    raw_path = str(body.get("bin_path") or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=422, detail="烧录必须提供 bin_path")
+    roots = [str(item) for item in (grant or {}).get("firmware_roots") or [] if str(item)]
+    source = "grant"
+    if not roots:
+        roots = [item for item in os.environ.get(_FLASH_ROOTS_ENV, "").split(os.pathsep) if item]
+        source = "local_full_env" if local_full else "env"
+    if not roots:
+        raise HTTPException(status_code=403, detail="当前授权未配置允许烧录目录")
+    candidate = Path(raw_path).expanduser().resolve()
+    for root_text in roots:
+        root = Path(root_text).expanduser().resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        return FlashAuthorization(
+            bin_path=str(candidate), firmware_root=str(root), authorization_source=source,
+        )
+    raise HTTPException(status_code=403, detail="固件路径不在当前授权的允许目录内")
+
+
+def record_flash_authorization(
+    control: AIControlService, *, flash_authorization: FlashAuthorization,
+    actor: str, resource: str, operation_id: str,
+) -> None:
+    """把「这次烧录凭什么被允许」写进 audit；不新增任何拒绝分支。"""
+    control.store.audit(
+        actor=actor,
+        action="flash.authorization",
+        resource=resource,
+        result=json.dumps({
+            "authorization_source": flash_authorization.authorization_source,
+            "bin_path": flash_authorization.bin_path,
+            "firmware_root": flash_authorization.firmware_root,
+        }, ensure_ascii=False, sort_keys=True),
+        operation_id=operation_id,
+    )
 
 
 _SAFE_RESOURCE_ALIAS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -224,26 +292,6 @@ def create_ai_v2_router(
                 return session_id
         return str(body.get("mapping_id") or "")
 
-    def _authorised_flash_request(body: dict, grant: dict | None) -> dict:
-        raw_path = str(body.get("bin_path") or "").strip()
-        if not raw_path:
-            raise HTTPException(status_code=422, detail="烧录必须提供 bin_path")
-        roots = [str(item) for item in (grant or {}).get("firmware_roots") or [] if str(item)]
-        if not roots:
-            roots = [item for item in os.environ.get("WORKBENCH_AI_FIRMWARE_ROOTS", "").split(os.pathsep) if item]
-        if not roots:
-            raise HTTPException(status_code=403, detail="当前授权未配置允许烧录目录")
-        candidate = Path(raw_path).expanduser().resolve()
-        for root_text in roots:
-            try:
-                candidate.relative_to(Path(root_text).expanduser().resolve())
-                result = dict(body)
-                result["bin_path"] = str(candidate)
-                return result
-            except ValueError:
-                continue
-        raise HTTPException(status_code=403, detail="固件路径不在当前授权的允许目录内")
-
     @router.post("/investigations", status_code=202, response_model=JobEnvelope)
     def create_investigation(request: Request, body: InvestigationRequest,
                              authorization: str | None = Header(None)) -> JobEnvelope:
@@ -307,10 +355,12 @@ def create_ai_v2_router(
         grant = None if context.zone == "local_full" else _v2_grant(
             authorization, auth_store, "flash_jobs.create", [resource],
         )
+        flash_authorization = resolve_flash_authorization(
+            payload, grant, local_full=context.zone == "local_full",
+        )
+        payload["bin_path"] = flash_authorization.bin_path
         try:
-            return capability_service.start_flash_job(
-                _authorised_flash_request(payload, grant), context=context,
-            )
+            envelope = capability_service.start_flash_job(payload, context=context)
         except IdempotencyConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except SessionBusy as exc:
@@ -321,6 +371,47 @@ def create_ai_v2_router(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        record_flash_authorization(
+            control, flash_authorization=flash_authorization, actor=context.actor,
+            resource=resource, operation_id=capability_service._operation_id(envelope.job_id),
+        )
+        return envelope
+
+    @router.get("/jobs")
+    def list_jobs(request: Request,
+                  kind: list[str] = Query(default=[]),
+                  state: str | None = Query(None),
+                  since: str | None = Query(None),
+                  limit: int = Query(20, ge=1),
+                  authorization: str | None = Header(None)) -> dict[str, object]:
+        """列出最近的 job 摘要（created_at 倒序），job_id 丢了也能找回最近任务。
+
+        - kind：可重复（?kind=flash_job&kind=verification_run）或逗号分隔
+          （?kind=flash_job,verification_run），两种写法可混用；不传不过滤。
+        - state：按操作状态精确过滤（created/running/waiting/succeeded/error/...）。
+        - since：ISO 时间，只返回 created_at >= since；非法值 422，不落 500。
+        - limit：默认 20，超过 100 按 100 处理；响应里的 limit 是实际生效值。
+        每条摘要只含元数据（不含 payload/result），另带派生 job_id 便于直接
+        调用 GET /api/ai/v2/jobs/{job_id}。
+        """
+        _context(request, authorization, "jobs.read")
+        kinds = [
+            part.strip()
+            for value in kind for part in str(value).split(",")
+            if part.strip()
+        ]
+        states = [state.strip()] if state and state.strip() else None
+        try:
+            operations = control.store.list_operations(
+                kinds=kinds or None, states=states, since=since, limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        jobs = [
+            {**item, "job_id": capability_service._job_id(str(item.get("operation_id") or ""))}
+            for item in operations
+        ]
+        return {"jobs": jobs, "count": len(jobs), "limit": min(limit, LIST_LIMIT_MAX)}
 
     @router.get("/jobs/{job_id}", response_model=JobEnvelope)
     def read_job(request: Request, job_id: str,

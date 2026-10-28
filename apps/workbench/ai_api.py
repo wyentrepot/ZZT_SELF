@@ -1,7 +1,6 @@
 """HTTP adapter for the bounded and scoped AI control plane."""
 from __future__ import annotations
 
-from pathlib import Path
 import secrets
 from typing import Any
 
@@ -10,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from .ai_auth import AuthorizationError, AuthorizationStore
 from .ai_operations import AIControlService, InvalidObservation, SessionBusy, SourceUnavailable
 from .ai_store import IdempotencyConflict
+from .ai_v2_api import record_flash_authorization, resolve_flash_authorization
 from listener.trace_service import FeatureError
 
 
@@ -40,24 +40,6 @@ def create_ai_router(
             raise HTTPException(status_code=503, detail="未配置人工授权管理密钥")
         if not supplied_key or not secrets.compare_digest(str(supplied_key), str(admin_key)):
             raise HTTPException(status_code=403, detail="人工授权管理密钥无效")
-
-    def authorised_flash_request(request: dict[str, Any], grant: dict) -> dict[str, Any]:
-        raw_path = str(request.get("bin_path") or "").strip()
-        if not raw_path:
-            raise HTTPException(status_code=422, detail="烧录必须提供 bin_path")
-        roots = [str(item) for item in grant.get("firmware_roots") or [] if str(item)]
-        if not roots:
-            raise HTTPException(status_code=403, detail="当前授权未配置允许烧录目录")
-        candidate = Path(raw_path).expanduser().resolve()
-        for root_text in roots:
-            try:
-                candidate.relative_to(Path(root_text).expanduser().resolve())
-                result = dict(request)
-                result["bin_path"] = str(candidate)
-                return result
-            except ValueError:
-                continue
-        raise HTTPException(status_code=403, detail="固件路径不在当前授权的允许目录内")
 
     @router.get("/admin/grants")
     def admin_list_grants(request: Request, x_workbench_admin_key: str | None = Header(None)):
@@ -168,7 +150,15 @@ def create_ai_router(
                 grant_from_header(
                     authorization, "module_flash:execute", control.operation_resource(existing["operation_id"]),
                 )
-            return control.flash_module(authorised_flash_request(request, grant), actor=actor(grant))
+            flash_authorization = resolve_flash_authorization(request, grant)
+            operation = control.flash_module(
+                {**request, "bin_path": flash_authorization.bin_path}, actor=actor(grant),
+            )
+            record_flash_authorization(
+                control, flash_authorization=flash_authorization, actor=actor(grant),
+                resource=resource, operation_id=operation["operation_id"],
+            )
+            return operation
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"会话不存在：{exc.args[0]}") from exc
         except ValueError as exc:

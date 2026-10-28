@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from workbench.ai_auth import AuthorizationStore
+from workbench.ai_store import OperationStore
 from workbench.app import create_workbench_app
 from workbench.test_ai_operations import FakeListenerLogService, FakeModuleService
 
@@ -244,3 +245,131 @@ class TestMinutePeriods:
         client, _ = _client(FakeStoreCore(), minute=True)
         assert client.get("/api/ai/v1/listener/minute-periods",
                           params={"task_no": 1}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# REQS-0003 P0-3：OperationStore.list_operations 只读列表能力（store 侧单元测试）
+# ---------------------------------------------------------------------------
+
+def _seed_operation(store, *, kind: str, created_at: str, state: str = "created",
+                    error: str | None = None, payload: dict | None = None) -> str:
+    operation = store.create(kind, "ai:test", payload or {"marker": "内部 payload 不外泄"})
+    if state != "created":
+        store.set_state(operation["operation_id"], state, error=error)
+    elif error is not None:
+        with store._lock:
+            store._operations[operation["operation_id"]]["error"] = error
+    with store._lock:
+        store._operations[operation["operation_id"]]["created_at"] = created_at
+    return operation["operation_id"]
+
+
+class TestListOperations:
+    def test_orders_newest_first(self):
+        store = OperationStore()
+        oldest = _seed_operation(store, kind="investigation",
+                                 created_at="2026-01-01T00:00:01+00:00")
+        newest = _seed_operation(store, kind="flash_job",
+                                 created_at="2026-01-01T00:00:03+00:00")
+        middle = _seed_operation(store, kind="verification_run",
+                                 created_at="2026-01-01T00:00:02+00:00")
+
+        rows = store.list_operations()
+
+        assert [row["operation_id"] for row in rows] == [newest, middle, oldest]
+
+    def test_filters_kind_and_state(self):
+        store = OperationStore()
+        flash = _seed_operation(store, kind="flash_job", state="succeeded",
+                                created_at="2026-01-01T00:00:01+00:00")
+        verify = _seed_operation(store, kind="verification_run", state="error",
+                                 error="模拟失败", created_at="2026-01-01T00:00:02+00:00")
+        _seed_operation(store, kind="investigation", state="running",
+                        created_at="2026-01-01T00:00:03+00:00")
+
+        rows = store.list_operations(kinds={"flash_job", "verification_run"})
+        assert {row["operation_id"] for row in rows} == {flash, verify}
+
+        rows = store.list_operations(states={"error"})
+        assert [row["operation_id"] for row in rows] == [verify]
+        assert rows[0]["error"] == "模拟失败"
+
+        # 空集合是"白名单为空"，不是"不过滤"
+        assert store.list_operations(kinds=set()) == []
+        assert store.list_operations(states=set()) == []
+
+    def test_since_is_inclusive_and_understands_offsets(self):
+        store = OperationStore()
+        boundary = _seed_operation(store, kind="investigation",
+                                   created_at="2026-05-01T10:00:00+00:00")
+        _seed_operation(store, kind="investigation",
+                        created_at="2026-05-01T09:59:59+00:00")
+
+        # 同值（含 +08:00 等价的 18:00+08:00）都算 >=，边界包含
+        assert [row["operation_id"] for row in store.list_operations(
+            since="2026-05-01T10:00:00+00:00")] == [boundary]
+        assert [row["operation_id"] for row in store.list_operations(
+            since="2026-05-01T18:00:00+08:00")] == [boundary]
+        # 晚一微秒就排除
+        assert store.list_operations(since="2026-05-01T10:00:00.000001+00:00") == []
+
+    def test_invalid_since_raises_value_error(self):
+        store = OperationStore()
+        _seed_operation(store, kind="investigation",
+                        created_at="2026-05-01T10:00:00+00:00")
+        for bad in ("not-a-time", "", "2026-13-01T00:00:00+00:00"):
+            with pytest.raises(ValueError):
+                store.list_operations(since=bad)
+
+    def test_limit_hard_cap_is_100(self):
+        store = OperationStore()
+        for index in range(150):
+            _seed_operation(store, kind="investigation",
+                            created_at=f"2026-01-01T00:{index // 60:02d}:{index % 60:02d}+00:00")
+
+        assert len(store.list_operations(limit=500)) == 100
+        assert len(store.list_operations(limit=101)) == 100
+        assert len(store.list_operations()) == 20
+        assert len(store.list_operations(limit=3)) == 3
+
+    def test_non_positive_limit_returns_empty(self):
+        store = OperationStore()
+        _seed_operation(store, kind="investigation",
+                        created_at="2026-05-01T10:00:00+00:00")
+        assert store.list_operations(limit=0) == []
+        assert store.list_operations(limit=-5) == []
+
+    def test_returns_deep_copy_and_summary_only(self):
+        store = OperationStore()
+        operation = store.create(
+            "investigation", "ai:test",
+            {"observations": [{"source": "listener", "secret": "不应出现在列表"}]},
+        )
+        store.set_state(operation["operation_id"], "succeeded", result={"raw": "结果不外泄"})
+        with store._lock:
+            store._operations[operation["operation_id"]]["created_at"] = (
+                "2026-05-01T10:00:00+00:00"
+            )
+        operation_id = operation["operation_id"]
+        before = store.get(operation_id)
+        assert before["result"] == {"raw": "结果不外泄"}  # 内部确实存了 result
+
+        rows = store.list_operations()
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert set(row) == {
+            "operation_id", "kind", "actor", "state", "created_at", "updated_at",
+            "client_request_id", "error",
+        }
+        assert "payload" not in row and "result" not in row
+        assert "不应出现在列表" not in repr(rows)
+        assert "结果不外泄" not in repr(rows)
+
+        row["state"] = "tampered"
+        row["error"] = "tampered"
+        row["created_at"] = "1970-01-01T00:00:00+00:00"
+        after = store.get(operation_id)
+        assert after["state"] == before["state"]
+        assert after["error"] == before["error"]
+        assert after["created_at"] == before["created_at"]
