@@ -514,6 +514,8 @@ def create_ai_router(
         grant = grant_from_header(authorization, "simcon:send", "simcon")
         try:
             return control.simcon_close(actor=actor(grant))
+        except SessionBusy as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except SourceUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 

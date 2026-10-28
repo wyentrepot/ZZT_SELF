@@ -1,6 +1,7 @@
 """Safe orchestration adapters for the AI workbench control plane."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -76,8 +77,12 @@ class AIControlService:
         self.simeter_service = simeter_service
         self.trace_service = trace_service
         self.store = store or OperationStore()
-        self._simcon_verify_gate = threading.Lock()
-        self._simcon_verify_running = False
+        # 模拟集中器统一准入闸门：verify / step / open / close 共用同一把锁，
+        # 任一时刻只允许一个写动作在跑（物理串口独占，混流会造出「假通过」）。
+        # 持有者只存内存（不落盘），供 409 文案与 GET /api/ai/v2/simcon/lease
+        # 只读快照使用；不做排队（no_queue_reject）。
+        self._simcon_gate = threading.Lock()
+        self._simcon_holder: dict | None = None
         # verify 代次与看门狗登记：看门狗超时废弃卡死线程后，旧线程的
         # 迟到结果不再复位守卫（以代次号为准）。
         self._simcon_verify_generation = 0
@@ -776,44 +781,160 @@ class AIControlService:
             raise SourceUnavailable("模拟集中器服务不可用")
         return self.simcon_service
 
+    # -- simcon 统一准入：谁能进、被拒说什么、怎么查，全部收敛在下面这一组方法 --
+    # 新增任何 simcon 写入口都必须登记在这里，并一律走 _simcon_lease()/_simcon_lease_begin()，
+    # 不要在入口处各写一遍 if（判断分散就会再次漏掉某个入口）。
+    _SIMCON_LEASE_KINDS = ("verify", "step", "open", "close")
+
+    def _simcon_new_holder(self, kind: str, *, actor: str,
+                           operation_id: str | None = None) -> dict:
+        """构造持有者登记（调用方须在持锁状态下发布）。"""
+        if kind not in self._SIMCON_LEASE_KINDS:
+            raise ValueError(f"未登记的 simcon 准入动作：{kind}")
+        return {
+            "actor": str(actor or "unknown"),
+            "kind": kind,
+            "operation_id": operation_id,
+            "started_at": _iso_now(),
+            "started_monotonic": time.monotonic(),
+            "thread": threading.current_thread().name,
+            "generation": None,
+        }
+
+    @staticmethod
+    def _simcon_elapsed_seconds(holder: dict) -> float:
+        """已运行时长按单调时钟算：墙钟会跳（校时/NTP），不能用它算耗时。"""
+        try:
+            started = float(holder.get("started_monotonic"))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, time.monotonic() - started)
+
+    @classmethod
+    def _simcon_busy_message(cls, holder: dict) -> str:
+        """409 文案：被拒的人要知道「谁占着、占的是什么动作、已经占多久」。"""
+        return (
+            f"已有模拟集中器任务在运行：actor={holder.get('actor') or 'unknown'}，"
+            f"动作={holder.get('kind') or 'unknown'}，"
+            f"已运行 {cls._simcon_elapsed_seconds(holder):.1f}s，"
+            f"operation={holder.get('operation_id') or '-'}"
+        )
+
+    def _simcon_lease_begin(self, kind: str, *, actor: str,
+                            operation_id: str | None = None) -> dict:
+        """取得统一闸门；已被占则抛 SessionBusy（带持有者信息），不排队。"""
+        with self._simcon_gate:
+            holder = self._simcon_holder
+            if holder is not None:
+                raise SessionBusy(self._simcon_busy_message(holder))
+            holder = self._simcon_new_holder(kind, actor=actor, operation_id=operation_id)
+            # 发布只做一次引用赋值（不就地新增/删键），读侧单次引用读取即可拿到快照；
+            # operation_id/generation 随后补写单键，最坏只在毫秒级窗口里读成 None。
+            self._simcon_holder = holder
+        return holder
+
+    def _simcon_lease_release_locked(self, holder: dict | None) -> None:
+        """释放持有权（调用方必须已持 _simcon_gate）。
+
+        按对象身份比对：看门狗废弃的旧验证线程迟到收尾时，不能把别人
+        （新任务）的持有权一起放掉。
+        """
+        if holder is not None and self._simcon_holder is holder:
+            self._simcon_holder = None
+
+    def _simcon_lease_release(self, holder: dict | None) -> None:
+        if holder is None:
+            return
+        with self._simcon_gate:
+            self._simcon_lease_release_locked(holder)
+
+    @contextlib.contextmanager
+    def _simcon_lease(self, kind: str, *, actor: str,
+                      operation_id: str | None = None):
+        """同步入口（step/open/close）的统一准入：任何异常路径都由 finally 释放。"""
+        holder = self._simcon_lease_begin(kind, actor=actor, operation_id=operation_id)
+        try:
+            yield holder
+        finally:
+            self._simcon_lease_release(holder)
+
+    def simcon_lease(self) -> dict:
+        """只读快照（GET /api/ai/v2/simcon/lease）：不取闸门，不阻塞、不影响在跑任务。
+
+        写侧只做「整体替换 + 发布后补 operation_id 单键」，读侧单次引用读取，
+        因此这里拿到的始终是一份可用登记（operation_id 极短暂为 None）。
+        """
+        holder = self._simcon_holder
+        if holder is None:
+            return {"held": False, "holder": None, "policy": "no_queue_reject"}
+        return {
+            "held": True,
+            "holder": {
+                "actor": holder.get("actor"),
+                "kind": holder.get("kind"),
+                "operation_id": holder.get("operation_id"),
+                "started_at": holder.get("started_at"),
+                "elapsed_seconds": round(self._simcon_elapsed_seconds(holder), 2),
+                "thread": holder.get("thread"),
+            },
+            "policy": "no_queue_reject",
+        }
+
     def simcon_verify(self, request: dict, *, actor: str, client_request_id: str = "") -> dict:
         """异步执行模拟集中器验证任务：202 + operation_id，wait 轮询到终态。
 
-        同一会话同一时刻只允许一个验证任务（并发返回 409）；任务不可取消。
-        底层 verify 可能在线程内永久阻塞（驱动级串口写挂死等），故另起
-        看门狗定时器：超时即落 error 终态并复位运行守卫，废弃卡死线程的
+        与 step/open/close 共用同一把统一闸门：任何时刻只有一个 simcon 写动作。
+        任务不可取消；底层 verify 可能在线程内永久阻塞（驱动级串口写挂死等），
+        故另起看门狗定时器：超时即落 error 终态并释放持有权，废弃卡死线程的
         后续结果，避免 verify 车道被永久 409 毒化。
+
+        verify 是异步的：持有权在请求线程取得、由后台线程收尾释放，故这里
+        不走 _simcon_lease() 上下文（那会在返回 202 时就释放），而是手工
+        begin/release，且释放带代次 + 对象身份双重校验。
         """
         service = self._require_simcon()
         request = dict(request or {})
-        with self._simcon_verify_gate:
-            if self._simcon_verify_running:
-                raise SessionBusy("已有模拟集中器验证任务在运行")
+        holder = self._simcon_lease_begin("verify", actor=actor)
+        thread_started = False
+        try:
             operation = self.store.create(
                 "simcon_verify", actor,
                 {"target": {"mapping_id": self._SIMCON_RESOURCE}, "task": request},
                 client_request_id=client_request_id,
             )
             if operation["state"] != "created":
+                self._simcon_lease_release(holder)  # 幂等重放：不占闸门
                 return operation
-            self._simcon_verify_running = True
-            self._simcon_verify_generation += 1
-            generation = self._simcon_verify_generation
+            holder["operation_id"] = operation["operation_id"]
+            with self._simcon_gate:
+                self._simcon_verify_generation += 1
+                generation = self._simcon_verify_generation
+                holder["generation"] = generation
             started = self.store.set_state(operation["operation_id"], "waiting")
-        thread = threading.Thread(
-            target=self._run_simcon_verify, name="ai-simcon-verify",
-            args=(operation["operation_id"], request, actor, generation), daemon=True,
-        )
-        thread.start()
-        timeout_s = self._verify_timeout_seconds()
-        watchdog = threading.Timer(
-            timeout_s, self._expire_simcon_verify,
-            args=(operation["operation_id"], actor, generation, timeout_s),
-        )
-        watchdog.daemon = True
-        watchdog.start()
-        with self._simcon_verify_gate:
-            self._simcon_verify_watchdogs[generation] = watchdog
+            thread = threading.Thread(
+                target=self._run_simcon_verify, name="ai-simcon-verify",
+                args=(operation["operation_id"], request, actor, generation, holder),
+                daemon=True,
+            )
+            # 运行线程记后台线程：verify 真正占串口的是它，不是接 202 的请求线程。
+            holder["thread"] = thread.name
+            thread.start()
+            thread_started = True
+            timeout_s = self._verify_timeout_seconds()
+            watchdog = threading.Timer(
+                timeout_s, self._expire_simcon_verify,
+                args=(operation["operation_id"], actor, generation, timeout_s, holder),
+            )
+            watchdog.daemon = True
+            watchdog.start()
+            with self._simcon_gate:
+                self._simcon_verify_watchdogs[generation] = watchdog
+        except BaseException:
+            # 线程没起来才在这里释放；线程已在跑则由它的 finally 收尾，
+            # 否则会在真实占用串口时把闸门提前放开（假通过的另一条路）。
+            if not thread_started:
+                self._simcon_lease_release(holder)
+            raise
         self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
                          result="waiting", operation_id=operation["operation_id"])
         return started
@@ -829,17 +950,18 @@ class AIControlService:
         return value if value > 0 else 240.0
 
     def _expire_simcon_verify(self, operation_id: str, actor: str, generation: int,
-                              timeout_s: float) -> None:
-        """看门狗到期：底层线程未在时限内返回 → 落 error 终态并复位运行守卫。
+                              timeout_s: float, holder: dict) -> None:
+        """看门狗到期：底层线程未在时限内返回 → 落 error 终态并释放持有权。
 
-        卡死的旧线程无法强杀，只能标记废弃：代次不匹配后其结果不再被
-        接受（store 终态不可改），守卫复位后新的 verify 可以正常提交。
+        卡死的旧线程无法强杀，只能标记废弃：代次 + 持有者身份对不上后其结果
+        不再被接受（store 终态不可改），持有权释放后新的 simcon 动作可以进入。
         """
-        with self._simcon_verify_gate:
+        with self._simcon_gate:
             self._simcon_verify_watchdogs.pop(generation, None)
-            if generation != self._simcon_verify_generation or not self._simcon_verify_running:
+            if (generation != self._simcon_verify_generation
+                    or self._simcon_holder is not holder):
                 return  # 正常路径已收尾，看门狗作废
-            self._simcon_verify_running = False
+            self._simcon_lease_release_locked(holder)
         self.store.set_state(
             operation_id, "error",
             error=f"验证总超时 {int(timeout_s)}s：底层验证线程未在时限内返回，已废弃本次任务"
@@ -849,7 +971,7 @@ class AIControlService:
                          result="error", operation_id=operation_id)
 
     def _run_simcon_verify(self, operation_id: str, request: dict, actor: str,
-                           generation: int) -> None:
+                           generation: int, holder: dict) -> None:
         watchdog: threading.Timer | None = None
         try:
             result = self.simcon_service.verify(request)
@@ -861,11 +983,11 @@ class AIControlService:
             self.store.audit(actor=actor, action="simcon.verify", resource=self._SIMCON_RESOURCE,
                              result="error", operation_id=operation_id)
         finally:
-            # 仅当本线程仍是当前代次才复位守卫并撤销看门狗；被看门狗废弃的
-            # 卡死线程迟返回时不触碰守卫，避免覆盖新任务的运行态。
-            with self._simcon_verify_gate:
+            # 仅当本线程仍是当前代次才释放持有权并撤销看门狗；被看门狗废弃的
+            # 卡死线程迟返回时不触碰新任务的持有权。
+            with self._simcon_gate:
                 if generation == self._simcon_verify_generation:
-                    self._simcon_verify_running = False
+                    self._simcon_lease_release_locked(holder)
                     watchdog = self._simcon_verify_watchdogs.pop(generation, None)
             if watchdog is not None:
                 watchdog.cancel()
@@ -882,7 +1004,11 @@ class AIControlService:
         if action["state"] != "created":
             return action
         try:
-            result = service.step(request)
+            # 与 verify 同一把闸门：verify 等应答时被插一帧，它可能把别人那一帧
+            # 当成自己的应答判 pass（假通过，事后无从发现），所以必须互斥。
+            with self._simcon_lease("step", actor=actor,
+                                    operation_id=action["operation_id"]):
+                result = service.step(request)
             completed = self.store.set_state(action["operation_id"], "succeeded", result=result)
             self.store.audit(actor=actor, action="simcon.step", resource=self._SIMCON_RESOURCE,
                              result="succeeded", operation_id=action["operation_id"])
@@ -925,13 +1051,21 @@ class AIControlService:
         return self._require_simcon().session()
 
     def simcon_open(self, spec: dict | None, *, actor: str) -> dict:
-        result = self._require_simcon().open(dict(spec or {}))
+        service = self._require_simcon()  # 先保 503 语义：服务缺失优先于闸门 409
+        # 同一个口：verify/step 在跑时 open 必须 409，不能把句柄从别人脚下换掉。
+        with self._simcon_lease("open", actor=actor):
+            result = service.open(dict(spec or {}))
         self.store.audit(actor=actor, action="simcon.open", resource=self._SIMCON_RESOURCE,
                          result="succeeded")
         return result
 
     def simcon_close(self, *, actor: str) -> dict:
-        result = self._require_simcon().close()
+        service = self._require_simcon()
+        # 同理：close 会把串口从进行中的 verify 底下抽走，也要先过闸门。
+        # 闸门拒绝以领域异常 SessionBusy 抛出，由路由层统一映射 409（与 open/step 一致）；
+        # 控制面不直接构造 HTTPException（分层纪律）。
+        with self._simcon_lease("close", actor=actor):
+            result = service.close()
         self.store.audit(actor=actor, action="simcon.close", resource=self._SIMCON_RESOURCE,
                          result="succeeded")
         return result

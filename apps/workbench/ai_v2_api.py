@@ -29,7 +29,12 @@ from .ai_operations import InvalidObservation, SessionBusy, SourceUnavailable
 from .ai_store import LIST_LIMIT_MAX, IdempotencyConflict
 
 
-def _bearer_grant(authorization: str | None, auth_store: AuthorizationStore) -> dict:
+def _bearer_grant(authorization: str | None, auth_store: AuthorizationStore,
+                  *, scope: str = "status:read") -> dict:
+    """按 Bearer 取授权；scope 缺省 status:read（保持既有能力清单端点行为）。
+
+    只读端点各自声明所需 scope（如 simcon:read），不另写一套 401/403 映射。
+    """
     if not authorization or not authorization.lower().startswith("bearer "):
         # REQS-0034 BR-1：缺 token 与缺环境变量是两回事——直接提示本机 loopback 免 token 姿势，
         # 不再裸 401「缺少 Bearer token」；有 token 但无效/过期/撤销时走下方原文案。
@@ -38,7 +43,7 @@ def _bearer_grant(authorization: str | None, auth_store: AuthorizationStore) -> 
             detail="缺少 Bearer token；本机 loopback 可在启动时设 WORKBENCH_LOCAL_FULL_ACCESS=1 免 token",
         )
     try:
-        return auth_store.authenticate(authorization[7:].strip(), scope="status:read")
+        return auth_store.authenticate(authorization[7:].strip(), scope=scope)
     except AuthorizationError as exc:
         message = str(exc)
         status = 401 if any(word in message for word in ("无效", "过期", "撤销")) else 403
@@ -454,5 +459,21 @@ def create_ai_v2_router(
             raise HTTPException(status_code=404, detail="Job 不存在") from exc
         except SessionBusy as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/simcon/lease")
+    def read_simcon_lease(request: Request,
+                          authorization: str | None = Header(None)) -> dict[str, object]:
+        """模拟集中器统一闸门的只读快照：谁在用、用的是什么动作、已经用了多久。
+
+        - 空闲 {"held": false, "holder": null}；占用时 holder 带
+          actor/kind/operation_id/started_at/elapsed_seconds/thread。
+        - 不取闸门：查一下不会阻塞请求线程，也不改变在跑任务的准入状态。
+        - policy 固定 no_queue_reject：撞门就直接 409，本版不排队。
+        鉴权与其它 v2 只读端点一致：本机 loopback 免 token，局域网需 simcon:read。
+        """
+        context = resolve_access_context(request, local_full_enabled=local_full_enabled)
+        if context.zone.value != "local_full":
+            _bearer_grant(authorization, auth_store, scope="simcon:read")
+        return control.simcon_lease()
 
     return router
