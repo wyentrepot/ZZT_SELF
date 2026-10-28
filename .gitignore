@@ -422,3 +422,9 @@ reasonix.toml
 _tmp_*/
 # 例外：tools/taiti/分钟采集 samples 精简样例需入库（作单测/演示回归基线）
 !tools/taiti/分钟采集/samples/*.log
+
+# 本机串口配置备份（2026-10-28 整理脏工作区时加；备份只在本机有意义）
+config/*.bak-*
+config/*.usbipd-backup-*.json
+# zcode 工具残留（.gitignore 的副本，本机专用）
+.zcodeignore
