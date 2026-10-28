@@ -57,6 +57,11 @@ class AICapabilityService:
     def __init__(self, control: AIControlService):
         self.control = control
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ai-v2")
+        # 烧录互斥闸门：建父 job → 判同键重提 → 判同会话并发 → 认领为 waiting
+        # 必须在同一把锁里原子完成。否则两个同键请求会各自读到 state="created"
+        # 而各烧一次板子（P0-4 真机二次烧录的直接成因）。锁只覆盖受理，不覆盖
+        # 真实烧录——烧录在后台线程里跑，不能占着锁（否则又变回同步阻塞）。
+        self._flash_gate = threading.Lock()
 
     @staticmethod
     def _job_id(operation_id: str) -> str:
@@ -227,7 +232,8 @@ class AICapabilityService:
             kind, context.actor, payload, client_request_id=client_request_id,
         )
 
-    def _finish_write_job(self, parent: dict, underlying: dict, *, result: dict | None = None) -> JobEnvelope:
+    def _finish_write_job(self, parent: dict, underlying: dict, *, result: dict | None = None,
+                          error: str | None = None) -> JobEnvelope:
         compact = result or self._compact_operation(underlying)
         compact.setdefault("underlying_operation_id", underlying.get("operation_id"))
         compact.setdefault("underlying_state", underlying.get("state"))
@@ -237,7 +243,10 @@ class AICapabilityService:
         parent_state = "succeeded" if state in {"succeeded", "matched", "timed_out", "idle"} else (
             "cancelled" if state == "cancelled" else "error" if state in {"error", "interrupted"} else "waiting"
         )
-        stored = self.control.store.set_state(parent["operation_id"], parent_state, result=compact)
+        # error 同时写进父 job 的 error 字段：信封 summary 取的是 error，只写 result
+        # 会让客户端只看到 "flash_job error" 这种无信息量的摘要（后台线程里更典型）。
+        stored = self.control.store.set_state(parent["operation_id"], parent_state,
+                                              result=compact, error=error)
         return self._envelope(stored)
 
     def _monitor_write_job(self, parent_id: str, underlying_id: str) -> None:
@@ -337,6 +346,21 @@ class AICapabilityService:
             raise
 
     def start_flash_job(self, request: FlashJobRequest | dict, *, context: AccessContext) -> JobEnvelope:
+        """受理烧录任务：只做「登记 + 认领 + 派后台」，绝不在请求线程里烧。
+
+        为什么这样改（两个坑都在这个函数里）：
+        1. 幂等：此前 client_request_id 被 pop 掉就丢了，内层 module_flash 拿不到
+           幂等键；而父 job 又要等 121s 的烧录跑完才转 waiting，阻塞期一直是
+           created —— 客户端超时用同一个键重提时，「已有任务」判断不成立，于是
+           又烧了一次（真机 CCO 21:44 二次烧录）。现在：幂等键继续透传给内层
+           （加 :module_flash 后缀另开一档，父 job 已占用原始键），且父 job 在
+           真正开烧之前就落 waiting —— 重提必然命中「已有任务」分支，返回同一个
+           job_id，不会再碰板子。
+        2. 异步：真机 flash_module 是同步阻塞（实测 121s），HTTP 响应要等烧完才
+           回，客户端 curl -m 60 先超时、响应体 0 字节，job_id 从未到手。现在受理
+           即返回 202 + JobEnvelope(running)，烧录交给后台线程，终态由
+           _monitor_write_job 推进。
+        """
         payload = self._json_request(request)
         client_request_id = str(payload.pop("client_request_id", "") or "")
         session_id = str(payload.get("session_id") or "")
@@ -344,26 +368,96 @@ class AICapabilityService:
             resource = self.control.session_resource(session_id)
         except KeyError:
             resource = session_id
-        parent = self._new_write_job(
-            "flash_job", {"target": {"session_id": session_id, "mapping_id": resource},
-                           "resources": [resource], "cleanup": "owned_only",
-                           "request_fingerprint": self._request_fingerprint(payload)},
-            context=context, client_request_id=client_request_id,
-        )
-        if parent["state"] != "created":
-            return self._envelope(parent)
-        try:
-            underlying = self.control.flash_module(payload, actor=context.actor)
-            if underlying.get("state") in TERMINAL_STATES:
-                return self._finish_write_job(parent, underlying)
-            started = self.control.store.set_state(
-                parent["operation_id"], "waiting", result=self._compact_operation(underlying),
+        job_payload = {"target": {"session_id": session_id, "mapping_id": resource},
+                       "resources": [resource], "cleanup": "owned_only",
+                       "request_fingerprint": self._request_fingerprint(payload)}
+        with self._flash_gate:
+            if client_request_id and self.control.store.by_client_request_id(client_request_id):
+                # 同键重提：交给 store 复核请求指纹（同键不同参数 → IdempotencyConflict
+                # 409，不静默接受），命中则原样返回同一个 job。父 job 这时早已不是
+                # created，绝不会再进下面的烧录分支。
+                return self._envelope(self._new_write_job(
+                    "flash_job", job_payload, context=context,
+                    client_request_id=client_request_id,
+                ))
+            self._reject_concurrent_flash(session_id)
+            parent = self._new_write_job(
+                "flash_job", job_payload, context=context,
+                client_request_id=client_request_id,
             )
-            self._executor.submit(self._monitor_write_job, parent["operation_id"], underlying["operation_id"])
-            return self._envelope(started)
-        except Exception as exc:
-            self.control.store.set_state(parent["operation_id"], "error", error=str(exc))
-            raise
+            if parent["state"] != "created":
+                return self._envelope(parent)
+            started = self.control.store.set_state(
+                parent["operation_id"], "waiting",
+                result={"session_id": session_id, "mapping_id": resource, "phase": "starting"},
+            )
+            self._executor.submit(
+                self._run_flash_job, parent["operation_id"], payload, context.actor,
+                client_request_id,
+            )
+        return self._envelope(started)
+
+    def _reject_concurrent_flash(self, session_id: str) -> None:
+        """同一会话同时只允许一个烧录在册（沿用通道层 _flash_state 互斥的口径）。
+
+        异步化之后不能再靠请求线程「撞上」底层 `烧录已在执行中` 才算拒绝：那会把
+        迟到的拒绝变成一个 error job，而真正烧板子的动作已经发生。所以在受理阶段
+        就按「该会话还有非终态 flash_job」显式拒绝（409 SessionBusy），且拒绝发生
+        在建父 job 之前 —— 不给幂等键留下一个永久 error 的假任务。
+        """
+        for operation in self.control.store.list_active():
+            if operation.get("kind") != "flash_job":
+                continue
+            target = (operation.get("payload") or {}).get("target") or {}
+            if str(target.get("session_id") or "") == session_id:
+                raise SessionBusy("该会话已有烧录任务在执行，烧录不可并发")
+
+    def _run_flash_job(self, parent_id: str, payload: dict, actor: str,
+                       client_request_id: str = "") -> None:
+        """后台线程里执行真实烧录（父 job 已由受理路径落到 waiting）。
+
+        为什么 try 包到底：烧录不可取消，父 job 一旦因后台异常停在 waiting，客户端
+        会永远等不到终态；异常必须转成可读的 error 落到父 job 上，不能只在日志里
+        留一条栈。底层 module_flash 自己就是「异常→error 状态」的写法，两条路都要
+        覆盖（它也可能在落 operation 之前就抛，如 SourceUnavailable）。
+        """
+        request = dict(payload)
+        if client_request_id:
+            # 幂等键透传到内层 module_flash：原始键已被父 job 占用，直接复用会被
+            # store 判成「指纹不一致」而 409，所以加固定后缀另开一档。
+            request["client_request_id"] = f"{client_request_id}:module_flash"
+        try:
+            underlying = self.control.flash_module(request, actor=actor)
+        except Exception as exc:  # noqa: BLE001 - 后台线程必须兜住，否则父 job 永久 waiting
+            self._fail_flash_job(parent_id, exc)
+            return
+        try:
+            if underlying.get("state") in TERMINAL_STATES:
+                error = None
+                if str(underlying.get("state")) in {"error", "interrupted"}:
+                    reason = str(underlying.get("error") or "底层未给出失败原因")[:3000]
+                    error = f"烧录失败：{reason}"
+                self._finish_write_job(
+                    self.control.store.get(parent_id), underlying, error=error,
+                )
+                return
+            # 底层自己异步（flash 仍在进行）：挂上现有监视线程推进到终态。
+            self.control.store.set_state(
+                parent_id, "waiting", result=self._compact_operation(underlying),
+            )
+            self._monitor_write_job(parent_id, underlying["operation_id"])
+        except Exception as exc:  # noqa: BLE001 - 同上，停在 waiting 比报错更难查
+            self._fail_flash_job(parent_id, exc)
+
+    def _fail_flash_job(self, parent_id: str, exc: BaseException) -> None:
+        message = (str(exc) or exc.__class__.__name__)[:3000]
+        try:
+            self.control.store.set_state(
+                parent_id, "error", result={"error": message},
+                error=f"烧录失败：{message}",
+            )
+        except KeyError:  # 父 job 不在了也不能让后台线程抛出去
+            pass
 
     def cancel_job(self, job_id: str, *, actor: str) -> JobEnvelope:
         parent = self.control.store.get(self._operation_id(job_id))
