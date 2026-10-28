@@ -11,6 +11,11 @@ from .ai_operations import AIControlService, InvalidObservation, SessionBusy, So
 from .ai_store import IdempotencyConflict
 from .ai_v2_api import record_flash_authorization, resolve_flash_authorization
 from listener.trace_service import FeatureError
+from sim_concentrator.scenario_codec import (
+    ScenarioParamError,
+    validate_send,
+    validate_steps,
+)
 
 
 def create_ai_router(
@@ -392,6 +397,12 @@ def create_ai_router(
     @router.post("/simcon/verify", status_code=202)
     def simcon_verify(request: dict[str, Any], authorization: str | None = Header(None)):
         grant = grant_from_header(authorization, "simcon:verify", "simcon")
+        # 建 operation（job）之前拦参数写法：simcon_verify 是 202 + 后台执行，
+        # 构帧失败会落在 step.result=fail，用户只会看到「设备不响应」。
+        try:
+            validate_steps(request.get("steps"))
+        except ScenarioParamError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
         if existing is not None:
             grant_from_header(authorization, "simcon:verify", "simcon")
@@ -410,6 +421,11 @@ def create_ai_router(
     @router.post("/simcon/step")
     def simcon_step(request: dict[str, Any], authorization: str | None = Header(None)):
         grant = grant_from_header(authorization, "simcon:send", "simcon")
+        # 同 verify：先校验再建 operation，非法 afn/fn 不该留下 error 记录。
+        try:
+            validate_send(request.get("send"))
+        except ScenarioParamError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         existing = control.idempotent_operation(str(request.get("client_request_id") or ""))
         if existing is not None:
             grant_from_header(authorization, "simcon:send", "simcon")

@@ -27,6 +27,7 @@ from .ai_capability_service import EvidenceRefForbidden
 from .ai_operations import AIControlService
 from .ai_operations import InvalidObservation, SessionBusy, SourceUnavailable
 from .ai_store import LIST_LIMIT_MAX, IdempotencyConflict
+from sim_concentrator.scenario_codec import ScenarioParamError, validate_steps
 
 
 def _bearer_grant(authorization: str | None, auth_store: AuthorizationStore,
@@ -338,6 +339,15 @@ def create_ai_v2_router(
     def create_verification_run(request: Request, body: VerificationRunRequest,
                                 authorization: str | None = Header(None)) -> JobEnvelope:
         context = _context(request, authorization, "verification_runs.create", ["simcon"])
+        # 必须在 start_verification_run 之前校验：该服务先建父 job 再调 simcon，
+        # 202 之后才在后台构帧失败只会留下一个 failed job（result=fail、
+        # sent_hex=""），把参数写错伪装成设备不响应；这里非法直接 422、不建 job。
+        payload = body.model_dump(mode="json", exclude_none=True)
+        task = payload.get("task")
+        try:
+            validate_steps(task.get("steps") if isinstance(task, dict) else None)
+        except ScenarioParamError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             return capability_service.start_verification_run(body, context=context)
         except IdempotencyConflict as exc:

@@ -23,12 +23,20 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from sim_concentrator.journal import SessionManager
 from sim_concentrator.runner import execute_task, run_single_step
 from sim_concentrator.responder import Responder
-from sim_concentrator.scenario_codec import build_send, load_profile
+from sim_concentrator.scenario_codec import (
+    ScenarioParamError,
+    build_send,
+    load_profile,
+    normalise_afn,
+    normalise_fn,
+    validate_send,
+    validate_steps,
+)
 from sim_concentrator import recipes as simcon_recipes
 from shared.serial_mapping import SerialPortCatalog
 from shared.serial_resources import SerialResourceRegistry
@@ -97,6 +105,17 @@ class VerifyTask(BaseModel):
     responders: Optional[List[Dict[str, Any]]] = None
     steps: List[Dict[str, Any]] = []
 
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _check_steps_afn_fn(cls, value):
+        """请求体解析阶段就拦下 steps[].send.afn/fn 写法错误（→ 422）。
+
+        必须在进执行器之前拦：执行器会捕获构帧异常并写成 step result=fail，
+        参数写错就伪装成「设备不响应」污染用例结论。
+        """
+        validate_steps(value)
+        return value
+
 
 class StepRequest(BaseModel):
     """单步语义执行请求（ADR-5：send 只写 afn/fn+params，raw 报错）。
@@ -115,6 +134,13 @@ class StepRequest(BaseModel):
     enable_responder: bool = True
     name: Optional[str] = None
 
+    @field_validator("send", mode="before")
+    @classmethod
+    def _check_send_afn_fn(cls, value):
+        """单步下发的 send.afn/fn 同样在请求解析阶段拦（→ 422）。"""
+        validate_send(value)
+        return value
+
 
 class BuildRequest(BaseModel):
     """语义化构帧预览请求：只经 scenario_codec 计算帧字节，不触串口。"""
@@ -124,6 +150,16 @@ class BuildRequest(BaseModel):
     direction: str = "down"
     profile: Optional[str] = None
     seq: int = 1
+
+    @field_validator("afn", "fn", mode="before")
+    @classmethod
+    def _check_afn_fn(cls, value, info):
+        """构帧预览的 afn/fn 写法校验（只校验，不改值，build_send 语义不变）。"""
+        if info.field_name == "afn":
+            normalise_afn(value)
+        else:
+            normalise_fn(value)
+        return value
 
 
 class BatchReadRequest(BaseModel):
@@ -506,6 +542,9 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         """执行验证任务并返回逐步判定 + 汇总结论 JSON。"""
         try:
             return _run_verify_task(task.model_dump())
+        except ScenarioParamError as exc:
+            # 参数写错是 4xx，不是「设备不响应」；不能混进 409 的执行失败。
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=409, detail=f"验证任务执行失败：{exc}") from exc
 

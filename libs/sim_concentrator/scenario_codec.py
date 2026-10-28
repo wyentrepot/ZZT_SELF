@@ -28,6 +28,21 @@ class ScenarioCodecError(ValueError):
     """用例描述 → 帧 转换失败（缺 profile、参数非法等）。"""
 
 
+class ScenarioParamError(ScenarioCodecError):
+    """afn/fn 等入参写法非法（前置校验用）。
+
+    与 ScenarioCodecError 同属 ValueError：老的 `except ValueError` 分支照旧
+    能接住；上层若要区分「参数写错」与「构帧/执行失败」，单独 catch 本类型即可
+    映射 422（参数错不该伪装成 result=fail 的用例失败）。
+    """
+
+
+# 合法写法提示：错误消息必须自带示例，否则用户只能去翻协议库源码。
+_AFN_HINT = '两位十六进制、不带后缀（如 "10"），或整数 0-255'
+_FN_HINT = '十进制数字、可带 F 前缀（如 "230" / "F230"），或整数 0-255'
+_HEX_DIGITS = "0123456789abcdefABCDEF"
+
+
 # ---------------------------------------------------------------------------
 # profile 加载
 # ---------------------------------------------------------------------------
@@ -175,17 +190,84 @@ def build_send(send: dict, profile: dict, seq: int = 1) -> bytes:
     )
 
 
+def normalise_afn(value, *, field: str = "afn") -> int:
+    """校验 afn 写法并转 int（**不改合法输入的取值语义**，"10" 仍是 0x10）。
+
+    合法：十六进制字符串（不带 H/h 后缀；"0x10" 这类已有写法保留兼容）
+    或 0-255 整数。非法一律抛 ScenarioParamError，消息带合法写法示例。
+    """
+    if isinstance(value, bool):  # bool 是 int 子类，先显式拒绝
+        raise ScenarioParamError(f'{field} 格式非法：{value!r}。合法写法：{_AFN_HINT}')
+    if isinstance(value, int):
+        if not 0 <= value <= 0xFF:
+            raise ScenarioParamError(f'{field} 超出范围：{value}。合法写法：{_AFN_HINT}')
+        return value
+    text = "" if value is None else str(value).strip()
+    if not text:
+        raise ScenarioParamError(f'{field} 为空（{value!r}）。合法写法：{_AFN_HINT}')
+    body = text[2:] if text[:2].lower() == "0x" else text
+    if not body or any(ch not in _HEX_DIGITS for ch in body):
+        raise ScenarioParamError(f'{field} 格式非法："{text}"。合法写法：{_AFN_HINT}')
+    number = int(body, 16)
+    if not 0 <= number <= 0xFF:
+        raise ScenarioParamError(f'{field} 超出范围："{text}"（= {number}）。合法写法：{_AFN_HINT}')
+    return number
+
+
+def normalise_fn(value, *, field: str = "fn") -> int:
+    """校验 fn 写法并转 int（**不改合法输入的取值语义**，"F230" 仍是 230）。
+
+    合法：十进制数字字符串，可带 F 前缀（"230" / "F230"），或 0-255 整数。
+    非法一律抛 ScenarioParamError，消息带合法写法示例。
+    """
+    if isinstance(value, bool):
+        raise ScenarioParamError(f'{field} 格式非法：{value!r}。合法写法：{_FN_HINT}')
+    if isinstance(value, int):
+        if not 0 <= value <= 0xFF:
+            raise ScenarioParamError(f'{field} 超出范围：{value}。合法写法：{_FN_HINT}')
+        return value
+    text = "" if value is None else str(value).strip()
+    if not text:
+        raise ScenarioParamError(f'{field} 为空（{value!r}）。合法写法：{_FN_HINT}')
+    body = text[1:] if text[:1] in ("F", "f") else text
+    if not body or any(ch not in "0123456789" for ch in body):
+        raise ScenarioParamError(f'{field} 格式非法："{text}"。合法写法：{_FN_HINT}')
+    number = int(body, 10)
+    if not 0 <= number <= 0xFF:
+        raise ScenarioParamError(f'{field} 超出范围："{text}"（= {number}）。合法写法：{_FN_HINT}')
+    return number
+
+
+def validate_send(send, *, where: str = "send") -> None:
+    """前置校验 send.afn / send.fn 的写法；只拦截非法，不改任何取值。
+
+    只检查**已出现**的键：缺 afn/fn 仍由 build_send 报「send 缺 afn」，
+    recv_only 等无 send 的场景不会被误伤。
+    """
+    if send is None:
+        return
+    if not isinstance(send, dict):
+        raise ScenarioParamError(f"{where} 必须是对象，实际 {type(send).__name__}")
+    if "afn" in send:
+        normalise_afn(send.get("afn"), field=f"{where}.afn")
+    if "fn" in send:
+        normalise_fn(send.get("fn"), field=f"{where}.fn")
+
+
+def validate_steps(steps, *, where: str = "steps") -> None:
+    """校验验证任务的 steps 数组里每一跳 send.afn / send.fn 的写法。"""
+    if steps is None:
+        return
+    if not isinstance(steps, (list, tuple)):
+        raise ScenarioParamError(f"{where} 必须是数组，实际 {type(steps).__name__}")
+    for index, step in enumerate(steps):
+        if isinstance(step, dict):
+            validate_send(step.get("send"), where=f"{where}[{index}].send")
+
+
 def _norm_afn(v) -> int:
-    if isinstance(v, int):
-        return v & 0xFF
-    return int(str(v), 16)
+    return normalise_afn(v)
 
 
 def _norm_fn(v) -> int:
-    """fn 支持 "F230" / "f230" / 230 / "230"。"""
-    if isinstance(v, int):
-        return v
-    s = str(v).strip().upper()
-    if s.startswith("F"):
-        s = s[1:]
-    return int(s, 10)
+    return normalise_fn(v)
