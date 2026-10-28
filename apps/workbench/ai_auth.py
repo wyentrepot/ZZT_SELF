@@ -30,6 +30,8 @@ V2_CAPABILITY_SCOPES: dict[str, frozenset[str]] = {
     "jobs.read": frozenset({"evidence:read"}),
     "jobs.cancel": frozenset({"observation:create"}),
     "jobs.evidence.read": frozenset({"evidence:read"}),
+    # 2026-10-28 新增：simcon 统一闸门的只读快照（谁在用、用了多久）
+    "simcon_lease.read": frozenset({"simcon:read"}),
 }
 
 # A capability is usable only against aliases from these logical sources.  The
@@ -46,6 +48,7 @@ V2_CAPABILITY_SOURCES: dict[str, frozenset[str]] = {
     "jobs.read": frozenset({"module_log", "listener", "simcon", "simeter"}),
     "jobs.cancel": frozenset({"module_log", "listener", "simcon", "simeter"}),
     "jobs.evidence.read": frozenset({"module_log", "listener", "simcon", "simeter"}),
+    "simcon_lease.read": frozenset({"simcon"}),
 }
 
 

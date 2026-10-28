@@ -182,6 +182,7 @@ def _resource_aliases(control: AIControlService, grant: dict | None) -> list[Res
 # 缺省能力不在此表 → call_examples 为空数组。
 _CALL_EXAMPLES: dict[str, list[str]] = {
     "capabilities.read": ["GET /api/ai/v2/capabilities"],
+    "simcon_lease.read": ["GET /api/ai/v2/simcon/lease"],
     "investigations.create": [
         "POST /api/ai/v2/investigations",
         "GET /api/ai/v2/jobs/{id}",
@@ -239,6 +240,8 @@ _CALL_EXAMPLES: dict[str, list[str]] = {
 # 真实前置条件（依赖的 session_id、烧录白名单、串口/闸门等）。只描述现有行为，
 # 不引入新语义；缺省能力不在此表 → summary 为空、requires 为空数组。
 _CAPABILITY_SUMMARIES: dict[str, str] = {
+    "simcon_lease.read": "只读查询模拟集中器当前被谁占着、什么动作、已跑多久；"
+                         "提交 verify/step 前先看它，held=true 就别提，别盲重试。",
     "capabilities.read": "读本机当前可用的 v2 能力、资源别名与源健康度；开工前先看它确认能做什么、走哪条路，省得翻文档。",
     "flash_jobs.create": "把 iap 固件烧进 CCO/STA，异步受理后返回 job_id，终态要轮询 jobs.read。",
     "investigations.create": "对 module_log/listener/simcon/simeter 发起 1-3 路观察任务并 202 返回 job_id；要看实时帧、等事件或取证时用。",
@@ -267,6 +270,9 @@ _CAPABILITY_REQUIRES: dict[str, list[str]] = {
     "module_actions.send": ["module_actions.ensure → session_id", "text 与 data_hex 二选一"],
     "module_actions.stop": ["module_actions.ensure → session_id"],
     "simeter_frames.read": ["simeter 在线（source_health.simeter.available）"],
+    "simcon_lease.read": [
+        "simcon 侧有任务在跑时先查它，判断要不要等",
+    ],
     "verification_runs.create": [
         "simcon 空闲（GET /api/ai/v2/simcon/lease）",
         "task.steps 的 afn/fn 写法合法（非法 422）",

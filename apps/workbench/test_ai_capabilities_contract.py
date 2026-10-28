@@ -44,18 +44,18 @@ def test_capability_new_fields_are_additive_and_optional():
 
 
 def test_all_eleven_capabilities_carry_summary_and_requires():
-    """11 项能力逐项校验：summary 非空且 ≤120 字、requires 是 list[str]。"""
+    """12 项能力逐项校验（2026-10-28 增补 simcon_lease.read）：summary 非空且 ≤120 字、requires 是 list[str]。"""
     snapshot = _snapshot()
     caps = {item.name: item for item in snapshot.capabilities}
 
-    assert len(caps) == 11
+    assert len(caps) == 12
     assert set(caps) == set(V2_CAPABILITY_SCOPES)
     for name, item in caps.items():
         assert item.summary.strip(), f"{name} 缺 summary"
         assert len(item.summary) <= 120, f"{name} summary 超过 120 字"
         assert isinstance(item.requires, list), f"{name} requires 不是 list"
         assert all(isinstance(text, str) and text.strip() for text in item.requires)
-        # 既有字段：11 项都应有最小调用链示例
+        # 既有字段：12 项都应有最小调用链示例
         assert item.call_examples, f"{name} 缺 call_examples"
 
 
@@ -83,3 +83,18 @@ def test_snapshot_serialises_with_new_fields_and_keeps_revision():
     for item in payload["capabilities"]:
         assert isinstance(item["summary"], str) and item["summary"]
         assert isinstance(item["requires"], list)
+
+def test_simcon_lease_capability_registered():
+    """simcon 统一闸门的只读端点要出现在能力清单里（加了端点不登记是同类隐患）。"""
+    names = {
+        "capabilities.read", "investigations.create", "verification_runs.create",
+        "simeter_frames.read", "module_actions.ensure", "module_actions.send",
+        "module_actions.stop", "flash_jobs.create", "jobs.read", "jobs.cancel",
+        "jobs.evidence.read", "simcon_lease.read",
+    }
+    snapshot = _snapshot()                     # 返回 CapabilitySnapshot（pydantic 模型）
+    got = {cap.name for cap in snapshot.capabilities}
+    assert got == names
+    lease = next(cap for cap in snapshot.capabilities if cap.name == "simcon_lease.read")
+    assert lease.summary and len(lease.summary) <= 120
+    assert lease.call_examples, "要给最小调用链示例"
