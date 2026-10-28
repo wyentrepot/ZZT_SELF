@@ -4,7 +4,7 @@
     {
       "id": "simcon",
       "windows_com": "COM4",
-      "linux_device": "/dev/ttyUSB0",
+      "linux_device": "/run/hplc/serial/simcon",
       "label": "模拟集中器",
       "usage": "simcon",
       "module": "",
@@ -13,12 +13,27 @@
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true,
-      "usb_busid": "6-1"
+      "usb_busid": "",
+      "note": "WSL 侧 PTY 必须 8N1（物理 8E1 由 Windows 桥侧实现）；CCO 当前 bps 落点 115200"
+    },
+    {
+      "id": "factory",
+      "windows_com": "COM7",
+      "linux_device": "/run/hplc/serial/factory",
+      "label": "厂测上位机",
+      "usage": "",
+      "module": "",
+      "baudrate": 9600,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true,
+      "usb_busid": ""
     },
     {
       "id": "listener",
-      "windows_com": "COM24",
-      "linux_device": "/dev/ttyUSB1",
+      "windows_com": "COM11",
+      "linux_device": "/run/hplc/serial/listener",
       "label": "侦听台",
       "usage": "listener",
       "module": "",
@@ -27,12 +42,12 @@
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true,
-      "usb_busid": "6-4"
+      "usb_busid": ""
     },
     {
       "id": "cco-main",
-      "windows_com": "COM9",
-      "linux_device": "/dev/ttyACM1",
+      "windows_com": "COM8",
+      "linux_device": "/run/hplc/serial/cco-main",
       "label": "CCO 模块",
       "usage": "module_log",
       "module": "cco",
@@ -41,12 +56,12 @@
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true,
-      "usb_busid": "5-2:1.0"
+      "usb_busid": ""
     },
     {
       "id": "sta-main",
-      "windows_com": "COM8",
-      "linux_device": "/dev/ttyACM0",
+      "windows_com": "COM9",
+      "linux_device": "/run/hplc/serial/sta-main",
       "label": "STA 模块",
       "usage": "module_log",
       "module": "sta",
@@ -55,7 +70,7 @@
       "bytesize": 8,
       "stopbits": 1,
       "enabled": true,
-      "usb_busid": "5-2:1.2"
+      "usb_busid": ""
     }
   ]
 }

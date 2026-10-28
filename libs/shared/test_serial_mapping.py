@@ -158,3 +158,35 @@ def test_merge_system_ports_ch342_dual_interface():
     by_dev = {r["device"]: r for r in merged}
     assert by_dev["/dev/ttyACM0"]["mapping_id"] == "cco-main"
     assert by_dev["/dev/ttyACM1"]["mapping_id"] == "sta-main"
+
+
+def test_merge_system_ports_marks_present_bridge_path_online(tmp_path):
+    """桥接 PTY 不进 list_ports；配置路径存在且为字符设备时应判在线。"""
+    import os
+    import pty
+
+    master_fd, slave_fd = pty.openpty()
+    pts = os.ttyname(slave_fd)
+    link = tmp_path / "listener"
+    link.symlink_to(pts)
+    try:
+        data = _config()
+        data["ports"][0]["linux_device"] = str(link)
+        catalog = SerialPortCatalog.load(_write_config(data))
+
+        merged = catalog.merge_system_ports([], platform_name="posix")
+        listener = next(r for r in merged if r["mapping_id"] == "listener")
+        assert listener["online"] is True
+        assert listener["device"] == str(link)
+        assert "桥接" in listener["description"]
+
+        # 路径不存在时仍应判离线
+        missing = tmp_path / "missing"
+        data["ports"][0]["linux_device"] = str(missing)
+        catalog = SerialPortCatalog.load(_write_config(data))
+        merged = catalog.merge_system_ports([], platform_name="posix")
+        listener = next(r for r in merged if r["mapping_id"] == "listener")
+        assert listener["online"] is False
+    finally:
+        os.close(master_fd)
+        os.close(slave_fd)

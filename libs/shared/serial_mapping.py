@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -245,6 +246,19 @@ class SerialPortCatalog:
             if not mapping.enabled or mapping.id in seen_mapping_ids:
                 continue
             record = mapping.as_dict(platform_name)
-            record.update({"description": "配置的串口当前离线", "online": False})
+            # 桥接 / 手工补建的串口节点不会出现在 serial.tools.list_ports 的
+            # 枚举里（PTY 尤其如此）；只要配置路径实际存在且是字符设备，
+            # 就按“在线”展示，避免监听台/模块会话被“当前离线”误拦。
+            present = False
+            if platform_name != "nt":
+                device = str(record.get("device") or "")
+                try:
+                    present = bool(device) and stat.S_ISCHR(os.stat(device).st_mode)
+                except OSError:
+                    present = False
+            record.update({
+                "description": "桥接虚拟串口（已就绪）" if present else "配置的串口当前离线",
+                "online": present,
+            })
             results.append(record)
         return results

@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "windows": {
+    "host": "127.0.0.1",
+    "reconnect_seconds": 1.0
+  },
+  "wsl": {
+    "listen_host": "127.0.0.1",
+    "link_dir": "/run/hplc/serial",
+    "status_file": "/run/hplc/serial/status.json",
+    "log_file": "data/runtime/serial_bridge.log"
+  },
+  "ports": [
+    {
+      "id": "simcon",
+      "label": "模拟集中器",
+      "windows_com": "COM4",
+      "tcp_port": 8814,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "E",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9814
+    },
+    {
+      "id": "factory",
+      "label": "厂测上位机",
+      "windows_com": "COM7",
+      "tcp_port": 8817,
+      "baudrate": 9600,
+      "bytesize": 8,
+      "parity": "N",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9817
+    },
+    {
+      "id": "listener",
+      "label": "侦听台 / STA 底座口",
+      "windows_com": "COM11",
+      "tcp_port": 8824,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "E",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9824
+    },
+    {
+      "id": "sta-main",
+      "label": "STA 模块日志口",
+      "windows_com": "COM9",
+      "tcp_port": 8818,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "N",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9818
+    },
+    {
+      "id": "cco-main",
+      "label": "CCO 模块日志口",
+      "windows_com": "COM8",
+      "tcp_port": 8819,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "N",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9819
+    }
+  ]
+}

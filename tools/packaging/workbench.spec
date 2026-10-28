@@ -26,6 +26,7 @@ datas = [
     (str(ROOT / "apps" / "workbench" / "static"), "static"),
     # 可维护映射模板；runtime hook 首次启动复制到 exe 同级 config/。
     (str(ROOT / "config" / "serial_ports.json"), "config"),
+    (str(ROOT / "config" / "serial_bridge.json"), "config"),
     (str(ROOT / "apps" / "workbench" / "scenarios"), "workbench/scenarios"),
     # 统一后端挂载的子应用静态前端：各自映射到包目录，
     # frozen 下子应用 _base_dir()=包目录 → STATIC_DIR=包目录/static 保持一致
@@ -56,6 +57,7 @@ hiddenimports = [
     "workbench.ai_auth",
     "workbench.ai_operations",
     "workbench.ai_store",
+    "workbench.serial_bridge_api",
     # Bounded AI module-log regex observations.
     "regex",
     "workbench.api",

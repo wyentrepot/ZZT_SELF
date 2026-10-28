@@ -1,16 +1,18 @@
 ﻿#Requires -Version 5.1
 param(
     [switch]$Test,   # 测试模式：仅显示状态后退出（供自动化验证）
-    [ValidateSet('map','restore','status','start-gateway','stop-gateway')][string]$Action = ''
+    [ValidateSet('map','restore','status','start-gateway','stop-gateway','bridge-start','bridge-stop','bridge-toggle','bridge-status')][string]$Action = ''
 )
 <#
     uart-map.ps1 - Windows <-> WSL 环境部署工具
     功能：
-      1) 映射串口到 WSL : 将 Windows 串口(USB 转串口)通过 usbipd 挂载到 WSL，并加载内核驱动
+      1) 映射串口到 WSL : 将 Windows 串口(USB 转串口)通过 usbipd 挂载到 WSL，并加载内核驱动（旧方案）
       2) 恢复串口到 Windows (detach)
-      3) 查看状态（串口 + 解析网关）
+      3) 查看状态（Python 串口桥 + usbipd + 解析网关）
       4) 启动解析网关（Windows 侧解析服务，端口 8700，供 WSL 深度解析，REQS-0019）
       5) 停止解析网关
+      6) Python 串口桥开关（推荐；启动/停止 Windows 桥，停止即释放 COM 给 Windows 工具）
+      7) 查看 Python 串口桥状态
 
     用法：
       - 直接运行（双击 wsl环境部署.bat）→ 交互菜单
@@ -28,6 +30,21 @@ $ErrorActionPreference = 'Continue'
 $script:UsbipdPath = 'C:\Program Files\usbipd-win\usbipd.exe'
 $script:WslDist = 'Ubuntu-22.04'
 
+# ---- Python 串口桥（默认串口方案，替代 usbipd）----
+# WSL 仓库根（按现场修改；Windows 侧通过 \\wsl.localhost\<distro>\... 访问）
+$script:WslRepo    = '/01-workfile-ai/01-zzt/ZZT_SELF'
+$script:WslRepoUnc = "\\wsl.localhost\$($script:WslDist)" + ($script:WslRepo -replace '/', '\')
+$script:BridgeWinScript = "$script:WslRepoUnc\tools\serial_bridge\serial_bridge.py"
+$script:BridgeWinConfig = "$script:WslRepoUnc\config\serial_bridge.json"
+$script:BridgeRuntimeDir = Join-Path $env:USERPROFILE '.serial-bridge'
+$script:BridgePidFile    = Join-Path $script:BridgeRuntimeDir 'bridge.pid'
+$script:BridgeLogFile    = Join-Path $script:BridgeRuntimeDir 'bridge.log'
+$script:BridgePython     = $null
+foreach ($candidate in @('pythonw.exe', 'python.exe', 'py.exe')) {
+    $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+    if ($cmd) { $script:BridgePython = $cmd.Source; break }
+}
+
 # ---- 解析网关配置（REQS-0019）----
 $script:ProjectRoot = 'D:\019-wy-tool\ZZT_SELF'
 $script:BuildPlain  = Join-Path $script:ProjectRoot '.build_plain'
@@ -39,21 +56,22 @@ $script:GatewayErr  = Join-Path $script:BuildPlain 'parse_svc.err.log'
 function Get-ConsoleCodePage {
     # 将控制台切到 UTF-8，保证中文正常显示
     try { chcp 65001 | Out-Null } catch {}
+    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+    try { $global:OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
     # 规避 cmd.exe 在 UNC 当前目录（\\wsl.localhost...）下无法启动的警告
     if ($PWD.ProviderPath -like '\\*') { Set-Location $env:USERPROFILE }
 }
 
 function Show-Banner {
     Write-Host "==============================================" -ForegroundColor Cyan
-    Write-Host "  Windows <-> WSL 环境部署工具（串口 + 解析网关）" -ForegroundColor Cyan
+    Write-Host "  Windows <-> WSL 环境部署工具（Python 串口桥 + usbipd + 解析网关）" -ForegroundColor Cyan
     Write-Host "==============================================" -ForegroundColor Cyan
     Write-Host ""
 }
 
 function Test-Preconditions {
     if (-not (Test-Path $script:UsbipdPath)) {
-        Write-Host "[错误] 未找到 usbipd.exe，请先安装 usbipd-win (winget install usbipd)" -ForegroundColor Red
-        return $false
+        Write-Host "[警告] 未找到 usbipd.exe；usbipd 菜单不可用，Python 串口桥仍可使用" -ForegroundColor Yellow
     }
     $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
     if (-not $wsl) {
@@ -74,7 +92,16 @@ function Get-SerialDevices {
         每项: @{ BusId='5-1'; VidPid='10c4:ea60'; Name='...COM4...'; State='Shared'|'Attached' }
         只保留包含 COM 的 USB 转串口设备（排除蓝牙串口等非 USB 设备，蓝牙不在 usbipd 列表）
     #>
-    $raw = & $script:UsbipdPath list 2>&1 | Out-String
+    if (-not (Test-Path $script:UsbipdPath)) { return @() }
+    $job = Start-Job -ScriptBlock { param($exe) & $exe list 2>&1 } -ArgumentList $script:UsbipdPath
+    if (-not (Wait-Job -Job $job -Timeout 3)) {
+        Stop-Job -Job $job -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        Write-Host "[警告] usbipd list 超过 3 秒未返回（Hyper-V 防火墙/服务可能异常）；跳过 usbipd 视图。" -ForegroundColor Yellow
+        return @()
+    }
+    $raw = (Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-String)
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     $lines = $raw -split "`r?`n"
     $devices = @()
     $inConnected = $false
@@ -105,10 +132,10 @@ function Get-SerialDevices {
 function Show-Status {
     $devices = Get-SerialDevices
     if ($devices.Count -eq 0) {
-        Write-Host "未检测到 USB 串口设备 (COM)。" -ForegroundColor Yellow
+        Write-Host "未检测到 USB 串口设备 (COM)；usbipd 可能未安装或没有串口。" -ForegroundColor Yellow
         return
     }
-    Write-Host "当前 USB 串口设备：" -ForegroundColor Green
+    Write-Host "当前 USB 串口设备（usbipd 视图）：" -ForegroundColor Green
     Write-Host ("{0,-8} {1,-10} {2,-50} {3}" -f 'BUSID','VID:PID','设备','状态')
     Write-Host ("{0,-8} {1,-10} {2,-50} {3}" -f '------','--------','----','----')
     foreach ($d in $devices) {
@@ -277,6 +304,190 @@ function Stop-ParseGateway {
     }
 }
 
+# ===================== Python 串口桥 =====================
+
+function Invoke-WslBridgeCommand {
+    param([string]$Arguments)
+    $cmd = "cd $($script:WslRepo) && python3 tools/serial_bridge/serial_bridge.py $Arguments"
+    return & wsl.exe -d $script:WslDist -u root -e bash -lc $cmd 2>&1
+}
+
+function Get-BridgeWslStatus {
+    try {
+        $out = (Invoke-WslBridgeCommand 'wsl status --config config/serial_bridge.json' | Out-String)
+        $start = $out.IndexOf('{')
+        if ($start -lt 0) { return $null }
+        return ($out.Substring($start) | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Get-BridgeWindowsProcess {
+    if (Test-Path $script:BridgePidFile) {
+        $text = (Get-Content $script:BridgePidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($text -match '^\d+$') {
+            $p = Get-Process -Id ([int]$text) -ErrorAction SilentlyContinue
+            if ($p) {
+                $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue
+                if ($ci -and $ci.CommandLine -match 'serial_bridge\.py' -and $ci.CommandLine -match '\bwindows\b') {
+                    return $p
+                }
+            }
+        }
+        Remove-Item $script:BridgePidFile -ErrorAction SilentlyContinue
+    }
+    $candidates = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessId -ne $PID -and
+        $_.Name -notmatch '^(powershell|pwsh|cmd|conhost)\.exe$' -and
+        $_.CommandLine -and
+        $_.CommandLine -match 'serial_bridge\.py' -and
+        $_.CommandLine -match '\bwindows\b'
+    }
+    if ($candidates) {
+        $first = $candidates | Select-Object -First 1
+        return (Get-Process -Id $first.ProcessId -ErrorAction SilentlyContinue)
+    }
+    return $null
+}
+
+function Show-BridgeStatus {
+    $win = Get-BridgeWindowsProcess
+    if ($win) {
+        Write-Host "Python 串口桥 Windows 侧：运行中（PID $($win.Id)）" -ForegroundColor Green
+    } else {
+        Write-Host "Python 串口桥 Windows 侧：未运行（COM 空闲，可给 Windows 工具用）" -ForegroundColor Yellow
+    }
+
+    $st = Get-BridgeWslStatus
+    if (-not $st -or -not $st.running -or -not $st.status) {
+        Write-Host "Python 串口桥 WSL 侧：未运行" -ForegroundColor Yellow
+        return
+    }
+    Write-Host "Python 串口桥 WSL 侧：运行中（PID $($st.status.pid)）" -ForegroundColor Green
+    $ports = @($st.status.ports.PSObject.Properties | ForEach-Object { $_.Value })
+    Write-Host ("  {0,-10} {1,-8} {2,-10} {3,-10} {4,-6} {5}" -f 'ID', 'COM', 'data', 'control', 'baud', 'PTY')
+    foreach ($p in $ports) {
+        $data = if ($p.client_connected) { 'connected' } else { 'DOWN' }
+        $ctrl = if ($p.control_connected) { 'connected' } else { 'DOWN' }
+        $color = if ($p.client_connected -and $p.control_connected) { 'Green' } elseif ($p.client_connected) { 'Yellow' } else { 'Gray' }
+        Write-Host ("  {0,-10} {1,-8} {2,-10} {3,-10} {4,-6} {5}" -f $p.id, $p.windows_com, $data, $ctrl, $p.desired_baud, $p.link) -ForegroundColor $color
+    }
+    if (-not $win) {
+        Write-Host "  提示：Windows 侧未运行，data/control 显示 DOWN；用 [6] 开关重新接管。" -ForegroundColor DarkGray
+    }
+}
+
+function Start-PythonBridge {
+    Write-Host "[Python 桥] 启动（WSL supervisor + Windows 桥）..." -ForegroundColor Green
+    if (-not $script:BridgePython) {
+        Write-Host "  [错误] 未找到 python.exe / pythonw.exe / py.exe，请先安装 Windows Python。" -ForegroundColor Red
+        return
+    }
+
+    Write-Host "  [1/2] 启动 WSL 侧 supervisor ..." -ForegroundColor Gray
+    $wslOut = (Invoke-WslBridgeCommand 'wsl start --config config/serial_bridge.json' | Out-String)
+    try {
+        $startInfo = $wslOut.Substring($wslOut.IndexOf('{')) | ConvertFrom-Json
+        if ($startInfo.already_running) {
+            Write-Host "    WSL supervisor 已在运行（PID $($startInfo.status.pid)）" -ForegroundColor DarkGray
+        } elseif ($startInfo.started) {
+            Write-Host "    WSL supervisor 已启动（PID $($startInfo.pid)）" -ForegroundColor DarkGray
+        } else {
+            Write-Host "    WSL supervisor 启动失败：$($startInfo.error)" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "    WSL supervisor 输出无法解析：" -ForegroundColor Yellow
+        $wslOut -split "`r?`n" | Select-Object -First 5 | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+    }
+
+    if (-not (Test-Path $script:BridgeWinScript)) {
+        Write-Host "  [错误] 未找到桥脚本：$script:BridgeWinScript" -ForegroundColor Red
+        Write-Host "  请确认 WSL 仓库路径 `$script:WslRepo` 与发行版名称是否正确。" -ForegroundColor Yellow
+        return
+    }
+
+    # 不主动调用 usbipd list：Hyper-V 防火墙异常时 usbipd 查询可能卡住。
+    # 如果 COM 打不开，请先确认设备没有被 usbipd attach（菜单 [2] 或手动 detach）。
+
+    $existing = Get-BridgeWindowsProcess
+    if ($existing) {
+        Write-Host "  Windows 桥已在运行（PID $($existing.Id)），跳过启动。" -ForegroundColor Yellow
+    } else {
+        New-Item -ItemType Directory -Force -Path $script:BridgeRuntimeDir | Out-Null
+        $pyArgs = @()
+        if ([IO.Path]::GetFileName($script:BridgePython) -ieq 'py.exe') { $pyArgs += '-3' }
+        $pyArgs += @($script:BridgeWinScript, '--log', $script:BridgeLogFile, 'windows', '--config', $script:BridgeWinConfig)
+        $proc = Start-Process -FilePath $script:BridgePython -ArgumentList $pyArgs `
+            -WorkingDirectory $env:USERPROFILE -WindowStyle Hidden -PassThru
+        $proc.Id | Set-Content -Encoding ascii $script:BridgePidFile
+        Write-Host "  [2/2] Windows 桥 PID $($proc.Id)，等待 WSL 连接 ..." -ForegroundColor Gray
+    }
+
+    $presentComs = @([System.IO.Ports.SerialPort]::GetPortNames())
+    $deadline = (Get-Date).AddSeconds(12)
+    $ok = $false
+    $missingComs = @()
+    do {
+        Start-Sleep -Milliseconds 500
+        $st = Get-BridgeWslStatus
+        if ($st -and $st.running -and $st.status -and $st.status.ports) {
+            $ports = @($st.status.ports.PSObject.Properties | ForEach-Object { $_.Value })
+            $enabled = @($ports | Where-Object { $_.enabled -ne $false })
+            $missingComs = @($enabled | Where-Object { $presentComs -notcontains $_.windows_com } | ForEach-Object { $_.windows_com })
+            $expected = @($enabled | Where-Object { $presentComs -contains $_.windows_com })
+            $bad = @($expected | Where-Object { -not $_.client_connected -or -not $_.control_connected })
+            if ($expected.Count -gt 0 -and $bad.Count -eq 0) { $ok = $true; break }
+        }
+    } while ((Get-Date) -lt $deadline)
+
+    if ($missingComs.Count -gt 0) {
+        Write-Host "  [提示] Windows 未枚举到：$($missingComs -join ', ')；对应口保持 DOWN。" -ForegroundColor Yellow
+    }
+
+    if ($ok) {
+        $okCount = @($expected | Where-Object { $_.client_connected -and $_.control_connected }).Count
+        $totalCount = @($enabled).Count
+        Write-Host "  [成功] Python 串口桥已连通（$okCount/$totalCount 个已枚举口 data/control 双通道）。" -ForegroundColor Green
+    } else {
+        Write-Host "  [警告] 12 秒内未全部连通；查看状态或日志：$script:BridgeLogFile" -ForegroundColor Yellow
+        if (Test-Path $script:BridgeLogFile) {
+            Get-Content $script:BridgeLogFile -Tail 8 -Encoding UTF8 -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        }
+    }
+    Show-BridgeStatus
+}
+
+function Stop-PythonBridge {
+    Write-Host "[Python 桥] 停止 Windows 桥（释放 COM 给 Windows 工具）..." -ForegroundColor Green
+    $proc = Get-BridgeWindowsProcess
+    if (-not $proc) {
+        Write-Host "  Windows 桥未在运行；COM 应该已经是空闲状态。" -ForegroundColor Yellow
+    } else {
+        $procId = $proc.Id
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        if (Get-Process -Id $procId -ErrorAction SilentlyContinue) {
+            Write-Host "  [警告] PID $procId 仍在运行，请手动结束。" -ForegroundColor Yellow
+        } else {
+            Write-Host "  已停止 Windows 桥（PID $procId），COM 已释放。" -ForegroundColor Green
+        }
+    }
+    Remove-Item $script:BridgePidFile -ErrorAction SilentlyContinue
+    Show-BridgeStatus
+    Write-Host "  说明：WSL supervisor 仍在运行；再按 [6] 即可重新接管。" -ForegroundColor DarkGray
+}
+
+function Toggle-PythonBridge {
+    $win = Get-BridgeWindowsProcess
+    if ($win) {
+        Stop-PythonBridge
+    } else {
+        Start-PythonBridge
+    }
+}
+
 # ---------- 主流程 ----------
 Get-ConsoleCodePage
 Show-Banner
@@ -291,9 +502,13 @@ if ($Action) {
     switch ($Action) {
         'map'           { Map-To-Wsl }
         'restore'       { Restore-FromWsl }
-        'status'        { Show-Status; Show-GatewayStatus }
+        'status'        { Show-Status; Show-GatewayStatus; Show-BridgeStatus }
         'start-gateway' { Start-ParseGateway }
         'stop-gateway'  { Stop-ParseGateway }
+        'bridge-start'  { Start-PythonBridge }
+        'bridge-stop'   { Stop-PythonBridge }
+        'bridge-toggle' { Toggle-PythonBridge }
+        'bridge-status' { Show-BridgeStatus }
     }
     exit 0
 }
@@ -301,6 +516,7 @@ if ($Action) {
 if ($Test) {
     Show-Status
     Show-GatewayStatus
+    Show-BridgeStatus
     exit 0
 }
 
@@ -311,9 +527,11 @@ while ($running) {
     Write-Host "请选择操作：" -ForegroundColor White
     Write-Host "  [1] 映射串口到 WSL  (attach + 加载驱动)"
     Write-Host "  [2] 恢复串口到 Windows (detach)"
-    Write-Host "  [3] 查看当前状态（串口 + 解析网关）"
+    Write-Host "  [3] 查看当前状态（串口桥 + usbipd + 解析网关）"
     Write-Host "  [4] 启动解析网关（Windows 侧，端口 8700）"
     Write-Host "  [5] 停止解析网关"
+    Write-Host "  [6] Python 串口桥开关（启动/停止；停止即释放 COM 给 Windows 工具）"
+    Write-Host "  [7] 查看 Python 串口桥状态"
     Write-Host "  [Q] 退出"
     Write-Host ""
     $choice = Read-Host "请输入选项"
@@ -321,9 +539,11 @@ while ($running) {
     switch ($choice.Trim().ToUpper()) {
         '1' { Map-To-Wsl; break }
         '2' { Restore-FromWsl; break }
-        '3' { Show-Status; Show-GatewayStatus; break }
+        '3' { Show-Status; Show-GatewayStatus; Show-BridgeStatus; break }
         '4' { Start-ParseGateway; break }
         '5' { Stop-ParseGateway; break }
+        '6' { Toggle-PythonBridge; break }
+        '7' { Show-BridgeStatus; break }
         'Q' { $running = $false; break }
         default { Write-Host "无效选项，请重试。" -ForegroundColor Yellow }
     }

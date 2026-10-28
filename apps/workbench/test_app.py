@@ -76,6 +76,14 @@ def test_health(client):
     assert r.json()["app"] == "workbench"
 
 
+def test_serial_bridge_status_route_mounted(client):
+    r = client.get("/api/serial-bridge/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert "ports" in body
+    assert "supervisor" in body
+
+
 def test_platform_version(client):
     r = client.get("/api/platform-version")
     assert r.status_code == 200

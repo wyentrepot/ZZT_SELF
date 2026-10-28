@@ -13,12 +13,10 @@ import sys
 from pathlib import Path
 
 
-def install_default_serial_ports_config() -> None:
-    if not getattr(sys, "frozen", False):
-        return
+def _seed_config(name: str) -> None:
     bundle_root = Path(getattr(sys, "_MEIPASS", ""))
-    source = bundle_root / "config" / "serial_ports.json"
-    target = Path(sys.executable).resolve().parent / "config" / "serial_ports.json"
+    source = bundle_root / "config" / name
+    target = Path(sys.executable).resolve().parent / "config" / name
     if not source.is_file() or target.exists():
         return
     try:
@@ -28,6 +26,13 @@ def install_default_serial_ports_config() -> None:
         # Startup must remain usable even on a read-only installation path.
         # The catalog reports a clear mapping error and can still enumerate ports.
         return
+
+
+def install_default_serial_ports_config() -> None:
+    if not getattr(sys, "frozen", False):
+        return
+    _seed_config("serial_ports.json")
+    _seed_config("serial_bridge.json")
 
 
 install_default_serial_ports_config()

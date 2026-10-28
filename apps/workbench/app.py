@@ -470,6 +470,13 @@ def create_workbench_app(
         port_details_provider=_port_provider,
     ))
 
+    # ---- 3.7 串口桥状态/验证（Python Windows<->WSL 通道，只读 + 可打开验证）----
+    from .serial_bridge_api import create_serial_bridge_router
+
+    app.include_router(create_serial_bridge_router(
+        resource_registry=app.state.serial_resource_registry,
+    ))
+
     # ---- 4. 编排路由 ----
     app.include_router(orchestration_router)
 
