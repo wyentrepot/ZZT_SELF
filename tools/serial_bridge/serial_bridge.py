@@ -63,6 +63,11 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
 
 
+def iso_from_epoch(epoch: float) -> str:
+    """本地时区 ISO（与 now_iso 同格式），用于把 mtime 和载入时刻放在一起比较展示。"""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(epoch))
+
+
 def log(tag: str, message: str, *, error: bool = False) -> None:
     line = f"[{time.strftime('%H:%M:%S')}] [{tag}] {message}"
     try:
@@ -191,6 +196,8 @@ def load_config(path: Path | str) -> dict[str, Any]:
     if overlap:
         raise ConfigError(f"tcp_port 与 control_port 冲突：{sorted(overlap)}")
 
+    # 载入时刻只用于 status 暴露"配置已变更、未生效"，不参与通道行为。
+    loaded_epoch = time.time()
     return {
         "version": 1,
         "windows": {"host": host, "reconnect_seconds": reconnect_seconds},
@@ -202,6 +209,8 @@ def load_config(path: Path | str) -> dict[str, Any]:
         },
         "ports": ports,
         "_path": str(config_path),
+        "_loaded_at": iso_from_epoch(loaded_epoch),
+        "_loaded_epoch": loaded_epoch,
     }
 
 
@@ -658,9 +667,75 @@ class PortRuntime:
             }
 
 
+def _windows_config_state() -> dict[str, Any]:
+    """Windows 侧配置状态：桥的 Windows 进程跑在另一个主机上，WSL 侧读不到。
+
+    取不到就明确写 unknown，而不是沿用 WSL 侧的时间戳假装正常。
+    """
+    return {
+        "known": False,
+        "path": "unknown",
+        "loaded_at": "unknown",
+        "mtime": "unknown",
+        "stale": "unknown",
+        "reason": (
+            "Windows 侧桥进程在 Windows 主机上运行，WSL 侧读不到它的配置文件与载入时刻；"
+            "需在 Windows 侧执行 serial_bridge.py windows --check 确认"
+        ),
+    }
+
+
+def config_freshness(config: dict[str, Any]) -> dict[str, Any]:
+    """配置新鲜度：进程载入配置的时刻 vs 配置文件当前 mtime。
+
+    只读判定，不触发重载（桥仍然只在启动时读一次配置，重载是后续工作）。
+    """
+    path = str(config.get("_path") or "")
+    loaded_epoch = float(config.get("_loaded_epoch") or 0.0)
+    loaded_at = str(config.get("_loaded_at") or "")
+    if not loaded_at:
+        loaded_at = iso_from_epoch(loaded_epoch) if loaded_epoch else "unknown"
+    mtime_iso = "unknown"
+    mtime_epoch: float | None = None
+    mtime_error = ""
+    if not path:
+        mtime_error = "配置路径未知"
+    else:
+        try:
+            mtime_epoch = os.stat(path).st_mtime
+            mtime_iso = iso_from_epoch(mtime_epoch)
+        except OSError as exc:
+            mtime_error = f"读不到配置 mtime：{exc}"
+    # 严格大于才算变更：相等（同一秒内保存）按未变更处理；st_mtime 是 float，
+    # ext4 上有纳秒精度，同秒内的多次保存也能区分开。
+    stale = bool(mtime_epoch is not None and loaded_epoch and mtime_epoch > loaded_epoch)
+    hint = ""
+    if stale:
+        hint = (
+            f"串口桥配置在进程启动后被修改（{mtime_iso}），当前进程仍在用旧配置："
+            "需重启 Windows 侧桥与 WSL 侧桥后生效；不要用 SIGHUP（会被当成停机）"
+        )
+    return {
+        "config_loaded_at": loaded_at,
+        "config_mtime": mtime_iso,
+        "config_stale": stale,
+        "stale_hint": hint,
+        "config_sources": {
+            "wsl_bridge": {
+                "path": path or "unknown",
+                "loaded_at": loaded_at,
+                "mtime": mtime_iso,
+                "stale": stale,
+                "mtime_error": mtime_error,
+            },
+            "windows_bridge": _windows_config_state(),
+        },
+    }
+
+
 def _build_status(config: dict[str, Any], runtimes: list[PortRuntime],
                   started_at: str, pid: int) -> dict[str, Any]:
-    return {
+    status = {
         "version": 1,
         "pid": pid,
         "started_at": started_at,
@@ -670,6 +745,8 @@ def _build_status(config: dict[str, Any], runtimes: list[PortRuntime],
         "listen_host": config["wsl"]["listen_host"],
         "ports": {rt.spec["id"]: rt.snapshot() for rt in runtimes},
     }
+    status.update(config_freshness(config))
+    return status
 
 
 def _acquire_lock(lock_path: Path):

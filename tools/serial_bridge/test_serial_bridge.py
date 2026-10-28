@@ -69,6 +69,53 @@ def test_load_config_rejects_duplicate_ids_and_ports(tmp_path):
         bridge.load_config(config_path)
 
 
+def test_status_reports_config_freshness(tmp_path):
+    config_path = _write_config(tmp_path, [_port("listener", 18824)])
+    config = bridge.load_config(config_path)
+    assert config["_loaded_at"] and config["_loaded_epoch"] > 0
+
+    fresh = bridge._build_status(config, [], "2026-10-28T16:00:00", 4321)
+    assert fresh["config_loaded_at"] == config["_loaded_at"]
+    assert fresh["config_mtime"] != "unknown"
+    assert fresh["config_stale"] is False
+    assert fresh["stale_hint"] == ""
+    assert fresh["config_sources"]["wsl_bridge"]["stale"] is False
+    # Windows 侧取不到：必须明确 unknown，不能假装正常
+    windows = fresh["config_sources"]["windows_bridge"]
+    assert windows["known"] is False
+    assert windows["loaded_at"] == "unknown"
+    assert windows["stale"] == "unknown"
+    assert "Windows" in windows["reason"]
+
+    loaded = float(config["_loaded_epoch"])
+    # 更旧：不算变更
+    os.utime(config_path, (loaded - 60, loaded - 60))
+    assert bridge._build_status(config, [], "", 1)["config_stale"] is False
+    # 相等：严格大于才 stale
+    os.utime(config_path, (loaded, loaded))
+    assert bridge._build_status(config, [], "", 1)["config_stale"] is False
+    # 更新：stale + 人话提示
+    os.utime(config_path, (loaded + 60, loaded + 60))
+    stale = bridge._build_status(config, [], "", 1)
+    assert stale["config_stale"] is True
+    assert stale["config_sources"]["wsl_bridge"]["stale"] is True
+    assert "被修改" in stale["stale_hint"]
+    assert "重启" in stale["stale_hint"]
+    assert "SIGHUP" in stale["stale_hint"]
+    assert stale["stale_hint"] != fresh["stale_hint"]
+
+
+def test_config_freshness_unknown_when_file_missing(tmp_path):
+    config_path = _write_config(tmp_path, [_port("listener", 18824)])
+    config = bridge.load_config(config_path)
+    config_path.unlink()
+    state = bridge.config_freshness(config)
+    assert state["config_mtime"] == "unknown"
+    assert state["config_stale"] is False
+    assert state["stale_hint"] == ""
+    assert "mtime" in state["config_sources"]["wsl_bridge"]["mtime_error"]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="WSL PTY pump is POSIX-only")
 def test_port_runtime_pumps_bytes_and_exposes_symlink(tmp_path):
     serial = pytest.importorskip("serial")

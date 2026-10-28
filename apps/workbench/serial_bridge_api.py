@@ -26,6 +26,39 @@ from fastapi import APIRouter
 from shared.serial_mapping import SerialPortCatalog
 
 
+# 字段语义写在这里，随 status/verify 一起返回：调用方（尤其 AI）不用猜。
+_SEMANTICS: dict[str, str] = {
+    "ok": (
+        "全局与：所有 enabled 端口的 channel_ok 全部为真才为真，跟单口可用性不是一回事。"
+        "一个没接的口（如 factory/COM7）就会把它拉成 false，所以不要用它判断单个口能不能用；"
+        "判单口用 ports[].usable，判工作台整体可用用 all_enabled_ready。"
+    ),
+    "all_enabled_ready": (
+        "所有 enabled 端口的 usable 全部为真的 AND。与 ok 的区别：ok 只看通道层"
+        "（channel_ok），all_enabled_ready 还要求工作台映射就绪（workbench_ready）且该口自身"
+        " errors 为空。它同样是全局布尔，定位具体端口请看 ready_ports / unusable_ports。"
+    ),
+    "usable": (
+        "单口布尔：enabled 且 workbench_ready 且该口 errors 为空。只看本口，"
+        "不受其他端口成败影响，用来回答\"这个口现在能不能用\"。"
+    ),
+    "workbench_ready": (
+        "单口布尔：channel_ok（WSL 桥在跑、软链是字符设备、Windows 数据通道与控制通道都已连接）"
+        "且工作台映射就绪（config/serial_ports.json 同 id 映射的 device 指向桥接软链、"
+        "parity=N、映射 enabled）。"
+    ),
+    "in_use": (
+        "单口布尔，只出现在 /api/serial-bridge/verify 的 ports[].checks 中：已有工作台会话"
+        "（资源登记表）持有该口。in_use=true 时不再执行打开检查。"
+    ),
+    "open_ok": (
+        "单口三态，只出现在 /verify 的 ports[].checks 中：true=此刻用工作台映射的波特率成功"
+        "打开过一次；false=打开失败（原因见 open_error）；null=没做打开检查（in_use=true，"
+        "或请求里 open=false，或软链不是字符设备）。null 不等于失败。"
+    ),
+}
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -120,6 +153,118 @@ def _path_matches(left: str, right: str) -> bool:
     if not left or not right:
         return False
     return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+
+
+def _iso_from_epoch(epoch: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(epoch))
+
+
+def _parse_local_iso(value: str) -> float | None:
+    """解析桥写的本地时区 ISO（%Y-%m-%dT%H:%M:%S）；解析不了返回 None。"""
+    try:
+        return time.mktime(time.strptime(str(value), "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _file_mtime(path: Path) -> tuple[str, float | None, str]:
+    try:
+        epoch = path.stat().st_mtime
+    except OSError as exc:
+        return "unknown", None, f"读不到配置 mtime：{exc}"
+    return _iso_from_epoch(epoch), epoch, ""
+
+
+def _stale_hint(mtime_iso: str) -> str:
+    return (
+        f"串口桥配置在进程启动后被修改（{mtime_iso or '时间未知'}），当前进程仍在用旧配置："
+        "需重启 Windows 侧桥与 WSL 侧桥后生效；不要用 SIGHUP（会被当成停机）"
+    )
+
+
+def _config_freshness(config_path: Path,
+                      bridge_status: dict[str, Any] | None) -> dict[str, Any]:
+    """配置新鲜度：桥进程载入配置的时刻 vs 配置文件当前的 mtime。
+
+    工作台每次请求都重读两份配置，不持有启动时的旧副本；真正可能拿旧配置的是
+    桥进程，所以以桥在 status.json 里上报的载入时刻为基准，并现场 stat 同一份
+    配置（status.json 的 config 字段）比对，不单纯相信桥的自述。Windows 侧在另
+    一个主机上，取不到即 unknown。
+    """
+    now = time.time()
+    state = bridge_status or {}
+    own_mtime_iso, own_mtime_epoch, own_mtime_error = _file_mtime(config_path)
+
+    bridge_path = str(state.get("config") or "").strip()
+    observed_path = Path(bridge_path) if bridge_path else config_path
+    observed_mtime_iso, observed_mtime_epoch, observed_mtime_error = _file_mtime(observed_path)
+
+    bridge_loaded_at = str(state.get("config_loaded_at") or "").strip()
+    bridge_loaded_epoch = _parse_local_iso(bridge_loaded_at)
+    if bridge_loaded_epoch is not None:
+        loaded_at = bridge_loaded_at
+        loaded_epoch: float | None = bridge_loaded_epoch
+        mtime_iso, mtime_epoch = observed_mtime_iso, observed_mtime_epoch
+        if mtime_epoch is None:
+            # 桥的配置文件工作台读不到：退回桥自报的 mtime，仍算不了就只信桥的自述。
+            reported_iso = str(state.get("config_mtime") or "").strip()
+            reported_epoch = _parse_local_iso(reported_iso)
+            if reported_epoch is not None:
+                mtime_iso, mtime_epoch = reported_iso, reported_epoch
+    else:
+        loaded_at = _iso_from_epoch(now)
+        loaded_epoch = now
+        mtime_iso, mtime_epoch = own_mtime_iso, own_mtime_epoch
+
+    # 严格大于才算变更：相等按未变更处理。桥自己已判 stale 时以桥为准
+    # （工作台手里的 status.json 可能比桥慢一秒）。
+    stale = bool(
+        loaded_epoch is not None and mtime_epoch is not None and mtime_epoch > loaded_epoch
+    )
+    if state.get("config_stale") is True:
+        stale = True
+    hint = ""
+    if stale:
+        hint = str(state.get("stale_hint") or "") or _stale_hint(mtime_iso)
+
+    bridge_known = bridge_loaded_epoch is not None
+    return {
+        "config_loaded_at": loaded_at,
+        "config_mtime": mtime_iso,
+        "config_stale": stale,
+        "stale_hint": hint,
+        "config_sources": {
+            "workbench": {
+                "path": str(config_path),
+                "loaded_at": _iso_from_epoch(now),
+                "mtime": own_mtime_iso,
+                "stale": False,
+                "mtime_error": own_mtime_error,
+            },
+            "wsl_bridge": {
+                "known": bridge_known,
+                "path": bridge_path or ("unknown" if not bridge_known else str(config_path)),
+                "loaded_at": bridge_loaded_at if bridge_known else "unknown",
+                "mtime": mtime_iso if bridge_known else "unknown",
+                "stale": stale if bridge_known else "unknown",
+                "mtime_error": observed_mtime_error if bridge_known else "",
+                "reason": "" if bridge_known else (
+                    "桥未上报配置载入时刻（桥未运行，或桥版本较旧；升级桥后重试）"
+                ),
+            },
+            "windows_bridge": {
+                "known": False,
+                "path": "unknown",
+                "loaded_at": "unknown",
+                "mtime": "unknown",
+                "stale": "unknown",
+                "reason": (
+                    "Windows 侧桥进程在 Windows 主机上运行，工作台在 WSL 侧读不到它的"
+                    "配置文件与载入时刻；需在 Windows 侧确认（serial_bridge.py windows --check）"
+                ),
+            },
+        },
+    }
 
 
 def _mapping_for(catalog: SerialPortCatalog, port_id: str):
@@ -218,6 +363,7 @@ def _port_status(port: dict[str, Any], config: dict[str, Any],
         and link_exists
         and is_char
     )
+    workbench_ready = bool(channel_ok and mapping_ready)
     return {
         "id": port["id"],
         "label": port["label"],
@@ -249,10 +395,23 @@ def _port_status(port: dict[str, Any], config: dict[str, Any],
         },
         "mapping": mapping_info,
         "channel_ok": channel_ok,
-        "workbench_ready": bool(channel_ok and mapping_ready),
+        "workbench_ready": workbench_ready,
+        # 只看本口：不受其他端口成败影响。
+        "usable": bool(port.get("enabled", True) and workbench_ready and not errors),
         "warnings": warnings,
         "errors": errors,
     }
+
+
+def _unusable_reason(port: dict[str, Any]) -> str:
+    """给出该口不可用的一句话原因，优先 errors（真实故障），其次 warnings（映射问题）。"""
+    errors = [str(item) for item in port.get("errors") or []]
+    if errors:
+        return "；".join(errors)
+    if not port.get("workbench_ready"):
+        warnings = [str(item) for item in port.get("warnings") or []]
+        return "；".join(warnings) or "工作台映射未就绪"
+    return "未知原因"
 
 
 def _snapshot(config_path: Path | None, mapping_config_path: Path | None) -> dict[str, Any]:
@@ -261,20 +420,26 @@ def _snapshot(config_path: Path | None, mapping_config_path: Path | None) -> dic
     catalog = SerialPortCatalog.load(mapping_config_path)
     result: dict[str, Any] = {
         "ok": False,
+        "semantics": dict(_SEMANTICS),
         "config": str(bridge_config_path),
         "config_error": config_error,
         "mapping_config_error": catalog.mapping_error,
         "status_file": "",
         "supervisor": {"running": False, "pid": 0, "stale": False, "age_seconds": None},
         "summary": {"total": 0, "enabled": 0, "channel_ok": 0, "workbench_ready": 0},
+        "ready_ports": [],
+        "unusable_ports": [],
+        "all_enabled_ready": False,
         "ports": [],
     }
     if config is None:
+        result.update(_config_freshness(bridge_config_path, None))
         return result
 
     status_path = Path(config["status_file"])
     result["status_file"] = str(status_path)
     bridge_status = _read_json(status_path)
+    result.update(_config_freshness(bridge_config_path, bridge_status))
     pid = int((bridge_status or {}).get("pid") or 0)
     running = _pid_alive(pid)
     age_seconds = None
@@ -310,6 +475,15 @@ def _snapshot(config_path: Path | None, mapping_config_path: Path | None) -> dic
         "workbench_ready": sum(1 for port in ports if port["workbench_ready"]),
     }
     result["ok"] = bool(enabled) and all(port["channel_ok"] for port in enabled)
+    # 与 ok 的区别：ok 只看通道层；这里把工作台映射就绪与 errors 也算进来。
+    result["all_enabled_ready"] = bool(enabled) and all(port["usable"] for port in enabled)
+    result["ready_ports"] = [
+        port["mapping"]["mapping_id"] or port["id"] for port in ports if port["usable"]
+    ]
+    result["unusable_ports"] = [
+        {"id": port["id"], "reason": _unusable_reason(port)}
+        for port in ports if not port["usable"]
+    ]
     return result
 
 
