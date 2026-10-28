@@ -192,11 +192,13 @@ _CALL_EXAMPLES: dict[str, list[str]] = {
         "GET /api/ai/v2/jobs/{id}",
     ],
     "module_actions.send": [
-        "POST /api/ai/v2/module-actions",
+        "POST /api/ai/v2/module-actions  # action=ensure → session_id",
+        "POST /api/ai/v2/module-actions  # action=send, session_id + text 或 data_hex",
         "GET /api/ai/v2/jobs/{id}",
     ],
     "module_actions.stop": [
-        "POST /api/ai/v2/module-actions",
+        "POST /api/ai/v2/module-actions  # action=ensure → session_id",
+        "POST /api/ai/v2/module-actions  # action=stop",
         "GET /api/ai/v2/jobs/{id}",
     ],
     "verification_runs.create": [
@@ -205,10 +207,14 @@ _CALL_EXAMPLES: dict[str, list[str]] = {
         "GET /api/ai/v2/jobs/{id}/evidence?level=L1",
     ],
     "flash_jobs.create": [
+        "POST /api/ai/v2/module-actions  # action=ensure, mapping_id={alias} → session_id",
         "POST /api/ai/v2/flash-jobs",
         "GET /api/ai/v2/jobs/{id}",
     ],
-    "jobs.read": ["GET /api/ai/v2/jobs/{id}"],
+    "jobs.read": [
+        "GET /api/ai/v2/jobs?limit=20  # job_id 丢了先列最近任务",
+        "GET /api/ai/v2/jobs/{id}",
+    ],
     "jobs.evidence.read": [
         "GET /api/ai/v2/jobs/{id}/evidence?level=L1",
         "GET /api/ai/v2/jobs/{id}/evidence?level=L2",
@@ -229,6 +235,45 @@ _CALL_EXAMPLES: dict[str, list[str]] = {
 }
 
 
+# 能力清单的「人话口径」：summary 一句话说清「做什么 + 什么时候用」，requires 列
+# 真实前置条件（依赖的 session_id、烧录白名单、串口/闸门等）。只描述现有行为，
+# 不引入新语义；缺省能力不在此表 → summary 为空、requires 为空数组。
+_CAPABILITY_SUMMARIES: dict[str, str] = {
+    "capabilities.read": "读本机当前可用的 v2 能力、资源别名与源健康度；开工前先看它确认能做什么、走哪条路，省得翻文档。",
+    "flash_jobs.create": "把 iap 固件烧进 CCO/STA，异步受理后返回 job_id，终态要轮询 jobs.read。",
+    "investigations.create": "对 module_log/listener/simcon/simeter 发起 1-3 路观察任务并 202 返回 job_id；要看实时帧、等事件或取证时用。",
+    "jobs.read": "按 job_id 读任务信封与终态结论，wait_seconds 可阻塞等推进；拿到 202 后靠它轮询，别空转。",
+    "jobs.cancel": "取消未终态的普通观察/模块任务（烧录与模拟集中器验证不可取消，会 409）；已终态则原样返回。",
+    "jobs.evidence.read": "按 job_id 取 L1/L2/L3 证据（帧、日志、判定理由）；要回答「凭什么这么判」或给人看证据时用。",
+    "module_actions.ensure": "按 mapping_id 开一个模块串口会话（幂等），后续 send/flash 都要用它返回的 session_id。",
+    "module_actions.send": "向已开的模块会话发一条文本或 hex 指令并等回执；要在 CCO/STA 串口上发既定指令时用。",
+    "module_actions.stop": "关闭 module_actions.ensure 开的模块会话并释放串口；任务收尾或换 mapping 前用，force 可强停。",
+    "simeter_frames.read": "只读查看模拟电表的状态与近期收发帧；开表口、喂 645 请求、改表数据请走直连 /api/simeter/*。",
+    "verification_runs.create": "向模拟集中器提交多步验证任务（task.steps 逐跳 afn/fn 收发）并 202 返回 job_id；验协议交互时用，靠 jobs.read 轮询。",
+}
+
+_CAPABILITY_REQUIRES: dict[str, list[str]] = {
+    "capabilities.read": [],
+    "flash_jobs.create": [
+        "module_actions.ensure → session_id",
+        "烧录白名单 firmware_roots",
+        "同会话无并发烧录",
+    ],
+    "investigations.create": ["观测源在线（source_health.available）"],
+    "jobs.read": ["create 类能力返回的 job_id"],
+    "jobs.cancel": ["job_id（未终态才有实际取消效果）", "烧录/模拟集中器验证任务不可取消"],
+    "jobs.evidence.read": ["job_id", "L3 需 ref=listener:{index_id}:{frame_id} 且属于该 job"],
+    "module_actions.ensure": ["mapping_id（resource_aliases 里的逻辑资源别名）"],
+    "module_actions.send": ["module_actions.ensure → session_id", "text 与 data_hex 二选一"],
+    "module_actions.stop": ["module_actions.ensure → session_id"],
+    "simeter_frames.read": ["simeter 在线（source_health.simeter.available）"],
+    "verification_runs.create": [
+        "simcon 空闲（GET /api/ai/v2/simcon/lease）",
+        "task.steps 的 afn/fn 写法合法（非法 422）",
+    ],
+}
+
+
 def capability_snapshot(*, context, control: AIControlService, grant: dict | None) -> CapabilitySnapshot:
     aliases = _resource_aliases(control, grant)
     capabilities: list[Capability] = []
@@ -242,6 +287,8 @@ def capability_snapshot(*, context, control: AIControlService, grant: dict | Non
             capabilities.append(Capability(
                 name=name, allowed=True, resources=resources,
                 call_examples=_CALL_EXAMPLES.get(name, []),
+                summary=_CAPABILITY_SUMMARIES.get(name, ""),
+                requires=list(_CAPABILITY_REQUIRES.get(name, [])),
             ))
 
     source_health = [

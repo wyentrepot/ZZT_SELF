@@ -29,6 +29,11 @@ class Capability(_Contract):
     # REQS-0033 BR-7：每项能力的最小 HTTP 调用链示例（"一键小抄"）；可选字段，
     # 旧客户端不读即无影响；口径与 ai-control-plane SKILL.md「任务 → 最小路径速查」一致。
     call_examples: list[str] = Field(default_factory=list)
+    # 能力清单的人话描述：summary 一句话说清「做什么 + 什么时候用」，
+    # requires 列前置条件（依赖的 session_id、白名单、闸门等）。两者都带默认值，
+    # 纯加法：旧快照缺这两个键仍可反序列化，旧客户端不读即无影响。
+    summary: str = Field(default="", max_length=120)
+    requires: list[str] = Field(default_factory=list)
 
 
 class ResourceAlias(_Contract):
