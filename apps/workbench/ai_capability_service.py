@@ -46,6 +46,36 @@ _L2_MAX_ITEMS = 50
 _L3_MAX_REFS = 10
 _LISTENER_REF_RE = re.compile(r"^listener:(?P<index_id>[^:]+):(?P<frame_id>\d+)$")
 
+# 证据取数映射：job kind → 底层结果落在哪个字段族。
+# 为什么非要按 kind 分流：investigation 的产物才是 result.observations；
+# 烧录 / 验证这类异步写任务的结果被 _compact_operation 套在 result.result 下
+# （steps[] / flash{}），根本不在 observations 里。旧实现只认 observations，
+# 于是失败任务的 evidence 返回 items: [] —— 事后审计/复盘拿不到「为什么失败」
+# 的可引用证据，只能翻 operations.json 原始文件。这不是少一条字段，而是
+# 证据链接口在失败场景下等于没工作，所以这里是缺陷而非可选增强。
+_EVIDENCE_SHAPE_BY_KIND: dict[str, str] = {
+    "verification_run": "steps",
+    "simcon_verify": "steps",
+    "flash_job": "flash",
+    "module_flash": "flash",
+    "module_action": "observations",
+    "investigation": "observations",
+}
+# 操作级失败（无 steps/flash 明细）时合成证据项所用的 source：保持与任务
+# 实际取材通道一致，审计时来源不错位。
+_EVIDENCE_SOURCE_BY_KIND: dict[str, SourceKind] = {
+    "verification_run": SourceKind.SIMCON,
+    "simcon_verify": SourceKind.SIMCON,
+    "flash_job": SourceKind.MODULE_LOG,
+    "module_flash": SourceKind.MODULE_LOG,
+    "module_action": SourceKind.MODULE_LOG,
+    "investigation": SourceKind.MODULE_LOG,
+}
+# 这些失败终态下即使没有明细也必须留下一条原因证据：空数组等于「无证据」，
+# 与「服务没给出原因」是两回事，后者本身也是可引用的审计结论。
+_EVIDENCE_FAILURE_STATES = frozenset({"error", "interrupted", "cancelled", "timed_out"})
+_NO_REASON_TEXT = "服务未给出原因"
+
 
 class EvidenceRefForbidden(ValueError):
     """L3 引用越权：ref 不属于该 job（映射为 HTTP 403）。"""
@@ -615,13 +645,141 @@ class AICapabilityService:
             items = self._l3_items(envelope, list(refs or []))
             return EvidenceView(job_id=job_id, level=level, summary=envelope.summary or "",
                                 items=items, refs=envelope.evidence_refs)
-        items = [self._evidence_item(item, level) for item in results]
+        items = self._job_evidence_items(operation, results, level)
         if level == EvidenceLevel.L1:
             items = self._bound_items_to(items, _L1_MAX_BYTES)
         elif level == EvidenceLevel.L2:
             items = self._bound_items_to(items, _L2_MAX_BYTES)
         return EvidenceView(job_id=job_id, level=level, summary=envelope.summary or "",
                             items=items, refs=envelope.evidence_refs)
+
+    def _job_evidence_items(self, operation: dict, observations: list[dict],
+                            level: EvidenceLevel) -> list[EvidenceItem]:
+        """按 job kind 取证据项；失败终态下保证至少给出一条原因。
+
+        映射集中在 _EVIDENCE_SHAPE_BY_KIND 一处，避免散落在多个 if 里
+        （同一 kind 的 L1/L2/L3 口径才不会各自漂移）。
+        """
+        kind = str(operation.get("kind") or "")
+        shape = _EVIDENCE_SHAPE_BY_KIND.get(kind, "observations")
+        if shape == "steps":
+            items = self._step_evidence_items(operation, level)
+        elif shape == "flash":
+            items = self._flash_evidence_items(operation)
+        else:
+            items = [self._evidence_item(item, level) for item in observations]
+        if items or str(operation.get("state") or "") not in _EVIDENCE_FAILURE_STATES:
+            return items
+        return [self._failure_evidence_item(operation, kind)]
+
+    @staticmethod
+    def _job_detail(operation: dict) -> dict:
+        """父 job 的 result.result：底层任务结果被 _compact_operation 套在这一层。"""
+        result = operation.get("result") or {}
+        detail = result.get("result")
+        return detail if isinstance(detail, dict) else {}
+
+    @staticmethod
+    def _ordered_steps(steps: Any) -> list[dict]:
+        """按 step.index 升序（缺 index 的退回原位置）。
+
+        证据条目顺序必须稳定：用 list + 显式排序，不用 set/dict 迭代序，
+        否则同一次失败在不同进程里证据顺序会漂移，审计对不上。
+        """
+        pairs = [(pos, step) for pos, step in enumerate(steps or [])
+                 if isinstance(step, dict)]
+        pairs.sort(key=lambda pair: (
+            pair[1].get("index") if isinstance(pair[1].get("index"), int) else pair[0],
+            pair[0],
+        ))
+        return [step for _, step in pairs]
+
+    def _step_evidence_items(self, operation: dict,
+                             level: EvidenceLevel) -> list[EvidenceItem]:
+        steps = self._ordered_steps(self._job_detail(operation).get("steps"))
+        if not steps:
+            return []
+        if level == EvidenceLevel.L1:
+            # L1 只投影失败步骤：L1 有 3KB 上限，而 _bound_items_to 从尾部裁剪；
+            # 验证又默认 fail_fast（失败步通常就是最后一步），把全部步骤塞进
+            # L1 会把最该被看见的失败步裁掉。全通过时才退回全部步骤，避免
+            # 成功任务也返回空数组。
+            failed = [step for step in steps if step.get("result") == "fail"]
+            steps = failed or steps
+        return [self._step_evidence_item(step) for step in steps]
+
+    @staticmethod
+    def _step_evidence_item(step: dict) -> EvidenceItem:
+        data = {
+            "index": step.get("index"),
+            "name": step.get("name"),
+            "result": step.get("result"),
+            "sent_hex": step.get("sent_hex"),
+            "matched": step.get("matched"),
+            "reason": step.get("reason"),
+        }
+        return EvidenceItem(source=SourceKind.SIMCON, data=_strip_paths(data))
+
+    @staticmethod
+    def _flash_detail(operation: dict) -> dict:
+        """烧录进度在不同落库形态下的位置：父 job 的 result.result.flash、
+        底层 module_flash 同步结果的 result.flash、异步受理快照的 *.initial.flash。"""
+        result = operation.get("result") or {}
+        detail = AICapabilityService._job_detail(operation)
+        candidates = (
+            detail.get("flash"),
+            result.get("flash"),
+            (detail.get("initial") or {}).get("flash")
+            if isinstance(detail.get("initial"), dict) else None,
+            (result.get("initial") or {}).get("flash")
+            if isinstance(result.get("initial"), dict) else None,
+        )
+        for candidate in candidates:
+            if isinstance(candidate, dict) and candidate:
+                return candidate
+        return {}
+
+    def _flash_evidence_items(self, operation: dict) -> list[EvidenceItem]:
+        flash = self._flash_detail(operation)
+        if not flash:
+            return []
+        data = {
+            "packet": flash.get("packet"),
+            "total": flash.get("total"),
+            "phase": flash.get("phase"),
+            "message": flash.get("message"),
+            "error": flash.get("error"),
+        }
+        # 人读 / AI 读都要能直接看到 "368/368"：运维判断进度时先看的是这个比值。
+        if isinstance(flash.get("packet"), int) and isinstance(flash.get("total"), int):
+            data["progress"] = f"{flash['packet']}/{flash['total']}"
+        return [EvidenceItem(source=SourceKind.MODULE_LOG, data=_strip_paths(data))]
+
+    @staticmethod
+    def _failure_reason(operation: dict) -> str:
+        """失败原因：父 job error → 落库 result 上的 error/message（如看门狗超时）。"""
+        result = operation.get("result") or {}
+        detail = AICapabilityService._job_detail(operation)
+        for candidate in (operation.get("error"), result.get("error"),
+                          detail.get("error"), result.get("message"),
+                          detail.get("message")):
+            text = str(candidate or "").strip()
+            if text:
+                return text[:1024]
+        return _NO_REASON_TEXT
+
+    def _failure_evidence_item(self, operation: dict, kind: str) -> EvidenceItem:
+        """操作级失败：没有 steps/flash 明细时合成一条原因证据项。"""
+        state = str(operation.get("state") or "")
+        data = {
+            "reason": self._failure_reason(operation),
+            "kind": kind,
+            "state": state,
+        }
+        return EvidenceItem(
+            source=_EVIDENCE_SOURCE_BY_KIND.get(kind, SourceKind.MODULE_LOG),
+            data=_strip_paths(data),
+        )
 
     def _l3_items(self, envelope: JobEnvelope, refs: list[str]) -> list[EvidenceItem]:
         """L3：仅对本 job 已返回的 listener ref 回传完整帧 JSON（越权 403、格式错 422）。"""
