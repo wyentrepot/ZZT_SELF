@@ -191,6 +191,28 @@ def collect(log_path: str, start_offset: int, minutes: int) -> tuple[list[dict],
     return nodes, end_reason
 
 
+
+def listen_chunk(mapping_id: str, seconds: float) -> dict:
+    """提交一个"只等一帧"的验证任务，占住串口 duration 秒。
+
+    为什么必须这么做：验证任务结束就关串口，此后 CCO 的 06H 主动上报没人接、
+    帧不会进 journal，采集端只能干等（2026-10-28 第一轮 15 分钟零结果的真因）。
+    simcon 验证有看门狗（缺省 240s，WORKBENCH_VERIFY_TIMEOUT_S 可覆盖），故分片串联。
+    """
+    code, job = _req("POST", "/api/ai/v2/verification-runs", {"task": {
+        "mapping_id": mapping_id, "id": "listen-uplink", "fail_fast": False,
+        "steps": [{
+            "name": f"监听主动上报 {int(seconds)}s",
+            "recv_only": True,
+            "expect": {"afn": "06", "fn": "F4"},
+            "expect_timeout": float(seconds),
+        }],
+    }})
+    if code != 202:
+        return {"error": f"HTTP {code} {job.get('detail')}"}
+    return _wait_job(job.get("job_id"), tries=int(seconds) + 20)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="15 分钟搜表 → 写入档案区")
     parser.add_argument("--minutes", type=int, default=15, help="注册持续时间（分钟）")
@@ -200,6 +222,8 @@ def main() -> int:
     parser.add_argument("--pool", default=POOL, help="档案区文件")
     parser.add_argument("--dry-run", action="store_true", help="只做构帧预检，不发不占串口")
     parser.add_argument("--no-pause-route", action="store_true", help="跳过 12H-F2 暂停路由")
+    parser.add_argument("--listen-chunk", type=int, default=180,
+                        help="监听分片秒数（受 simcon 看门狗 240s 限制，默认 180）")
     args = parser.parse_args()
 
     pause_hex, activate_hex = preflight(args.minutes)
@@ -244,7 +268,42 @@ def main() -> int:
     envelope = _wait_job(job.get("job_id"))
     print(f"下发阶段：{envelope.get('job_state')} {envelope.get('summary')}", flush=True)
 
-    nodes, end_reason = collect(log_path, start_offset, args.minutes)
+    # 边监听边收集：每片 recv_only 任务占住串口 chunk 秒，期间帧会进 journal。
+    chunk = max(30, min(200, args.listen_chunk))
+    deadline = time.time() + args.minutes * 60
+    nodes: list[dict] = []
+    end_reason = "时间到"
+    seen: set[tuple] = set()
+    offsets = _follow_offsets()
+    while time.time() < deadline and end_reason == "时间到":
+        budget = min(chunk, int(deadline - time.time()))
+        if budget < 15:
+            break
+        result = listen_chunk(args.mapping_id, budget)
+        for line in _read_new_lines(offsets):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("dir") != "rx" or str(record.get("afn")) != "06":
+                continue
+            fn = str(record.get("fn") or "").upper()
+            if fn == "F3":
+                end_reason = "收到 06H-F3（搜表结束）"
+                break
+            if fn not in {"F1", "F4"}:
+                continue
+            key = (record.get("frame_hex"), fn)
+            if key in seen:
+                continue
+            seen.add(key)
+            for node in extract_nodes(record):
+                node["fn"] = fn
+                nodes.append(node)
+        print(f"  [进度] 已收集 {len(nodes)} 个从节点"
+              f"（剩余 {int(max(0, deadline - time.time()) / 60)} 分钟；"
+              f"监听片结果 {str(result.get('job_state') or result.get('error'))[:40]}）", flush=True)
+
 
     # 兜底终止主动注册（失败不影响已收集结果）
     _req("POST", "/api/ai/v2/verification-runs",
