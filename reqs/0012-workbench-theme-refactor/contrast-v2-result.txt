@@ -1,4 +1,4 @@
-审计对象：D:\2-侦听台改造\apps\workbench\static\tokens-v2.css
+审计对象：/01-workfile-ai/01-zzt/ZZT_SELF/apps/workbench/static/tokens-v2.css
 门禁：AA >= 4.5:1，0 FAIL 方可通过；观察区 ⚠ 项不阻塞，供 P2 决策
 ================================================================================
 

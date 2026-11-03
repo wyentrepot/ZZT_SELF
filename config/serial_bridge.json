@@ -30,7 +30,7 @@
       "tcp_port": 8817,
       "baudrate": 9600,
       "bytesize": 8,
-      "parity": "N",
+      "parity": "E",
       "stopbits": 1,
       "enabled": true,
       "control_port": 9817
@@ -38,7 +38,7 @@
     {
       "id": "listener",
       "label": "侦听台 / STA 底座口",
-      "windows_com": "COM11",
+      "windows_com": "COM20",
       "tcp_port": 8824,
       "baudrate": 115200,
       "bytesize": 8,
@@ -70,6 +70,18 @@
       "stopbits": 1,
       "enabled": true,
       "control_port": 9819
+    },
+    {
+      "id": "simeter",
+      "label": "模拟电表",
+      "windows_com": "COM11",
+      "tcp_port": 8825,
+      "baudrate": 9600,
+      "bytesize": 8,
+      "parity": "E",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9825
     }
   ]
 }

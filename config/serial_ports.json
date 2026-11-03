@@ -32,7 +32,7 @@
     },
     {
       "id": "listener",
-      "windows_com": "COM11",
+      "windows_com": "COM20",
       "linux_device": "/run/hplc/serial/listener",
       "label": "侦听台",
       "usage": "listener",
@@ -71,6 +71,21 @@
       "stopbits": 1,
       "enabled": true,
       "usb_busid": ""
+    },
+    {
+      "id": "simeter",
+      "windows_com": "COM11",
+      "linux_device": "/run/hplc/serial/simeter",
+      "label": "模拟电表",
+      "usage": "",
+      "module": "",
+      "baudrate": 9600,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true,
+      "usb_busid": "",
+      "note": "COM20 模拟电表；WSL 侧 PTY 8N1，真实 2400/E 由 Windows 桥侧实现"
     }
   ]
 }
