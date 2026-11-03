@@ -12,7 +12,14 @@ APDU 遵循 A-XDR 编码，本适配器至少实现：
 - 常见 Data 类型（NULL/array/structure/octet-string/visible-string/long-unsigned/double-long等）。
 """
 import os
+from datetime import datetime, timedelta, timezone
+
 from parser_lib.core.adapter import ProtocolAdapter, ProtocolFrame, DataField, ExtractResult
+
+# 重庆 STA 分钟采集 11E3 上行 698 的 APDU 固定尾前缀（REQS-0037）：
+# 00 00 01 00 04 + 4 字节大端 Unix 秒（STA more_frame_698_ack_struct 写入），
+# 698.45 标准无此域。
+_STA_TAIL_PREFIX = b"\x00\x00\x01\x00\x04"
 
 # 附录 C 给出的 PPP FCS-16 查找表
 _FCSTAB = [
@@ -235,6 +242,50 @@ def _parse_data(data: bytes, offset: int = 0):
         return ({"OAD": oad, "rows": rows}, None, 6+4*ln)
     # 未支持类型，返回 raw
     return (data[offset+1:].hex(), None, len(data) - offset)
+
+
+def _unknown_tag_guard(data: bytes, offset: int):
+    """未知 A-XDR 标签防吞尾部（REQS-0037 重庆 11E3 实测）。
+
+    缺项 OAD 的数据以 0xFF 填充，0xFF 不是任何合法 A-XDR 标签；旧实现按
+    "未支持类型返回剩余全部字节" 处理，会把后续 OAD 与 APDU 固定尾一并吞进
+    一条乱码 hex 值。这里对 0xFF 只消费 1 字节，返回占位值让上层继续逐字节
+    扫描 OAD/固定尾。
+    返回 (value, unit, consumed) 或 None（非 0xFF 走原逻辑）。
+    """
+    if data[offset] == 0xFF:
+        return ("(未知标签FF)", None, 1)
+    return None
+
+
+def _decode_sta_tail(data: bytes):
+    """识别重庆 STA 分钟采集 698 APDU 固定尾（REQS-0037）。
+
+    布局：00 00 01 00 04 + 4 字节大端 Unix 秒（read_start_sec），位于 APDU 尾部。
+    返回 (start_index, readable, tail_hex, sec) 或 None。
+    """
+    start = data.rfind(_STA_TAIL_PREFIX)
+    if start < 0 or start + 9 != len(data):
+        return None
+    sec = int.from_bytes(data[start + 5:start + 9], "big")
+    try:
+        if sec <= 0 or sec > 4102444800:  # >2100-01-01 视为非时间
+            return None
+        # STA 侧 read_start_sec 直接由墙钟 BCD 折算 Unix 秒（无时区偏移），
+        # 按 UTC 解释即设备墙钟时间（REQS-0037 台架：6AE8C3E8 → 17:10:00）。
+        readable = datetime.fromtimestamp(sec, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    except (OverflowError, OSError, ValueError):
+        return None
+    return start, readable, data[start:start + 9].hex().upper(), sec
+
+
+def _parse_data_with_guard(data: bytes, offset: int = 0):
+    """_parse_data 的防吞尾包装：未知标签（如缺项 0xFF）只消费 1 字节。"""
+    if offset < len(data):
+        guarded = _unknown_tag_guard(data, offset)
+        if guarded is not None:
+            return guarded
+    return _parse_data(data, offset)
 
 
 def _oad_key(oad_bytes: bytes) -> str:
@@ -510,6 +561,22 @@ class DLT69845Adapter(ProtocolAdapter):
     def _parse_get_response(self, apdu, frame, warnings):
         if len(apdu) < 2:
             warnings.append("GET-Response长度不足"); return
+        # 重庆 STA 分钟采集 11E3 上行（REQS-0037）：APDU 尾部带 9 字节固定尾
+        # （00 00 01 00 04 + 4B 大端 Unix 秒），先解出并从数据区剔除，避免混入
+        # 最后一个 OAD 的数据。
+        tail = _decode_sta_tail(apdu)
+        tail_apdu = apdu
+        if tail is not None:
+            start, readable, tail_hex, sec = tail
+            tail_apdu = apdu[:start]
+            frame.fields.append(DataField(
+                name="时间标签TimeTag", value=readable, hex=tail_hex, raw=sec,
+                desc="重庆STA分钟采集固定尾(REQS-0037)：00 00 01 00 04 + 4B大端Unix秒"))
+        self._parse_get_response_inner(tail_apdu, frame, warnings)
+
+    def _parse_get_response_inner(self, apdu, frame, warnings):
+        if len(apdu) < 2:
+            warnings.append("GET-Response长度不足"); return
         resp_type = apdu[1]
         frame.fields.append(DataField(name="响应类型", value=f"0x{resp_type:02X} ({_GET_RESPONSE_TYPES.get(resp_type, '未知')})",
             hex=f"{resp_type:02X}", raw=resp_type))
@@ -542,11 +609,42 @@ class DLT69845Adapter(ProtocolAdapter):
                 oad = apdu[pos:pos+4]
                 pos += 4
                 if pos < len(apdu) and apdu[pos] == 1:  # [1] Data
-                    val, unit, consumed = _parse_data(apdu, pos + 1)
-                    self._add_oad_item(oad, frame, val, None, unit)
-                    pos += 1 + consumed
+                    # 重庆 11E3 缺项场景（REQS-0037）：数据为全 0xFF 填充，
+                    # 标注"缺失"而非错误或乱码。
+                    if pos + 1 < len(apdu) and apdu[pos + 1] == 0xFF:
+                        end = pos + 1
+                        while end < len(apdu) and apdu[end] == 0xFF:
+                            end += 1
+                        self._add_oad_item(oad, frame, "缺失(FF填充)", None,
+                                           data_hex=apdu[pos + 1:end].hex(), type_tag="缺项")
+                        pos = end
+                    else:
+                        val, unit, consumed = _parse_data_with_guard(apdu, pos + 1)
+                        self._add_oad_item(oad, frame, val, None, unit)
+                        pos += 1 + consumed
+                elif pos < len(apdu) and apdu[pos] == 0:  # [0] DAR 访问结果
+                    dar = apdu[pos + 1] if pos + 1 < len(apdu) else None
+                    self._add_oad_item(oad, frame, f"访问错误(DAR=0x{dar:02X})" if dar is not None else "访问错误", None,
+                                       data_hex=apdu[pos:pos+2].hex())
+                    pos += 2
                 else:
-                    self._add_oad_item(oad, frame, None, None)
+                    # 重庆 11E3 缺项场景（REQS-0037）：无 Get-Result 标签，
+                    # 数据直接按配置长度填充；全 0xFF 标注为"缺失"而非错误
+                    # 或乱码；其他未知 A-XDR 标签只按该标签消费 1 字节，不吞
+                    # 后续 OAD/固定尾。
+                    if pos < len(apdu) and apdu[pos] == 0xFF:
+                        end = pos
+                        while end < len(apdu) and apdu[end] == 0xFF:
+                            end += 1
+                        self._add_oad_item(oad, frame, "缺失(FF填充)", None,
+                                           data_hex=apdu[pos:end].hex(), type_tag="缺项")
+                        pos = end
+                    elif pos < len(apdu):
+                        val, unit, consumed = _parse_data_with_guard(apdu, pos)
+                        self._add_oad_item(oad, frame, val, None, unit)
+                        pos += consumed
+                    else:
+                        self._add_oad_item(oad, frame, None, None)
         elif resp_type == 3:  # GetResponseRecord
             self._parse_get_response_record(apdu, frame, warnings)
         else:
