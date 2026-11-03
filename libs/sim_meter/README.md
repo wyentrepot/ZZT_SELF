@@ -53,6 +53,7 @@ PYTHONPATH=libs python -m sim_meter ports
 | `POST /clock` `{time}` | 设置表内时钟 |
 | `GET/POST /jzjc` | **重庆即装即采配置**：device_type（"0x10"…）、descriptor、protocol_type（00H/02H/03H）、下挂设备 |
 | `POST /jzjc/report` `{style: sta\|afn06f7, send?}` | 生成（可选发送）即装即采上送报文 hex |
+| `GET/POST /oad` | **698 采集 OAD 数据集**：GET 三层视图（file/runtime/effective）；POST `{entries:[{oad, data_hex\|missing, length?, note?}], remove?, reset?}` 设置运行时层（API 优先于文件） |
 | `POST /handle_hex` `{hex}` | 无串口调测：喂主站请求帧 → 返回应答帧 + 说明 |
 | `POST /send_hex` `{hex}` | 串口打开时手动注入原始帧 |
 | `GET  /frames` | 会话帧日志（dir=rx/tx/event、after_seq、limit） |
@@ -69,18 +70,56 @@ PYTHONPATH=libs python -m sim_meter ports
 - 设备类型 4036 为半字节拼接口径（大类×0x10+小类）；描述符按前 3~4 字符
   识别（DDZY/DTZY/DTSU/DJS/LKT/DFDL/EVBC/EVCC）。
 
+## 698 采集 OAD 数据集（REQS-0037）
+
+STA 分钟采集任务经 485 发 698 GET（任务点 OAD，如 20000201 / 20010201 /
+20000200，SECURITY-Request 明文包 GET-Request WithList），脑按**可配置 OAD
+数据集**直接应答，分钟采集台架不再依赖外挂注入脚本。jzjc OAD（43000200）
+的自动应答不受影响；数据集未配置时采集 OAD 保持历史行为（不应答）。
+
+条目 schema（二选一）：
+
+```jsonc
+{
+  "oads": [
+    {"oad": "20000201", "data_hex": "1101", "note": "task1 点1：应答 2 字节"},
+    {"oad": "20000200", "missing": true, "length": 2, "note": "缺项：不进应答条目"}
+  ]
+}
+```
+
+- `data_hex`：应答数据字节（hex）；`length` 须与其实长一致（防与任务配置
+  长度错位导致 STA 切分错位）。
+- `missing`（缺项口径，698.45 表端行为 + 20261103 台架注入脚本实证）：
+  该 OAD **不进应答条目**（不否认、不回错误码），STA 读层对缺席 OAD 按任务
+  配置长度补 FF（`minute_assert/mclt_698.py` OadItem：data 全 FF 判缺项）。
+  需要表端显式回 FF 就把 `data_hex` 配成 `FF`×N。
+- 全局集（任务无关，台架一次配置所有任务共用），两层载体，**API 优先级高于
+  文件**（同 OAD 运行时层覆盖文件层）：
+  - 文件：随库示例 `data/oad_dataset.example.json`，复制为同目录
+    `oad_dataset.json` 自动加载，或设 `SIMETER_OAD_DATASET` 指定路径；
+    文件加载失败不致命（`GET /oad` 的 `file_error` 可见）。
+  - 运行时：`POST /api/simeter/oad`（`entries` / `remove` / `reset=true`
+    回落文件层），`GET /api/simeter/oad` 查 file/runtime/effective 三层视图。
+
+台架复现（20261103 实测口径）：按示例配好三 OAD 后，对 STA 真实抓帧的应答
+与 `inject_698_reply.py` 注入帧**逐字节一致**（有固定用例钉住）。
+
 ## 测试
 
 ```bash
-.venv/bin/python -m pytest libs/sim_meter/ -q     # 53 passed（含 loop:// 回环串口用例）
+.venv/bin/python -m pytest libs/sim_meter/ -q     # 126 passed（含 loop:// 回环串口用例）
 ```
 
 ## 模块结构
 
 | 文件 | 职责 |
 | --- | --- |
-| `meter.py` | 核心脑：645 应答引擎 + 数据集 + 即装即采状态（不碰串口，`handle_frame` 永不抛异常） |
+| `meter.py` | 核心脑：645 应答引擎 + 数据集 + 即装即采状态 + 698 采集 OAD 数据集（不碰串口，`handle_frame` 永不抛异常） |
+| `protocol_698.py` | 698.45 编解码：jzjc 43000200、采集 WithList 请求解析 / 应答构造、事件上报 |
+| `oad_dataset.py` | 698 采集 OAD 数据集：校验 / 文件加载 / file+runtime 合并（API 优先） |
 | `serial_channel.py` | 从站串口通道：读线程切帧应答、波特率热切换（读线程跨重开存活）、loop:// 支持 |
 | `journal.py` | 会话帧日志（内存镜像 + JSONL 落盘） |
 | `api.py` | FastAPI 子应用 `create_simeter_app`（可独立跑或挂载侦听台） |
 | `cli.py` / `__main__.py` | `serve` / `api` / `ports` / `demo` 子命令 |
+| `data/oad_dataset.example.json` | 采集 OAD 数据集示例（20261103 台架实测三 OAD） |

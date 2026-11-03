@@ -32,6 +32,7 @@ except ImportError:  # pragma: no cover - 无 pyserial 环境
     _SERIAL_AVAILABLE = False
 
 from parser_lib.adapters.adapter_645 import DLT645Adapter
+from parser_lib.adapters.adapter_698 import DLT69845Adapter
 
 from sim_meter.journal import MeterJournal
 from sim_meter.meter import MeterBrain
@@ -61,6 +62,7 @@ class MeterSerialChannel:
     """电表从站串口通道：读线程切帧应答 + 写锁 + 波特率热切换。"""
 
     _ADAPTER = DLT645Adapter()
+    _ADAPTER_698 = DLT69845Adapter()
     _STALL_RESYNC = 0.5                   # 假头重同步阈值（秒）
 
     def __init__(self, brain: MeterBrain, *, port: str, baudrate: Optional[int] = None,
@@ -158,6 +160,34 @@ class MeterSerialChannel:
         return self.baudrate
 
     # -- 读线程 ----------------------------------------------------------
+    @classmethod
+    def _try_extract(cls, buf: bytes):
+        """统一切帧入口：返回 (raw, consumed) 或 None。
+
+        - 先跳过前导 FE（698/645 线上帧均可能带 FE 前导），记录偏移并计入
+          consumed，buf 中的 FE 被一并消费；
+        - buf[pos] == 0x68 且 buf[pos+3] != 0x68 且 698 结构成立 → 698 优先
+          （698 帧第 3 字节是控制域，645/1376.2 在该位置是地址/帧头 0x68；
+          645 帧控制域后的数据区也可能让 698 误判，故以 698 结构校验为准）；
+        - 否则回退 645 adapter（含转义帧处理）；
+        - 698 结构不完整（长度不足等）时同样回退 645，保持既有 645 行为。
+        """
+        pos = 0
+        n = len(buf)
+        while pos < n and buf[pos] == 0xFE:
+            pos += 1
+        body = buf[pos:]
+        if not body or body[0] != 0x68:
+            return None
+        if len(body) >= 4 and body[3] != 0x68:
+            res = cls._ADAPTER_698.try_extract(body)
+            if res is not None:
+                return res.raw, res.consumed + pos
+        res = cls._ADAPTER.try_extract(body)
+        if res is not None:
+            return res.raw, res.consumed + pos
+        return None
+
     def _run(self) -> None:
         """读线程：累积字节 → 去前导 FE → 切帧 → 应答回写。
 
@@ -193,19 +223,19 @@ class MeterSerialChannel:
             if data:
                 buf += data
             while True:
-                extracted = self._ADAPTER.try_extract(buf)
+                extracted = self._try_extract(buf)
                 if extracted is None:
                     if buf and buf[0] != 0x68:
                         idx = buf.find(0x68)    # 脏字节/FE 前导重同步
                         buf = buf[idx:] if idx >= 0 else b""
                     elif (buf and time.monotonic() - last_progress
                           > self._STALL_RESYNC):
-                        # 假头毒化（如实机 STA 交替下发的 698 帧，L 字节可达
+                        # 假头毒化（如实机 STA 交替下发的异常帧，其 L 字节可达
                         # 0xAA）：跳到 buf 内下一个 0x68 重新同步
                         idx = buf.find(0x68, 1)
                         buf = buf[idx:] if idx >= 0 else b""
                     break
-                raw, consumed = extracted.raw, extracted.consumed
+                raw, consumed = extracted
                 self._rx_history.append(raw)
                 if len(self._rx_history) > 1000:
                     del self._rx_history[: len(self._rx_history) - 1000]
@@ -219,7 +249,8 @@ class MeterSerialChannel:
         self._rx_queue.put(raw)
         if self.journal is not None:
             self.journal.append("rx", raw, note)
-        if result is not None and result.reply is not None:
+        if result is not None and (result.reply is not None
+                                   or result.reply_wire is not None):
             time.sleep(0.01)                    # 从站应答间隔
             wire = result.reply_wire
             try:

@@ -311,3 +311,31 @@ class TestMode1997:
         # 单播到本表 → 按未知控制码异常应答 C8H
         res2 = brain97.handle_frame(_req(0x08, bytes(8)))
         assert res2.reply is not None and res2.reply[8] == 0xC8
+
+
+class TestEventRecord:
+    """645 DI 04001501 主动上报状态字：STA ORDINARY_EVT 的前置读表。"""
+
+    def test_default_record_has_event(self, brain):
+        # 线上 DI：01 15 00 04 (+33H) → 34 48 33 37
+        res = brain.handle_frame(_req(0x11, bytes.fromhex("01150004")))
+        assert res.reply is not None
+        _, ctrl, data = _parse_reply(res.reply)
+        assert ctrl == 0x91
+        assert data[:4] == bytes.fromhex("01150004")
+        assert data[-2:] == b"\xAA\xAA"          # DD DD 分隔符（+33H 后）
+        # STA recv_645_event_check：DI 后 12 字节不能全是 0x00
+        assert any(b != 0 for b in data[4:16])
+        assert res.note["func"] == "读主动上报状态字(04001501)"
+
+    def test_set_record_and_validation(self, brain):
+        brain.set_event_record("00" * 11 + "02")
+        res = brain.handle_frame(_req(0x11, bytes.fromhex("01150004")))
+        _, _, data = _parse_reply(res.reply)
+        assert data[15] == 0x02
+        brain.set_event_record("01" + "00" * 11)
+        assert brain.get_event_record()["length"] == 12
+        with pytest.raises(ValueError):
+            brain.set_event_record("00" * 11)     # 少于 12 字节
+        with pytest.raises(ValueError):
+            brain.set_event_record("zz")

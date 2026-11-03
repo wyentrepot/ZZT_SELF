@@ -17,6 +17,13 @@
 - GET  /api/simeter/jzjc            重庆即装即采配置（设备类型/描述符/下挂设备）
 - POST /api/simeter/jzjc            更新即装即采配置（类型可改，描述符缺省取预设）
 - POST /api/simeter/jzjc/report     生成即装即采设备信息上送报文（sta / afn06f7）
+- GET  /api/simeter/event/config    事件上报配置（目标 STA 地址）
+- POST /api/simeter/event/config    设置事件上报目标 STA 地址
+- POST /api/simeter/event/report    构造 698 事件上报帧（send=true 时串口发出）
+- GET  /api/simeter/event/record    645 DI 04001501 主动上报状态字事件内容
+- POST /api/simeter/event/record    设置事件内容（DD DD 之间，≥12B）
+- GET  /api/simeter/oad             698 采集 OAD 数据集（file/runtime/effective 三层视图）
+- POST /api/simeter/oad             设置运行时 OAD 数据集（API 优先级高于文件，同 OAD 覆盖）
 - POST /api/simeter/handle_hex      无串口调测：把主站请求帧喂给电表脑，返回应答帧
 - POST /api/simeter/send_hex        串口打开时手动注入原始帧
 - GET  /api/simeter/frames          会话帧日志查询（dir/after_seq/limit）
@@ -95,6 +102,36 @@ class JzjcReportSpec(BaseModel):
     style: str = "sta"                     # sta | afn06f7
     seq: Optional[int] = None
     send: bool = False                     # 串口打开时把报文 hex 从本口发出
+
+
+class EventConfigSpec(BaseModel):
+    target_addr: str                       # 事件上报目标 STA 地址（12 位十六进制，6B）
+
+
+class EventReportSpec(BaseModel):
+    target_addr: Optional[str] = None       # 缺省取已配置的 event_target_addr
+    oad: str = "20140200"                  # 4 字节 OAD（显示序）
+    data_hex: str = "00"                    # 事件数据（十六进制）
+    piid: int = 1                          # 优先级/启动标识
+    send: bool = True                      # True 时从串口发出（未打开 409）
+
+
+class EventRecordSpec(BaseModel):
+    data_hex: str                          # DI 04001501 事件内容（DD DD 之间，≥12B）
+
+
+class OadEntrySpec(BaseModel):
+    oad: str                               # 8 位十六进制显示序，如 20000201
+    data_hex: Optional[str] = None         # 应答数据字节（hex）；与 missing 二选一
+    missing: bool = False                  # 缺项：不进应答条目（STA 按配置长度补 FF）
+    length: Optional[int] = None           # 数据长度（data_hex 时须与其实长一致）
+    note: str = ""                         # 可选说明（如任务/点号）
+
+
+class OadSpec(BaseModel):
+    entries: Optional[List[OadEntrySpec]] = None   # 逐条设置（同 OAD 覆盖文件层）
+    remove: Optional[List[str]] = None             # 从运行时层删除指定 OAD
+    reset: bool = False                    # 先清空运行时层（回落文件层）再应用
 
 
 class HandleHexSpec(BaseModel):
@@ -250,6 +287,14 @@ def create_simeter_app(prefix: str = "/api/simeter",
                 "POST /clock": "设置表内时钟 {time:\"YYYY-MM-DD HH:MM:SS\"}",
                 "GET/POST /jzjc": "重庆即装即采配置",
                 "POST /jzjc/report": "生成即装即采上送报文（style=sta|afn06f7）",
+                "GET /event/config": "事件上报配置（event_target_addr）",
+                "POST /event/config": "设置事件上报目标 {target_addr}（12 位十六进制）",
+                "POST /event/report": "构造 698 事件上报帧（send=true 时发出，未开口 409）",
+                "GET /event/record": "645 DI 04001501 主动上报状态字事件内容",
+                "POST /event/record": "设置事件内容 {data_hex}（DD DD 之间，≥12B；全 0 会被 STA 判无事件）",
+                "GET /oad": "698 采集 OAD 数据集三层视图（file/runtime/effective）",
+                "POST /oad": "设置运行时 OAD 数据集（entries:[{oad, data_hex|missing, length?, note?}]，"
+                             "同 OAD 覆盖文件层；remove:[oad] 删运行时条目；reset=true 回落文件层）",
                 "POST /handle_hex": "无串口调测：喂 645 请求帧 hex，返回应答帧 hex",
                 "POST /send_hex": "串口打开时注入原始帧 hex",
                 "GET /frames": "会话帧日志（dir=rx|tx|event，after_seq，limit）",
@@ -263,6 +308,13 @@ def create_simeter_app(prefix: str = "/api/simeter",
                 "出厂地址 000000000001；对档联调先 POST /config 设为档案地址（如 999999999999），否则读数据不响应",
                 "13H 读地址支持 FE×6 / 99×6 / AA×6 三种广播（对齐 STA 绑表扫掠）",
                 "WSL pts 不接受 PARENB：经虚拟串口/桥接环境开口一律 parity=N（线参由对端决定）",
+                "POST /event/config 的 target_addr 必须是 STA 模块地址（不是电表地址），698 事件上报帧 SA 指向该 STA",
+                "STA 侧 43000200 是自动应答（brain 应答 43000200 读请求），不需要手动注入；POST /event/report 用于其他事件上报场景",
+                "分钟采集任务点（如 20000201/20010201/20000200）：POST /oad 配好数据集后由 brain 直接应答"
+                "（REQS-0037），不再需要外挂注入脚本；文件配置见 libs/sim_meter/data/oad_dataset.example.json",
+                "缺项口径：OAD 配 missing=true 时不进应答条目，STA 读层按任务配置长度补 FF；"
+                "需表端显式回 FF 就把 data_hex 配成 FF×N",
+                "STA 的 ORDINARY_EVT 会先 645 读 DI 04001501；/event/record 设置的就是这条事件内容，全 0 会导致 recv_645_event_check 判无事件并中止",
             ],
         }
 
@@ -368,6 +420,71 @@ def create_simeter_app(prefix: str = "/api/simeter",
         return {"style": spec.style, "payload_hex": payload.hex().upper(),
                 "length": len(payload), "sent": sent}
 
+    @app.get(routes_prefix + "/event/config")
+    def get_event_config() -> dict:
+        return svc.brain.get_event_config()
+
+    @app.post(routes_prefix + "/event/config")
+    def set_event_config(spec: EventConfigSpec) -> dict:
+        try:
+            target = svc.brain.set_event_target(spec.target_addr)
+        except ValueError as exc:
+            raise _bad_request(exc) from exc
+        return {"event_target_addr": target}
+
+    @app.post(routes_prefix + "/event/report")
+    def event_report(spec: EventReportSpec) -> dict:
+        try:
+            wire = svc.brain.build_event_report(
+                target_addr=spec.target_addr, oad=spec.oad,
+                data_hex=spec.data_hex, piid=spec.piid)
+        except ValueError as exc:
+            raise _bad_request(exc) from exc
+        # 目标地址：显式传参优先，否则取已配置值（get_event_config）
+        # （与 _parse_addr 同口径归一：去空白、转大写）
+        cfg = svc.brain.get_event_config()
+        target = (spec.target_addr or cfg.get("event_target_addr") or "")
+        target = str(target).strip().upper().replace(" ", "")
+        sent = False
+        if spec.send:
+            if svc.channel is None or not svc.channel.is_open():
+                raise HTTPException(409, "串口未打开，无法发送（可 send=false 仅生成报文）")
+            svc.channel.send_frame(wire)
+            sent = True
+        return {"frame_hex": wire.hex().upper(), "length": len(wire),
+                "sent": sent, "target_addr": target}
+
+    @app.get(routes_prefix + "/event/record")
+    def get_event_record() -> dict:
+        return svc.brain.get_event_record()
+
+    @app.post(routes_prefix + "/event/record")
+    def set_event_record(spec: EventRecordSpec) -> dict:
+        try:
+            data = svc.brain.set_event_record(spec.data_hex)
+        except ValueError as exc:
+            raise _bad_request(exc) from exc
+        return {"data_hex": data, "length": len(bytes.fromhex(data))}
+
+    @app.get(routes_prefix + "/oad")
+    def get_oad() -> dict:
+        """698 采集 OAD 数据集三层视图（file/runtime/effective）。"""
+        return svc.brain.get_oad_entries()
+
+    @app.post(routes_prefix + "/oad")
+    def set_oad(spec: OadSpec) -> dict:
+        """设置运行时 OAD 数据集（同 OAD 覆盖文件层；reset 先清运行时层）。
+
+        entries 为空且未给 remove/reset 时视为无操作（只回当前视图）。
+        """
+        try:
+            return svc.brain.set_oad_entries(
+                entries=[e.model_dump() for e in spec.entries]
+                if spec.entries is not None else None,
+                remove=spec.remove, reset=spec.reset)
+        except ValueError as exc:
+            raise _bad_request(exc) from exc
+
     @app.post(routes_prefix + "/handle_hex")
     def handle_hex(spec: HandleHexSpec) -> dict:
         try:
@@ -375,10 +492,12 @@ def create_simeter_app(prefix: str = "/api/simeter",
         except ValueError as exc:
             raise _bad_request(exc) from exc
         if result is None:
-            return {"reply_hex": None, "note": {"error": "处理异常"}}
+            return {"reply_hex": None, "reply_wire_hex": None,
+                    "note": {"error": "处理异常"}}
         return {
             "reply_hex": result.reply.hex().upper() if result.reply is not None else None,
-            "reply_wire_hex": result.reply_wire.hex().upper() if result.reply is not None else None,
+            "reply_wire_hex": result.reply_wire.hex().upper()
+            if result.reply_wire is not None else None,
             "note": result.note,
             "action": list(result.action) if result.action else None,
         }

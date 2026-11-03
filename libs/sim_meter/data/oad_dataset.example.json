@@ -1,0 +1,22 @@
+{
+  "comment": "sim_meter 698 采集 OAD 数据集示例（REQS-0037 分钟采集台架实测口径）",
+  "usage": "复制为同目录 oad_dataset.json 随库自动加载，或设环境变量 SIMETER_OAD_DATASET 指向自定义文件；运行时 POST /api/simeter/oad 逐条覆盖本文件（API 优先级高于文件）",
+  "oads": [
+    {
+      "oad": "20000201",
+      "data_hex": "1101",
+      "note": "task1 点1：应答 2 字节 11 01（20261103 台架注入帧同款）"
+    },
+    {
+      "oad": "20010201",
+      "data_hex": "1102",
+      "note": "task1 点2：应答 2 字节 11 02（20261103 台架注入帧同款）"
+    },
+    {
+      "oad": "20000200",
+      "missing": true,
+      "length": 2,
+      "note": "task1 点3：缺项——不应答该条目，STA 读层按任务配置长度 2 补 FF（mclt_698 OadItem 口径）"
+    }
+  ]
+}

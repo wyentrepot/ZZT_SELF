@@ -1,4 +1,5 @@
-"""模拟电表核心脑：645 帧应答引擎 + 表内数据集 + 重庆即装即采状态。
+"""模拟电表核心脑：645 帧应答引擎 + 表内数据集 + 重庆即装即采状态
++ 698 采集 OAD 数据集（REQS-0037）。
 
 只做协议与状态，不碰串口：handle_frame(原始帧) → 应答帧 + 动作。串口
 热切换波特率等物理动作由 serial_channel / api 层执行。
@@ -19,6 +20,21 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from parser_lib.adapters.adapter_645 import build_frame, build_frame_escaped
+
+from sim_meter.oad_dataset import (
+    load_oad_dataset_file,
+    normalize_oad,
+    normalize_oad_entries,
+    resolve_dataset_path,
+)
+from sim_meter.protocol_698 import (
+    JZJC_OAD,
+    build_event_report as _build_event_report_698,
+    build_get_list_response,
+    build_get_normal_response,
+    build_jzjc_response,
+    parse_698_frame,
+)
 
 _BROADCAST_READ_ADDR = b"\xFE" * 6      # 13H/15H 广播方式使用的地址域（知识库口径）
 _BROADCAST_CTRL = b"\x99" * 6           # 广播校时地址域
@@ -150,17 +166,25 @@ class JzjcConfig:
 
 
 class HandleResult:
-    """handle_frame 结果：应答帧（未转义+线上转义两份）+ 动作 + 说明。"""
+    """handle_frame 结果：应答帧（未转义+线上转义两份）+ 动作 + 说明。
+
+    wire：698 等不走 645 反转义/转义的完整线上帧；有 wire 时 reply_wire
+    直接返回 wire，reply 仍为 None（645 语义下的逻辑应答帧不存在）。
+    """
 
     def __init__(self, reply: Optional[bytes], note: dict,
-                 action: Optional[Tuple[str, Any]] = None):
+                 action: Optional[Tuple[str, Any]] = None,
+                 wire: Optional[bytes] = None):
         self.reply = reply                                # 逻辑帧（未转义）
         self.note = note
         self.action = action                              # 如 ("baud", 9600)
+        self._wire = wire
 
     @property
     def reply_wire(self) -> Optional[bytes]:
         """线上传输帧（数据域+33H 已含、转义后）。"""
+        if self._wire is not None:
+            return self._wire
         if self.reply is None:
             return None
         return build_frame_escaped(self.reply[1:7], self.reply[8],
@@ -172,7 +196,8 @@ class MeterBrain:
 
     def __init__(self, addr: str = "000000000001", version: str = "2007",
                  baudrate: int = 2400, parity: str = "E", bytesize: int = 8,
-                 stopbits: int = 1):
+                 stopbits: int = 1,
+                 oad_dataset_path: Optional[str] = None):
         self._lock = threading.RLock()
         self._addr = _parse_addr(addr)
         self.version = "2007"                 # "2007" | "1997"
@@ -186,8 +211,33 @@ class MeterBrain:
         for di, (val, scale, length) in _DEFAULT_REGISTERS.items():
             self._registers[di] = {"value": val, "scale": scale, "length": length}
         self.jzjc = JzjcConfig()
+        self.event_target_addr: Optional[bytes] = None   # 698 事件上报目标 STA 地址（6B）
+        # 645 主动上报状态字 DI=04001501 的事件内容（12 字节，夹在 DD DD 之间）。
+        # 末字节置 1 表示"有事件"——STA recv_645_event_check 要求 12 字节内
+        # 至少一个字节转换后非 0x33，否则判为无事件并中止本次上报。
+        self.event_record: bytes = bytes(11) + b"\x01"
+        # 698 采集 OAD 数据集（REQS-0037）：文件层（默认集）+ 运行时层（API），
+        # 同 OAD 运行时层覆盖文件层；两层都空时采集 OAD 不应答（与历史行为一致）。
+        self._oad_file_path: Optional[str] = None
+        self._oad_file_error: Optional[str] = None
+        self._oad_file_entries: Dict[str, Dict[str, Any]] = {}
+        self._oad_runtime_entries: Dict[str, Dict[str, Any]] = {}
+        path = resolve_dataset_path(oad_dataset_path)
+        if path is not None:
+            self._load_oad_file(str(path))
         self.tx_count = 0
         self.rx_count = 0
+
+    def _load_oad_file(self, path: str) -> None:
+        """加载文件层数据集；失败不致命（记 file_error，服务照常起）。"""
+        with self._lock:
+            self._oad_file_path = path
+            try:
+                self._oad_file_entries = load_oad_dataset_file(path)
+                self._oad_file_error = None
+            except (ValueError, OSError) as exc:
+                self._oad_file_entries = {}
+                self._oad_file_error = str(exc)
 
     # ------------------------------------------------------------------
     # 状态配置（接口层直调）
@@ -265,6 +315,33 @@ class MeterBrain:
             _bcd_encode(item["value"], item["scale"], item["length"])  # 先验证再入库
             self._registers[di] = item
             return dict(item)
+
+    # -- 645 事件记录（DI 04001501 主动上报状态字） ---------------------
+    def set_event_record(self, data_hex: str) -> str:
+        """设置 DI 04001501 的事件内容（DD DD 之间的 12+ 字节，原始值）。
+
+        STA 的 recv_645_event_check 要求该区至少有一个字节 +0x33 后非 0x33；
+        全 0x00 会被判为"无事件"并中止上报。
+        """
+        s = str(data_hex).strip().replace(" ", "").replace("-", "")
+        if len(s) % 2:
+            raise ValueError(f"事件内容须为整数字节：{data_hex!r}")
+        try:
+            data = bytes.fromhex(s)
+        except ValueError as exc:
+            raise ValueError(f"事件内容非十六进制：{data_hex!r}") from exc
+        if len(data) < 12:
+            raise ValueError("事件内容至少 12 字节（STA 固定检查 DI 后 12 字节）")
+        if len(data) > 64:
+            raise ValueError("事件内容过长（上限 64 字节）")
+        with self._lock:
+            self.event_record = data
+            return self.event_record.hex().upper()
+
+    def get_event_record(self) -> dict:
+        with self._lock:
+            return {"data_hex": self.event_record.hex().upper(),
+                    "length": len(self.event_record)}
 
     # -- 即装即采 -------------------------------------------------------
     def get_jzjc(self) -> dict:
@@ -354,6 +431,86 @@ class MeterBrain:
             return bytes(out)
 
     # ------------------------------------------------------------------
+    # 698 事件上报（电表主动上报 → STA）
+    # ------------------------------------------------------------------
+    def set_event_target(self, addr: str) -> str:
+        """设置事件上报目标 STA 地址（12 位十六进制，6 字节）。"""
+        with self._lock:
+            self.event_target_addr = _parse_addr(addr)
+            return self.event_target_addr.hex().upper()
+
+    def get_event_config(self) -> dict:
+        with self._lock:
+            target = self.event_target_addr
+            return {
+                "event_target_addr": target.hex().upper() if target else None,
+            }
+
+    def build_event_report(self, target_addr=None, oad: str = "20140200",
+                           data_hex: str = "00", piid: int = 1) -> bytes:
+        """构造 698 REPORT-Notification 事件上报线上帧。
+
+        target_addr 未传时取 event_target_addr；两者都缺抛 ValueError。
+        """
+        if target_addr is None:
+            with self._lock:
+                target = self.event_target_addr
+            if target is None:
+                raise ValueError("事件上报目标 STA 地址未配置（先 set_event_target 或传 target_addr）")
+        elif isinstance(target_addr, str):
+            target = _parse_addr(target_addr)
+        else:
+            target = bytes(target_addr)
+        oad_b = bytes.fromhex(str(oad).strip().replace(" ", ""))
+        data_b = bytes.fromhex(str(data_hex).strip().replace(" ", ""))
+        return _build_event_report_698(target, oad_b, data_b, piid=piid)
+
+    # ------------------------------------------------------------------
+    # 698 采集 OAD 数据集（REQS-0037：分钟采集任务点应答配置）
+    # ------------------------------------------------------------------
+    def get_oad_entries(self) -> dict:
+        """OAD 数据集三层视图：file（默认集）/ runtime（API）/ effective。
+
+        effective = file 被 runtime 逐 OAD 覆盖后的生效集；两层都空时采集
+        OAD 不应答（与历史行为一致）。
+        """
+        with self._lock:
+            effective = dict(self._oad_file_entries)
+            effective.update(self._oad_runtime_entries)
+            return {
+                "file_path": self._oad_file_path,
+                "file_error": self._oad_file_error,
+                "file": {k: dict(v) for k, v in self._oad_file_entries.items()},
+                "runtime": {k: dict(v) for k, v in self._oad_runtime_entries.items()},
+                "effective": {k: dict(v) for k, v in effective.items()},
+            }
+
+    def set_oad_entries(self, entries: Optional[List[dict]] = None,
+                        remove: Optional[List[str]] = None,
+                        reset: bool = False) -> dict:
+        """设置运行时层数据集（API 优先级高于文件层，同 OAD 覆盖）。
+
+        entries：逐条 {oad, data_hex | missing, length?, note?}，校验失败整体
+        不生效（抛 ValueError）；remove：从运行时层删除指定 OAD（文件层条目
+        用配 missing=true 覆盖实现"不回"）；reset：先清空运行时层回落文件层。
+        """
+        with self._lock:
+            if reset:
+                self._oad_runtime_entries = {}
+            if remove is not None:
+                for oad in remove:
+                    self._oad_runtime_entries.pop(normalize_oad(oad), None)
+            if entries is not None:
+                self._oad_runtime_entries.update(normalize_oad_entries(entries))
+            return self.get_oad_entries()
+
+    def _oad_effective(self) -> Dict[str, Dict[str, Any]]:
+        with self._lock:
+            merged = dict(self._oad_file_entries)
+            merged.update(self._oad_runtime_entries)
+            return merged
+
+    # ------------------------------------------------------------------
     # 协议入口
     # ------------------------------------------------------------------
     def handle_hex(self, hex_str: str) -> Optional[HandleResult]:
@@ -365,12 +522,16 @@ class MeterBrain:
         """处理一帧主站请求，返回应答（None=不应答）。"""
         with self._lock:
             self.rx_count += 1
-        buf = _unescape(bytes(raw or b""))
+        raw_bytes = bytes(raw or b"")
+        note: Dict[str, Any] = {"rx_hex": raw_bytes.hex().upper()}
+        # 698 不做 1B 转义，须在 645 反转义之前识别；645 路径保持原行为。
+        if self._looks_like_698(raw_bytes):
+            return self._handle_698(raw_bytes, note)
+        buf = _unescape(raw_bytes)
         i = 0
         while i < len(buf) and buf[i] == 0xFE:     # 去主站唤醒前导 4×FE
             i += 1
         buf = buf[i:]
-        note: Dict[str, Any] = {"rx_hex": bytes(raw).hex().upper()}
         if len(buf) < 12 or buf[0] != 0x68 or buf[7] != 0x68 or buf[-1] != 0x16:
             note["error"] = "帧结构不合法"
             return HandleResult(None, note)
@@ -396,6 +557,116 @@ class MeterBrain:
         except Exception as exc:                    # 协议入口不向通道层抛异常
             note["error"] = f"帧处理异常: {exc!r}"
             return HandleResult(None, note)
+
+    @staticmethod
+    def _looks_like_698(data: bytes) -> bool:
+        """识别 698.45 帧（去 FE 后：68 起、第 3 字节非 68=非 1376.2、
+        第 7 字节非 68=非 645，且 L(小端) 与帧长一致）。"""
+        i = 0
+        while i < len(data) and data[i] == 0xFE:
+            i += 1
+        b = data[i:]
+        if len(b) < 12 or b[0] != 0x68:
+            return False
+        if b[3] == 0x68:                            # 1376.2：68..L..68..
+            return False
+        if b[7] == 0x68:                            # 645：第 7 字节为第二个 68
+            return False
+        L = b[1] | (b[2] << 8)
+        return len(b) == L + 2
+
+    def _handle_698(self, raw: bytes, note: Dict[str, Any]) -> HandleResult:
+        """698.45 从站应答：只处理 DIR=0（客户机发出）、功能码 3（用户数据）
+        的 GET-Request，且 SA=本表地址（或广播地址）。
+
+        OAD=43000200（重庆即装即采读设备描述符）固定应答；其余 OAD 走采集
+        数据集（REQS-0037）：WithList 按 OAD 逐条命中应答（缺项/未配置条目
+        不进应答，STA 读层按任务配置长度补 FF），Normal 单点命中也应答；
+        数据集未命中保持历史行为——不应答（reason=未知 OAD），不悄悄变。
+        """
+        try:
+            parsed = parse_698_frame(raw)
+        except ValueError as exc:
+            note["protocol"] = "698.45"
+            note["error"] = f"698 帧解析失败: {exc}"
+            return HandleResult(None, note)
+
+        note["protocol"] = "698.45"
+        note["ctrl"] = f"{parsed.control:02X}"
+        note["addr"] = parsed.addr.hex().upper()
+        note["ca"] = f"{parsed.ca:02X}"
+
+        if (parsed.control & 0x0F) != 0x03:
+            note["func"] = f"698 功能码 0x{parsed.control & 0x0F:02X} 非用户数据，不应答"
+            return HandleResult(None, note)
+        if parsed.control & 0x80:
+            note["func"] = "698 服务器帧，忽略（避免 loop:// 自激）"
+            return HandleResult(None, note)
+        if parsed.service != 0x05:
+            note["func"] = f"698 非 GET-Request（service=0x{parsed.service:02X}），不应答"
+            return HandleResult(None, note)
+
+        sa_head = parsed.addr[0] if parsed.addr else 0
+        sa_addr = parsed.addr[1:]
+        is_broadcast = bool(sa_head & 0x40) or sa_addr == b"\xAA" * 6
+        if sa_addr != self._addr and not is_broadcast:
+            note["func"] = "698 非本表地址，不应答"
+            note["mine"] = False
+            return HandleResult(None, note)
+
+        if parsed.oad == JZJC_OAD:
+            desc = self.jzjc.descriptor.encode("ascii")
+            wire = build_jzjc_response(parsed, desc)
+            with self._lock:
+                self.tx_count += 1
+            note["func"] = "即装即采读设备描述符(43000200)"
+            note["descriptor"] = self.jzjc.descriptor
+            note["security"] = parsed.security is not None
+            return HandleResult(None, note, wire=wire)
+
+        # ---- 采集 OAD 数据集匹配（REQS-0037）----------------------------
+        dataset = self._oad_effective()
+
+        if parsed.oads is not None:                 # WithList：STA 分钟采集实测口径
+            items: List[Tuple[bytes, bytes]] = []
+            omitted: List[str] = []
+            for oad in parsed.oads:
+                entry = dataset.get(oad.hex().upper())
+                if entry is not None and not entry["missing"]:
+                    items.append((oad, bytes.fromhex(entry["data_hex"])))
+                else:
+                    omitted.append(
+                        f"{oad.hex().upper()}"
+                        + ("(缺项)" if entry is not None else "(未配置)"))
+            if not items:
+                keys = " ".join(o.hex().upper() for o in parsed.oads)
+                note["func"] = f"698 OAD=[{keys}] 非 43000200，不应答"
+                note["reason"] = "未知 OAD"
+                note["oad_omitted"] = omitted
+                return HandleResult(None, note)
+            wire = build_get_list_response(parsed, items)
+            with self._lock:
+                self.tx_count += 1
+            note["func"] = f"698 采集读点(WithList {len(items)}/{len(parsed.oads)})"
+            note["oads"] = [o.hex().upper() for o, _ in items]
+            # 缺项/未配置条目不进应答：STA 读层按任务配置长度补 FF（表端口径）
+            note["oad_omitted"] = omitted
+            note["security"] = parsed.security is not None
+            return HandleResult(None, note, wire=wire)
+
+        entry = dataset.get(parsed.oad.hex().upper()) if parsed.oad else None
+        if entry is None or entry["missing"]:
+            oad_hex = parsed.oad.hex().upper() if parsed.oad else ""
+            note["func"] = f"698 OAD=0x{oad_hex} 非 43000200，不应答"
+            note["reason"] = "未知 OAD" if entry is None else "OAD 缺项"
+            return HandleResult(None, note)
+        wire = build_get_normal_response(parsed, parsed.oad,
+                                         bytes.fromhex(entry["data_hex"]))
+        with self._lock:
+            self.tx_count += 1
+        note["func"] = f"698 采集读点({entry['oad']})"
+        note["security"] = parsed.security is not None
+        return HandleResult(None, note, wire=wire)
 
     # -- 应答帧构造 ------------------------------------------------------
     def _reply(self, ctrl: int, data: bytes = b"") -> bytes:
@@ -536,6 +807,13 @@ class MeterBrain:
             note["func"] = "读时间"
             note["value"] = n.strftime("%H:%M:%S")
             return HandleResult(self._reply(0x11, di_wire + value), note)
+        if key == "04001501":                       # 主动上报状态字（645 事件帧）
+            # 线上：DI + 事件内容(+0x33) + DD DD；DD DD 之间为事件内容，
+            # STA recv_645_event_check 要求其中至少一个字节非 0x33。
+            note["func"] = "读主动上报状态字(04001501)"
+            note["event_record"] = self.event_record.hex().upper()
+            return HandleResult(
+                self._reply(0x11, di_wire + self.event_record + b"\xAA\xAA"), note)
 
         di = _ALIAS_REGISTERS.get(key, key)
         value = self._register_value_bcd(di)

@@ -13,6 +13,7 @@ from parser_lib.adapters.adapter_645 import build_frame_escaped
 from sim_meter.api import SimMeterService, create_simeter_app
 from sim_meter.journal import MeterJournal
 from sim_meter.meter import MeterBrain
+from sim_meter.protocol_698 import build_get_request_43000200, parse_698_frame
 from sim_meter.serial_channel import MeterSerialChannel
 
 pytest.importorskip("serial", reason="需要 pyserial")
@@ -150,6 +151,21 @@ class TestApi:
         reply = bytes.fromhex(body["reply_wire_hex"])
         assert reply[8] == 0x93 and reply[10:16] == ADDR
 
+    def test_handle_hex_698_jzjc(self, client):
+        # 698 应答只有 wire（无 645 逻辑帧），handle_hex 也必须回 wire
+        req = build_get_request_43000200(ADDR, piid=1, security=True)
+        r = client.post("/api/simeter/handle_hex",
+                        json={"hex": req.hex().upper()})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["note"]["func"] == "即装即采读设备描述符(43000200)"
+        assert body["reply_hex"] is None
+        wire = bytes.fromhex(body["reply_wire_hex"])
+        parsed = parse_698_frame(wire)
+        assert parsed.control == 0xC3 and parsed.service == 0x85
+        desc_len = parsed.inner_apdu[9]
+        assert parsed.inner_apdu[10:10 + desc_len] == b"DDZY666-Z"
+
     def test_baud_via_handle_hex(self, client):
         # 17H 更改速率：脑内状态与 action 一并暴露
         req = build_frame_escaped(ADDR, 0x17, _d33(bytes([0x20]))).hex().upper()
@@ -186,6 +202,81 @@ class TestApi:
             status = client.get("/api/simeter/status").json()
             assert status["serial"] is None
 
+
+class TestEventApi:
+    """698 事件上报接口：/event/config 配置目标 STA，/event/report 生成线上帧。"""
+
+    def test_event_config_roundtrip(self, client):
+        r = client.get("/api/simeter/event/config")
+        assert r.status_code == 200
+        assert r.json() == {"event_target_addr": None}          # 初始未配置
+        r = client.post("/api/simeter/event/config",
+                        json={"target_addr": "1200000000AA"})
+        assert r.status_code == 200
+        assert r.json()["event_target_addr"] == "1200000000AA"
+        assert client.get("/api/simeter/event/config").json() == {
+            "event_target_addr": "1200000000AA"}
+        # 非法地址：非 12 位十六进制 → 400
+        for bad in ["1200000000", "1200000000AAX", "zz0000000000", ""]:
+            assert client.post("/api/simeter/event/config",
+                               json={"target_addr": bad}).status_code == 400
+
+    def test_event_report_build_no_send(self, client):
+        client.post("/api/simeter/event/config",
+                    json={"target_addr": "1200000000AA"})
+        r = client.post("/api/simeter/event/report", json={"send": False})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["sent"] is False
+        assert body["target_addr"] == "1200000000AA"
+        wire = bytes.fromhex(body["frame_hex"])
+        assert wire[:4] == b"\xFE" * 4                            # FE×4 前导
+        assert len(wire) == body["length"]
+        p = parse_698_frame(wire)                                # 完整线上帧可解析
+        assert p.addr == b"\x05" + bytes.fromhex("1200000000AA")
+        assert p.oad == bytes.fromhex("20140200")                # 默认 OAD
+        assert p.data == bytes.fromhex("00")                     # 默认事件数据
+        assert p.piid == 1
+
+    def test_event_report_uses_defaults(self, client):
+        """缺省 send=true：未开串口 → 409；显式 send=false 只生成。"""
+        client.post("/api/simeter/event/config",
+                    json={"target_addr": "1200000000AA"})
+        r = client.post("/api/simeter/event/report", json={})
+        assert r.status_code == 409                              # 默认 send=True，串口未打开
+        assert "串口未打开" in r.json()["detail"]
+
+    def test_event_report_target_override(self, client):
+        client.post("/api/simeter/event/config",
+                    json={"target_addr": "1200000000AA"})
+        r = client.post("/api/simeter/event/report",
+                        json={"target_addr": "0000000000FF", "send": False})
+        assert r.status_code == 200
+        assert r.json()["target_addr"] == "0000000000FF"         # 显式传参优先
+        wire = bytes.fromhex(r.json()["frame_hex"])
+        assert parse_698_frame(wire).addr == b"\x05" + bytes.fromhex("0000000000FF")
+
+    def test_event_report_without_target_400(self, client):
+        r = client.post("/api/simeter/event/report", json={"send": False})
+        assert r.status_code == 400                              # 未配置且未传 target_addr
+        assert "未配置" in r.json()["detail"]
+
+    def test_event_report_bad_oad_or_data_400(self, client):
+        client.post("/api/simeter/event/config",
+                    json={"target_addr": "1200000000AA"})
+        # OAD 非 4 字节 → 400
+        r = client.post("/api/simeter/event/report",
+                        json={"oad": "2014", "send": False})
+        assert r.status_code == 400
+        # data_hex 非十六进制 → 400
+        r = client.post("/api/simeter/event/report",
+                        json={"data_hex": "XY", "send": False})
+        assert r.status_code == 400
+        # 显式 target_addr 非法 → 400
+        r = client.post("/api/simeter/event/report",
+                        json={"target_addr": "1234", "send": False})
+        assert r.status_code == 400
+
 def test_meta_endpoint_self_describing_and_state_service():
     """_meta 小抄：端点清单 + 典型序列 + 错误语义；state 暴露服务供 AI 桥用。"""
     svc = SimMeterService(brain=MeterBrain(), log_dir=None)
@@ -196,7 +287,36 @@ def test_meta_endpoint_self_describing_and_state_service():
     meta = r.json()
     assert meta["service"].startswith("sim_meter")
     assert "POST /open" in meta["endpoints"] and "GET /frames" in meta["endpoints"]
+    assert "GET /event/config" in meta["endpoints"]
+    assert "POST /event/report" in meta["endpoints"]
     assert any("000000000001" in n for n in meta["notes"])
+    assert any("STA 模块地址" in n for n in meta["notes"])      # target_addr 口径说明
+    assert any("43000200" in n for n in meta["notes"])          # 自动应答说明
     assert meta["open_sequence"][0].startswith("POST /api/simeter/open")
     # 工作台 AI 桥经 app.state 拿服务实例
     assert app.state.simeter_service is svc
+
+
+class TestEventRecordApi:
+    """645 DI 04001501 事件内容接口（STA ORDINARY_EVT 前置读表）。"""
+
+    def test_event_record_api(self, client):
+        r = client.get("/api/simeter/event/record")
+        assert r.status_code == 200
+        assert r.json()["length"] == 12
+        r = client.post("/api/simeter/event/record",
+                        json={"data_hex": "00" * 11 + "02"})
+        assert r.status_code == 200
+        assert r.json()["data_hex"].endswith("02")
+        assert client.post("/api/simeter/event/record",
+                           json={"data_hex": "00"}).status_code == 400
+
+    def test_handle_hex_645_event_record(self, client):
+        req = build_frame_escaped(ADDR, 0x11,
+                                  _d33(bytes.fromhex("01150004"))).hex().upper()
+        body = client.post("/api/simeter/handle_hex",
+                           json={"hex": req}).json()
+        wire = bytes.fromhex(body["reply_wire_hex"])
+        assert wire[8] == 0x91                    # 读数据正常应答
+        assert wire[9] >= 0x10                    # 数据域 ≥ DI4 + 事件12
+        assert body["note"]["func"] == "读主动上报状态字(04001501)"
