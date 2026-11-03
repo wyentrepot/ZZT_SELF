@@ -3,9 +3,11 @@ name: mclt-collect-analysis
 description: 'Use when 需求明确涉及 HPLC 分钟采集（MCLT，15 分钟冻结周期）分析：页面漏报/缺报表三端对账定位、11E4 主动上报时序（jitter/重传）、11E3 补抄请求→响应延迟、分钟采集两端时钟偏移、mclt_ut 校准参数提取（UT_STA_RSP_DELAY_MS/cco_offset_s/UT_SSN_BASE），且已有（或可定位到）侦听台 7E 报文与 CCO 串口日志路径。纯离线文件分析，只读日志。DO NOT load for 高频采集失败分析（用 hf-collect-analysis）、协议帧/字段/状态机咨询（用 knowledge-lookup）、拉合闸/停复电/入网/升级、或要求在线/实时分析。'
 metadata:
   author: reasonix
-  version: "1.0.0"
+  version: "1.1.0"
   applies-to: /01-workfile-ai/01-zzt/ZZT_SELF
 ---
+
+> v1.1.0（2026-11-03）：REQS-0037 — 工具节新增 minute_assert 断言库入口（`assert_698_11e3_chain`，离线核 698 11E3 补抄帧）。
 
 # 分钟采集分析技能（mclt-collect-analysis）
 
@@ -63,6 +65,13 @@ metadata:
 | `pair <CCO日志> <7E报文>` | 两端时钟偏移 + 补抄延迟交叉验证 |
 | `miss <CCO日志> <7E报文> <页面xlsx> [--freeze HH:MM]` | 页面缺失表三端对账（漏报根因定位） |
 | `utcalib <CCO日志> <7E报文> [--freeze HH:MM:SS]` | 一键输出 mclt_ut 校准参数 |
+
+## 断言库入口（minute_assert，离线核帧）
+
+- `from minute_assert import Expect698, assert_698_11e3_chain`：对 F231 明细逐帧断 698 内层——
+  C=0xC3、APDU 85 02 01 `<di_cnt>` / 缺项 OAD 按长度补 FF、TimeTag=冻结时刻、APDU 长度含 9B 尾。
+- `oad_lens` **按实际 F231 配置传入**，勿凭记忆写死。
+- 真机样本见 `/home/H_STA/01/sta/reqs/0005-*/evidence/`。
 
 ## 执行步骤
 
