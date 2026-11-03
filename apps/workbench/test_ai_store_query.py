@@ -112,6 +112,27 @@ def _plain_module_factory():
     return app
 
 
+def _simcon_factory(core, *, with_store=True):
+    """与 test_ai_simcon._simcon_factory 同构：把执行核心提升到 simcon 子应用 state。
+
+    REQS-0018 收发库访问器挂同一 fake core（with_store=False 时缺省 None，
+    模拟库未启用 → AI 桥 503）。不注入则 create_workbench_app 挂载真实
+    create_simcon_app 并绑定 data/ 真库，库内旧事件行会污染断言。
+    """
+    app = FastAPI()
+    app.state.simcon_run_verify = core.verify
+    app.state.simcon_run_step = core.step
+    app.state.simcon_frames = core.frames
+    app.state.simcon_session = core.session
+    app.state.simcon_open = core.open
+    app.state.simcon_close_io = core.close
+    if with_store:
+        app.state.simcon_store_snapshots = core.store_snapshots
+        app.state.simcon_store_snapshot_items = core.store_snapshot_items
+        app.state.simcon_store_events = core.store_events
+    return app
+
+
 def _listener_factory_with_minute():
     app = FastAPI()
     app.state.log_service = FakeMinuteLogService()
@@ -119,6 +140,11 @@ def _listener_factory_with_minute():
 
 
 def _listener_factory_plain():
+    return FastAPI()
+
+
+def _plain_simcon_factory():
+    """simcon 子应用占位（无访问器），避免缺省挂载真实 simcon 子应用绑定真库。"""
     return FastAPI()
 
 
@@ -140,6 +166,9 @@ def _client(core=None, scopes=None, resources=None, minute=False, with_store=Tru
     app = create_workbench_app(
         module_log_factory=(_plain_module_factory if core is None
                             else lambda: _module_factory(core, with_store=with_store)),
+        # 假 simcon 子应用（test_ai_simcon 同构），与真库解耦。
+        simcon_factory=(_plain_simcon_factory if core is None
+                        else lambda: _simcon_factory(core, with_store=with_store)),
         listener_factory=(_listener_factory_with_minute if minute
                           else _listener_factory_plain),
         ai_auth_store=auth,

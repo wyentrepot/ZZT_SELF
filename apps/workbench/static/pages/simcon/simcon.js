@@ -2,6 +2,8 @@
  * 数据源：/api/dict/afn-fn（AFN/Fn 参考字典）+ /api/simcon/*（status/ports/open/close/
  * build/step/frames/responders，经 workbench 直挂 /api/simcon 透传 module_log 子应用）。
  * 构帧预览走 /api/simcon/build（只算不发）；下发走 /api/simcon/step（串口未开会自动打开）。
+ * REQS-0037「分钟采集」页签：F231/F232 配任务 + 11E3 构帧预览 + 0037 场景入口
+ * + 06H-F230 存数展示（/report_buckets buckets.F230 与 /store/mclt）。
  */
 (function () {
   "use strict";
@@ -869,12 +871,15 @@
   function renderReports(d) {
     var b = d.buckets || {};
     var power = b.F5_power || { name: "停复电事件", count: 0, items: [] };
+    var mclt = b.F230 || { name: "分钟采集数据上报", count: 0, items: [] };   // REQS-0037
     var html = '<div class="statrow" style="margin-bottom:9px">' +
       '<div class="statkv"><div class="k">上报总数</div><div class="v">' + (d.total || 0) + "</div></div>" +
       ["F1", "F2", "F3", "F4", "F5"].map(function (k) {
         return '<span class="chip"><span class="mono">' + k + "</span> " + esc((b[k] || {}).name || "") + " × " + ((b[k] || {}).count || 0) + "</span>";
       }).join("") +
-      '<span class="chip chip--ac">停复电 × ' + power.count + "</span></div>";
+      '<span class="chip chip--ac">停复电 × ' + power.count + "</span>" +
+      '<span class="chip chip--ac" id="mcltF230Chip">F230 分钟采集 × ' + mclt.count + "</span>" +
+      "</div>";
     // 停复电单独一表
     html += '<div class="bkt-card"><div class="bkt-h">停复电事件（06H-F5 · 协议类型 04H）<span class="cnt">' + power.count + "</span></div>";
     html += power.items.length
@@ -886,6 +891,18 @@
           return "<tr><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td><td class='mono'>" + esc(x.meter) + "</td><td>" + ev + "</td><td class='mono' style='max-width:280px;overflow:hidden;text-overflow:ellipsis'>" + esc(x.summary) + "</td></tr>";
         }).join("") + "</tbody></table>"
       : '<div class="empty" style="height:52px"><p>暂无停复电事件（真机停电/复电后到达）</p></div>';
+    html += "</div>";
+    // REQS-0037：分钟采集（06H-F230）单独一表（仿停复电特例：任务号/协议/采集时间/从节点/长度，点行看详情）
+    html += '<div class="bkt-card" id="mcltF230Card"><div class="bkt-h">分钟采集数据上报（06H-F230）<span class="cnt">' + mclt.count + "</span></div>";
+    html += mclt.items.length
+      ? '<table class="rtab" id="mcltF230Table"><thead><tr><th>时间</th><th>任务号</th><th>协议</th><th>采集时间</th><th>从节点</th><th class="num">长度</th></tr></thead><tbody>' +
+        mclt.items.map(function (x, i) {
+          return "<tr class='mclt-f230-row' data-i='" + i + "'><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td>" +
+            "<td class='mono'>" + esc(x.task_id) + "</td><td>" + esc(x.proto) + "</td>" +
+            "<td class='mono'>" + esc(x.collect_time || "—") + "</td><td class='mono'>" + esc(x.meter || "—") + "</td>" +
+            "<td class='num'>" + esc(x.data_len == null ? "—" : x.data_len) + "</td></tr>";
+        }).join("") + "</tbody></table>"
+      : '<div class="empty" style="height:52px"><p>暂无 F230 存数（配任务后按周期上报；点「分钟采集」页签配任务）</p></div>';
     html += "</div>";
     // 其余类型各一表
     ["F1", "F2", "F3", "F4", "F5"].forEach(function (k) {
@@ -901,6 +918,13 @@
     });
     $("#pBodyReports").innerHTML = html;
     $("#panelMeta").textContent = "上报分桶 · 总数 " + (d.total || 0);
+    // F230 行点击 → /store/mclt 明细（含 frame_id 证据链 + 内嵌帧数）
+    Array.prototype.forEach.call(document.querySelectorAll("#mcltF230Table .mclt-f230-row"), function (tr) {
+      tr.addEventListener("click", function () {
+        var item = (b.F230 || {}).items ? b.F230.items[+tr.dataset.i] : null;
+        if (item) showMcltDetail(item);
+      });
+    });
   }
 
   function loadReports() {
@@ -1089,6 +1113,343 @@
     else stopPanelTimers();
   });
 
+  /* ================= REQS-0037：分钟采集页签 =================
+   * 配任务（11H-F231/F232）→ 等存数（wait_mclt_stored）→ 读数（read_mclt_11e3）。
+   * 构帧全部走后端（/build 走 scenario_codec；11E3 走 /mclt/11e3_preview 走
+   * mclt_e3），前端不手拼字节；场景执行走 POST /api/simcon/verify（verify 任务面）。
+   */
+  var MC_SCENARIO_ID = "chongqing_mclt_recheck_0037";
+
+  /* OAD 列表 textarea → [{item, reply_len}]（8 位 hex OAD + 回复长度字节） */
+  function mcParseOads(text) {
+    return String(text || "").split(/[\n,，;；]+/).map(function (line) {
+      var seg = line.trim().split(/[\s:：=]+/).filter(Boolean);
+      if (!seg.length) return null;
+      var oad = seg[0].replace(/[^0-9a-fA-F]/g, "");
+      if (!oad) return null;
+      return { item: oad, reply_len: seg[1] ? (parseInt(seg[1], 10) || 0) : 0, meter_type: 0 };
+    }).filter(Boolean);
+  }
+
+  /* 组 F231/F232 send 描述（字段语义 = scenario_codec 示例场景 / adapter_10376 编码器） */
+  function mcTaskSend(fnNo) {
+    var taskNo = parseInt($("#mcTaskNo").value, 10);
+    if (isNaN(taskNo) || taskNo < 0 || taskNo > 15) throw new Error("任务号需 0~15");
+    if (fnNo === 231) {
+      var cycle = parseInt($("#mcCycle").value, 10);
+      if (isNaN(cycle) || cycle < 1 || cycle > 1440) throw new Error("周期分钟需 1~1440");
+      var items = mcParseOads($("#mcOads").value);
+      if (!items.length) throw new Error("请填写至少一条 OAD（每行：OAD hex + 回复长度）");
+      return {
+        afn: "11", fn: "F231",
+        params: { task_no: taskNo, action: "enable",
+                  protocol: parseInt($("#mcProto").value, 10),
+                  cycle_min: cycle, items: items },
+      };
+    }
+    var meters = $("#mcMeters").value.split(/[^0-9]+/).filter(function (x) { return x.length === 12; });
+    if (!meters.length) throw new Error("F232 需至少一个 12 位 BCD 档案地址");
+    return { afn: "11", fn: "F232", params: { task_no: taskNo, meters: meters } };
+  }
+
+  /* 构帧预览（POST /api/simcon/build，scenario_codec 只算不发） */
+  function mcPreviewBuild(send) {
+    return api("/api/simcon/build", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ afn: send.afn, fn: send.fn, params: send.params, profile: $("#profileSel").value }),
+    });
+  }
+
+  /* 经单步路径下发（POST /api/simcon/step：串口未开自动打开；F231/F232 为 afn/fn 帧） */
+  function mcSendStep(send, label) {
+    return api("/api/simcon/step", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        send: send, profile: $("#profileSel").value,
+        expect: { format: "local", afn: 17, fn: send.fn === "F231" ? 231 : 232 },
+        enable_responder: true, name: label,
+      }),
+    });
+  }
+
+  function mcShowHex(obj, target) {
+    $(target).innerHTML = colorHex(obj.hex);
+    return obj;
+  }
+
+  /* 渲染步骤列表：步骤 dict 逐个展示（wait_mclt_stored 超时/轮询、read_mclt_11e3 auto/显式冻结时刻） */
+  function mcRenderSteps(steps) {
+    var box = $("#mcSteps");
+    if (!steps || !steps.length) {
+      box.innerHTML = '<div class="empty" style="height:70px"><p>无步骤</p></div>';
+      return;
+    }
+    box.innerHTML = steps.map(function (s, i) {
+      var name = s.name || s.send && ("发送 " + (s.send.afn || "") + " " + (s.send.fn || "")) || ("步骤 " + (i + 1));
+      var kind = s.wait_mclt_stored ? "wait_mclt_stored"
+        : s.read_mclt_11e3 ? "read_mclt_11e3"
+        : s.send ? ("send " + (s.send.afn || "") + "-" + (s.send.fn || ""))
+        : Object.keys(s).filter(function (k) { return k !== "name"; })[0] || "step";
+      var kvs = [];
+      if (s.wait_mclt_stored) {
+        var w = s.wait_mclt_stored;
+        kvs.push("task_id=" + w.task_id, "timeout_s=" + (w.timeout_s != null ? w.timeout_s : 900), "poll_s=" + (w.poll_s != null ? w.poll_s : 5));
+        if (w.proto != null) kvs.push("proto=" + w.proto);
+      }
+      if (s.read_mclt_11e3) {
+        var r = s.read_mclt_11e3;
+        kvs.push("task_id=" + r.task_id, "freeze_time=" + (r.freeze_time || "auto"), "protocol=" + (r.protocol || 3));
+      }
+      if (s.expect_timeout != null) kvs.push("expect_timeout=" + s.expect_timeout);
+      if (s.expect && s.expect.afn != null) kvs.push("expect afn=" + s.expect.afn + (s.expect.task_id != null ? "/task_id=" + s.expect.task_id : ""));
+      if (s.send && s.send.params) {
+        kvs.push("params " + JSON.stringify(s.send.params));
+      }
+      return '<div class="mc-step"><span class="no">' + (i + 1) + '</span><div class="body">' +
+        '<div class="nm">' + esc(name) + '</div><div class="kv">' + esc(kind) + (kvs.length ? " · " + esc(kvs.join(" · ")) : "") + "</div></div></div>";
+    }).join("");
+  }
+
+  /* 用户自选 task 组合 → wait+read 步骤对（语义对齐 scenario_codec 构建器） */
+  function mcBuildTaskSeqSteps() {
+    var ids = ($("#mcTaskSeq").value || "").split(/[^0-9]+/).filter(Boolean).map(function (x) { return parseInt(x, 10); });
+    if (!ids.length) throw new Error("请填任务号列表，如 0,1,15");
+    var proto = parseInt($("#mcSeqProto").value, 10);
+    var steps = [];
+    ids.forEach(function (tid) {
+      steps.push({
+        name: "等待 task " + tid + " 存数 (06H-F230)",
+        wait_mclt_stored: { task_id: tid, proto: proto, timeout_s: 900, poll_s: 5 },
+      });
+      steps.push({
+        name: "按冻结时刻读数 (11E3, task " + tid + ", auto)",
+        read_mclt_11e3: { task_id: tid, freeze_time: "auto", protocol: proto },
+        expect: { afn: "11E3", task_id: tid },
+        expect_timeout: 60,
+      });
+    });
+    mcRenderSteps(steps);
+    $("#mcScenarioMeta").textContent = "已生成 " + steps.length + " 步（" + ids.length + " 组 wait+read）· 点「运行场景」执行";
+    return steps;
+  }
+
+  /* POST /api/simcon/verify：verify 任务面执行 wait/read 语义步骤序列 */
+  function mcRunSteps(steps) {
+    var body = {
+      id: "ui.mclt." + Date.now().toString(36),
+      profile: $("#profileSel").value,
+      enable_responder: true,
+      fail_fast: false,
+      steps: steps,
+    };
+    $("#mcScenarioMeta").textContent = "执行中…（wait 步骤最长等 timeout_s）";
+    return api("/api/simcon/verify", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }).then(function (r) {
+      var s = r.summary || {};
+      $("#mcScenarioMeta").textContent = "结论 " + (s.verdict || "—") + " · 通过 " + (s.pass || 0) + "/" + (s.total || 0) +
+        (r.run_id ? " · run " + r.run_id : "");
+      mcRenderResults(r);
+      loadReports();
+      return r;
+    });
+  }
+
+  /* verify 结果按步骤渲染（含失败原因） */
+  function mcRenderResults(r) {
+    var steps = r.steps || [];
+    if (!steps.length) return;
+    var box = $("#mcSteps");
+    box.insertAdjacentHTML("beforeend",
+      '<div class="mc-step"><span class="no">✓</span><div class="body"><div class="nm">执行结果</div>' +
+      steps.map(function (s) {
+        var badge = s.result === "pass" ? '<span class="badge badge--ok">通过</span>'
+          : '<span class="badge badge--deny">失败</span>';
+        return '<div class="kv" style="margin-top:4px">' + badge + " " + esc(s.name || "") +
+          '<span class="hint"> ' + esc(s.reason || "") + "</span></div>";
+      }).join("") + "</div></div>");
+  }
+
+  /* 11E3 构帧预览（POST /api/simcon/mclt/11e3_preview → mclt_e3.build_11e3_down） */
+  function mcPreview11E3() {
+    var taskNo = parseInt($("#mcReadTaskNo").value, 10);
+    if (isNaN(taskNo) || taskNo < 0 || taskNo > 15) return Promise.reject(new Error("任务号需 0~15"));
+    var fz = $("#mcFreeze").value.trim();
+    if (!fz) return Promise.reject(new Error("请填冻结时刻（或点「取最近存数」）"));
+    return api("/api/simcon/mclt/11e3_preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskNo, freeze_time: fz,
+                             protocol: parseInt($("#mcReadProto").value, 10),
+                             ssn: parseInt($("#mcSsn").value, 10) || 1 }),
+    });
+  }
+
+  /* F230 明细弹窗：report_buckets item + /store/mclt 行（frame_id 证据链 + 内嵌帧数） */
+  function showMcltDetail(item) {
+    var mask = document.createElement("div");
+    mask.className = "mclt-mask";
+    var kv = function (k, v) {
+      return '<div class="pkv"><span class="k">' + esc(k) + '</span><span class="v mono">' + esc(v == null ? "—" : v) + "</span></div>";
+    };
+    var payload = item.payload || {};
+    var items = payload.items || [];
+    mask.innerHTML =
+      '<div class="mclt-dlg"><div class="d-h">06H-F230 明细 · 任务 ' + esc(item.task_id) +
+      '<span class="sp"></span><button class="btn btn--sm btn--ghost" data-close>关闭</button></div>' +
+      '<div class="d-body">' +
+      kv("上报时间", (item.ts || "").replace("T", " ")) + kv("任务号", item.task_id) + kv("协议", item.proto) +
+      kv("采集（冻结）时间", item.collect_time) + kv("从节点地址", item.meter) +
+      kv("内嵌帧数", item.nested_count) + kv("报文长度", item.data_len) +
+      '<div><div class="hint" style="margin-bottom:4px">报文 hex（内层 645/698）</div><div class="hexwrap"><div class="hex mono">' + esc(item.summary || "") + "</div></div></div>" +
+      (items.length
+        ? '<div><div class="hint" style="margin-bottom:4px">内嵌帧 × ' + items.length + "</div>" +
+          '<table class="rtab"><thead><tr><th>#</th><th>地址</th><th>摘要</th></tr></thead><tbody>' +
+          items.map(function (x, i) {
+            return "<tr><td class='num'>" + (i + 1) + "</td><td class='mono'>" + esc(x.meter || x.addr || "—") + "</td><td class='mono'>" + esc((x.summary || x.payload_hex || "").slice(0, 48)) + "</td></tr>";
+          }).join("") + "</tbody></table></div>"
+        : "") +
+      '<div class="hint">完整证据链：frame_id 回溯 frame_log（GET /api/simcon/store/mclt 行内 frame_id）</div>' +
+      "</div></div>";
+    mask.addEventListener("click", function (e) {
+      if (e.target === mask || e.target.closest("[data-close]")) mask.remove();
+    });
+    document.body.appendChild(mask);
+  }
+
+  /* F230 存数明细表（分钟采集页签内，/store/mclt） */
+  function loadMcltStore() {
+    api("/api/simcon/store/mclt?limit=100").then(function (d) {
+      var rows = d.items || [];
+      var body = $("#mcF230Body");
+      if (!rows.length) {
+        body.innerHTML = '<div class="empty" style="height:70px"><p>暂无 F230 存数记录</p></div>';
+        return;
+      }
+      body.innerHTML = '<table class="rtab"><thead><tr><th>时间</th><th>任务号</th><th>协议</th><th>采集时间</th><th>从节点</th><th class="num">长度</th><th class="num">帧数</th></tr></thead><tbody>' +
+        rows.map(function (x) {
+          return "<tr><td class='mono'>" + esc((x.ts || "").replace("T", " ").slice(0, 19)) + "</td>" +
+            "<td class='mono'>" + esc(x.task_id || "—") + "</td><td class='mono'>" + esc(x.proto_type || "—") + "</td>" +
+            "<td class='mono'>" + esc(x.collect_time || "—") + "</td><td class='mono'>" + esc(x.node_addr || "—") + "</td>" +
+            "<td class='num'>" + esc(x.data_len == null ? "—" : x.data_len) + "</td>" +
+            "<td class='num'>" + esc(x.nested_count == null ? "—" : x.nested_count) + "</td></tr>";
+        }).join("") + "</tbody></table>";
+    }).catch(function (e) {
+      $("#mcF230Body").innerHTML = '<div class="empty" style="height:70px"><p>读取失败：' + esc(e.message) + "</p></div>";
+    });
+  }
+
+  /* 场景列表：默认选中 0037 复测场景 */
+  function loadMcltScenarios() {
+    api("/api/scenarios").then(function (list) {
+      var sel = $("#mcScenarioSel");
+      var arr = (list || []).filter(function (s) { return s && s.id; });
+      sel.innerHTML = arr.map(function (s) {
+        return '<option value="' + esc(s.id) + '">' + esc(s.name || s.id) + "</option>";
+      }).join("") || '<option value="">无场景</option>';
+      if (arr.some(function (s) { return s.id === MC_SCENARIO_ID; })) sel.value = MC_SCENARIO_ID;
+      $("#mcScenarioMeta").textContent = arr.length + " 个场景";
+    }).catch(function (e) {
+      $("#mcScenarioMeta").textContent = "场景加载失败：" + e.message;
+    });
+  }
+
+  $("#mcBuildCfg").addEventListener("click", function () {
+    try {
+      var send = mcTaskSend(231);
+      mcPreviewBuild(send).then(function (r) { mcShowHex(r, "#mcPrevHex"); })
+        .catch(function (e) { banner("构帧失败：" + e.message); });
+    } catch (e) { banner(e.message); }
+  });
+
+  $("#mcSendCfg").addEventListener("click", function () {
+    var btn = $("#mcSendCfg");
+    try {
+      var send = mcTaskSend(231);
+      btn.disabled = true;
+      mcPreviewBuild(send).then(function (r) {
+        mcShowHex(r, "#mcPrevHex");
+        return mcSendStep(send, "分钟采集-F231");
+      }).then(function () {
+        banner(null);
+        banner("F231 已下发（任务 " + $("#mcTaskNo").value + "）");
+        btn.disabled = false;
+      }).catch(function (e) { banner("下发失败：" + e.message); btn.disabled = false; });
+    } catch (e) { banner(e.message); }
+  });
+
+  $("#mcSendF232").addEventListener("click", function () {
+    var btn = $("#mcSendF232");
+    try {
+      var send = mcTaskSend(232);
+      btn.disabled = true;
+      mcPreviewBuild(send).then(function (r) {
+        mcShowHex(r, "#mcPrevHex");
+        return mcSendStep(send, "分钟采集-F232");
+      }).then(function () {
+        banner(null);
+        banner("F232 已下发（任务 " + $("#mcTaskNo").value + "）");
+        btn.disabled = false;
+      }).catch(function (e) { banner("下发失败：" + e.message); btn.disabled = false; });
+    } catch (e) { banner(e.message); }
+  });
+
+  /* 「取最近存数」：/store/mclt 最新一条该任务的 collect_time 填入冻结时刻 */
+  $("#mcFreezeAuto").addEventListener("click", function () {
+    var tid = String(parseInt($("#mcReadTaskNo").value, 10) || "");
+    api("/api/simcon/store/mclt?limit=100").then(function (d) {
+      var rows = (d.items || []).filter(function (x) { return String(x.task_id) === tid && x.collect_time; });
+      if (!rows.length) { banner("任务 " + tid + " 暂无 F230 存数（可先运行场景等存数）"); return; }
+      $("#mcFreeze").value = rows[0].collect_time;
+      banner(null);
+    }).catch(function (e) { banner(e.message); });
+  });
+
+  $("#mcBuild11E3").addEventListener("click", function () {
+    mcPreview11E3().then(function (r) {
+      mcShowHex(r, "#mc11E3Hex");
+    }).catch(function (e) {
+      $("#mc11E3Hex").innerHTML = "<span style='color:var(--color-status-fail)'>" + esc(e.message) + "</span>";
+    });
+  });
+
+  $("#mcCopy11E3").addEventListener("click", function () {
+    var hex = $("#mc11E3Hex").textContent || "";
+    if (!hex.trim()) { banner("请先构帧预览"); return; }
+    var text = hex.replace(/\s+/g, "");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { banner("11E3 hex 已复制（" + (text.length / 2) + " 字节）"); })
+        .catch(function () { banner("复制失败，请手动选择文本"); });
+    } else {
+      banner("剪贴板不可用，请手动选择文本复制");
+    }
+  });
+
+  $("#mcScenarioLoad").addEventListener("click", function () {
+    var id = $("#mcScenarioSel").value;
+    if (!id) { banner("请选择场景"); return; }
+    api("/api/scenarios/" + encodeURIComponent(id)).then(function (s) {
+      var steps = s.steps || (((s.steps_template || {}).task_1) || []);
+      mcRenderSteps(steps);
+      $("#mcScenarioMeta").textContent = (s.name || s.id) + " · " + steps.length + " 步（含 steps_template 可换 task 组合）";
+    }).catch(function (e) { banner("场景加载失败：" + e.message); });
+  });
+
+  $("#mcSeqBuild").addEventListener("click", function () {
+    try { mcBuildTaskSeqSteps(); } catch (e) { banner(e.message); }
+  });
+
+  $("#mcScenarioRun").addEventListener("click", function () {
+    var id = $("#mcScenarioSel").value;
+    if (!id) { banner("请选择场景"); return; }
+    api("/api/scenarios/" + encodeURIComponent(id)).then(function (s) {
+      var steps = s.steps || (((s.steps_template || {}).task_1) || []);
+      if (!steps.length) throw new Error("场景无 steps");
+      return mcRunSteps(steps);
+    }).catch(function (e) { banner("场景执行失败：" + e.message); });
+  });
+
+  $("#mcF230Refresh").addEventListener("click", loadMcltStore);
+
   /* ================= 初始化 ================= */
   loadDict();
   loadPorts();
@@ -1098,4 +1459,6 @@
   renderDeepPanel();
   loadDeepStats();
   deepTimer = setInterval(loadDeepStats, 10000);
+  loadMcltScenarios();
+  loadMcltStore();
 })();
