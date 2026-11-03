@@ -44,6 +44,7 @@
 | 0034 | ai-control-plane / mclt 工具待办收口（启动前置检查、401 区分、job 终态提示、L3 ref 示例、mclt 三改进、README 首屏） | 大需求 | 🚧 进行中（基线 v1.1：P0 工作台使用优化 BR-1/2/3 已实施+单测通过；P1 mclt 三改进、P2 README 首屏暂缓另行排期） | master | 2026-09-21 |
 | 0035 | sim_meter 模拟电表（645-2007/1997 从站：应答地址/查询时间/抄表/波特率热切换/重庆即装即采 + 虚拟串口台架 vbench + 工作台 /api/simeter 专页与 AI 只读能力） | 小需求 | ✅ 已完成（libs/sim_meter + tools/vbench 17 用例 + /api/simeter 挂载 + AI v2 simeter_frames.read + 专页 UI；详见 docs/20 与 reqs/0035-sim-meter/） | master | 2026-09-28 |
 | 0036 | AI 控制台技能体检与实测收口（expect AFN/Fn 记法归一+超时原因透出、v2 job wait_seconds 阻塞读、summary 判定、技能 v2.8.0 补 simeter/并发抄表/auth scope、docs/16 与 KB 帧文档补正） | 小需求 | ✅ 已完成（matcher/runner/ai_capability_service 代码修复 + 7 用例新增；技能事实源 v2.8.0 落盘；审计实测口径见 REQS.md §1） | master | 2026-09-29 |
+| 0037 | 重庆 STA 分钟采集 698 11E3 修复 + 645 回归（真机台架；CCO 重庆固件重编译烧录、task 0/1/15 内层 698 全链路 PASS、645 配置/采集/缺项 0x32/06F230 PASS；源码 c43f682a，证据 /d/sta/01-sta/20261103-003456/ 与 /d/cco/001-cco/20261103-003456/） | 小需求 | ✅ 已完成（2026-11-03 真机补测收口：task 0/1/15 内层 698 冻结 01:00:00 断言 ALL PASS、645 快速回归/删除任务/软重启 PASS、未烧录未重编译；遗留转工程跟进见 reqs/0037 TODO） | master | 2026-11-02 |
 
 ## 使用说明
 
