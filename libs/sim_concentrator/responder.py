@@ -26,6 +26,7 @@ reply 字段说明（构造应答帧的参数）：
 - 上行帧先 decode 得到信封字段（单 68）；
 - 依次遍历规则，取第一个 match 命中的；
 - 用例提供的覆盖规则优先于内置表。
+- reply=None 的规则只匹配不应答（保留能力位；当前 F230 恢复确认，见用户拍板 2026-11-02）。
 """
 from __future__ import annotations
 
@@ -78,10 +79,16 @@ def _now_bcd_time(dt=None) -> bytes:
 
 
 class ReplyRule:
+    """一条应答规则。
+
+    reply=None 表示"匹配但不应答"（收帧吞掉，保留能力位，REQS-0037 曾用于
+    F230 只收不答观察），仍出现在 list_rules 里供 /responders 展示与排查。
+    """
+
     def __init__(self, rule: dict):
         self.id = rule.get("id", "reply.custom")
         self.match = rule.get("match", {})  # {"afn": int, "fn": int, ...}
-        self.reply = rule.get("reply", {})
+        self.reply = rule.get("reply", {}) if rule.get("reply") is not None else None
 
     def matches(self, decoded: dict) -> bool:
         m = self.match
@@ -141,7 +148,7 @@ class Responder:
         except Exception:
             return None
         rule = self._find(decoded)
-        if rule is None:
+        if rule is None or rule.reply is None:
             return None
         return self._build_reply(decoded, rule, seq_override)
 
@@ -275,6 +282,8 @@ _BUILTIN_RULES: List[dict] = [
         "reply": {"afn": 0x00, "fn": 1, "format": "local",
                   "desc": "CCO 上报 06H-F3 工况变动 → 回确认"},
     },
+    # 06H-F230 分钟采集数据上报：主动上报必须回 00H-F1 确认（与 F1/F3/F4/F5
+    # 同类，防 CCO 重复上报——用户拍板 2026-11-02，推翻先前"只收不答"观察）。
     {
         "id": "builtin.local_06F230_mclt_report",
         "match": {"afn": 0x06, "fn": 230},

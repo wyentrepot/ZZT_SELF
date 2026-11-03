@@ -271,3 +271,77 @@ def _norm_afn(v) -> int:
 
 def _norm_fn(v) -> int:
     return normalise_fn(v)
+
+
+# ---------------------------------------------------------------------------
+# REQS-0037：分钟采集「等存数 → 按冻结时刻读数」语义步骤
+#
+# 台架教训（REQS-0037 REQS.md §5.6）：分钟采集任务要一次配齐，等每个任务
+# "存数"（06H-F230 入 report_mclt_data，collect_time=冻结时刻）后才能按对应
+# 冻结时刻发 11E3 读数——task 0/15 内层 698 漏测的直接原因就是 11E3 发早了
+# （17:10 请求时数据 17:20:05 才存上）。这里把该时序做成两个语义步骤，
+# 由 runner 执行：
+#   wait_mclt_stored：轮询 store 中该 task_id 的 F230 记录，命中即通过并把
+#                     collect_time（冻结时刻）写入步骤上下文供后续步骤引用；
+#   read_mclt_11e3 ：按显式 freeze_time 或上下文里的冻结时刻构造 11E3 下行
+#                     APS 域（mclt_e3.build_11e3_down，字节级对齐台架证据帧）
+#                     并 expect 外层 task_id 回显。
+# ---------------------------------------------------------------------------
+def build_mclt_stored_step(params: Optional[dict] = None, **overrides) -> dict:
+    """生成 wait_mclt_stored 步骤描述（参数校验前置）。
+
+    params = {task_id（必填）, proto（可选）, timeout_s=900, poll_s=5}
+    """
+    p = dict(params or {})
+    task_id = normalise_fn(p.get("task_id"), field="wait_mclt_stored.task_id")
+    step = {
+        "name": str(overrides.pop("name", "等待分钟采集存数 (06H-F230)")),
+        "wait_mclt_stored": {
+            "task_id": task_id,
+            "proto": p.get("proto"),
+            "timeout_s": p.get("timeout_s", 900),
+            "poll_s": p.get("poll_s", 5),
+        },
+    }
+    step.update(overrides)
+    return step
+
+
+def build_mclt_read_step(params: Optional[dict] = None, **overrides) -> dict:
+    """生成 read_mclt_11e3 步骤描述（参数校验前置）。
+
+    params = {
+      task_id（必填）,
+      freeze_time（"YYYY-MM-DD HH:MM[:SS]" 或 "auto"——取该任务最近一条
+                   F230 的 collect_time，推荐默认）,
+      protocol（2/3，缺省 3）, dst（可选）, addr_wire（可选）,
+      expect_timeout（缺省 60s）
+    }
+    """
+    p = dict(params or {})
+    task_id = normalise_fn(p.get("task_id"), field="read_mclt_11e3.task_id")
+    freeze_time = p.get("freeze_time", "auto")
+    if freeze_time != "auto":
+        try:
+            from sim_concentrator.mclt_e3 import freeze_time_bytes
+            freeze_time_bytes(str(freeze_time))     # 前置校验可解析
+        except (ValueError, TypeError) as e:
+            raise ScenarioParamError(
+                f'read_mclt_11e3.freeze_time 非法: {freeze_time!r}（{e}；'
+                '合法写法 "YYYY-MM-DD HH:MM[:SS]" 或 "auto"）') from e
+    cfg = {
+        "task_id": task_id,
+        "freeze_time": freeze_time,
+        "protocol": p.get("protocol", 3),
+    }
+    for k in ("dst", "addr_wire", "meter_type"):
+        if p.get(k) is not None:
+            cfg[k] = p.get(k)
+    step = {
+        "name": str(overrides.pop("name", "按冻结时刻读数 (11E3)")),
+        "read_mclt_11e3": cfg,
+        "expect": {"afn": "11E3", "task_id": task_id},
+        "expect_timeout": p.get("expect_timeout", 60),
+    }
+    step.update(overrides)
+    return step

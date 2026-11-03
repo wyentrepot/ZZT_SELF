@@ -162,6 +162,21 @@ class BuildRequest(BaseModel):
         return value
 
 
+class Mclt11E3PreviewRequest(BaseModel):
+    """REQS-0037：11E3 下行 APS 域构帧预览请求（只构帧不发送）。
+
+    freeze_time 必填（"YYYY-MM-DD HH:MM[:SS]"）：预览无执行上下文，
+    auto 语义（取最近存数冻结时刻）由前端查 /store/mclt 后显式填入。
+    """
+    task_id: int
+    freeze_time: str
+    protocol: int = 3
+    dst: Optional[str] = None
+    addr_wire: Optional[str] = None
+    meter_type: Optional[int] = None
+    ssn: int = 1
+
+
 class BatchReadRequest(BaseModel):
     """并发抄表任务创建请求（REQS-0027 G5）。"""
     meters: List[str] = []
@@ -252,7 +267,8 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         """常驻自动应答器：只对「模块主动上报」回确认（06H-F230 采集上报、
         06H-F3 工况变动、03H-F10 运行模式 → 00H-F1），并压制查询类帧。
 
-        不开内置查询 echo 规则（10H/03H echo 会与 CCO 形成应答回环）；
+        06H-F230 为主动上报，必须确认防 CCO 重复上报（用户拍板 2026-11-02，
+        与 F1/F3/F4/F5 同类口径）；REQS-0037 的入库/分桶能力不变。
         查询/配置类帧的显式应答仍由 step 内的完整 responder 处理。
         """
         return Responder(override_rules=[
@@ -433,6 +449,10 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     def simcon_store_events(*, limit: int = 50) -> dict:
         return {"items": _simcon_store_or_raise().list_report_events(limit=limit)}
 
+    def simcon_store_mclt(*, limit: int = 100) -> dict:
+        """06H-F230 分钟采集上报记录（REQS-0037，新→旧）。"""
+        return {"items": _simcon_store_or_raise().list_report_mclt_data(limit=limit)}
+
     # P4+：把执行核心提升到 state，供统一工作台/AI 控制面进程内注入（不经 HTTP 回调）。
     app.state.simcon_run_verify = _run_verify_task
     app.state.simcon_run_step = _run_step_task
@@ -442,6 +462,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     app.state.simcon_store_snapshots = simcon_store_snapshots
     app.state.simcon_store_snapshot_items = simcon_store_snapshot_items
     app.state.simcon_store_events = simcon_store_events
+    app.state.simcon_store_mclt = simcon_store_mclt
 
     @app.get(f"{prefix}/status")
     async def status():
@@ -573,6 +594,35 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"构帧失败：{exc}") from exc
         return {"hex": data.hex(" ").upper(), "length": len(data)}
+
+    @app.post(f"{prefix}/mclt/11e3_preview")
+    async def mclt_11e3_preview(request: Mclt11E3PreviewRequest):
+        """11E3 下行 APS 域构帧预览（REQS-0037）：只经 mclt_e3 构帧，不发送。
+
+        下发通道待定（本仓库尚无 11E3 本地口承载 Fn），预览 hex 供协议工具
+        下发；字段布局见 mclt_e3.build_11e3_down 模块注释（24B，字节级对齐
+        BENCH-v5-taskid-RECOVERED.md 证据帧）。
+        """
+        try:
+            from sim_concentrator.mclt_e3 import build_11e3_down
+            kw: dict[str, Any] = {
+                "task_id": int(request.task_id),
+                "freeze_time": str(request.freeze_time),
+                "protocol": int(request.protocol),
+                "ssn": int(request.ssn),
+            }
+            if request.dst is not None:
+                kw["dst"] = str(request.dst)
+            if request.addr_wire is not None:
+                kw["addr_wire"] = str(request.addr_wire)
+            if request.meter_type is not None:
+                kw["meter_type"] = int(request.meter_type)
+            raw = build_11e3_down(**kw)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"11E3 构帧失败：{exc}") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=f"11E3 构帧异常：{exc}") from exc
+        return {"hex": raw.hex(" ").upper(), "length": len(raw)}
 
     @app.get(f"{prefix}/frames")
     async def frames(
@@ -710,7 +760,7 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
 
     @app.get(f"{prefix}/report_buckets")
     async def report_buckets(limit: int = 500):
-        """主动上报分类型计数（G6）：F1-F5 各桶 + 停复电子类单列。"""
+        """主动上报分类型计数（G6）：F1-F5 各桶 + 停复电子类 + F230 单列。"""
         return _report_buckets(limit=limit)
 
     # ---- REQS-0030：并发抄表周期统计 ---------------------------------------
@@ -838,6 +888,14 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         if store is None:
             raise HTTPException(status_code=503, detail="收发库未启用")
         return {"items": store.list_report_events(limit=limit)}
+
+    @app.get(f"{prefix}/store/mclt")
+    async def store_mclt(limit: int = 100):
+        """06H-F230 分钟采集数据上报记录（REQS-0037，持久层，新→旧）。"""
+        store = getattr(app.state, "simcon_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="收发库未启用")
+        return {"items": store.list_report_mclt_data(limit=limit)}
 
     return app
 

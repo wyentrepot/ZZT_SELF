@@ -4,7 +4,8 @@
   共用一张明细表（表地址/AFN-Fn/数据项/值/时间/耗时/结果），失败按否认码
   细分；顶部统计行给出 下发/应答/成功/失败/成功率。
 - report_buckets：AFN=06H 主动上报按类型分桶（F1 从节点信息 / F2 抄读数据 /
-  F3 路由工况 / F4 信息+设备类型 / F5 事件，其中停复电子类 01H/02H 单列）。
+  F3 路由工况 / F4 信息+设备类型 / F5 事件，其中停复电子类 01H/02H 单列；
+  F230 分钟采集数据上报单列，带任务号/协议类型/采集时间维度，REQS-0037）。
 
 口径：超时（无应答）计入失败；应答数 = 成功 + 否认（收到了明确应答）。
 """
@@ -22,6 +23,9 @@ _REPORT_FN_NAMES = {
     "4": "从节点信息及设备类型",
     "5": "从节点事件",
 }
+
+# 协议类型代码 → 人话（F230 维度，REQS-0037）
+_PROTO_NAMES = {"2": "645-2007", "3": "698.45"}
 
 _DENY_KEYS = {
     "6D": "6D 超最大并发",
@@ -146,8 +150,47 @@ def collect_readings(store: Optional[ListenerStore], jobs: Optional[Dict[str, An
     return {"stats": _finalize(stats), "rows": rows}
 
 
+def _mclt_buckets(store: ListenerStore, limit: int) -> dict:
+    """06H-F230 分钟采集上报分桶（REQS-0037）：按任务号 + 协议类型二级分桶。
+
+    返回 {"count": 总数, "items": 新→旧明细, "by_task": {task_id: count},
+          "by_proto": {代码: count}}（库不可用/无 F230 时 count=0 结构完整）。
+    """
+    out: dict = {"count": 0, "items": [], "by_task": {}, "by_proto": {}}
+    try:
+        rows = store.query(
+            "SELECT * FROM report_mclt_data ORDER BY id DESC LIMIT ?", (max(1, int(limit)),))
+    except Exception:
+        return out
+    for r in rows:
+        payload: dict = {}
+        try:
+            payload = json.loads(r.get("payload_json") or "{}")
+        except Exception:
+            pass
+        task = str(r.get("task_id") or "")
+        proto = str(r.get("proto_type") or "")
+        proto_name = _PROTO_NAMES.get(proto, proto or "—")
+        out["count"] += 1
+        out["by_task"][task or "—"] = out["by_task"].get(task or "—", 0) + 1
+        out["by_proto"][proto_name] = out["by_proto"].get(proto_name, 0) + 1
+        out["items"].append({
+            "ts": r.get("ts"),
+            "afn_fn": "06H F230",
+            "task_id": task or "—",
+            "proto": proto_name,
+            "collect_time": r.get("collect_time") or "—",
+            "meter": r.get("node_addr") or "—",
+            "data_len": r.get("data_len"),
+            "nested_count": r.get("nested_count"),
+            "summary": (r.get("payload_hex") or "")[:96],
+            "payload": payload,
+        })
+    return out
+
+
 def report_buckets(store: Optional[ListenerStore], *, limit: int = 500) -> dict:
-    """主动上报分类型计数（G6）：F1-F5 各桶 + 停复电子类单列。"""
+    """主动上报分类型计数（G6）：F1-F5 各桶 + 停复电子类 + F230 单列。"""
     buckets: Dict[str, dict] = {
         "F1": {"name": _REPORT_FN_NAMES["1"], "count": 0, "items": []},
         "F2": {"name": _REPORT_FN_NAMES["2"], "count": 0, "items": []},
@@ -155,6 +198,15 @@ def report_buckets(store: Optional[ListenerStore], *, limit: int = 500) -> dict:
         "F4": {"name": _REPORT_FN_NAMES["4"], "count": 0, "items": []},
         "F5": {"name": _REPORT_FN_NAMES["5"], "count": 0, "items": []},
         "F5_power": {"name": "停复电事件（协议类型 04H）", "count": 0, "items": []},
+    }
+    mclt = _mclt_buckets(store, limit) if store is not None else {
+        "count": 0, "items": [], "by_task": {}, "by_proto": {}}
+    buckets["F230"] = {
+        "name": "分钟采集数据上报",
+        "count": mclt["count"],
+        "items": mclt["items"],
+        "by_task": mclt["by_task"],
+        "by_proto": mclt["by_proto"],
     }
     if store is None:
         return {"buckets": buckets, "total": 0}

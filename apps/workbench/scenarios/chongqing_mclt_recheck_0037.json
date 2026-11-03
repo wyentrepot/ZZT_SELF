@@ -1,0 +1,109 @@
+{
+  "id": "chongqing_mclt_recheck_0037",
+  "name": "0037 复测：等存数→按冻结时刻发 11E3（task 0/1/15）",
+  "module": "cco",
+  "profile": "anhui",
+  "baudrate": 115200,
+  "enable_responder": true,
+  "description": "REQS-0037 task 0/15 内层 698 补测（TODO.md「下次台架顺序」步骤 3-4 的场景化）。流程：配齐 698 任务（F231/F232）→ wait_mclt_stored 轮询 06H-F230 存数（collect_time 即冻结时刻）→ read_mclt_11e3 按该冻结时刻构造 11E3（APS 域 24B，字段布局见 libs/sim_concentrator/mclt_e3.py 模块注释，构帧字节与 BENCH-v5-taskid-RECOVERED.md 证据帧逐字节一致）并断言外层 task_id 回显。task 0/15 按各自冻结时刻读数；失败响应（result=2）本身也是有效证据（说明该冻结时刻仍无数据）。内层 698 深度断言（C=C3/APDU 85 02 01/缺项 FF/TimeTag）由 libs/minute_assert 断言库负责，不在本场景展开。port/mapping_id 按台架实际（simcon=CCO 本地口）执行时注入。",
+  "responders": [
+    {
+      "id": "cq.ack.f230",
+      "match": { "afn": 6, "fn": 230 },
+      "reply": { "afn": 0, "fn": 1, "format": "local", "desc": "采集数据上报→回确认" }
+    }
+  ],
+  "steps_note": "以下步骤按 TODO.md 台架顺序组合；task_id 逐个替换 0/1/15 跑三轮，或复制成三段并行任务。",
+  "steps_template": {
+    "task_1": [
+      {
+        "name": "配置采集任务 (11H-F231, task1/698/5min/3 OAD)",
+        "send": {
+          "afn": "11", "fn": "F231",
+          "params": {
+            "task_no": 1, "action": "enable", "protocol": 3, "cycle_min": 5,
+            "items": [
+              { "meter_type": 0, "item": "20000201", "reply_len": 2 },
+              { "meter_type": 0, "item": "20010201", "reply_len": 2 },
+              { "meter_type": 0, "item": "20000200", "reply_len": 2 }
+            ]
+          }
+        },
+        "expect": { "format": "local", "afn": 17, "fn": 231 },
+        "expect_timeout": 5.0
+      },
+      {
+        "name": "关联档案到任务 (11H-F232, task1/表000000000001)",
+        "send": {
+          "afn": "11", "fn": "F232",
+          "params": { "task_no": 1, "meters": ["000000000001"] }
+        },
+        "expect": { "format": "local", "afn": 17, "fn": 232 },
+        "expect_timeout": 5.0
+      },
+      {
+        "name": "等待 task 1 存数 (06H-F230 → collect_time=冻结时刻)",
+        "wait_mclt_stored": {
+          "task_id": 1, "proto": 3, "timeout_s": 900, "poll_s": 5
+        }
+      },
+      {
+        "name": "按冻结时刻读数 (11E3, task1, auto=最近一次存数时刻)",
+        "read_mclt_11e3": {
+          "task_id": 1, "freeze_time": "auto", "protocol": 3
+        },
+        "expect": { "afn": "11E3", "task_id": 1 },
+        "expect_timeout": 60
+      },
+      {
+        "name": "等待 06H-F230 二次上报（内层与 11E3 一致性由 minute_assert 离线断言）",
+        "recv_only": true,
+        "expect_history": true,
+        "expect": { "format": "local", "afn": 6, "fn": 230, "fields": { "任务号": "1" } },
+        "expect_timeout": 120.0
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "查询采集任务数量 (10H-F230, 组网/配置确认)",
+      "send": { "afn": "10", "fn": "F230" },
+      "expect": { "format": "local", "afn": 16, "fn": 230 },
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "等待 task 0 存数 (06H-F230, task 0 首采可能晚于冻结周期)",
+      "wait_mclt_stored": { "task_id": 0, "proto": 3, "timeout_s": 900, "poll_s": 5 }
+    },
+    {
+      "name": "按冻结时刻读数 (11E3, task 0, auto)",
+      "read_mclt_11e3": { "task_id": 0, "freeze_time": "auto", "protocol": 3 },
+      "expect": { "afn": "11E3", "task_id": 0 },
+      "expect_timeout": 60
+    },
+    {
+      "name": "等待 task 1 存数 (06H-F230)",
+      "wait_mclt_stored": { "task_id": 1, "proto": 3, "timeout_s": 900, "poll_s": 5 }
+    },
+    {
+      "name": "按冻结时刻读数 (11E3, task 1, auto)",
+      "read_mclt_11e3": { "task_id": 1, "freeze_time": "auto", "protocol": 3 },
+      "expect": { "afn": "11E3", "task_id": 1 },
+      "expect_timeout": 60
+    },
+    {
+      "name": "等待 task 15 存数 (06H-F230)",
+      "wait_mclt_stored": { "task_id": 15, "proto": 3, "timeout_s": 900, "poll_s": 5 }
+    },
+    {
+      "name": "按冻结时刻读数 (11E3, task 15, auto)",
+      "read_mclt_11e3": { "task_id": 15, "freeze_time": "auto", "protocol": 3 },
+      "expect": { "afn": "11E3", "task_id": 15 },
+      "expect_timeout": 60
+    }
+  ],
+  "monitor": {
+    "rules": ["common", "provinces/chongqing"],
+    "sources": ["module_log", "listener"]
+  }
+}

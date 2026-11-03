@@ -6,10 +6,17 @@
 - 可选：recv_only 步骤（不 send，只等待并匹配一帧——用于验证 CCO 主动上报）。
 - 可选：expect_history 步骤（在超时内轮询历史帧，确认是否出现过某类上报）。
 - 可选：该步骤期望无响应（expect_no_reply）。
+- 可选（REQS-0037）：wait_mclt_stored（等 06H-F230 存数入库）与
+  read_mclt_11e3（按冻结时刻构造 11E3 并校验 task_id 回显），两步间通过
+  步骤上下文传递冻结时刻（详见 mclt_e3/scenario_codec 注释）。
 
 应答引擎在任务执行期间挂载（内置 + 任务覆盖规则）：收到的每一帧若命中
 应答规则，立即自动应答（统一回 00H-F1 确认），从而验证"模块上行 → 模拟
 集中器应答"闭环；同一帧仍可被 expect / expect_history 匹配验证。
+
+步骤上下文（step context）：execute_task 维护一个 dict 随步骤传递，
+wait_mclt_stored 命中后写入 {"mclt_fz_time": "YYYY-MM-DD HH:MM:SS",
+"mclt_task_id": X}；read_mclt_11e3 的 freeze_time="auto" 从中取值。
 """
 from __future__ import annotations
 
@@ -104,15 +111,215 @@ def _rtsa_to_show(rtsa: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# REQS-0037：wait_mclt_stored / read_mclt_11e3 步骤执行
+# ---------------------------------------------------------------------------
+def _store_of(io, ctx: Optional[dict] = None) -> object:
+    """取 ListenerStore：优先任务注入（ctx["mclt_store"]），其次 io.journal.store
+    （sink 落库链路，api.py 经 SessionManager 挂 store）。缺失返回 None。"""
+    if ctx is not None and ctx.get("mclt_store") is not None:
+        return ctx["mclt_store"]
+    journal = getattr(io, "journal", None)
+    store = getattr(journal, "store", None)
+    if store is not None:
+        return store
+    return getattr(journal, "_store_ref", None)
+
+
+def _latest_mclt_row(store, task_id: int, proto=None) -> Optional[dict]:
+    """取 store 中该 task_id 最近一条 F230 记录（proto 可选过滤）。
+
+    store 为 None（库未启用）或查询异常返回 None（由调用方按"未存数"处理）。
+    """
+    if store is None:
+        return None
+    try:
+        rows = store.list_report_mclt_data(limit=200)
+    except Exception:
+        return None
+    tid = str(task_id)
+    for r in rows:  # 新→旧
+        if str(r.get("task_id") or "") != tid:
+            continue
+        if proto is not None and str(r.get("proto_type") or "") != str(proto):
+            continue
+        if not r.get("collect_time"):
+            continue
+        return r
+    return None
+
+
+def run_wait_mclt_stored(step: dict, io, ctx: Optional[dict] = None) -> dict:
+    """wait_mclt_stored：轮询 store 中该任务 F230 记录直至命中或超时。
+
+    命中即通过，并把冻结时刻写入 ctx（{"mclt_fz_time","mclt_task_id",
+    "mclt_row"}）供 read_mclt_11e3 引用。超时按确定性失败处理，报错信息
+    含「等到 timeout_s 仍未出现 task_id=X 的 F230」。
+    """
+    cfg = step.get("wait_mclt_stored") or {}
+    task_id = cfg.get("task_id")
+    proto = cfg.get("proto")
+    timeout = cfg.get("timeout_s", 900)
+    poll = cfg.get("poll_s", 5)
+    if isinstance(task_id, bool) or not isinstance(task_id, int):
+        return {"index": -1, "name": step.get("name", "wait_mclt_stored"),
+                "sent_hex": "", "matched": None, "parsed": None,
+                "result": "fail",
+                "reason": f"wait_mclt_stored.task_id 非法: {task_id!r}"}
+    timeout = float(timeout) if isinstance(timeout, (int, float)) and timeout > 0 else 900.0
+    poll = float(poll) if isinstance(poll, (int, float)) and poll > 0 else 5.0
+
+    store = _store_of(io, ctx)
+    deadline = time.time() + timeout
+    last = None
+    while True:
+        last = _latest_mclt_row(store, task_id, proto)
+        if last is not None:
+            break
+        if time.time() >= deadline:
+            tip = "" if store is not None else \
+                "（当前会话未挂 ListenerStore，F230 不会入库；请经 simcon API/带 store 的 journal 收帧）"
+            return {"index": -1, "name": step.get("name", "wait_mclt_stored"),
+                    "sent_hex": "", "matched": None, "parsed": None,
+                    "result": "fail",
+                    "reason": (f"等到 {int(timeout)}s 仍未出现 task_id={task_id} 的 F230"
+                               + (f"（proto={proto}）" if proto is not None else "")
+                               + f"；轮询间隔 {poll:g}s{tip}")}
+        time.sleep(poll)
+
+    fz = str(last.get("collect_time"))
+    if ctx is not None:
+        ctx["mclt_fz_time"] = fz
+        ctx["mclt_task_id"] = task_id
+        ctx["mclt_row"] = last
+    return {
+        "index": -1, "name": step.get("name", "wait_mclt_stored"),
+        "sent_hex": "", "matched": "", "parsed": None,
+        "result": "pass",
+        "reason": (f"task_id={task_id} 已存数：collect_time={fz}，"
+                   f"proto={last.get('proto_type')}，data_len={last.get('data_len')}"),
+        "mclt": {"task_id": task_id, "collect_time": fz,
+                 "proto_type": last.get("proto_type"),
+                 "data_len": last.get("data_len"),
+                 "frame_id": last.get("frame_id")},
+    }
+
+
+def build_11e3_read_step_send(cfg: dict, ctx: Optional[dict] = None) -> bytes:
+    """read_mclt_11e3 → 11E3 下行 APS 域字节（mclt_e3.build_11e3_down）。
+
+    freeze_time="auto" 从 ctx["mclt_fz_time"] 取（wait_mclt_stored 写入）；
+    上下文没有则报 ScenarioCodecError（防发早——正是台架漏测根因）。
+    """
+    from sim_concentrator.mclt_e3 import build_11e3_down
+    task_id = cfg.get("task_id")
+    freeze = cfg.get("freeze_time", "auto")
+    if freeze == "auto" or freeze is None:
+        fz = (ctx or {}).get("mclt_fz_time")
+        if not fz:
+            raise ScenarioCodecError(
+                "freeze_time=auto 但上下文无冻结时刻：前置 wait_mclt_stored "
+                "步骤缺失或未命中（11E3 发早会导致内层 698 缺失，REQS-0037 台架教训）")
+        freeze = str(fz)
+    kw = {
+        "task_id": int(task_id),
+        "freeze_time": str(freeze),
+        "protocol": int(cfg.get("protocol", 3) or 3),
+    }
+    if cfg.get("dst"):
+        kw["dst"] = str(cfg["dst"])
+    if cfg.get("addr_wire"):
+        kw["addr_wire"] = str(cfg["addr_wire"])
+    if cfg.get("meter_type") is not None:
+        kw["meter_type"] = int(cfg["meter_type"])
+    return build_11e3_down(**kw)
+
+
+def run_read_mclt_11e3(step: dict, io, responder: Optional[Responder],
+                       ctx: Optional[dict] = None) -> dict:
+    """read_mclt_11e3：按冻结时刻发 11E3 下行并校验上行 task_id 回显。
+
+    expect 复用 matcher 机制：afn="11E3" 特判为 APS 域 11E3 帧解析
+    （frame[0]==0x11 && frame[1]==0xE3），并断言外层 task_id 回显。
+    """
+    cfg = step.get("read_mclt_11e3") or {}
+    task_id = cfg.get("task_id")
+    name = step.get("name", "read_mclt_11e3")
+    result = {"index": -1, "name": name, "sent_hex": "", "matched": None,
+              "parsed": None, "result": "fail", "reason": ""}
+    timeout = step.get("expect_timeout", 60)
+    timeout = float(timeout) if isinstance(timeout, (int, float)) and timeout > 0 else 60.0
+
+    try:
+        raw = build_11e3_read_step_send(cfg, ctx)
+    except Exception as e:
+        result["reason"] = f"构帧失败: {e!r}"
+        return result
+    result["sent_hex"] = raw.hex()
+    try:
+        io.send_frame(raw)
+    except Exception as e:
+        result["reason"] = f"发送失败: {e!r}"
+        return result
+
+    from sim_concentrator.mclt_e3 import parse_11e3_up
+    deadline = time.time() + timeout
+    samples = []
+    while time.time() < deadline:
+        got = io.recv_frame(timeout=max(0.05, deadline - time.time()))
+        if got is None:
+            continue
+        _auto_reply(io, responder, got)
+        up = parse_11e3_up(got)
+        if up is None:
+            samples.append(got.hex()[:32])
+            continue
+        result["matched"] = got.hex()
+        result["parsed"] = {
+            "task_id": up.task_id, "protocol": up.protocol,
+            "result": up.result, "di_cnt": up.di_cnt,
+            "bufflen": up.bufflen, "fz_time": up.fz_time_text,
+            "src_wire": up.src_wire, "ssn": up.ssn,
+        }
+        if up.task_id != task_id:
+            result["reason"] = (
+                f"11E3 上行外层 task_id 回显不匹配: 期望{task_id}, 实际{up.task_id}")
+            return result
+        if not up.ok:
+            result["reason"] = (
+                f"11E3 上行 result={up.result}（非 0，失败响应；"
+                f"di_cnt={up.di_cnt} bufflen={up.bufflen}，冻结时刻 {up.fz_time_text}）")
+            return result
+        if ctx is not None:
+            ctx["mclt_11e3_up"] = result["parsed"]
+        result["result"] = "pass"
+        result["reason"] = (
+            f"匹配成功：task_id={up.task_id} 回显一致，result=0，"
+            f"di_cnt={up.di_cnt}，bufflen={up.bufflen}，fz={up.fz_time_text}")
+        return result
+    result["reason"] = (f"超时({timeout:g}s)未收到 11E3 上行"
+                        + (f"；期间收到非 11E3 帧 {len(samples)} 条" if samples else ""))
+    if samples:
+        result["bystanders"] = [{"hex": s} for s in samples[-3:]]
+    return result
+
+
+def _is_11e3_up_frame(raw: bytes) -> bool:
+    """expect afn="11E3" 的帧形态判定（APS 域 11 E3 + dir=1）。"""
+    return len(raw) >= 6 and raw[0] == 0x11 and raw[1] == 0xE3 and bool(raw[4] & 0x80)
+
+
+# ---------------------------------------------------------------------------
 # 单步执行
 # ---------------------------------------------------------------------------
 def run_step(io: SerialIO, responder: Optional[Responder],
              step: dict, idx: int, profile: Optional[dict] = None,
-             seq: Optional[int] = None) -> dict:
+             seq: Optional[int] = None,
+             ctx: Optional[dict] = None) -> dict:
     """执行一步，返回判定结果 dict。
 
     profile：task.profile 加载的全局信息（传给 build_send_frame 构帧）。
     seq：构帧时 info.seq 覆盖值（缺省用 idx+1；单步下发由调用方传会话内递增序号）。
+    ctx：步骤上下文（REQS-0037：wait_mclt_stored → read_mclt_11e3 传冻结时刻）。
     """
     name = step.get("name", f"步骤{idx + 1}")
     result = {
@@ -124,6 +331,18 @@ def run_step(io: SerialIO, responder: Optional[Responder],
         "result": "fail",
         "reason": "",
     }
+
+    # REQS-0037：分钟采集等存数/按冻结时刻读数两语义步骤（非 1376.2 帧，单独执行）
+    if step.get("wait_mclt_stored"):
+        r = run_wait_mclt_stored(step, io, ctx)
+        r["index"] = idx
+        r["name"] = step.get("name", r["name"])
+        return r
+    if step.get("read_mclt_11e3"):
+        r = run_read_mclt_11e3(step, io, responder, ctx)
+        r["index"] = idx
+        r["name"] = step.get("name", r["name"])
+        return r
 
     recv_only = step.get("recv_only", False)
     expect_history = step.get("expect_history", False)
@@ -368,6 +587,12 @@ def execute_task(task: dict, io: Optional[SerialIO] = None, *,
     if profile and task.get("profile_overrides"):
         profile = {**profile, **task["profile_overrides"]}
 
+    # REQS-0037：任务可直接注入 ListenerStore（测试/无 journal 场景），
+    # 供 wait_mclt_stored 轮询 report_mclt_data。
+    step_ctx_base: dict = {}
+    if task.get("store") is not None:
+        step_ctx_base["mclt_store"] = task["store"]
+
     opened = False
     try:
         if own_io:
@@ -378,6 +603,7 @@ def execute_task(task: dict, io: Optional[SerialIO] = None, *,
         with scope_ctx:
             step_results = []
             seq_counter = 0
+            step_ctx: dict = dict(step_ctx_base)  # REQS-0037：步骤间上下文（冻结时刻等）
             for idx, step in enumerate(steps):
                 # 若本步声明了自有 responder，则临时挂载；否则用任务级 responder
                 step_r = responder
@@ -392,7 +618,7 @@ def execute_task(task: dict, io: Optional[SerialIO] = None, *,
                         seq_counter += 1
                         send["seq"] = seq_counter
                     step["send"] = send
-                r = run_step(io, step_r, step, idx, profile=profile)
+                r = run_step(io, step_r, step, idx, profile=profile, ctx=step_ctx)
                 step_results.append(r)
                 # 任一步失败即中止（默认），除非 task.fail_fast=false
                 if r["result"] == "fail" and task.get("fail_fast", True):

@@ -5,6 +5,7 @@
   持久层（只追加）
     report_event       06H F1/F3/F4/F5 上报事件
     report_meter_data  06H F2 抄读数据
+    report_mclt_data   06H F230 分钟采集数据上报（REQS-0037）
     frame_log          所有 1376.2 收发帧（证据链，业务行经 frame_id 回溯）
   临时层（快照制，可清理）
     query_snapshot     一次查询/自动遍历 = 一个快照
@@ -76,6 +77,27 @@ CREATE TABLE IF NOT EXISTS report_meter_data (
 );
 CREATE INDEX IF NOT EXISTS idx_report_meter_data_ts ON report_meter_data(ts);
 CREATE INDEX IF NOT EXISTS idx_report_meter_data_day ON report_meter_data(day);
+
+-- REQS-0037：06H-F230 分钟采集数据上报（CCO → 模拟集中器，
+-- 入库并自动应答 00H-F1；主动上报需确认，防 CCO 重复上报）
+CREATE TABLE IF NOT EXISTS report_mclt_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frame_id INTEGER,
+    ts TEXT NOT NULL,                  -- 收帧时刻
+    day TEXT NOT NULL DEFAULT '',      -- YYYY-MM-DD，按天保存
+    task_id TEXT,                      -- 采集任务号（外层 00E3 task_id）
+    proto_type TEXT,                   -- 通信协议类型：2=DL/T 645-2007 / 3=DL/T 698.45
+    collect_time TEXT,                 -- 采集（冻结）时间 BCD yyyy-MM-dd HH:mm:ss
+    node_addr TEXT,                    -- 从节点地址
+    data_len INTEGER,                  -- 报文长度（内层 645/698 帧字节数）
+    payload_hex TEXT,                  -- 内层报文 hex（报文内容）
+    nested_count INTEGER,              -- 嵌套内层帧条数
+    payload_json TEXT,                 -- 结构化明细（items + nested 摘要）
+    FOREIGN KEY (frame_id) REFERENCES frame_log(id)
+);
+CREATE INDEX IF NOT EXISTS idx_report_mclt_data_ts ON report_mclt_data(ts);
+CREATE INDEX IF NOT EXISTS idx_report_mclt_data_day ON report_mclt_data(day);
+CREATE INDEX IF NOT EXISTS idx_report_mclt_data_task ON report_mclt_data(task_id, day);
 
 CREATE TABLE IF NOT EXISTS query_snapshot (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,7 +174,7 @@ class ListenerStore:
         业务行与证据帧同步过期。
         """
         cutoff = (date.today() - timedelta(days=_REPORT_RETAIN_DAYS - 1)).isoformat()
-        for table in ("report_event", "report_meter_data", "frame_log"):
+        for table in ("report_event", "report_meter_data", "report_mclt_data", "frame_log"):
             self._conn.execute(
                 f"DELETE FROM {table} WHERE day = '' OR day < ?", (cutoff,),
             )
@@ -214,6 +236,34 @@ class ListenerStore:
                      str(payload.get("从节点序号", "")), str(payload.get("通信协议类型", "")),
                      str(payload.get("当前报文本地通信上行时长", "")),
                      payload.get("报文内容__hex", ""),
+                     json.dumps(payload, ensure_ascii=False, default=str)),
+                )
+                self._prune_reports()  # 滚动保留最近 5 天
+                self._conn.commit()
+                return cur.lastrowid
+        except Exception as e:  # pragma: no cover
+            self.last_error = str(e)
+            return None
+
+    def add_report_mclt_data(self, *, frame_id: int | None, payload: dict) -> Optional[int]:
+        """06H-F230 分钟采集数据上报入库（REQS-0037）。
+
+        payload 为 sink 生成的结构化明细（task_id/proto_type/collect_time/node_addr/
+        data_len/payload_hex/nested + items + warnings），字段缺失按空落库不抛。
+        """
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    "INSERT INTO report_mclt_data(frame_id, ts, day, task_id, proto_type, "
+                    "collect_time, node_addr, data_len, payload_hex, nested_count, payload_json) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (frame_id, datetime.now().isoformat(timespec="milliseconds"),
+                     self._today(),
+                     str(payload.get("task_id", "")), str(payload.get("proto_type", "")),
+                     str(payload.get("collect_time", "")), str(payload.get("node_addr", "")),
+                     payload.get("data_len") if isinstance(payload.get("data_len"), int) else None,
+                     payload.get("payload_hex", ""),
+                     payload.get("nested_count") if isinstance(payload.get("nested_count"), int) else None,
                      json.dumps(payload, ensure_ascii=False, default=str)),
                 )
                 self._prune_reports()  # 滚动保留最近 5 天
@@ -305,14 +355,30 @@ class ListenerStore:
         return self.query("SELECT * FROM report_event ORDER BY id DESC LIMIT ?", (int(limit),))
 
     def report_days(self) -> list[dict]:
-        """上报数据按天统计（供「上报历史」按天分组展示）。"""
+        """上报数据按天统计（供「上报历史」按天分组展示）。
+
+        mclt 列 = 06H-F230 分钟采集上报当天条数（REQS-0037）；
+        仅 F230 有记录的日期也会出现一行（cnt=0, mclt=n）。
+        """
         rows = self.query(
             "SELECT day, COUNT(*) AS cnt FROM report_event GROUP BY day ORDER BY day DESC")
         meter = {r["day"]: r["cnt"] for r in self.query(
             "SELECT day, COUNT(*) AS cnt FROM report_meter_data GROUP BY day")}
+        mclt = {r["day"]: r["cnt"] for r in self.query(
+            "SELECT day, COUNT(*) AS cnt FROM report_mclt_data GROUP BY day")}
         for r in rows:
             r["meter"] = meter.get(r["day"], 0)
+        for day, cnt in mclt.items():
+            if day not in {r["day"] for r in rows}:
+                rows.append({"day": day, "cnt": 0, "meter": 0})
+        for r in rows:
+            r["mclt"] = mclt.get(r["day"], 0)
         return rows
+
+    def list_report_mclt_data(self, *, limit: int = 100) -> list[dict]:
+        """06H-F230 分钟采集上报记录（REQS-0037，新→旧）。"""
+        return self.query(
+            "SELECT * FROM report_mclt_data ORDER BY id DESC LIMIT ?", (int(limit),))
 
     def close(self) -> None:
         try:

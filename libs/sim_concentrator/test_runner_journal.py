@@ -101,6 +101,7 @@ class TestExecuteTaskJournal:
         assert json.loads(lines[0])["dir"] == "tx"
 
     def test_auto_reply_tagged(self, tmp_path):
+        """auto_reply 打 kind=auto_reply/run_id（06H-F230 上报 → 00H-F1 确认）。"""
         journal = FrameJournal(port="COM_TEST", log_dir=tmp_path)
         io = FakeJournalIO(journal, preset_rx=[_up_report()])
         task = _task(enable_responder=True, steps=[
@@ -148,6 +149,7 @@ class TestRunSingleStep:
             run_single_step(io, recv_only=False, send=None)
 
     def test_recv_only_waits_for_uplink(self, tmp_path):
+        """recv_only 等到上行帧即 pass（auto_reply 不影响匹配）。"""
         journal = FrameJournal(port="COM_TEST", log_dir=tmp_path)
         io = FakeJournalIO(journal, preset_rx=[_up_report()])
         out = run_single_step(

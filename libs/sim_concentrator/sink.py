@@ -3,8 +3,9 @@
 
 职责：
   1. 每帧 → frame_log（证据链）
-  2. 上行帧（updown=up）且 AFN=06H → 按 resp 契约提取并落库：
-       F1/F3/F4/F5 → report_event；F2 → report_meter_data
+  2. 上行帧（updown=up）且 AFN=06H → 按契约/适配器提取并落库：
+       F1/F3/F4/F5 → report_event；F2 → report_meter_data；
+       F230 → report_mclt_data（分钟采集上报，REQS-0037，入库并自动应答 00H-F1）
   3. 上行响应帧（AFN=10H / 03H-F3 等分页型）→ 由调用方经 snapshot API 显式落库
      （查询结果归属某次遍历快照，需 snapshot_id 上下文，故不在此自动写）。
 
@@ -52,6 +53,66 @@ _EVENT_FN = {
     "F4": "上报从节点信息及设备类型",
     "F5": "上报从节点事件",
 }
+
+
+def _f230_payload(entry: dict) -> dict:
+    """从 journal entry 提取 06H-F230 分钟采集上报明细（REQS-0037）。
+
+    adapter_10376 已把 F230 应用层解析为 items（任务号/从节点地址/通信协议类型/
+    采集时间/报文长度/报文内容/嵌套帧），这里仅做提取与规整：
+      - task_id / node_addr / payload_hex：字符串
+      - proto_type：协议代码 "2"(645-2007) / "3"(698.45)，原值透传
+      - collect_time：BCD 采集（冻结）时间，规整为 "yyyy-MM-dd HH:mm:ss"
+      - data_len / nested_count：int
+    字段缺失置空（F230 无 persist 契约，完整结构化以 parsed 为准）。
+    """
+    parsed = entry.get("parsed") or {}
+    items = {str(i.get("name") or ""): i for i in (parsed.get("items") or [])}
+
+    def _val(name: str) -> str:
+        v = items.get(name, {}).get("value")
+        return "" if v is None else str(v)
+
+    # 协议类型："0x02 (DL/T 645—2007)"/"0x03 (DL/T 698.45)" → 代码 "2"/"3"
+    proto_raw = _val("通信协议类型")
+    proto = proto_raw.strip()
+    if proto.startswith("0x"):
+        proto = proto.split(" ")[0][2:].lstrip("0") or "0"
+
+    # 采集时间："2026年11月02日 17:10:00" → "2026-11-02 17:10:00"
+    t = _val("采集时间")
+    collect_time = t
+    try:
+        y = t[0:4]
+        mo = t[5:7]
+        d = t[8:10]
+        hms = t[12:20] if len(t) >= 20 else ""
+        if y.isdigit() and mo.isdigit() and d.isdigit():
+            collect_time = f"{y}-{mo}-{d} {hms}".strip()
+    except Exception:
+        pass
+
+    # 报文长度："54B" → 54
+    dl_raw = _val("报文长度").rstrip("Bb")
+    try:
+        data_len = int(dl_raw) if dl_raw.isdigit() else None
+    except Exception:
+        data_len = None
+
+    nested = parsed.get("nested") or []
+    return {
+        "task_id": _val("任务号"),
+        "proto_type": proto,
+        "proto_raw": proto_raw,
+        "collect_time": collect_time,
+        "node_addr": _val("从节点地址"),
+        "data_len": data_len,
+        "payload_hex": _val("报文内容"),
+        "nested_count": len(nested),
+        "nested_structures": [str(n.get("structure") or "") for n in nested],
+        "items": parsed.get("items") or [],
+        "warnings": parsed.get("warnings") or [],
+    }
 
 
 def _appdata_from_entry(entry: dict) -> Optional[bytes]:
@@ -106,6 +167,11 @@ def ingest_entry(store: Any, entry: dict) -> Optional[int]:
     key = _contract_key(afn, fn)
     contract = _CONTRACT.get(key or "")
     appdata = _appdata_from_entry(entry)
+    if fn == "F230":
+        # REQS-0037：F230 无 persist 契约，走 adapter items 提取入库；
+        # 入库后由 responder 自动应答 00H-F1（主动上报需确认，防 CCO 重复上报）。
+        store.add_report_mclt_data(frame_id=fid, payload=_f230_payload(entry))
+        return fid
     payload: dict = {"head": {}, "records": [], "warnings": []}
     if contract and contract.get("persist") and appdata:
         resp = contract.get("resp") or {}

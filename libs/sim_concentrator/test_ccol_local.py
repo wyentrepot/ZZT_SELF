@@ -129,6 +129,8 @@ def test_match_local_frame():
 # 应答
 # ---------------------------------------------------------------------------
 def test_responder_unified_ack():
+    """06H-F230/F3、03H-F10 主动上报统一回 00H-F1 确认
+    （F230 确认为用户拍板 2026-11-02：主动上报需确认，防 CCO 重复上报）。"""
     rp = Responder()
     for afn, fn in [(6, 230), (6, 3), (3, 10)]:
         report = _cco(afn, fn, buff=b"\x00")
