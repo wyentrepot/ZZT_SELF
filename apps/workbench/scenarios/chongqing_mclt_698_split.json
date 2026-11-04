@@ -1,0 +1,66 @@
+{
+  "id": "chongqing_mclt_698_split",
+  "name": "重庆分钟采集 698 分帧拉块专项：等存数→85 05 分块应答→断言 05 05 回帧与拼块",
+  "module": "cco",
+  "profile": "anhui",
+  "baudrate": 115200,
+  "enable_responder": true,
+  "description": "req006 内层 698 分块拉取专项（chongqing_mclt_recheck_0037.json 的深度补测）。simeter 无分块配置模式，分块应答走 send_hex 注入：tools/scripts/minute_collect/build_8505_block.py 构 85 05 读块应答帧（PIID-ACD→lastblock→block→CHOICE→data+9B 尾，DL/T 698.45 表 76），build_link_frames.py 在 APDU 超长时切 00/11/01 分帧，inject_8505_blocks.py 编排『等 85 05 GET 请求→按块注入→核对 tx 落帧』。断言：STA 05 05 回帧（block/lastblock 回显正确）+ CCO 侧拼块落盘（06H-F230 二次上报，内层一致性由 libs/minute_assert 离线断言；注意 parse_inner_698 只认 85 02，85 05 用 adapter_698._check_fcs 回验）。port/mapping_id 按台架实际执行时注入。",
+  "responders": [
+    {
+      "id": "cq.ack.f230",
+      "match": { "afn": 6, "fn": 230 },
+      "reply": { "afn": 0, "fn": 1, "format": "local", "desc": "采集数据上报→回确认" }
+    }
+  ],
+  "steps_note": "注入步骤在 simeter 面执行（POST /api/simeter/send_hex），不在 verify steps 里；本场景 steps 只负责配任务/等存数/收上报三段，中间的 85 05 注入由 minute_collect 脚本在 wait 步骤超时窗口内完成。",
+  "steps": [
+    {
+      "name": "查询采集任务数量 (10H-F230, 组网/配置确认)",
+      "send": { "afn": "10", "fn": "F230" },
+      "expect": { "format": "local", "afn": 16, "fn": 230 },
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "配置采集任务 (11H-F231, task1/698/5min/3 OAD)",
+      "send": {
+        "afn": "11", "fn": "F231",
+        "params": {
+          "task_no": 1, "action": "enable", "protocol": 3, "cycle_min": 5,
+          "items": [
+            { "meter_type": 0, "item": "20000201", "reply_len": 2 },
+            { "meter_type": 0, "item": "20010201", "reply_len": 2 },
+            { "meter_type": 0, "item": "20000200", "reply_len": 2 }
+          ]
+        }
+      },
+      "expect": { "format": "local", "afn": 17, "fn": 231 },
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "关联档案到任务 (11H-F232, task1/表000000000001)",
+      "send": {
+        "afn": "11", "fn": "F232",
+        "params": { "task_no": 1, "meters": ["000000000001"] }
+      },
+      "expect": { "format": "local", "afn": 17, "fn": 232 },
+      "expect_timeout": 5.0
+    },
+    {
+      "name": "等待 task 1 存数 (06H-F230 → collect_time=冻结时刻)",
+      "wait_mclt_stored": { "task_id": 1, "proto": 3, "timeout_s": 900, "poll_s": 5 },
+      "inject_note": "此窗口内 STA 发起 85 05 读块：python3 tools/scripts/minute_collect/inject_8505_blocks.py --blocks 1120 --data 3301 --wait-req 120"
+    },
+    {
+      "name": "等待 06H-F230 二次上报（拼块落盘证据；内层 85 05 分块一致性由 libs/minute_assert + adapter_698._check_fcs 离线断言）",
+      "recv_only": true,
+      "expect_history": true,
+      "expect": { "format": "local", "afn": 6, "fn": 230, "fields": { "任务号": "1" } },
+      "expect_timeout": 120.0
+    }
+  ],
+  "monitor": {
+    "rules": ["common", "provinces/chongqing"],
+    "sources": ["module_log", "listener"]
+  }
+}
