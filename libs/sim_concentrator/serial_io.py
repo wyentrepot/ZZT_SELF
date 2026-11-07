@@ -339,9 +339,16 @@ class SerialIO:
         self._read_stop = threading.Event()
         self._read_thread: Optional[threading.Thread] = None
         self._write_lock = threading.Lock()
-        self._rx_queue: "queue.Queue[bytes]" = queue.Queue()
-        # 历史帧记录：读线程收到的所有完整帧（供 expect_history / 主动上报验证）
-        self._rx_history: list = []
+        # 接收队列有界（REQS-0039 LR-5）：batch 抄表期间无人消费 recv 队列，
+        # 无界队列会让 pending_frames 单调增长；满时丢最旧帧并计数背压。
+        self._rx_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=2048)
+        # 历史帧记录：读线程收到的所有完整帧（供 expect_history / 主动上报验证）。
+        # 条目为 (seq, frame)，seq 为单调递增帧序号（REQS-0039 LR-4）：匹配游标
+        # 按 seq 记，与“只保留最近 1000 条”的截断解耦。旧 len() 游标在历史到顶
+        # 后恒等，hist[seen:] 永远为空 → 高频长跑全部应答超时（req0007 实测）。
+        self._rx_entries: list = []
+        self._rx_seq = 0
+        self._rx_dropped = 0
         self._open = False
         self._auto_responder = auto_responder
 
@@ -442,15 +449,12 @@ class SerialIO:
             while True:
                 frame, consumed = scan_any_frame(buf)
                 if frame is not None:
-                    self._rx_history.append(frame)
+                    self._record_rx(frame)
                     if self.journal is not None:
                         try:
                             self.journal.append("rx", frame)
                         except Exception:
                             pass
-                    # 历史只保留最近 1000 帧，防止长时间运行内存增长
-                    if len(self._rx_history) > 1000:
-                        del self._rx_history[: len(self._rx_history) - 1000]
                 if frame is None:
                     break
                 # 常驻自动应答：任何时刻收到完整帧，若命中规则（如 06H-F230 →
@@ -463,7 +467,7 @@ class SerialIO:
                     except Exception:
                         # 自动应答失败不影响读线程主链路
                         pass
-                self._rx_queue.put(frame)
+                self._enqueue_rx(frame)
                 buf = buf[consumed:]
         # 退出前排空剩余（可选）
         if buf:
@@ -495,9 +499,65 @@ class SerialIO:
         except queue.Empty:
             return None
 
+    def _record_rx(self, frame: bytes) -> None:
+        """历史登记：单调 seq 递增入表，超过 1000 条从头截断（REQS-0039 LR-4）。"""
+        self._rx_seq += 1
+        self._rx_entries.append((self._rx_seq, frame))
+        if len(self._rx_entries) > 1000:
+            del self._rx_entries[: len(self._rx_entries) - 1000]
+
     def pending_frames(self) -> int:
         return self._rx_queue.qsize()
 
+    def _enqueue_rx(self, frame: bytes) -> None:
+        """入队；队列满时丢最旧一帧再放（有界背压，防 48h 内存单调增长）。"""
+        try:
+            self._rx_queue.put_nowait(frame)
+        except queue.Full:
+            try:
+                self._rx_queue.get_nowait()
+                self._rx_dropped += 1
+            except queue.Empty:
+                pass
+            try:
+                self._rx_queue.put_nowait(frame)
+            except queue.Full:
+                self._rx_dropped += 1
+
+    def dropped_frames(self) -> int:
+        """接收队列满后被丢弃的帧累计数（背压指标，REQS-0039 LR-5）。"""
+        return self._rx_dropped
+
+    def drain_rx(self) -> int:
+        """排空接收队列（背压复位），返回取出的帧数。"""
+        n = 0
+        while True:
+            try:
+                self._rx_queue.get_nowait()
+                n += 1
+            except queue.Empty:
+                return n
+
     def rx_history(self) -> list:
         """返回收到的所有完整帧（bytes 列表，供主动上报验证/历史查询）。"""
-        return list(self._rx_history)
+        return [frame for _, frame in self._rx_entries]
+
+    def rx_cursor(self) -> int:
+        """当前历史末帧的单调序号（匹配游标基线；0 表示尚无帧）。"""
+        return self._rx_seq
+
+    def rx_history_since(self, last_seq: int) -> tuple[list, int]:
+        """返回 (last_seq 之后的新帧列表, 新游标)。
+
+        游标为单调帧序号（REQS-0039 LR-4）：即使基线帧已被 1000 条截断挤掉，
+        也只是从现存最早帧起返回——不会把历史尾巴当新帧，更不会恒为空。
+        entry seq 连续递增，first_seq + 下标即帧序号。
+        """
+        entries = list(self._rx_entries)
+        if not entries:
+            return [], max(int(last_seq), 0)
+        start = int(last_seq) - entries[0][0] + 1
+        if start < 0:
+            start = 0
+        frames = [frame for _, frame in entries[start:]]
+        return frames, max(int(last_seq), entries[-1][0])

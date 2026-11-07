@@ -474,6 +474,8 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
             "port_identity": io.port_identity if io is not None else None,
             "mapping_error": catalog.mapping_error,
             "pending_frames": io.pending_frames() if io is not None else 0,
+            "dropped_frames": (io.dropped_frames() if io is not None and
+                               hasattr(io, "dropped_frames") else 0),
             "session": journal.info() if journal is not None else None,
         }
 

@@ -55,11 +55,23 @@ def _app_payload(raw: bytes) -> bytes:
 
 def _wait_reply(io, afn: int, fn: int, *, timeout: float,
                 baseline: int = 0) -> Optional[bytes]:
-    """在 rx_history 基线之后等待指定 AFN/Fn 应答帧（不消费历史）。"""
+    """在 rx_history 基线之后等待指定 AFN/Fn 应答帧（不消费历史）。
+
+    baseline 支持两种口径：单调帧序号游标（io.rx_cursor()，优先；与历史
+    1000 条截断解耦，REQS-0039 LR-4），或旧的 len(rx_history()) 截断基线
+    （无游标 io 的回退）。
+    """
+    use_seq = hasattr(io, "rx_history_since")
+    last_seq = int(baseline)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        hist = io.rx_history()
-        for raw in hist[baseline:]:
+        if use_seq:
+            new_frames, last_seq = io.rx_history_since(last_seq)
+        else:
+            hist = io.rx_history()
+            new_frames = hist[last_seq:]
+            last_seq = len(hist)
+        for raw in new_frames:
             got = frame_afn_fn(raw)
             if got == (afn, fn):
                 return raw
@@ -150,7 +162,7 @@ def query_archive(io, *, start: int = 0, count: int = 200,
     raw = build_send({"afn": "10", "fn": "F2",
                       "params": {"start": start, "count": count}},
                      profile or {}, seq=seq)
-    baseline = len(io.rx_history())
+    baseline = io.rx_cursor() if hasattr(io, "rx_cursor") else len(io.rx_history())
     io.send_frame(raw)
     reply = _wait_reply(io, 0x10, 2, timeout=timeout, baseline=baseline)
     if reply is None:
@@ -171,7 +183,7 @@ def query_online(io, *, timeout: float = 5.0,
     """查在网（网络规模）：10H-F1 从节点总数量 / 路由支持最大容量。"""
     raw = build_send({"afn": "10", "fn": "F1", "params": {}},
                      profile or {}, seq=seq)
-    baseline = len(io.rx_history())
+    baseline = io.rx_cursor() if hasattr(io, "rx_cursor") else len(io.rx_history())
     io.send_frame(raw)
     reply = _wait_reply(io, 0x10, 1, timeout=timeout, baseline=baseline)
     if reply is None:

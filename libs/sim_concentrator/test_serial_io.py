@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from sim_concentrator.batch import meter_read_645
 from sim_concentrator.frame_codec import build_13762_frame
 from sim_concentrator.serial_io import (
     SerialIO,
@@ -96,6 +97,125 @@ def test_serial_io_send_requires_open():
 def test_serial_io_recv_timeout():
     io = SerialIO(port="COM_TEST")
     assert io.recv_frame(timeout=0.1) is None
+
+
+# -- REQS-0039 LR-4/LR-5 回归：单调帧序号游标 + 有界接收队列 ------------------
+
+def test_rx_cursor_survives_history_truncation():
+    """len() 游标在历史截断到 1000 条后恒等、hist[seen:] 恒为空（req0007 实测
+    高频长跑全部超时的根因）；seq 游标必须与截断解耦。"""
+    io = SerialIO(port="COM_TEST")
+    for _ in range(1200):
+        io._record_rx(_frame())
+    assert io.rx_cursor() == 1200
+    assert len(io.rx_history()) == 1000
+    # 旧口径的陷阱（文档化断言）：len 游标之后永远切不出新帧
+    seen = len(io.rx_history())
+    assert io.rx_history()[seen:] == []
+    # 新口径：基线之前的帧被截掉，只是从现存最早帧起返回
+    frames, cur = io.rx_history_since(0)
+    assert len(frames) == 1000 and cur == 1200
+    # 正常增量：只要末尾新帧
+    frames, cur = io.rx_history_since(1195)
+    assert len(frames) == 5 and cur == 1200
+    # 游标超前（无新帧）：返回空且游标不回退
+    frames, cur = io.rx_history_since(5000)
+    assert frames == [] and cur == 5000
+
+
+def test_rx_queue_bounded_drops_oldest():
+    """队列有界：满时丢最旧帧并计数，drain 排空（防 48h 内存单调增长）。"""
+    io = SerialIO(port="COM_TEST")
+    for i in range(3000):
+        io._enqueue_rx(bytes([i & 0xFF]) * 8)
+    assert io.pending_frames() == 2048
+    assert io.dropped_frames() == 952
+    assert io.drain_rx() == 2048
+    assert io.pending_frames() == 0
+
+
+def _saturated_seq_io():
+    """seq 游标口径假 io：历史只留最近 1000 条（复刻 SerialIO 截断语义），
+    send 后灌 1199 条噪声再给真应答——应答永远落在截断线之后。"""
+    from sim_concentrator.batch import _decoded_seq
+    from sim_concentrator.frame_codec import decode_frame
+
+    class _SaturatedIO:
+        def __init__(self):
+            self._entries = []
+            self.sent = []
+            for _ in range(1000):       # 预饱和：len() 游标从此失效
+                self._append(build_13762_frame(afn=0x06, fn=1, direction="up",
+                                               info={"seq": 0}))
+
+        def _append(self, f):
+            nxt = self._entries[-1][0] + 1 if self._entries else 1
+            self._entries.append((nxt, f))
+            if len(self._entries) > 1000:
+                del self._entries[: len(self._entries) - 1000]
+
+        def send_frame(self, raw):
+            self.sent.append(raw)
+            app = meter_read_645("000000000010")
+            proto = bytes([2, 0]) + len(app).to_bytes(2, "little") + app
+            reply = build_13762_frame(
+                afn=0xF1, fn=1, appdata=proto, direction="up",
+                info={"seq": _decoded_seq(decode_frame(raw))})
+            for _ in range(1199):
+                self._append(build_13762_frame(afn=0x06, fn=1, direction="up",
+                                               info={"seq": 0}))
+            self._append(reply)
+
+        def rx_cursor(self):
+            return self._entries[-1][0] if self._entries else 0
+
+        def rx_history_since(self, last_seq):
+            entries = list(self._entries)
+            if not entries:
+                return [], max(int(last_seq), 0)
+            start = max(0, int(last_seq) - entries[0][0] + 1)
+            return ([f for _, f in entries[start:]],
+                    max(int(last_seq), entries[-1][0]))
+
+        def rx_history(self):
+            return [f for _, f in self._entries]
+
+    return _SaturatedIO()
+
+
+def test_batch_read_matches_after_history_saturation():
+    """REQS-0039 LR-4 回归：历史饱和（>1000 条）后 batch 抄表仍能匹配应答。"""
+    from sim_concentrator.batch import BatchReadJob
+
+    job = BatchReadJob(_saturated_seq_io(), ["000000000010"],
+                       mode="batch", timeout=2)
+    job._read_one("000000000010")
+    rows = job.snapshot()["rows"]
+    assert rows and rows[0]["status"] == "success"
+
+
+def test_batch_read_fallback_without_seq_cursor():
+    """无 seq 游标接口的 io（旧测试桩）：回退 len() 基线仍可用。"""
+    from sim_concentrator.batch import BatchReadJob
+
+    class _PlainIO:
+        def __init__(self):
+            self.hist = []
+
+        def send_frame(self, raw):
+            app = meter_read_645("000000000010")
+            proto = bytes([2, 0]) + len(app).to_bytes(2, "little") + app
+            self.hist.append(build_13762_frame(
+                afn=0xF1, fn=1, appdata=proto, direction="up",
+                info={"seq": 7}))
+
+        def rx_history(self):
+            return list(self.hist)
+
+    job = BatchReadJob(_PlainIO(), ["000000000010"], mode="batch", timeout=2)
+    job._read_one("000000000010")
+    rows = job.snapshot()["rows"]
+    assert rows and rows[0]["status"] == "success"
 
 
 def test_list_ports_returns_list():

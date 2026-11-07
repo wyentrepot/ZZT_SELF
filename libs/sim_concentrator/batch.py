@@ -10,7 +10,8 @@
 - mode="single"：每表一帧 02H-F1（转发通信协议数据帧，嵌套 645 读数据）；
 - mode="batch"：每表一帧 F1H-F1（集中器主动并发抄表，单表单帧滑动）。
 
-应答匹配：轮询 io.rx_history()（只读语义，与 expect_history 对齐），按
+应答匹配：轮询 io.rx_history_since(单调帧序号游标，只读语义；无游标 io
+回退 len(rx_history()) 截断基线)，按
 AFN/Fn + 帧内嵌表地址判定归属；表地址同时接受 CCO 档案线上字节（默认，
 10H-F2 口径）与标准 645 BCD 反序/直序；否认帧（00H-F2）带否认码即判失败
 并释放槽位。
@@ -264,8 +265,12 @@ class BatchReadJob:
             raw = build_13762_frame(afn=afn, fn=1, appdata=proto,
                                     direction="down", info={"seq": seq_sent},
                                     address=self._address())
-            # 基线游标取在发送前一刻：此后新入历史的帧才是本次下发的候选应答
-            seen = len(self.io.rx_history())
+            # 基线游标取在发送前一刻：此后新入历史的帧才是本次下发的候选应答。
+            # 游标用单调帧序号（REQS-0039 LR-4）：len() 游标在历史截断到 1000 条
+            # 后恒等，hist[seen:] 永远为空 → 所有应答匹配不到 → 全部超时。
+            use_seq_cursor = hasattr(self.io, "rx_history_since")
+            last_seq = (self.io.rx_cursor() if use_seq_cursor
+                        else len(self.io.rx_history()))
             self.io.send_frame(raw)
         except Exception as e:
             self._row(meter, "error", started=started, note=f"发送失败: {e}")
@@ -275,9 +280,12 @@ class BatchReadJob:
         try:
             deadline = time.time() + timeout
             while time.time() < deadline and not self.stop_flag.is_set():
-                hist = self.io.rx_history()
-                new_frames = hist[seen:]
-                seen = len(hist)
+                if use_seq_cursor:
+                    new_frames, last_seq = self.io.rx_history_since(last_seq)
+                else:
+                    hist = self.io.rx_history()
+                    new_frames = hist[last_seq:]
+                    last_seq = len(hist)
                 for hf in new_frames:
                     try:
                         decoded = decode_frame(hf)

@@ -86,8 +86,11 @@ class MeterSerialChannel:
         self._read_thread: Optional[threading.Thread] = None
         self._write_lock = threading.Lock()
         self._reopen_lock = threading.RLock()
-        self._rx_queue: "queue.Queue[bytes]" = queue.Queue()
+        # 接收队列有界（REQS-0039 LR-5 同口径）：48h 高频抄表下无人消费时
+        # 无界队列会单调增长；满时丢最旧帧并计数。
+        self._rx_queue: "queue.Queue[bytes]" = queue.Queue(maxsize=2048)
         self._rx_history: list = []
+        self._rx_dropped = 0
         self._last_error: str = ""
         self._open = False
 
@@ -243,10 +246,29 @@ class MeterSerialChannel:
                 last_progress = time.monotonic()
                 self._on_frame(raw)
 
+    def _enqueue_rx(self, frame: bytes) -> None:
+        """入队；队列满时丢最旧一帧再放（有界背压，防长跑内存单调增长）。"""
+        try:
+            self._rx_queue.put_nowait(frame)
+        except queue.Full:
+            try:
+                self._rx_queue.get_nowait()
+                self._rx_dropped += 1
+            except queue.Empty:
+                pass
+            try:
+                self._rx_queue.put_nowait(frame)
+            except queue.Full:
+                self._rx_dropped += 1
+
+    def dropped_frames(self) -> int:
+        """接收队列满后被丢弃的帧累计数（背压指标）。"""
+        return self._rx_dropped
+
     def _on_frame(self, raw: bytes) -> None:
         result = self.brain.handle_frame(raw)
         note = dict(result.note) if result is not None else {"error": "处理异常"}
-        self._rx_queue.put(raw)
+        self._enqueue_rx(raw)
         if self.journal is not None:
             self.journal.append("rx", raw, note)
         if result is not None and (result.reply is not None
@@ -256,7 +278,7 @@ class MeterSerialChannel:
             try:
                 self._write(wire)
                 note["reply_hex"] = wire.hex().upper()
-                self._rx_queue.put(wire)
+                self._enqueue_rx(wire)
             except Exception as exc:
                 note["reply_error"] = repr(exc)
             if self.journal is not None:
