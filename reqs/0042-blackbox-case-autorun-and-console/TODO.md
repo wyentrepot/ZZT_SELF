@@ -34,6 +34,18 @@
 - [ ] 门禁：构造三种场景分别得 fail / blocked / inconclusive
 
 ## P4：API 层（API-*）
+
+> **已有骨架（2026-11-23 遗留，未提交）**：
+> `apps/workbench/cases_api.py`（1184 行，9 端点 + job 线程）与
+> `apps/workbench/test_cases_api.py`（857 行，30 tests）已存在，**但按 REQS-0041 旧语义编写**：
+> - 缺 `blocked` 三分类（§3.5）
+> - 缺地址角色化（§3.1，仍是 `addr` 而非 `meter_addr`）
+> - 缺 `/api/cases/bench` 台架快照端点
+> - `app.py` 的挂载**已被摘除**（只留注释），需升级后重新挂载
+>
+> → 实现时可复用其端点骨架与 job 模式，但必须按本文 §3.1/§3.5/§3.6 改造。
+> 改造前先跑 `pytest apps/workbench/test_cases_api.py -q`（应 30 passed）确认基座可用。
+
 - [ ] `create_cases_router` + `app.py` 挂载（紧跟 autotest 之后，2-3 行）
 - [ ] 10 端点（含 `/api/cases/bench`）
 - [ ] 异步 job（复位 30s / 抄表数十秒不得同步阻塞）
