@@ -1,6 +1,6 @@
 {
   "id": "nwk.active_registration",
-  "title": "激活从节点主动注册（11H-F5，必填 time6 + duration + retry + slices，判据 00H-F1 确认）",
+  "title": "激活从节点主动注册（11H-F5）—— **搜表**：临时关闭白名单过滤、放行档案外新表上报（06H-F4 / 06H-F1）；**不是入网手段，禁止进用例**（依据 `业务层/86_档案自动同步_业务.md:51-52`：主动搜表模式下关闭白名单过滤、搜表业务结束后启用）。块本身保留供其它场景使用，必填 time6 + duration + retry + slices，判据 00H-F1 确认。",
   "needs": ["bench.simcon_online"],
   "provides": [],
   "action": {
@@ -16,5 +16,5 @@
   "assert": [
     {"type": "confirm", "frame": "00H-F1"}
   ],
-  "tags": ["nwk", "batch-1", "precondition-archive", "required-params"]
+  "tags": ["nwk", "search-meter", "not-for-cases"]
 }

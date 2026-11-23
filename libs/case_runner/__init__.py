@@ -38,9 +38,11 @@ __all__ = [
     "FACT_STATES",
     "FACT_UNKNOWN",
     "FACT_YES",
+    "OUTCOME_BLOCKED",
     "OUTCOME_FAIL",
     "OUTCOME_INCONCLUSIVE",
     "OUTCOME_PASS",
+    "OUTCOME_PRIORITY",
     "OUTCOMES",
     # models
     "BlockSpec",

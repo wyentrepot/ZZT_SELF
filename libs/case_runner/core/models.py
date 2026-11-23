@@ -9,9 +9,16 @@
 约定：
 - 所有 ``*Spec`` 都是 **JSON 数据的形状**（``data/case_*/**.json``），不是执行体；
   执行体按 id 注册在 ``core/registry.py``。
-- 结论模型**不新增**：块结果、事实结果、用例结论一律落
-  ``test_automation.models.AssertionResult``（``outcome ∈ pass|fail|inconclusive``）
-  或本模块的三态常量，见 ``OUTCOME_*`` / ``FACT_*``。
+- 结论模型**分两层，且只有两层**（REQS-0042 §3.5 / D2-4）：
+
+  * **断言层三态**：``test_automation.models.AssertionResult`` 的
+    ``outcome ∈ pass|fail|inconclusive``（``ASSERTION_OUTCOMES``）**一字不改**，
+    永远不出现 ``blocked``。块结果、事实结果落在这里。
+  * **结论层四态**：用例 / 方案的 ``verdict`` ∈ ``pass|fail|blocked|inconclusive``
+    （本模块 ``OUTCOMES`` / ``OUTCOME_*``）。``blocked`` 只在聚合处产生，来源
+    只是块态 ``skipped``（台架不具备条件），见 ``executor.BLOCK_TO_OUTCOME``。
+
+- 事实三态见 ``FACT_*``（``unknown`` 永不折算 ``yes`` / ``pass``）。
 """
 
 from __future__ import annotations
@@ -39,18 +46,52 @@ FACT_STATES: frozenset[str] = frozenset({FACT_YES, FACT_NO, FACT_UNKNOWN})
 
 
 # --------------------------------------------------------------------------- #
-# 结论口径（与 test_automation.models.ASSERTION_OUTCOMES 完全一致，不新造模型）
+# 结论口径：用例 / 方案 verdict **四态**（REQS-0042 §3.5 失败三分类 / D2-4）
 # --------------------------------------------------------------------------- #
+#
+# 四态语义（同一份口径同时用于用例级与方案级聚合）：
+#
+# - ``pass``         判据成立（所有步骤都 pass，且用例级断言也 pass）
+# - ``fail``         **被测对象真失败**：收到应答但判据不成立
+# - ``blocked``      **台架不具备条件**：服务不可达 / 端口占用 / 闸门忙 / 前置事实不满足
+#                    （块态 ``skipped`` 的唯一合法去处；产品本身没被证伪）
+# - ``inconclusive`` **说不清**：超时无应答 / 解析不出 / 等待超时仍是过程态
+#                    （块态 ``unknown`` 的去处）
+#
+# 优先级（同一用例/方案内多块混合时取最严重，见 ``OUTCOME_PRIORITY``）：
+# ``fail`` > ``blocked`` > ``inconclusive`` > ``pass``。
+#
+# **红线（D2-4）**：``blocked`` 只活在结论层。断言层
+# （``test_automation.models.AssertionResult``）仍然严格三值，见 ``OUTCOMES_ASSERTION``；
+# 不许为了「四态一致」去扩 ``ASSERTION_OUTCOMES``。
 
 OUTCOME_PASS = "pass"
 OUTCOME_FAIL = "fail"
+OUTCOME_BLOCKED = "blocked"
 OUTCOME_INCONCLUSIVE = "inconclusive"
+
+#: 用例 / 方案 verdict 允许的四个取值
 OUTCOMES: frozenset[str] = frozenset(
+    {OUTCOME_PASS, OUTCOME_FAIL, OUTCOME_BLOCKED, OUTCOME_INCONCLUSIVE}
+)
+
+#: 严重度顺序（越靠前越严重）：聚合时取第一个出现的
+OUTCOME_PRIORITY: tuple[str, ...] = (
+    OUTCOME_FAIL,
+    OUTCOME_BLOCKED,
+    OUTCOME_INCONCLUSIVE,
+    OUTCOME_PASS,
+)
+
+#: 断言层三态（``AssertionResult.outcome`` 的口径，取自
+#: ``test_automation.models.ASSERTION_OUTCOMES``，此处**只读镜像**、不得扩成四态）
+OUTCOMES_ASSERTION: frozenset[str] = frozenset(
     {OUTCOME_PASS, OUTCOME_FAIL, OUTCOME_INCONCLUSIVE}
 )
 
 # --------------------------------------------------------------------------- #
-# 块执行态（执行器内部状态；对外结论仍映射到上面三种 outcome）
+# 块执行态（执行器内部状态；对外由 executor.BLOCK_TO_OUTCOME 折算成结论层四态，
+# 折算到断言层时 skipped/unknown 仍是 inconclusive）
 # --------------------------------------------------------------------------- #
 
 BLOCK_PASS = "pass"
@@ -330,11 +371,14 @@ __all__ = [
     "UNKNOWN",
     "FACT_STATES",
     "FactState",
-    # 结论口径
+    # 结论口径（用例 / 方案 verdict 四态）
     "OUTCOME_PASS",
     "OUTCOME_FAIL",
+    "OUTCOME_BLOCKED",
     "OUTCOME_INCONCLUSIVE",
     "OUTCOMES",
+    "OUTCOME_PRIORITY",
+    "OUTCOMES_ASSERTION",
     # 块执行态
     "BLOCK_PASS",
     "BLOCK_FAIL",

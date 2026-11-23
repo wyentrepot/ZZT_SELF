@@ -1,6 +1,6 @@
 {
   "id": "nwk.route_status",
-  "title": "查询路由运行状态（10H-F4，判据：工作状态=抄表→通过；路由已完成(运行状态字D1=1)+档案数>0 但工作状态=学习→inconclusive(unknown，不是失败)；字段缺失/取值非法→unknown；用例可用 params.expect=[...] 指定显式期望）",
+  "title": "查询路由运行状态（10H-F4，判据：工作状态=抄表→通过；学习态持续等满 wait_s=300 秒仍不抄表→inconclusive(unknown，不是失败，detail 写「等了 N 秒仍处学习态」)—— 300s 依据：台架实测一轮入网约 240s，学习态→抄表切换在其后，预算须 ≥ 实测 + 余量；字段缺失/取值非法→unknown；用例可用 params.expect=[...] 指定显式期望；等待期只发只读查询）",
   "needs": [
     "bench.simcon_online"
   ],
@@ -8,7 +8,10 @@
   "action": {
     "afn": "10",
     "fn": 4,
-    "params": {}
+    "params": {
+      "wait_s": 300.0,
+      "poll_interval_s": 2.0
+    }
   },
   "assert": [
     {

@@ -21,6 +21,17 @@
    用例只是编排（``needs[]`` + ``blocks[]`` / ``plan[]`` + ``steps[]``）。
 8. **步骤实例化**（REQS-0042 D3-1）：``blocks[]`` 与 ``plan[]`` 至少给一个；``plan`` 内
    step id 唯一、引用的块存在；单测专用用例（``single-test-only``）可不进方案。
+9. **禁止项**（REQS-0042 v7 **D6-2**）：用例与方案里**不得出现**搜表块
+   ``nwk.active_registration``（``11H-F5``，临时关白名单放行档案外新表，
+   ``业务层/86_档案自动同步_业务.md:51-52``）与重启路由块 ``nwk.route_restart``
+   （``12H-F1``，可选路由控制）——两者都不是入网手段，入网判定用 ``nwk.topology``
+   （``10H-F21``，``业务层/37_双模测试用例_业务.md:42-48``）。
+10. **拆案守卫**（REQS-0042 v9 **D9-1 / D9-2**）：抄表被拆成两条用例——
+   ``meter_daily``（**不复位**的日常主线）与 ``meter_first_join``（**含复位**的首次组网）。
+   真机实测：复位 STA 后链路恢复要十几分钟量级，而读取本身只要 2.3–2.6s；复位后
+   ``nwk.topology`` 会因 CCO 节点计数残留**立刻通过**——「组网判定通过」≠「链路可用」。
+   所以 ``meter_daily`` **不得**含 ``reset.sta``、``meter_first_join`` **必须**含
+   ``reset.sta`` 且排第一步；旧的单条 ``meter_read`` 已删除，不得复活。
 """
 
 from __future__ import annotations
@@ -70,6 +81,41 @@ FIRST_BATCH_FACTS = frozenset(
     }
 )
 
+#: **只供 UI 单跑 / 排障**、不进任何验收方案的用例（REQS-0042 v9 D9-1 收敛后）：
+#: - ``sta_reset`` / ``archive_ready`` / ``nwk_join``：三条动作级用例，块级判据与真机
+#:   抽样时单跑用；抄表两条用例（``meter_daily`` / ``meter_first_join``）已内含复位 /
+#:   档案 / 组网，验收方案里再带上它们只会重复复位与重复建档；
+#: - ``archive_multi`` 另有 ``single-test-only`` 标签豁免（见 D3-5）。
+#: 这些用例**仍在** ``data/cases/`` 里、``case_run run --case <id>`` 可直接单跑。
+UI_SINGLE_RUN_CASES = frozenset({"sta_reset", "archive_ready", "nwk_join"})
+
+#: 拆案后的用例清单与方案映射（REQS-0042 v9 **D9-1 / D9-2**）：删 ``meter_read``，
+#: 新增 ``meter_daily``（不复位，日常主线）/ ``meter_first_join``（含复位，首次组网）。
+EXPECTED_CASES = frozenset(
+    {
+        "bench_ready",
+        "sta_reset",
+        "archive_ready",
+        "archive_multi",
+        "nwk_join",
+        "meter_daily",
+        "meter_first_join",
+    }
+)
+
+#: 方案 → 用例映射（D9-2 定稿；顺序也是契约：台架前置在前、业务主线在后）
+EXPECTED_SUITES = {
+    "meter_smoke_min": ["bench_ready", "meter_daily"],
+    "smoke_meter": ["bench_ready", "meter_first_join"],
+}
+
+#: 抄表两条用例的块序列（D9-1 定稿；``meter_daily`` **不得**含 ``reset.sta``）
+DAILY_PLAN = ["archive.add", "nwk.topology", "meter.addr_probe", "meter.read_645", "meter.read_645"]
+FIRST_JOIN_PLAN = [
+    "reset.sta", "archive.add", "nwk.topology", "meter.addr_probe",
+    "meter.read_645", "meter.read_645",
+]
+
 #: 「参数化事实」四个（结论随入参变化，REQS-0042 D2-1 定稿）：
 #: ``archive.contains`` / ``sta.meter_addr_known`` 按表地址求值，
 #: ``nwk.onnet_count_min`` / ``nwk.nodes_online_min`` 按 ``min`` 求值。
@@ -87,6 +133,15 @@ PARAMETERIZED_FACTS = frozenset(
         "nwk.nodes_online_min",
     }
 )
+
+#: **禁止进用例 / 方案**的块（REQS-0042 v7 D6-2「禁止出现搜表」）：
+#: - ``nwk.active_registration``（11H-F5）= **搜表**：临时关闭白名单过滤、放行档案外新表
+#:   上报 06H-F4 / 06H-F1（权威出处 ``业务层/86_档案自动同步_业务.md:51-52``）。
+#:   它是「发现档案外电表」的业务，**不是入网手段**；
+#: - ``nwk.route_restart``（12H-F1）= 可选的路由控制命令，也不是入网手段
+#:   （入网判定用 10H-F21 查网络拓扑，``业务层/37_双模测试用例_业务.md:42-48``）。
+#: 块声明本身保留（供其它场景/单测用），但用例与方案里一律不得出现。
+BANNED_CASE_BLOCKS = ("nwk.active_registration", "nwk.route_restart")
 
 #: 1376.2 帧的粗略特征：``68`` + 至少 8 个 hex 字符（用例里出现即违规）
 FRAME_HEX_RE = re.compile(r"(?i)\b68[0-9a-f]{8,}")
@@ -153,9 +208,24 @@ def test_first_batch_inventory_is_declared() -> None:
 
 
 def test_cases_and_suites_are_not_empty() -> None:
+    """用例/方案的数量与**清单**都钉死：删改用例必须同步本清单（防止悄悄消失）。
+
+    v9 D9-1 拆案后是 7 条用例 / 2 个方案：``meter_read`` 已删除，换成
+    ``meter_daily``（不复位）+ ``meter_first_join``（含复位）。
+    """
     report = _report()
-    assert len(report.cases) >= 5, "第一批至少 5 条用例（台架/复位/档案/组网/抄表）"
-    assert len(report.suites) >= 2, "至少 2 个方案（抄表冒烟 / 只抄表）"
+    case_ids = {case.id for case in report.cases}
+    assert case_ids == set(EXPECTED_CASES), (
+        "用例清单变了：缺 %s，多 %s（v9 D9-1 定稿清单见 EXPECTED_CASES）"
+        % (sorted(set(EXPECTED_CASES) - case_ids), sorted(case_ids - set(EXPECTED_CASES)))
+    )
+    assert "meter_read" not in case_ids, (
+        "meter_read 已按 v9 D9-1 拆成 meter_daily / meter_first_join，不得复活"
+    )
+    suite_ids = {suite.id for suite in report.suites}
+    assert suite_ids == set(EXPECTED_SUITES), (
+        "方案清单变了：期望 %s，实际 %s" % (sorted(EXPECTED_SUITES), sorted(suite_ids))
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -265,53 +335,68 @@ def test_suite_file_name_and_notes() -> None:
 SINGLE_TEST_ONLY_TAG = "single-test-only"
 
 
-def test_every_case_belongs_to_a_suite() -> None:
-    """每条用例都要能「按方案跑」——单测专用用例除外（``single-test-only`` 标签）。
+def test_every_case_belongs_to_a_suite_or_is_ui_single_run() -> None:
+    """每条用例要么进验收方案，要么是**已知的** UI 单跑用例（不许悄悄变孤儿）。
 
-    0042 D3-5 起豁免 ``single-test-only``：``archive_multi`` 故意不进方案
-    （真机只有 1 块真表），它由单测（``test_planner`` / ``test_executor``）证明
-    「同块多 step、各带不同参数」这件事，不该出现在验收方案里。
+    两类豁免：
+    - ``single-test-only`` 标签：``archive_multi`` 故意不进方案（真机只有 1 块真表），
+      由单测证明「同块多 step、各带不同参数」（0042 D3-5）；
+    - ``UI_SINGLE_RUN_CASES``：``sta_reset`` / ``archive_ready`` / ``nwk_join`` 三条动作级
+      用例，v9 D9-1 把复位/档案/组网收进抄表两条用例（``meter_daily`` /
+      ``meter_first_join``）之后不再进验收方案，保留供单跑与真机抽样；进方案会让同一次
+      回归重复复位（≈30s）与重复建档。
     """
     used: Set[str] = set()
     for suite in loader.load_suites():
         used.update(suite.case_ids)
-    single_test_only = {
+    exempt = {
         case.id
         for case in loader.load_cases()
         if SINGLE_TEST_ONLY_TAG in case.tags
-    }
-    orphans = {case.id for case in loader.load_cases()} - used - single_test_only
+    } | set(UI_SINGLE_RUN_CASES)
+    orphans = {case.id for case in loader.load_cases()} - used - exempt
     assert orphans == set(), (
-        f"这些用例没有被任何方案引用（UI 里只能临时单跑）：{sorted(orphans)}；"
-        f"若确属单测专用，请打上 {SINGLE_TEST_ONLY_TAG!r} 标签"
+        f"这些用例既没进方案、也不在已知的单跑清单里：{sorted(orphans)}；"
+        f"若确属单测专用，请打上 {SINGLE_TEST_ONLY_TAG!r} 标签；"
+        f"若是新加的单跑用例，请显式登记到 UI_SINGLE_RUN_CASES"
     )
+    # 反向：登记为单跑却仍出现在方案里 → 清单过期，同样要修
+    stale = set(UI_SINGLE_RUN_CASES) & used
+    assert stale == set(), f"这些用例已登记为单跑，却又出现在方案里：{sorted(stale)}"
 
 
-def test_required_suite_order_and_stop_on_fail() -> None:
-    """两个必备方案的顺序即「前提链」：档案 → 组网 → 抄表；首个非通过即停。"""
+def test_suites_are_bench_precondition_then_one_meter_case() -> None:
+    """v9 D9-2 定稿的方案形态：**台架前置（只读自检）→ 一条抄表用例**，首个非通过即停。
+
+    两条方案对应两种节奏，不能混：
+    - ``meter_smoke_min`` → ``meter_daily``：**不复位**的日常主线；
+    - ``smoke_meter`` → ``meter_first_join``：**含复位**的首次组网（用户原话「第一次组网
+      需要复位 sta。之后就按需复位。」）。
+    历史方案 ``meter_only`` / ``smoke_meter_noreset`` 已删除：抄表用例自含档案 + 组网，
+    「不复位 / 不组网」这层语义在 ``meter_daily`` 之后已由方案映射直接表达，留着只会重复复位。
+    """
     suites = {suite.id: suite for suite in loader.load_suites()}
-    assert "smoke_meter" in suites, "缺少抄表冒烟方案 smoke_meter"
-    assert "meter_only" in suites, "缺少只抄表方案 meter_only"
+    assert set(suites) == set(EXPECTED_SUITES), sorted(suites)
+    for suite_id, expected_case_ids in EXPECTED_SUITES.items():
+        suite = suites[suite_id]
+        assert suite.case_ids == expected_case_ids, (suite_id, suite.case_ids)
+        assert suite.stop_on_fail is True
+        assert "台架前置" in suite.notes, "notes 要写清 bench_ready 只做台架前置、不是业务动作"
 
-    smoke = suites["smoke_meter"]
-    assert smoke.stop_on_fail is True
-    assert "sta_reset" in smoke.case_ids, "第一次组网必须复位 STA（用户口径）"
-    assert smoke.case_ids.index("archive_ready") < smoke.case_ids.index("nwk_join"), (
-        "档案必须先于组网"
+    # 日常主线（不复位）与首次组网（含复位）的语义必须在 notes 里说清
+    daily_notes = suites["meter_smoke_min"].notes
+    assert "不复位" in daily_notes and "日常" in daily_notes, daily_notes[:80]
+    join_notes = suites["smoke_meter"].notes
+    assert "第一次组网需要复位 sta。之后就按需复位。" in join_notes, (
+        "smoke_meter 的 notes 要保留用户原话「第一次组网需要复位 sta。之后就按需复位。」"
     )
-    assert smoke.case_ids.index("nwk_join") < smoke.case_ids.index("meter_read"), (
-        "组网必须先于抄表"
-    )
-    assert smoke.case_ids.index("sta_reset") < smoke.case_ids.index("archive_ready"), (
-        "复位必须先于建档"
+    assert "十几分钟" in join_notes, (
+        "smoke_meter 的 notes 要写明真机教训：复位后链路恢复要十几分钟量级（D9-1）"
     )
 
-    meter_only = suites["meter_only"]
-    assert meter_only.stop_on_fail is True
-    assert "sta_reset" not in meter_only.case_ids, (
-        "只抄表方案按需复位：不带 sta_reset（用户口径「之后就按需复位」）"
-    )
-    assert "archive_ready" in meter_only.case_ids and "meter_read" in meter_only.case_ids
+    # 旧方案不得复活（语义已被 meter_daily / meter_first_join 取代）
+    for retired in ("meter_only", "smoke_meter_noreset"):
+        assert retired not in suites, f"{retired} 已按 D9-1/D9-2 删除，请勿恢复"
 
 
 # --------------------------------------------------------------------------- #
@@ -413,20 +498,158 @@ def test_case_blocks_are_strings_not_inline_params() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 8. 步骤实例化资产（REQS-0042 S1.5）：meter_smoke_min / archive_multi
+# 8. 步骤实例化资产（REQS-0042 S1.5 / v9 D9-1）：meter_daily / meter_first_join / archive_multi
 # --------------------------------------------------------------------------- #
 
 
-def test_meter_smoke_min_is_the_zero_intervention_mainline() -> None:
-    """``meter_smoke_min``：≈40s 一轮、不复位不组网，是「零参与」验收主线（D3-4）。"""
+def test_meter_smoke_min_is_the_daily_mainline() -> None:
+    """``meter_smoke_min`` = ``bench_ready`` + ``meter_daily``：**不复位**的日常主线（5 步）。
+
+    旧答案是 ``["bench_ready", "meter_read"]``（含复位 → 档案 → 组网 → 绑表 → 抄表）。
+    真机实测（D9-1）：复位后链路恢复要十几分钟量级，而读取本身只要 2.3–2.6s ——
+    复位不能塞进日常回归，所以日常主线换成 ``meter_daily``（4 动作 5 步，不复位），
+    首次组网走 ``smoke_meter``（``meter_first_join``）。``bench_ready`` 的两个 fix 块负责
+    台架前置（simcon / simeter 会话 + 开表口），``archive.add`` 是 ``meter_daily`` 的 s1。
+    """
     suites = {suite.id: suite for suite in loader.load_suites()}
-    assert "meter_smoke_min" in suites, "缺少零参与验收主线方案 meter_smoke_min"
+    assert "meter_smoke_min" in suites, "缺少抄表最小冒烟方案 meter_smoke_min"
     suite = suites["meter_smoke_min"]
-    assert suite.case_ids == ["bench_ready", "archive_ready", "meter_read"]
+    assert suite.case_ids == ["bench_ready", "meter_daily"], suite.case_ids
     assert suite.stop_on_fail is True
-    assert "40s" in suite.notes, "notes 要写清一轮耗时（≈40s）"
-    assert "不复位不组网" in suite.notes
-    assert "sta_reset" not in suite.case_ids and "nwk_join" not in suite.case_ids
+    assert "台架前置" in suite.notes, "notes 要写清 bench_ready 只做台架前置（simcon/simeter 会话 + 开表口）"
+    assert "日常" in suite.notes, "notes 要写清这是日常回归主线"
+    assert "nwk.topology" in suite.notes, "notes 要交代组网等待的预算口径（300s 上限）"
+    assert "600s" in suite.notes, "notes 要写出与整轮 600s 上限的关系"
+
+    cases = {case.id: case for case in loader.load_cases()}
+    daily = cases["meter_daily"]
+    assert [step.block for step in daily.plan] == DAILY_PLAN
+    assert "reset.sta" not in {step.block for step in daily.plan}, (
+        "meter_daily 是日常主线，不得含 reset.sta（复位只属于 meter_first_join）"
+    )
+
+
+def test_meter_cases_split_reset_guard() -> None:
+    """★ **拆案守卫**（REQS-0042 v9 D9-1）：日常不复位、首次组网必复位。
+
+    直接读 ``data/cases/*.json`` **原文**断言（不经模型）：``meter_daily.json`` 里出现
+    ``reset.sta`` 即违规（复位是物理副作用，且复位后链路要十几分钟才恢复）；
+    ``meter_first_join.json`` 里必须有 ``reset.sta``，且是 plan 的第一块（复位排在建档
+    与组网之前）。
+    """
+    daily_raw = _read_json(DATA_DIR / loader.CASES_DIRNAME / "meter_daily.json")
+    join_raw = _read_json(DATA_DIR / loader.CASES_DIRNAME / "meter_first_join.json")
+
+    assert "reset.sta" not in json.dumps(daily_raw, ensure_ascii=False), (
+        "meter_daily.json 出现了 reset.sta：日常主线不复位（D9-1）"
+    )
+    daily_blocks = [step["block"] for step in daily_raw["plan"]]
+    assert daily_blocks == DAILY_PLAN, daily_blocks
+    assert daily_raw["needs"] == ["bench.simcon_online"], (
+        "不复位就不该依赖 bench.sta_online：%s" % daily_raw["needs"]
+    )
+
+    join_blocks = [step["block"] for step in join_raw["plan"]]
+    assert join_blocks == FIRST_JOIN_PLAN, join_blocks
+    assert join_blocks[0] == "reset.sta", (
+        "meter_first_join 必须复位，且复位是第一步（先复位再建档组网）"
+    )
+    assert set(join_raw["needs"]) == {"bench.sta_online", "bench.simcon_online"}, join_raw["needs"]
+
+    # 读步的等待预算（真机实测：复位后链路恢复≈10 分钟、冷启动有瞬态）——
+    # 只允许出现在读步，且组网步的 wait_s 必须保持块声明默认（不得压小）
+    expected_wait = {
+        "meter_daily": {"s3": 60, "s4": 30, "s5": 30},
+        "meter_first_join": {"s4": 180, "s5": 30, "s6": 30},
+    }
+    for raw, label in ((daily_raw, "meter_daily"), (join_raw, "meter_first_join")):
+        got = {s["id"]: (s.get("params") or {}).get("wait_s", 0) for s in raw["plan"]}
+        for step_id, want in expected_wait[label].items():
+            assert got.get(step_id) == want, (
+                "%s 的 %s 等待预算应为 %ss，实际 %r" % (label, step_id, want, got.get(step_id))
+            )
+        for step_id, value in got.items():
+            if step_id not in expected_wait[label]:
+                assert value == 0, "%s 的 %s 不该写 wait_s（组网等块用声明默认）" % (label, step_id)
+
+    # 两条用例的人读说明步数与 plan 步数一致
+    assert len(daily_raw["steps"]) == len(daily_blocks) == 5
+    assert len(join_raw["steps"]) == len(join_blocks) == 6
+
+
+def test_sampling_blocks_have_no_case_entry_gap_is_recorded() -> None:
+    """**已知缺口（照实记录，别偷偷塞回 nwk_join）**：
+
+    ``nwk.nodes_online``（``10H-F4``+``10H-F2``）与 ``nwk.route_status``（``10H-F4``）
+    现在**只有块级单测**（``blocks/test_archive_nwk.py``），**没有任何用例 / 方案入口**
+    —— 真机抽样证据待补（S6 收口时用一条单独的只读探测用例补，不塞回 ``nwk_join``：
+    三者语义是同一件事的三个视角，拓扑通过后另两个单次探测必然已满足，且三块等待
+    默认值叠加最坏 780s 会顶穿整轮 600s 上限）。
+
+    这条测试的作用：**让缺口在每次跑测试时都可见**，而不是被悄悄遗忘。
+    """
+    gap_blocks = ("nwk.nodes_online", "nwk.route_status")
+    used: Set[str] = set()
+    for case in loader.load_cases():
+        used.update(case.blocks)
+        used.update(step.block for step in case.plan)
+    assert set(gap_blocks) & used == set(), (
+        "真机抽样块不该进用例（等待预算会叠加）：%s" % sorted(set(gap_blocks) & used)
+    )
+    for block_id in gap_blocks:
+        assert block_id in _known_block_ids(), f"{block_id} 块声明应保留（只是没有用例入口）"
+
+
+def test_read_steps_pin_expect_timeout_in_both_meter_cases() -> None:
+    """抄表两条用例的三个读步都显式钉 ``expect_timeout``：等待预算可控（REQS D5-2）。"""
+    cases = {case.id: case for case in loader.load_cases()}
+    for case_id, read_ids, plain_ids in (
+        ("meter_daily", ("s3", "s4", "s5"), ("s1", "s2")),
+        ("meter_first_join", ("s4", "s5", "s6"), ("s1", "s2", "s3")),
+    ):
+        steps = {step.id: step for step in cases[case_id].plan}
+        for step_id in read_ids:
+            assert steps[step_id].params.get("expect_timeout") == 15, (
+                f"{case_id} 的 {step_id} 必须显式钉 expect_timeout=15（实测单数据项往返 "
+                "2.3–2.6s 的 6 倍余量；显式值下块不再查 03H-F7，避免按 t+5s 空等 95s）"
+            )
+        for step_id in plain_ids:
+            assert "expect_timeout" not in steps[step_id].params, (
+                f"{case_id} 的 {step_id} 保持块声明默认（组网 300s 不压）"
+            )
+
+
+def test_cases_and_suites_use_no_search_meter_or_route_restart() -> None:
+    """**禁止项**（REQS-0042 v7 D6-2）：用例与方案里不得出现搜表块与重启路由块。
+
+    直接读原文断言（不经模型，避免被默认值/别名洗掉）：``data/cases`` 与
+    ``data/case_suites`` 两个目录下，任何一个文件里出现 ``nwk.active_registration``
+    （11H-F5 搜表：临时关白名单放行档案外新表，``业务层/86:51-52``）或
+    ``nwk.route_restart``（12H-F1 重启路由）都算违规 —— 两者都不是入网手段，
+    入网判定只认 ``nwk.topology``（10H-F21）。
+    """
+    offenders: List[str] = []
+    for dirname in (loader.CASES_DIRNAME, loader.SUITES_DIRNAME):
+        for path in _json_files(dirname):
+            text = path.read_text(encoding="utf-8")
+            for block_id in BANNED_CASE_BLOCKS:
+                if block_id in text:
+                    offenders.append(f"{dirname}/{path.name}: 出现禁止块 {block_id!r}")
+    assert offenders == [], (
+        "用例/方案里出现了搜表块或重启路由块（v7 D6-2 禁止；块声明保留但只能供其它场景用）：\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_search_meter_block_is_declared_but_marked_not_for_cases() -> None:
+    """搜表块本身保留，但必须被标明「不是入网手段、禁止进用例」（D6-2 / D6-3）。"""
+    path = DATA_DIR / loader.BLOCKS_DIRNAME / "nwk_active_registration.json"
+    raw = _read_json(path)
+    tags = set(raw.get("tags") or [])
+    assert {"search-meter", "not-for-cases"} <= tags, tags
+    title = str(raw.get("title") or "")
+    for needle in ("搜表", "11H-F5", "不是入网手段"):
+        assert needle in title, "title 要写清%s：%r" % (needle, title)
 
 
 def test_archive_multi_case_is_plan_only_and_single_test_only() -> None:

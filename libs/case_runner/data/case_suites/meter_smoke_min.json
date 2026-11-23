@@ -1,11 +1,10 @@
 {
   "id": "meter_smoke_min",
-  "name": "抄表最小冒烟（台架自检 → 档案 → 抄表，不复位不组网）",
+  "name": "抄表最小冒烟（台架前置自检 → 日常主线 meter_daily，不复位）",
   "case_ids": [
     "bench_ready",
-    "archive_ready",
-    "meter_read"
+    "meter_daily"
   ],
   "stop_on_fail": true,
-  "notes": "用途：本需求（REQS-0042）「零参与」验收主线 —— 零参与验收主线，≈40s 一轮，不复位不组网。依据 D3-4 的「必验（真机，每轮）」6 块（fix.simcon_session / fix.simeter_session / archive.add / meter.addr_probe / meter.read_645 / meter.brain_local）：bench_ready 覆盖两个 fix 会话块（模拟集中器在位 + 模拟电表开口），archive_ready 覆盖 archive.add 的「确认帧 + 回查」双判据，meter_read 覆盖 meter.addr_probe / meter.read_645 / meter.brain_local 三个表侧块。刻意不含 sta_reset（复位 10–20s 且会打断已建立的入网状态）与 nwk_join（重启路由要等组网 60s 以上）：日常回归要的是「档案在 + 抄得到」，这两件事不需要动网络。stop_on_fail=true：台架自检不过就不必再发档案/抄表帧，断点落点一眼可见。与既有 meter_only 的差别：本方案是名正言顺的「最小抄表冒烟」主线（≈40s），meter_only 保留为历史方案不改。"
+  "notes": "用途：抄表**日常回归主线**。REQS-0042 v9 D9-1/D9-2 拆案后，本方案只用 meter_daily（**不复位**：档案 → 组网 → 绑表 → 抄表，4 动作 5 步），复位是物理副作用，不进日常主线；首次组网 / 换板 / 台架重上电请走 smoke_meter（meter_first_join）。两项分工：bench_ready 只做**台架前置**（simcon / simeter 会话在位、给模拟电表开口，≈2s、只读为主），不是业务动作；缺 bench_ready 的 fix.simeter_session，真实链路上模拟电表不会在 COM20 应答 STA 的 645 请求，绑表/抄表会整段超时。耗时口径（块声明默认值 + 用例里显式钉死的值）：档案 ≈2s、组网**已满足时 ≈2s**（等待上限 300s 保留块默认）、绑表与两次抄表典型各 ≈2s（用例里 expect_timeout 显式钉 15s，真机实测单数据项往返 2.3–2.6s → 6 倍余量；显式值存在时不再查 03H-F7，避免按 t+5s 空等 95s）。**典型一轮 ≈10s 内**（日常链路已在网：档案 2 + 组网 2 + 三次读 6～8）。静态最坏按块内等待上限相加 ≈350s（档案 5 + 组网 300 + 绑表 15 + 电能 15 + 电压 15），再计入档案预查/回查各 20s、每步 simcon.verify 的 20s 轮询兜底约 460s，仍在整轮 600s 硬上限内（D2-6）。本方案只有 nwk.topology 一个等待型判据，不叠加等待预算。stop_on_fail=true：首个非通过用例即停，断点落在哪一步一眼可见。"
 }

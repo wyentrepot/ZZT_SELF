@@ -1,0 +1,31 @@
+{
+  "id": "nwk.topology",
+  "title": "查询网络拓扑信息（10H-F21，入网权威判据：入网从节点数 ≥ ceil(档案数 × min_ratio)，默认 0.98 = 98%；默认严格口径 master_included=false = 节点总数量减去主节点 CCO，设 true 则照 KB 原句直接用节点总数量；明确不足且等满 wait_s=300 秒 → fail，档案数=0 或应答取不到 → unknown；等待期只发只读查询）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "afn": "10",
+    "fn": 21,
+    "params": {
+      "start": 1,
+      "count": 32,
+      "wait_s": 300.0,
+      "poll_interval_s": 2.0,
+      "min_ratio": 0.98,
+      "master_included": false
+    }
+  },
+  "assert": [
+    {
+      "type": "topology_min_ratio",
+      "min_ratio": 0.98
+    }
+  ],
+  "tags": [
+    "nwk",
+    "readonly",
+    "online"
+  ]
+}

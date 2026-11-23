@@ -1,18 +1,30 @@
 {
   "id": "nwk.nodes_online",
-  "title": "查询真实在网/可达节点数（10H-F4 已抄从节点数量 + 10H-F2 逐节点信号品质两路交叉，判据 两路任一读数 ≥ min；两路都为 0 判 fail）",
-  "needs": ["bench.simcon_online"],
+  "title": "查询真实在网/可达节点数（10H-F4 已抄从节点数量 + 10H-F2 逐节点信号品质两路交叉，判据 两路任一读数 ≥ min；等满 wait_s=180 秒仍不满足且两路都为 0 判 fail —— 180s 依据：台架实测一轮入网约 240s，本块只判「至少 1 个节点抄通」，取实测一半 + 余量；等待期只发只读查询）",
+  "needs": [
+    "bench.simcon_online"
+  ],
   "provides": [],
   "action": {
     "afn": "10",
     "fn": 4,
     "params": {
       "min": 1,
-      "count": 32
+      "count": 32,
+      "wait_s": 180.0,
+      "poll_interval_s": 2.0
     }
   },
   "assert": [
-    {"type": "nodes_online_min", "min": 1}
+    {
+      "type": "nodes_online_min",
+      "min": 1
+    }
   ],
-  "tags": ["nwk", "batch-1", "readonly", "online"]
+  "tags": [
+    "nwk",
+    "batch-1",
+    "readonly",
+    "online"
+  ]
 }

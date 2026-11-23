@@ -28,6 +28,24 @@ import ...`` —— 档案块和组网块被绑在一起，改任一板块都可
    - ``nodes_online_snapshot`` / ``judge_nodes_online`` —— **真正的在网/可达**判定
      （10H-F4 已抄数 + 10H-F2 逐节点信号品质两路交叉，绝不用档案数推断）。
 8. 台架能力解析与就绪判定（simeter / simcon / module）
+9. 自愈（占用就抢占一次：simcon 409 / simeter 端口冲突）
+
+自愈的边界（SH-3 代码审查项，REQS-0042 §3.4 / 变更 2 D2-7）
+--------------------------------------------------------
+用户口径原文：
+
+    「跑测试用例时，是主动调用跑的，这时候如果有占用，那应当以自动化测试为主，
+      不看归属，直接抢占为自己所用即可。」
+
+因此 :func:`with_self_heal` **只做接口级释放与重试**：遇到占用类错误（409）就调能力层
+的 ``close`` / ``close_port`` 释放，然后重试**一次**；**不判归属、不做时间猜**，抢占后
+也不负责还原对方的会话。**禁止进程级操作** —— 本目录下不得起子进程、不得杀进程、
+不得直调系统 shell，也不重启服务/断电；那些属人工运维，不是自动化测试该做的事
+（三项禁令由 ``test_self_heal.py`` 的静态守卫用例把守，必须零命中）。
+
+块态语义**不变**：自愈成功 → 照常按判据 pass/fail；重试仍被占用 → 仍是既有的
+``skipped``（detail 写明「已抢占一次仍失败」+ 原始 409 文本），S3 阶段才由上层映射成
+``blocked``。
 
 状态口径（REQS RU-3「绝不假 PASS」，领导裁决口径）
 --------------------------------------------------
@@ -51,7 +69,13 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from case_runner.capabilities.module import ModuleCapability
 from case_runner.capabilities.simeter import SimeterCapability
 from case_runner.capabilities.simcon import SimconCapability
-from case_runner.core.executor import BlockResult, RunContext
+from case_runner.core.executor import (
+    SELF_HEALED_KEY,
+    BlockResult,
+    RunContext,
+    record_self_heal,
+    self_heal_entry,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -107,6 +131,33 @@ CONFIG_ERRORS = frozenset(
 
 #: 「工作台可达但该子应用没挂载」= 明确没有，不是「不知道」
 ABSENT_ERRORS = frozenset({"http_404"})
+
+# --------------------------------------------------------------------------- #
+# 自愈口径（REQS-0042 §3.4 / D2-7 / SH-1..3）—— 常量放前面，供下面各函数的默认值用
+# --------------------------------------------------------------------------- #
+
+#: 自愈重试上限：**只重试一次**（SH-1「仅一次，不自愈成死循环」）
+SELF_HEAL_MAX_RETRY = 1
+#: 默认重试次数（等于上限；显式传更大值也会被夹到上限）
+SELF_HEAL_RETRY = SELF_HEAL_MAX_RETRY
+
+#: 「占用类」错误码（只有这类才允许自愈；422/参数错/超时/不可达一律不动手）
+#: simcon 闸门忙与 simeter 端口冲突后端都给 409，语义相同（= 有人占着）
+CONFLICT_ERRORS = frozenset({"http_409"})
+
+#: 自愈留痕的 ``result`` 取值（D4-4 自动决策的分级）
+SELF_HEAL_HEALED = "healed"            # 抢占后重试成功
+SELF_HEAL_FAILED = "failed"            # 已抢占一次，重试仍被占用 → 交上层按台架不具备处理
+SELF_HEAL_UNAVAILABLE = "unavailable"  # 遇到占用但没有可注入的 close 能力，未动手
+
+#: simcon 侧 close 能力的方法名（能力层补上 ``close()`` 即自动生效，块层不用改）
+SIMCON_CLOSER_NAMES = ("close",)
+#: simeter 侧 close 能力的方法名（现成：``POST /api/simeter/close``）
+SIMETER_CLOSER_NAMES = ("close_port",)
+
+#: ``close`` 应答里能指认「抢占了谁」的字段（事后追溯靠它，D2-7 要求写明）
+PREEMPT_KEYS = ("actor", "holder", "owner", "session", "session_id", "run_id",
+                "job_id", "task", "port", "device")
 
 # --------------------------------------------------------------------------- #
 # 模拟电表表口（simeter serial）开口口径（REQS-0041 §10.13 台架联调修复）
@@ -463,8 +514,8 @@ def require_target(
 # --------------------------------------------------------------------------- #
 
 
-def call_verify(cap: Any, steps: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
-    """调能力层 ``verify``，把任何异常收敛成 ``{"ok": False, "error": ...}``。"""
+def _call_verify_once(cap: Any, steps: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """真调一次 ``cap.verify``，把任何异常收敛成 ``{"ok": False, "error": ...}``。"""
     try:
         raw = cap.verify([dict(step) for step in steps])
     except Exception as exc:  # noqa: BLE001 - 适配器承诺不裸崩，替身也可能抛
@@ -479,27 +530,75 @@ def call_verify(cap: Any, steps: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
     return dict(raw)
 
 
+def _simcon_target(cap: Any) -> str:
+    """自愈留痕的 target（点名是哪一路 simcon 的闸门，便于事后追溯）。"""
+    return "simcon:%s" % (getattr(cap, "mapping_id", None) or "-")
+
+
+def call_verify(
+    cap: Any,
+    steps: Sequence[Mapping[str, Any]],
+    *,
+    closer: Any = None,
+    retry: int = SELF_HEAL_RETRY,
+    conflict: Any = None,
+) -> Dict[str, Any]:
+    """调能力层 ``verify``（simcon 侧提交），**占用类错误自愈一次**后再看结果。
+
+    口径（REQS-0042 §3.4 / D2-7，用户原话「不看归属，直接抢占为自己所用」）：
+
+    - 非占用错误（422 参数错 / 不可达 / 轮询超时 / 空 steps …）→ **一次都不重试**，
+      行为与原口径逐字一致（自愈解决不了配置错）；
+    - ``http_409``（串口闸门/会话忙，可能有残留任务）→ 调 close 释放（**不判归属**）
+      → 重试**一次**；仍 409 就交上层（块态仍是 ``skipped``，S3 才映射 blocked）；
+    - 留痕两路落地：写进执行器的自愈收集器（最终挂到 ``BlockRecord.self_healed``），
+      同时放在返回值的 ``self_healed`` 键里（块若把整个结果返回也能带上）。
+
+    ``closer`` 可注入（单测用假对象）；缺省按 ``cap.close()`` 解析 —— **不硬编码 HTTP**。
+    """
+    body = [dict(step) for step in steps]
+    result, healed = with_self_heal(
+        lambda: _call_verify_once(cap, body),
+        action="simcon.close",
+        target=_simcon_target(cap),
+        cap=cap,
+        closer=closer if closer is not None else capability_closer(cap, SIMCON_CLOSER_NAMES),
+        retry=retry,
+        conflict=conflict,
+    )
+    if healed and isinstance(result, Mapping):
+        result = dict(result)
+        result[SELF_HEALED_KEY] = [dict(item) for item in healed]
+    return result
+
+
 def verify_failure_state(result: Mapping[str, Any]) -> Tuple[str, str]:
-    """verify 整体失败 → ``(块态, 原因)``；**409 不重试**，超时/配置错不判设备 FAIL。"""
+    """verify 整体失败 → ``(块态, 原因)``；**409 自愈过就不再重试**，超时/配置错不判设备 FAIL。
+
+    ``result`` 里若带 ``self_healed``（:func:`call_verify` 塞的），原因串会补一句
+    「自愈记录：…」，这样块的 ``detail`` 也看得见「抢占了谁/已抢占一次仍失败」。
+    """
     code = str(result.get("error") or "")
     detail = str(result.get("detail") or "")
+    note = self_heal_note(result)
     if code in BUSY_ERRORS:
         return BLOCK_SKIPPED, (
-            "串口闸门/会话忙（%s）：%s；不自动重试 POST，交上层策略" % (code, detail)
+            "串口闸门/会话忙（%s）：%s；不自动重试 POST（占用类只自愈一次、不判归属），"
+            "交上层策略%s" % (code, detail, note)
         )
     if code in DOWN_ERRORS:
-        return BLOCK_SKIPPED, "台架不可用（%s）：%s" % (code, detail)
+        return BLOCK_SKIPPED, "台架不可用（%s）：%s%s" % (code, detail, note)
     if code.startswith("http_5"):
-        return BLOCK_SKIPPED, "工作台服务异常（%s）：%s" % (code, detail)
+        return BLOCK_SKIPPED, "工作台服务异常（%s）：%s%s" % (code, detail, note)
     if code == "poll_timeout":
         return BLOCK_UNKNOWN, (
-            "轮询 job 超时（poll_timeout）：%s；不表示设备失败" % (detail or "预算用尽")
+            "轮询 job 超时（poll_timeout）：%s；不表示设备失败%s" % (detail or "预算用尽", note)
         )
     if code in CONFIG_ERRORS:
         return BLOCK_UNKNOWN, (
-            "块参数/构帧配置错误（%s，非设备结论）：%s" % (code, detail)
+            "块参数/构帧配置错误（%s，非设备结论）：%s%s" % (code, detail, note)
         )
-    return BLOCK_UNKNOWN, "verify 未得到可判定结论（%s）：%s" % (code or "未知错误", detail)
+    return BLOCK_UNKNOWN, "verify 未得到可判定结论（%s）：%s%s" % (code or "未知错误", detail, note)
 
 
 def steps_of(result: Mapping[str, Any]) -> List[Mapping[str, Any]]:
@@ -1921,6 +2020,19 @@ def _open_simeter_port(capability: SimeterCapability, port: str) -> Dict[str, An
     return dict(result)
 
 
+def _simeter_conflict_tail(healed: Sequence[Mapping[str, Any]]) -> str:
+    """端口占用分支的收尾说明（区分「已抢占一次仍失败」/「没有 close 能力」/「没自愈」）。"""
+    results = [str(item.get("result") or "") for item in healed or ()]
+    if SELF_HEAL_FAILED in results:
+        return ("已抢占一次仍失败（close_port 释放后重试仍被占用），交上层按台架不具备处理；"
+                "按 D2-7 不还原占用方会话")
+    if SELF_HEAL_UNAVAILABLE in results:
+        return "没有可用的 close_port 能力，未自愈；需人工释放占用方"
+    if SELF_HEAL_HEALED in results:
+        return "已 close_port 抢占释放后重试成功"
+    return "表口开不了，需先释放占用方"
+
+
 def ensure_simeter_session(capability: SimeterCapability, *,
                            mapping_id: str = DEFAULT_SIMETER_PORT,
                            ensure_open: bool = DEFAULT_ENSURE_OPEN) -> Dict[str, Any]:
@@ -1933,19 +2045,23 @@ def ensure_simeter_session(capability: SimeterCapability, *,
     （``require_serial_open=True`` 严格口径），判定逻辑仍然只有一份（FT-2）。
 
     流程：``status()`` →（``serial_open`` 已真 → 沿用）→ ``open_port(mapping_id)``
-    → **再** ``status()`` 复核。**不调 ``close_port()``**：表口要一直在线给后续
-    ``meter.*`` 块用，开口方（本块）不拥有关闭时机。
+    → **再** ``status()`` 复核。**成功路径不关端口**：表口要一直在线给后续
+    ``meter.*`` 块用，开口方（本块）不拥有关闭时机。**唯一**会调 ``close_port()``
+    的场合是「open 撞 409 端口被占用」的自愈：按 §3.4 / D2-7 不判归属，先抢占释放
+    再重试**一次**（仍失败才交上层），过程留痕在返回值的 ``self_healed``。
 
     返回字典（块按 ``outcome`` 给态，不在这里直接决定 pass/fail）::
 
         {"outcome": <SIMETER_SESSION_*>, "detail": str, "port": str,
          "opened": bool, "ensure_open": bool, "error": str|None,
-         "status": dict|None}   # status = 最后一次可信的 status() 快照（供 judge 复用）
+         "status": dict|None,        # 最后一次可信的 status() 快照（供 judge 复用）
+         "self_healed": [ {action, target, result, detail}, ... ]}  # SH-2 自愈留痕
     """
     port = str(mapping_id or DEFAULT_SIMETER_PORT)
     gate: Dict[str, Any] = {
         "outcome": SIMETER_SESSION_UNKNOWN, "detail": "", "port": port,
         "opened": False, "ensure_open": bool(ensure_open), "error": None, "status": None,
+        "self_healed": [],
     }
 
     status = _simeter_status_snapshot(capability)
@@ -1972,7 +2088,17 @@ def ensure_simeter_session(capability: SimeterCapability, *,
                           "严格口径下这就是「未就绪」" % port)
         return gate
 
-    opened = _open_simeter_port(capability, port)
+    # 自愈接入点 ②（simeter 端口占用）：open 撞 409 → close_port 释放 → 重试**一次**。
+    # 口径见 §3.4 / D2-7：跑用例是主动行为，不判归属，直接抢占（关端口只走能力层接口）。
+    opened, healed = with_self_heal(
+        lambda: _open_simeter_port(capability, port),
+        action="simeter.close_port",
+        target="simeter:%s" % port,
+        cap=capability,
+        closer=capability_closer(capability, SIMETER_CLOSER_NAMES),
+        retry=SELF_HEAL_RETRY,
+    )
+    gate["self_healed"] = healed
     if not opened.get("ok"):
         code = str(opened.get("error") or "unknown")
         gate["error"] = code
@@ -1980,8 +2106,8 @@ def ensure_simeter_session(capability: SimeterCapability, *,
         gate["detail"] = _simeter_error_text(f"open_port(mapping_id={port})", code,
                                              opened.get("detail"))
         if gate["outcome"] == SIMETER_SESSION_CONFLICT:
-            gate["detail"] = ("端口被占用：%s —— 表口开不了，需先释放占用方"
-                              % gate["detail"])
+            gate["detail"] = ("端口被占用：%s —— %s"
+                              % (gate["detail"], _simeter_conflict_tail(healed)))
         return gate
 
     recheck = _simeter_status_snapshot(capability)
@@ -2004,9 +2130,12 @@ def ensure_simeter_session(capability: SimeterCapability, *,
 
     gate["outcome"] = SIMETER_SESSION_OPENED
     gate["opened"] = True
-    gate["detail"] = ("已打开表口（本次 open_port：mapping_id=%s port=%s）；"
+    preempt = ""
+    if any(str(item.get("result") or "") == SELF_HEAL_HEALED for item in healed):
+        preempt = "；先前端口被占用，已 close_port 抢占释放（未还原占用方会话）后重试成功"
+    gate["detail"] = ("已打开表口（本次 open_port：mapping_id=%s port=%s）%s；"
                       "端口保持打开，供后续抄表块使用"
-                      % (port, recheck.get("port") or "-"))
+                      % (port, recheck.get("port") or "-", preempt))
     return gate
 
 
@@ -2109,6 +2238,250 @@ def judge_sta_online(capability: ModuleCapability,
         state=FACT_UNKNOWN,
         detail="串口桥未给出 STA 口 %r 的可用性（usable=%r），无法判定" % (target, usable),
     )
+
+
+# --------------------------------------------------------------------------- #
+# 9. 自愈（REQS-0042 §3.4 / D2-7 / SH-1..3）
+# --------------------------------------------------------------------------- #
+#
+# 用户口径（原文，SH-3 审查项）
+# ----------------------------
+# 「跑测试用例时，是主动调用跑的，这时候如果有占用，那应当以自动化测试为主，
+#   不看归属，直接抢占为自己所用即可。」
+#
+# 因此本层**不判归属、不做时间猜**：遇到占用类错误就 close 释放，然后重试**一次**；
+# 只有重试后仍被占用才放弃（块态仍是既有 ``skipped``，S3 阶段才由上层映射成
+# ``blocked`` + 原因）。抢占后**不负责还原**对方的会话（D2-7）。
+#
+# 边界（SH-3 硬约束，代码审查项）
+# ------------------------------
+# 自愈**只做接口级释放与重试**（能力层的 ``close`` / ``close_port``），
+# **禁止**任何进程级操作：不起子进程、不杀进程、不直调系统 shell，
+# 不重启服务、不断电。那些属人工运维，不是自动化测试能做的事
+# （三项禁令的静态守卫见 ``test_self_heal.py``：本目录必须零命中）。
+#
+# 可注入性：close 能力**不硬编码 HTTP**，一律从能力实例的方法取（或显式传入
+# ``closer``，单测用假对象），见 :func:`capability_closer`。
+# --------------------------------------------------------------------------- #
+
+
+def is_conflict_error(result: Any) -> bool:
+    """结果是否「占用类」错误 —— **只有这类**才允许自愈（§3.4）。
+
+    - ``{"ok": False, "error": "http_409"}``：simcon 闸门忙 / simeter 端口冲突（后端同码）；
+    - ``{"outcome": "conflict"}``：开口门的分层结论（等价于 409）；
+    - 其它（``http_422`` 参数错 / ``unreachable`` / ``poll_timeout`` / ``bad_response`` …）
+      **一律不动手**：自愈解决不了配置错，乱关端口只会掩盖问题。
+    """
+    if not isinstance(result, Mapping):
+        return False
+    if result.get("ok"):
+        return False
+    if str(result.get("error") or "") in CONFLICT_ERRORS:
+        return True
+    return str(result.get("outcome") or "") == SIMETER_SESSION_CONFLICT
+
+
+def capability_closer(cap: Any, names: Sequence[str] = ("close", "close_port")) -> Optional[Any]:
+    """从能力实例取 ``close`` 能力（返回可调用对象或 ``None``）。
+
+    取不到 → ``None``：调用方据此判定「本类占用暂时不可自愈」，**绝不**自己拼 HTTP
+    去关别人的端口（SH-3：只做接口级释放，且释放动作必须属于能力层）。
+    """
+    for name in names:
+        method = getattr(cap, name, None)
+        if callable(method):
+            return method
+    return None
+
+
+def _close_names_text(names: Sequence[str]) -> str:
+    return " / ".join("%s()" % name for name in names) or "close()"
+
+
+def _close_once(closer: Any) -> Dict[str, Any]:
+    """调一次 close 能力，把任何异常收敛成 ``{"ok": bool, ...}``（不抛）。"""
+    if not callable(closer):
+        return {"ok": False, "error": "unsupported", "detail": "没有可调用的 close 能力"}
+    try:
+        raw = closer()
+    except Exception as exc:  # noqa: BLE001 - 适配器承诺不抛，替身/半成品可能抛
+        return {"ok": False, "error": "close_error",
+                "detail": "%s: %s" % (type(exc).__name__, exc)}
+    if isinstance(raw, Mapping):
+        result = dict(raw)
+        # 能力契约是 ``{"ok": bool}``；没给 ok 说明调用本身没报错，按成功算
+        result["ok"] = bool(result.get("ok", True))
+        return result
+    return {"ok": bool(raw), "detail": repr(raw)}
+
+
+def _preempt_note(closed: Mapping[str, Any]) -> str:
+    """从 close 应答里挖出「抢占了谁」+ 服务端原话（D2-7 要求事后可追溯）。"""
+    found: Dict[str, Any] = {}
+    sources: List[Mapping[str, Any]] = [closed]
+    for key in ("raw", "status", "data"):
+        nested = closed.get(key)
+        if isinstance(nested, Mapping):
+            sources.append(nested)
+    for source in sources:
+        for key in PREEMPT_KEYS:
+            if key in found:
+                continue
+            value = source.get(key)
+            if value in (None, "", False):
+                continue
+            found[key] = value
+    parts = ["%s=%s" % (key, found[key]) for key in PREEMPT_KEYS if key in found]
+    message = str(closed.get("detail") or closed.get("message") or "").strip()
+    if message:
+        parts.append("服务端应答：%s" % message)
+    if not closed.get("ok"):
+        code = str(closed.get("error") or "unknown")
+        parts.append("close 未成功（%s）" % code)
+    return "；".join(parts)
+
+
+def _close_ok_text(closed: Mapping[str, Any]) -> str:
+    """close 动作的可读描述（成功给抢占对象，失败给错误码）。"""
+    note = _preempt_note(closed)
+    if closed.get("ok"):
+        return note or "close 返回 ok（应答里未指名占用方）"
+    return note or ("close 失败（%s）" % (closed.get("error") or "unknown"))
+
+
+def _attempt_error_text(result: Any) -> str:
+    """把一次尝试的失败结果压成「码：detail」（原始错误要进留痕，不许吞掉）。"""
+    if not isinstance(result, Mapping):
+        return str(result)
+    code = str(result.get("error") or result.get("outcome") or "unknown")
+    detail = str(result.get("detail") or "").strip()
+    return "%s：%s" % (code, detail) if detail else code
+
+
+def _clamp_retry(retry: Any) -> int:
+    """重试次数夹到 ``[0, SELF_HEAL_MAX_RETRY]`` —— SH-1「仅一次」，绝不放大成死循环。"""
+    try:
+        value = int(retry)
+    except (TypeError, ValueError):
+        value = SELF_HEAL_RETRY
+    return max(0, min(value, SELF_HEAL_MAX_RETRY))
+
+
+def _attempt_call(attempt: Any) -> Any:
+    """跑一次尝试，异常收敛成 ``attempt_error``（自愈包装绝不把块打崩）。"""
+    try:
+        return attempt()
+    except Exception as exc:  # noqa: BLE001 - 替身/半成品适配器都可能抛
+        return {"ok": False, "error": "attempt_error",
+                "detail": "%s: %s" % (type(exc).__name__, exc)}
+
+
+def with_self_heal(
+    attempt: Any,
+    *,
+    action: str,
+    target: str,
+    cap: Any = None,
+    closer: Any = None,
+    retry: int = SELF_HEAL_RETRY,
+    conflict: Any = None,
+) -> Tuple[Any, List[Dict[str, Any]]]:
+    """**统一自愈包装**（§3.4 唯一一份实现，simcon / simeter 两类占用共用）。
+
+    参数
+    ----
+    - ``attempt``：真正干活的零参可调用（``call_verify`` / ``open_port`` 的一次尝试），
+      返回 ``{"ok": bool, "error": ...}`` 形态的字典；
+    - ``action`` / ``target``：留痕字段（``simcon.close`` / ``simeter.close_port``，
+      target 形如 ``simcon:simcon`` / ``simeter:simeter``）；
+    - ``cap``：能力实例，没显式给 ``closer`` 时按 ``close`` / ``close_port`` 解析；
+    - ``closer``：**可注入**的 close 能力（单测传假对象，绝不硬编码 HTTP）；
+    - ``retry``：重试次数，夹到 ``[0, 1]``（SH-1：仅一次）；
+    - ``conflict``：占用类判定，默认 :func:`is_conflict_error`。
+
+    返回 ``(最后一次结果, 留痕列表)``：留痕每项 ``{action, target, result, detail}``，
+    ``result`` ∈ ``healed`` / ``failed`` / ``unavailable``。同时写进执行器的
+    自愈收集器（``core.executor.record_self_heal``），块本身不用改一行。
+
+    行为（与用户口径逐字对应）
+    -------------------------
+    1. 第一次尝试不成功但不是占用类 → **原样返回**，一次 close 都不发、一次都不重试；
+    2. 占用类 → close 释放（**不看占用方是谁**）→ 重试**一次**：
+       - 重试成功 → ``healed``（块态照常由判据决定 pass/fail）；
+       - 重试仍被占 → ``failed``（detail 带原始错误 + 「已抢占一次仍失败」，
+         块态仍是既有 ``skipped``，交上层按台架不具备处理）；
+    3. 没有可注入的 close 能力 → ``unavailable``（不猜、不硬编码 HTTP，直接交上层）。
+    """
+    is_conflict = conflict if callable(conflict) else is_conflict_error
+    limit = _clamp_retry(retry)
+    first = _attempt_call(attempt)
+    if limit <= 0 or not is_conflict(first):
+        return first, []
+
+    close_fn = closer if closer is not None else capability_closer(cap)
+    if not callable(close_fn):
+        record = self_heal_entry(
+            action, target, SELF_HEAL_UNAVAILABLE,
+            "遇到占用（原始错误：%s），但能力实例 %s 没有可用的 %s，无法自愈；"
+            "不猜、不硬编码 HTTP、不做进程级操作（SH-3），按占用交上层"
+            % (_attempt_error_text(first),
+               type(cap).__name__ if cap is not None else "（未注入）",
+               _close_names_text(SIMCON_CLOSER_NAMES + SIMETER_CLOSER_NAMES)),
+        )
+        record_self_heal(record)
+        return first, [record]
+
+    original = _attempt_error_text(first)
+    closed = _close_once(close_fn)
+    close_text = _close_ok_text(closed)
+    last = first
+    healed = False
+    for _ in range(limit):
+        last = _attempt_call(attempt)
+        if not is_conflict(last):
+            healed = True
+            break
+
+    if healed:
+        detail = (
+            "遇到占用（原始错误：%s）→ 已 close 抢占释放（%s）→ 重试 1 次成功；"
+            "按 D2-7 不还原占用方会话" % (original, close_text)
+        )
+        record = self_heal_entry(action, target, SELF_HEAL_HEALED, detail)
+    else:
+        detail = (
+            "遇到占用（原始错误：%s）→ 已抢占一次仍失败（close：%s；重试 1 次后仍被占用：%s）；"
+            "不再重试，交上层按台架不具备处理（S3 映射为 blocked）"
+            % (original, close_text, _attempt_error_text(last))
+        )
+        record = self_heal_entry(action, target, SELF_HEAL_FAILED, detail)
+    record_self_heal(record)
+    return last, [record]
+
+
+_SELF_HEAL_NOTE_TEXT = {
+    SELF_HEAL_HEALED: "已抢占释放并重试成功",
+    SELF_HEAL_FAILED: "已抢占一次仍失败",
+    SELF_HEAL_UNAVAILABLE: "无可用的 close 能力，未自愈",
+}
+
+
+def self_heal_note(result: Any) -> str:
+    """把结果里带的自愈留痕压成一句**简短**后缀（全文在结构化留痕里，不在这里灌水）。"""
+    if not isinstance(result, Mapping):
+        return ""
+    healed = result.get(SELF_HEALED_KEY)
+    if not isinstance(healed, (list, tuple)) or not healed:
+        return ""
+    parts: List[str] = []
+    for item in healed:
+        if not isinstance(item, Mapping):
+            continue
+        code = str(item.get("result") or "")
+        parts.append("%s→%s（%s）" % (item.get("action") or "close", code,
+                                      _SELF_HEAL_NOTE_TEXT.get(code, "详情见 self_healed")))
+    return "；自愈记录：" + "；".join(parts) if parts else ""
 
 
 __all__ = [
@@ -2237,4 +2610,17 @@ __all__ = [
     "judge_simeter",
     "judge_simcon",
     "judge_sta_online",
+    # 9. 自愈（§3.4 / D2-7 / SH-1..3）
+    "with_self_heal",
+    "is_conflict_error",
+    "capability_closer",
+    "self_heal_note",
+    "SELF_HEAL_MAX_RETRY",
+    "SELF_HEAL_RETRY",
+    "SELF_HEAL_HEALED",
+    "SELF_HEAL_FAILED",
+    "SELF_HEAL_UNAVAILABLE",
+    "CONFLICT_ERRORS",
+    "SIMCON_CLOSER_NAMES",
+    "SIMETER_CLOSER_NAMES",
 ]

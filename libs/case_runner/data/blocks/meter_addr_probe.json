@@ -1,13 +1,18 @@
 {
   "id": "meter.addr_probe",
-  "title": "STA 获取表地址（02H-F1 透传 645 13H，判内层地址域）",
+  "title": "STA 获取表地址（02H-F1 透传 645 13H，判内层地址域）。等待型重试默认关闭：wait_s=0 只探一次（wait_s>0 时每 poll_interval_s 重发同一只读透传帧，直到判据成立或等满预算；等满全程无应答→unknown 说不清，有应答但地址不符→fail 真失败）——复位 STA 后链路恢复是分钟级，只有 meter_first_join 场景按需开启，meter_daily 保持默认",
   "needs": ["bench.simcon_online"],
   "provides": [],
   "action": {
     "afn": "02",
     "fn": 1,
-    "params": {"protocol": 2, "meter_addr": null},
-    "expect_timeout": 8
+    "params": {
+      "protocol": 2,
+      "meter_addr": null,
+      "addr_mode": "meter",
+      "wait_s": 0,
+      "poll_interval_s": 5
+    }
   },
   "assert": [{"type": "inner_645_addr", "meter_addr": null}],
   "tags": ["meter", "645", "smoke"]

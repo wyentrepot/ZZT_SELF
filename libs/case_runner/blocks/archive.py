@@ -18,6 +18,24 @@
 地址 → 用档案地址构 11H 帧与 10H-F2 回查判据」，**同一块内只有一只表**（action 与 assert
 不许各指一只，否则会出现「删 A 验 B」的假通过）。
 
+幂等（REQS-0042 §3.2 / **ID-1** / **ID-2**）
+-------------------------------------------
+``archive.add`` / ``archive.del`` 在**下发激励之前**先发一次只读的 10H-F2 预查，
+按 :func:`judge_contains` 的三态分流（**查不全 ≠ 不存在**）：
+
+====================  ==========================================================
+已存在                ``archive.add`` → ``pass`` +「已存在，跳过下发」，零 11H-F1 帧
+本就不存在            ``archive.del`` → ``pass`` +「本就不存在」，零 11H-F2 帧
+未查全 / 查询无结论    ``unknown``（不据此下发，detail 写明「未查全 ≠ 不存在」）
+明确不存在            ``archive.add`` 走原「建档 + 确认 + 回查」双判据
+====================  ==========================================================
+
+于是「同一方案连跑两次，两次结论一致」不依赖 CCO 容忍重复建档/重复删档——
+真实 CCO 对重复建档可能回 00H-F2 否认帧（错误状态字 7「表号不存在」），
+对已不存在的表号删档同理，那两条都会被当成假 FAIL。
+**破坏性动作不吃默认地址**的规则不因幂等而放宽：``archive.del`` 没显式给地址时
+仍然零帧 ``fail``（预查也一帧不发）。
+
 状态口径（REQS RU-3「绝不假 PASS」）
 -----------------------------------
 ===================  ==========================================================
@@ -94,6 +112,7 @@ from case_runner.core.executor import PARAM_ASSERT, BlockResult
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
+    BLOCK_SKIPPED,
     BLOCK_UNKNOWN,
     FACT_NO,
     FACT_UNKNOWN,
@@ -251,6 +270,18 @@ def block_add(params: Any, ctx: Any = None) -> BlockResult:
     入参 ``meter_addr``（电表 645 表地址）→ ``archive_addr_of()`` 换算成档案地址后构帧与
     回查；返回值里的 ``facts={"archive.contains": ...}`` **只作证据**（进块记录），不作为
     ``provides`` 回写事实缓存 —— 该事实带 ``meter_addr`` 参数，回写会造成跨地址假 PASS。
+
+    **幂等（REQS-0042 §3.2 / ID-1）**：下发 11H-F1 之前先发一次 10H-F2 预查（与回查同一份
+    档案地址、同一套查询窗口），按 :func:`judge_contains` 的三态分流：
+
+    ============== ================================================================
+    ``FACT_YES``   ``pass`` + 「已存在，跳过下发」——**零 11H-F1 帧**，也不查会话帧日志
+    ``FACT_UNKNOWN`` ``unknown`` + 「预查未查全」——查不全 ≠ 不存在，绝不据此下发
+    ``FACT_NO``    明确不存在 → 走原「建档 + 确认 + 回查」双判据
+    ============== ================================================================
+
+    这样同一用例连跑两次都是 ``pass``；否则第二次会因为 CCO 对重复建档回 00H-F2
+    否认帧（错误状态字 7「表号不存在」）而判 FAIL —— 那个 FAIL 是块造成的假 FAIL。
     """
     target, error = require_target(params, AFN_ARCHIVE, FN_ARCHIVE_ADD, BLOCK_ADD)
     if target is None:
@@ -287,6 +318,57 @@ def block_add(params: Any, ctx: Any = None) -> BlockResult:
     if gate is not None:
         return gate
 
+    # ------------------------------------------------------------------ #
+    # 幂等前置（REQS-0042 §3.2 / ID-1）：先 10H-F2 查档，已存在就不重复下发
+    # ------------------------------------------------------------------ #
+    # 三态必须分开处理，**不能**把「没查到」一律当「不存在」：
+    #   YES     → 已存在：pass 收工（零 11H-F1 帧；CCO 对重复建档可能回 00H-F2
+    #             否认帧，那会被判 FAIL —— 幂等就是为了消除这个假 FAIL）
+    #   UNKNOWN → 没查全 / 查询没得到可判定应答：不能当不存在去下发，unknown
+    #   NO      → 明确不存在：走原「建档 + 确认 + 回查」双判据
+    pre = archive_snapshot(cap=cap, **_query_options(action))
+    job_ids = list(pre.get("job_ids") or [])
+    exists_state, exists_detail = judge_contains(pre, addr)
+    if exists_state == FACT_YES:
+        return BlockResult(
+            state=BLOCK_PASS,
+            detail="已存在，跳过下发：%s（电表表地址 %s；未发 11H-F1，"
+            "避免 CCO 对重复建档回 00H-F2 否认帧而误判 FAIL）" % (exists_detail, meter_addr),
+            facts={
+                FACT_CONTAINS: {
+                    "state": FACT_YES,
+                    "detail": "archive.add 幂等命中（已存在，未下发）：%s" % exists_detail,
+                    "evidence": list(job_ids),
+                }
+            },
+            evidence_ids=list(job_ids),
+            expected="档案表含 %s" % addr,
+            actual="档案表已含 %s（未下发建档帧）" % addr,
+        )
+    if exists_state == FACT_UNKNOWN:
+        if pre.get("block_state") == BLOCK_SKIPPED:
+            # 环境/闸门问题（409 会话忙、台架不可达、看不到应答帧）：既不是设备结论，
+            # 也不等于「不存在」——按 skipped 上报，别把环境问题洗成 unknown/fail。
+            return BlockResult(
+                state=BLOCK_SKIPPED,
+                detail="%s 预查不具备条件，未下发 11H-F1（%s）" % (BLOCK_ADD, exists_detail),
+                evidence_ids=list(job_ids),
+            )
+        why = (
+            "档案表未查全" if pre.get("state") == "answered" else "未得到可判定应答"
+        )
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail=(
+                "%s 预查%s，不能当作「不存在」去下发 11H-F1：%s"
+                "（查不全 ≠ 不存在；请缩小查询窗口 count/max_pages 或等台架稳定后重跑）"
+                % (BLOCK_ADD, why, exists_detail)
+            ),
+            evidence_ids=list(job_ids),
+            expected="档案表不含 %s 且预查已覆盖全部档案" % addr,
+            actual="预查不可判定（%s）" % (pre.get("detail") or exists_detail),
+        )
+
     confirm_timeout = action.get("confirm_timeout", DEFAULT_TIMEOUT)
     confirm = call_verify(
         cap,
@@ -302,14 +384,15 @@ def block_add(params: Any, ctx: Any = None) -> BlockResult:
             )
         ],
     )
-    job_ids = [str(confirm.get("job_id") or "")] if confirm.get("job_id") else []
+    if confirm.get("job_id"):
+        job_ids.append(str(confirm["job_id"]))
     confirm_steps = steps_of(confirm)
     if not confirm_steps:
         state, why = verify_failure_state(confirm)
         return BlockResult(
             state=state,
             detail="%s：建档帧未得到可判定结论，双判据未成立（%s）" % (BLOCK_ADD, why),
-            evidence_ids=job_ids,
+            evidence_ids=list(job_ids),
         )
     verdict = judge_confirm_step(
         confirm_steps[-1], label="11H-F1 建档确认", cap=cap, job=confirm
@@ -375,6 +458,14 @@ def block_del(params: Any, ctx: Any = None) -> BlockResult:
     调用方没显式给地址 → 下发前一帧不发就 ``fail``。理由：``case_defaults.meter_addr``
     是「现场那只被测表」，拿它当删档默认等于「不传参就把被测表的档案删了」；而 ``loader``
     会把声明 ``assert`` 里的 ``null`` 解析成同一个默认值，所以 assert 兜底也必须关掉。
+    幂等前置**不放宽**这条：它排在地址解析之后，没地址时仍然零帧 ``fail``。
+
+    **幂等（REQS-0042 §3.2 / ID-2）**：下发 11H-F2 之前先发一次 10H-F2 预查：
+
+    - 目标**本就不存在**（全查不到且已查全）→ ``pass`` + 「本就不存在」，零删档帧
+      （第二次跑删档不再因为 CCO 回 00H-F2 否认帧「表号不存在」而假 FAIL）；
+    - 目标还在 → 只把**仍存在**的那些放进删档帧，后置判据仍逐个验**全部目标**；
+    - 一个都查不到却没查全 → ``unknown``，不猜着删也不猜着判 pass。
     """
     target, error = require_target(params, AFN_ARCHIVE, FN_ARCHIVE_DEL, BLOCK_DEL)
     if target is None:
@@ -396,35 +487,87 @@ def block_del(params: Any, ctx: Any = None) -> BlockResult:
             "请显式给要删的表地址（--params meter_addr=... / meter_addrs=[...]）"
         )
     meters = archive_addrs           # 档案侧地址：构帧 + 回查判据同一份
+    #: 档案地址 → 电表 645 地址（只用于 detail 留痕；两份列表同序，越界时退回档案地址）
+    meter_of = {
+        addr: (meter_addrs[index] if index < len(meter_addrs) else addr)
+        for index, addr in enumerate(meters)
+    }
 
     cap, injected = resolve_simcon(ctx)
     gate = capability_gate(cap, injected)
     if gate is not None:
         return gate
 
+    # ------------------------------------------------------------------ #
+    # 幂等前置（REQS-0042 §3.2 / ID-2）：先 10H-F2 查档
+    # ------------------------------------------------------------------ #
+    #   - 目标全都查不到（且查全了）→ pass「本就不存在」，**零 11H-F2 帧**
+    #   - 目标还在                    → 只删**仍存在**的那些（避免 CCO 对「表号不存在」
+    #     回 00H-F2 否认帧 → 假 FAIL），但后置判据仍逐个验**调用方要求的全部目标**
+    #   - 一个都没查到却「没查全」    → unknown，不猜着删也不猜着判 pass
+    pre = archive_snapshot(cap=cap, **_query_options(action))
+    job_ids = list(pre.get("job_ids") or [])
+    present: List[str] = []
+    unsure: List[str] = []
+    for addr in meters:
+        state, detail = judge_contains(pre, addr)
+        if state == FACT_YES:
+            present.append(addr)
+        elif state == FACT_UNKNOWN:
+            unsure.append("%s（%s）" % (addr, detail))
+    if not present and unsure:
+        if pre.get("block_state") == BLOCK_SKIPPED:
+            # 环境/闸门问题：连查都查不了，不能判 pass 也不能判 fail
+            return BlockResult(
+                state=BLOCK_SKIPPED,
+                detail="%s 预查不具备条件，未发 11H-F2 删档帧（%s）"
+                % (BLOCK_DEL, pre.get("detail") or "；".join(unsure)),
+                evidence_ids=list(job_ids),
+            )
+        why = "预查未查全" if pre.get("state") == "answered" else "预查未得到可判定应答"
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail="%s %s，既不能断定目标已不存在也不能安心删档（%s）；"
+            "未发 11H-F2 删档帧" % (BLOCK_DEL, why, "；".join(unsure)),
+            evidence_ids=list(job_ids),
+            expected="档案表不含 %s" % ",".join(meters),
+            actual="预查不可判定（%s）" % (pre.get("detail") or ""),
+        )
+    if not present:
+        return BlockResult(
+            state=BLOCK_PASS,
+            detail="本就不存在，跳过下发：10H-F2 已查不到 %s（%s；未发 11H-F2 删档帧）"
+            % (",".join(meters), pre.get("detail") or ""),
+            evidence_ids=list(job_ids),
+            expected="档案表不含 %s" % ",".join(meters),
+            actual="本就不存在 %s" % ",".join(meters),
+        )
+    already_gone = [addr for addr in meters if addr not in present]
+
     confirm = call_verify(
         cap,
         [
             send_step(
                 "删除从节点档案 %s（电表表地址 %s）"
-                % (",".join(meters), ",".join(meter_addrs)),
+                % (",".join(present), ",".join(meter_of.get(a, a) for a in present)),
                 AFN_ARCHIVE,
                 FN_ARCHIVE_DEL,
-                {"meters": meters},
+                {"meters": present},
                 expect_afn=AFN_CONFIRM,
                 expect_fn=FN_CONFIRM,
                 timeout=action.get("confirm_timeout", DEFAULT_TIMEOUT),
             )
         ],
     )
-    job_ids = [str(confirm.get("job_id") or "")] if confirm.get("job_id") else []
+    if confirm.get("job_id"):
+        job_ids.append(str(confirm["job_id"]))
     confirm_steps = steps_of(confirm)
     if not confirm_steps:
         state, why = verify_failure_state(confirm)
         return BlockResult(
             state=state,
             detail="%s：删档帧未得到可判定结论（%s）" % (BLOCK_DEL, why),
-            evidence_ids=job_ids,
+            evidence_ids=list(job_ids),
         )
     verdict = judge_confirm_step(
         confirm_steps[-1], label="11H-F2 删档确认", cap=cap, job=confirm
@@ -465,10 +608,15 @@ def block_del(params: Any, ctx: Any = None) -> BlockResult:
             % "；".join(unknown),
             evidence_ids=list(job_ids),
         )
+    skipped_note = (
+        "（其中 %s 下发前 10H-F2 已查不到，未纳入删档帧）" % ",".join(already_gone)
+        if already_gone
+        else ""
+    )
     return BlockResult(
         state=BLOCK_PASS,
-        detail="双判据成立：00H-F1 确认已收到，且 10H-F2 已查不到 %s（%s）"
-        % (",".join(meters), snapshot.get("detail") or ""),
+        detail="双判据成立：00H-F1 确认已收到，且 10H-F2 已查不到 %s（%s）%s"
+        % (",".join(meters), snapshot.get("detail") or "", skipped_note),
         evidence_ids=list(job_ids),
         expected="删除后查不到 %s" % ",".join(meters),
         actual="查不到 %s" % ",".join(meters),

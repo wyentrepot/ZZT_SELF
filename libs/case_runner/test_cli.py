@@ -58,6 +58,7 @@ EXIT_FAIL = 1
 EXIT_INCOMPLETE = 2
 EXIT_USAGE = 3
 EXIT_DECLARATION = 4
+EXIT_BLOCKED = 5        # blocked：台架/前置不具备（与 cli.EXIT_BLOCKED 同值）
 
 #: 末档默认地址（从常量推出来，测试里不重复写端口）
 DEFAULT_URL = "http://127.0.0.1:%d" % cli.DEFAULT_PORT
@@ -270,6 +271,9 @@ def isolate_service_discovery(
     runtime_file = tmp_path / "runtime" / "workbench.json"
     monkeypatch.setattr(cli, "RUNTIME_FILE", runtime_file)
     monkeypatch.setattr(cli, "DEFAULT_BASE_URL", "")
+    # 结果落盘根也必须隔离：否则每次 `run` 都会往仓库 data/case_runs/ 里写 dir
+    # （单测不许碰 data/**）。需要断言落盘内容的用例自己传 --result-dir。
+    monkeypatch.setattr(cli, "DEFAULT_RESULT_DIR", tmp_path / "case_runs")
     monkeypatch.delenv(cli.ENV_BASE_URL, raising=False)
     monkeypatch.chdir(tmp_path)
     return runtime_file
@@ -454,33 +458,65 @@ def test_exit_code_2_when_block_unknown(bench: FakeBench) -> None:
     assert payload["counts"]["pass"] == 0      # unknown 绝不进 pass 计数
 
 
-def test_exit_code_2_when_gated_by_unmet_fact(bench: FakeBench) -> None:
+def test_preflight_blocks_whole_run_when_needed_fact_is_no(bench: FakeBench) -> None:
+    """VF-2：前置事实不满足 → **整轮 blocked**（退出码 5），且一个块都不许跑。"""
     bench.truth["fake.ready"] = "no"
     code, payload = run_json([
         "run", "--case", "fake_blocked", "--params", json.dumps({"meter_addr": ADDR}),
         "--json", "--data-dir", str(bench.root),
     ])
-    assert code == EXIT_INCOMPLETE
-    assert payload["verdict"] == "inconclusive"
+    assert code == EXIT_BLOCKED
+    assert payload["verdict"] == "blocked"
+    assert payload["counts"]["pass"] == 0
+    assert payload["counts"]["total"] == 0, "预检不过不许逐用例跑出任何块记录"
+    assert bench.recorder.block_calls == []
+    # 缺项清单：事实 id + 三态 + 原因
+    assert payload["unmet_facts"]["fake.ready"]["state"] == "no"
+    assert payload["unmet_facts"]["fake.ready"]["reason"]
+    assert payload["preflight"]["ok"] is False
+    assert payload["interventions"] == []
+    assert "预检未通过" in payload["skipped_reason"]
+    kinds = [item["kind"] for item in payload["decisions"]]
+    assert "preflight" in kinds, "预检本身也要留证据（D4-4）"
+
+
+def test_gated_block_is_blocked_not_inconclusive_without_preflight(bench: FakeBench) -> None:
+    """``--no-preflight``：逐用例跑到一半发现前置不满足 → 块态 skipped 落 **blocked**。
+
+    §3.5：``skipped``（台架/前置不具备）→ 用例 ``blocked``；``unknown``（说不清）才落
+    ``inconclusive``。这两档在退出码上分别是 5 与 2（D2-6 六档）。
+    """
+    bench.truth["fake.ready"] = "no"
+    code, payload = run_json([
+        "run", "--case", "fake_blocked", "--params", json.dumps({"meter_addr": ADDR}),
+        "--no-preflight", "--json", "--data-dir", str(bench.root),
+    ])
+    assert code == EXIT_BLOCKED
+    assert payload["verdict"] == "blocked"
     assert payload["counts"]["skipped"] == 1
     assert payload["counts"]["pass"] == 0
     # 断点：阻断块 + 未满足事实都要给出
     assert payload["blocked_block"] == "fake.gated"
-    assert "fake.ready" in payload["unmet_facts"]
     assert payload["unmet_facts"]["fake.ready"]["state"] == "no"
 
 
 def test_no_fake_pass_when_fact_unknown(bench: FakeBench) -> None:
-    """``unknown`` 永不折算 pass：事实不知道 → 块 skipped → 用例 inconclusive。"""
+    """``unknown`` 永不折算 pass；且**事实 unknown ≠ 块态 unknown**（两档结论不同）。
+
+    - 事实 ``unknown``（台架就绪度没验出来）→ 预检判「未满足」→ 整轮 ``blocked``（5）；
+    - 块态 ``unknown``（超时无应答 / 解析不出）→ 用例 ``inconclusive``（2），
+      由 ``test_exit_code_2_when_block_unknown`` 守着。
+    """
     bench.truth["fake.ready"] = "unknown"
     code, payload = run_json([
         "run", "--case", "fake_blocked", "--params", json.dumps({"meter_addr": ADDR}),
         "--json", "--data-dir", str(bench.root),
     ])
-    assert code == EXIT_INCOMPLETE
-    assert payload["verdict"] == "inconclusive"
+    assert code == EXIT_BLOCKED
+    assert payload["verdict"] == "blocked"
     assert payload["counts"]["pass"] == 0
     assert all(block["state"] != "pass" for block in payload["blocks"])
+    assert payload["unmet_facts"]["fake.ready"]["state"] == "unknown"
 
 
 def test_exit_code_4_on_broken_declaration(bench: FakeBench) -> None:
@@ -663,11 +699,16 @@ def test_argparse_usage_error_maps_to_exit_3(tmp_path: pathlib.Path) -> None:
 
 
 def test_help_documents_exit_codes(capsys: pytest.CaptureFixture[str]) -> None:
+    """六档退出码必须写进 ``--help``（REQS-0042 D2-6 / D4-5）。"""
     code = cli.main(["--help"])
     captured = capsys.readouterr()
     assert code == EXIT_OK
-    for token in ("0  全部 pass", "1  有 fail", "2  有 unknown/skipped", "3  用法/参数错误",
-                  "4  声明加载失败"):
+    for token in (
+        "0  pass", "1  fail", "2  inconclusive", "3  用法/参数错误",
+        "4  声明加载失败", "5  blocked",
+        # 新开关同样要在帮助里说清用途
+        "--timeout", "--no-preflight", "--result-dir",
+    ):
         assert token in captured.out, token
 
 
@@ -1020,17 +1061,42 @@ def test_case_file_runs_without_being_registered(bench: FakeBench, tmp_path: pat
     case_file = tmp_path / "adhoc.json"
     case_file.write_text(json.dumps({
         "id": "adhoc", "title": "临时用例", "steps": [_step("跑假块")],
-        "needs": ["fake.never"], "blocks": ["fake.pass"], "asserts": [],
+        "needs": [], "blocks": ["fake.pass"], "asserts": [],
     }, ensure_ascii=False), encoding="utf-8")
     code, payload = run_json(["run", "--case-file", str(case_file), "--json",
                               "--data-dir", str(bench.root)])
-    assert code == EXIT_INCOMPLETE          # 前置事实 unknown → 块 skipped
+    assert code == EXIT_OK
     assert payload["case_id"] == "adhoc"
-    assert payload["blocked_block"] == "fake.pass"
+    assert payload["verdict"] == "pass"
 
     code, out, err = run_cli(["show", "--case-file", str(case_file),
                               "--data-dir", str(bench.root)])
     assert code == EXIT_OK and "临时用例" in out
+
+
+def test_case_file_with_unknown_need_is_blocked_by_preflight(
+    bench: FakeBench, tmp_path: pathlib.Path
+) -> None:
+    """临时用例的 ``needs`` 同样进预检：unknown 事实 → 整轮 blocked（不跑块）。"""
+    case_file = tmp_path / "adhoc.json"
+    case_file.write_text(json.dumps({
+        "id": "adhoc", "title": "临时用例", "steps": [_step("跑假块")],
+        "needs": ["fake.never"], "blocks": ["fake.pass"], "asserts": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    code, payload = run_json(["run", "--case-file", str(case_file), "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_BLOCKED
+    assert payload["case_id"] == "adhoc"
+    assert payload["verdict"] == "blocked"
+    assert payload["unmet_facts"]["fake.never"]["state"] == "unknown"
+    assert bench.recorder.block_calls == []
+
+    # 关掉预检 → 逐用例跑到闸门：块态 skipped → blocked（§3.5），断点在 fake.pass
+    code, payload = run_json(["run", "--case-file", str(case_file), "--no-preflight",
+                              "--json", "--data-dir", str(bench.root)])
+    assert code == EXIT_BLOCKED
+    assert payload["blocked_block"] == "fake.pass"
+    assert payload["counts"]["pass"] == 0
 
 
 def test_case_file_with_unknown_block_is_usage_error(
@@ -1181,8 +1247,12 @@ def test_show_case_has_step_table(bench: FakeBench) -> None:
 
 
 def test_show_real_case_has_step_table_readonly() -> None:
-    """真声明根：``show meter_read`` 要有步骤表（plan 为自动展开，只读不跑块）。"""
-    code, out, _err = run_cli(["show", "meter_read"])
+    """真声明根：``show meter_first_join`` 要有步骤表（plan 展开，只读不跑块）。
+
+    REQS-0042 v9 D9-1 起抄表拆成 ``meter_daily``（不复位）/ ``meter_first_join``（首次组网），
+    后者含 ``meter.addr_probe``，正好覆盖「步骤表 + 绑表步骤可见」这条意图。
+    """
+    code, out, _err = run_cli(["show", "meter_first_join"])
     assert code in (EXIT_OK, EXIT_DECLARATION), out
     assert "步骤表" in out, out
     assert "meter.addr_probe" in out

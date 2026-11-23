@@ -1,18 +1,42 @@
-"""P1-4 执行器测试（REQS v3 §10.5 KE-3 / PLAN P1-4）。
+"""P1-4 执行器测试（REQS v3 §10.5 KE-3 / PLAN P1-4；REQS-0042 §3.5 / D2-4 / D4-4）。
 
 铁律：
-- 结论一律落 ``test_automation.models.AssertionResult``（outcome ∈ pass|fail|inconclusive）
-- ``unknown`` 与 ``skipped`` 永不计入 PASS 计数（绝不假 PASS）
-- ``stop_on_fail`` 时首块非 pass → 下游全 ``skipped``
+- 结论**分两层**：断言层 ``AssertionResult`` 仍严格三值（``pass|fail|inconclusive``），
+  用例 / 方案 verdict 是**四态**（``pass|fail|blocked|inconclusive``）。
+  块态 → verdict：``pass→pass`` / ``fail→fail`` / ``skipped→blocked`` / ``unknown→inconclusive``。
+- 优先级 ``fail > blocked > inconclusive > pass``（用例级与方案级同一份口径）。
+- ``unknown`` 与 ``skipped`` **永不计入 PASS 计数**（绝不假 PASS）。
+- ``stop_on_fail`` 时首块非 pass → 下游全 ``skipped``。
+- ``decisions[]`` 自动生成（自愈 / 等待 / 超时），``interventions[]`` **恒为空**。
 """
 
 from __future__ import annotations
 
-import pytest
-from test_automation.models import AssertionResult
+import json
 
-from case_runner.core.executor import CaseRunResult, RunContext, execute_case
-from case_runner.core.models import BlockSpec, CaseSpec, CaseStep
+import pytest
+from test_automation.models import ASSERTION_OUTCOMES, AssertionResult
+
+from case_runner.core.executor import (
+    BLOCK_TO_ASSERTION_OUTCOME,
+    BLOCK_TO_OUTCOME,
+    CaseRunResult,
+    RunContext,
+    aggregate_verdict,
+    auto_decisions,
+    coerce_block_return,
+    execute_case,
+)
+from case_runner.core.models import (
+    OUTCOME_BLOCKED,
+    OUTCOME_FAIL,
+    OUTCOME_INCONCLUSIVE,
+    OUTCOME_PASS,
+    OUTCOMES,
+    BlockSpec,
+    CaseSpec,
+    CaseStep,
+)
 from case_runner.core.planner import FACT_UNKNOWN, FACT_YES
 from case_runner.core.registry import (
     clear_registries,
@@ -73,6 +97,110 @@ def test_single_fail_block_verdict_fail_and_failed_block() -> None:
     assert [b.state for b in result.blocks] == ["pass", "fail"]
 
 
+# --- A2 块态 → verdict 四态（REQS-0042 §3.5 / D2-4） -------------------------
+
+
+@pytest.mark.parametrize(
+    ("block_state", "verdict", "assertion_outcome"),
+    [
+        ("pass", OUTCOME_PASS, "pass"),
+        ("fail", OUTCOME_FAIL, "fail"),
+        ("skipped", OUTCOME_BLOCKED, "inconclusive"),  # 台架不具备 → blocked
+        ("unknown", OUTCOME_INCONCLUSIVE, "inconclusive"),  # 说不清 → inconclusive
+    ],
+)
+def test_block_state_to_verdict_and_assertion(
+    block_state, verdict, assertion_outcome
+) -> None:
+    """每种块态 → 对应 verdict；同时断言**断言层仍三值**（skipped 也不出 blocked）。"""
+    register_block("b1", lambda params, c: {"state": block_state, "detail": block_state})
+    result = execute_case(make_case(["b1"]), ctx())
+    assert result.verdict == verdict
+    assert result.blocks[0].outcome == verdict
+    assert result.blocks[0].assertion.outcome == assertion_outcome
+    assert result.blocks[0].assertion.outcome in ASSERTION_OUTCOMES
+    assert result.to_dict()["steps"][0]["outcome"] == verdict
+
+
+def test_block_state_mapping_tables() -> None:
+    """两张映射表**故意不同**：skipped 在 verdict 层是 blocked、在断言层是 inconclusive。"""
+    assert BLOCK_TO_OUTCOME == {
+        "pass": OUTCOME_PASS,
+        "fail": OUTCOME_FAIL,
+        "skipped": OUTCOME_BLOCKED,
+        "unknown": OUTCOME_INCONCLUSIVE,
+    }
+    assert BLOCK_TO_ASSERTION_OUTCOME == {
+        "pass": "pass",
+        "fail": "fail",
+        "skipped": "inconclusive",
+        "unknown": "inconclusive",
+    }
+    assert set(BLOCK_TO_ASSERTION_OUTCOME.values()) == ASSERTION_OUTCOMES
+
+
+def test_skipped_only_case_is_blocked_not_inconclusive() -> None:
+    """本次核心变更：台架不具备（``skipped``）不再算「说不清」，而是 ``blocked``。"""
+    register_block("b1", lambda params, c: {"state": "skipped", "detail": "端口被占"})
+    result = execute_case(make_case(["b1"]), ctx())
+    assert result.verdict == OUTCOME_BLOCKED
+    assert result.blocked_block == "b1"
+    assert result.failed_block == ""
+    assert result.counts["pass"] == 0, "skipped 永不计入 pass"
+
+
+def test_verdict_priority_fail_beats_blocked() -> None:
+    register_block("b1", lambda params, c: {"state": "fail"})
+    register_block("b2", lambda params, c: {"state": "skipped"})
+    result = execute_case(make_case(["b2", "b1"]), ctx())
+    assert [b.state for b in result.blocks] == ["skipped", "fail"]
+    assert result.verdict == OUTCOME_FAIL, "fail(真失败) 优先于 blocked(台架问题)"
+
+
+def test_verdict_priority_blocked_beats_inconclusive() -> None:
+    register_block("b1", lambda params, c: {"state": "unknown"})
+    register_block("b2", lambda params, c: {"state": "skipped"})
+    result = execute_case(make_case(["b1", "b2"]), ctx())
+    assert [b.state for b in result.blocks] == ["unknown", "skipped"]
+    assert result.verdict == OUTCOME_BLOCKED, "blocked(台架问题) 优先于 inconclusive(说不清)"
+
+
+def test_verdict_all_pass_is_pass() -> None:
+    register_block("b1", lambda params, c: {"state": "pass"})
+    register_block("b2", lambda params, c: {"state": "pass"})
+    assert execute_case(make_case(["b1", "b2"]), ctx()).verdict == OUTCOME_PASS
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "expected"),
+    [
+        ([], OUTCOME_INCONCLUSIVE),
+        (["pass"], OUTCOME_PASS),
+        (["pass", "pass"], OUTCOME_PASS),
+        (["pass", "inconclusive"], OUTCOME_INCONCLUSIVE),
+        (["pass", "blocked"], OUTCOME_BLOCKED),
+        (["inconclusive", "blocked"], OUTCOME_BLOCKED),
+        (["blocked", "fail"], OUTCOME_FAIL),
+        (["pass", "inconclusive", "blocked", "fail"], OUTCOME_FAIL),
+        # 无法识别的取值不参与比较（块态 ``skipped`` / ``unknown`` 不是 verdict）
+        (["nonsense"], OUTCOME_INCONCLUSIVE),
+        (["skipped"], OUTCOME_INCONCLUSIVE),
+    ],
+)
+def test_aggregate_verdict_priority_table(verdicts, expected) -> None:
+    """方案级聚合与本表同一份口径（``cli`` / API 一律调 ``aggregate_verdict``）。"""
+    assert aggregate_verdict(verdicts) == expected
+
+
+def test_case_run_result_accepts_four_verdicts_and_rejects_others() -> None:
+    for verdict in sorted(OUTCOMES):
+        assert CaseRunResult(case_id="c", verdict=verdict).verdict == verdict
+    with pytest.raises(ValueError):
+        CaseRunResult(case_id="c", verdict="passed")  # ``passed`` 不是结论口径
+    with pytest.raises(ValueError):
+        CaseRunResult(case_id="c", verdict="skipped")  # 块态不许当 verdict 用
+
+
 # --- C stop_on_fail ----------------------------------------------------------
 
 
@@ -109,7 +237,8 @@ def test_unknown_and_skipped_not_counted_as_pass() -> None:
     # 用例前置事实 unknown → 全部 skipped，pass 计数必须为 0
     assert result.counts["pass"] == 0
     assert [b.state for b in result.blocks] == ["skipped", "skipped"]
-    assert result.verdict == "inconclusive"
+    # skipped = 台架不具备条件 → blocked（不是 inconclusive，也不是 pass）
+    assert result.verdict == OUTCOME_BLOCKED
     assert result.passed_blocks() == []
 
 
@@ -240,7 +369,7 @@ def test_provider_without_value_leaves_downstream_skipped() -> None:
     result = execute_case(make_case(["b1", "b2"]), ctx(block_specs=specs))
     assert [b.state for b in result.blocks] == ["pass", "skipped"]
     assert "sta.meter_addr_known" in result.blocks[1].detail
-    assert result.verdict == "inconclusive"
+    assert result.verdict == OUTCOME_BLOCKED, "台架不具备条件 → blocked"
 
 
 def test_block_needs_fact_no_skips_and_reports_unmet() -> None:
@@ -252,7 +381,7 @@ def test_block_needs_fact_no_skips_and_reports_unmet() -> None:
     assert "archive.contains" in result.blocks[0].detail
     assert result.blocked_block == "b1"
     assert result.unmet_facts["archive.contains"]["state"] == "no"
-    assert result.verdict == "inconclusive"
+    assert result.verdict == OUTCOME_BLOCKED
 
 
 # --- 参数 / ctx 传递 ---------------------------------------------------------
@@ -326,7 +455,10 @@ def test_to_dict_contract() -> None:
     data = result.to_dict()
     assert data["case_id"] == "nwk_join"
     assert data["run_id"] == "run-42"
-    assert data["verdict"] == "inconclusive", "用例级断言未求值 → 不得 pass"
+    assert data["verdict"] == "blocked", (
+        "块态有 skipped(台架不具备) → blocked；用例级断言未求值只把它压到 inconclusive "
+        "之下，不得判 pass"
+    )
     assert data["failed_block"] == ""
     assert data["blocked_block"] == "b2"
     assert data["unmet_facts"]["archive.contains"] == {
@@ -342,11 +474,12 @@ def test_to_dict_contract() -> None:
         "sta.meter_addr_known": {"state": "yes", "detail": "", "evidence": []},
     }
     assert data["blocks"][0]["outcome"] == "pass"
-    assert data["blocks"][1]["outcome"] == "inconclusive"
+    assert data["blocks"][1]["outcome"] == "blocked", "skipped 的结论层取值是 blocked"
     assert "archive.contains" in data["blocks"][1]["detail"]
     assert data["counts"] == {"pass": 1, "fail": 0, "skipped": 1, "unknown": 0, "total": 2}
-    import json
-
+    # D4-4：两个数组必在，且 interventions 恒为空
+    assert data["decisions"] == []
+    assert data["interventions"] == []
     json.dumps(data, ensure_ascii=False)  # 必须可 JSON 序列化（落盘 RU-2）
 
 
@@ -811,3 +944,227 @@ def test_blocked_step_when_gated_fact_missing() -> None:
     data = result.to_dict()
     assert data["blocked_block"] == "archive.add"
     assert data["blocked_step"] == "add_a"
+    assert data["verdict"] == OUTCOME_BLOCKED
+
+
+# --- I 自动决策 decisions[] / 介入 interventions[]（REQS-0042 D4-4） -----------
+#
+# 判据：
+# - ``decisions[]`` 记**自动**决策（自愈 / 重试 / 等待轮询 / 超时收尾），各带理由与次数；
+# - ``interventions[]`` 记人/AI 介入，**必须恒为空数组**（非空即本次运行不成立）。
+
+
+def _poll_block(detail: str, *, state: str = "pass", actual=None):
+    """假等待型块：detail 是块层 ``waited_text`` 的口径，「等了 N 秒，只读探测 K 次」。"""
+
+    def executor(params, c):
+        payload = {"state": state, "detail": detail}
+        if actual is not None:
+            payload["actual"] = actual
+        return payload
+
+    return executor
+
+
+def test_decisions_generated_from_self_healed() -> None:
+    """自愈留痕 → 一条 ``kind="self_heal"`` 决策（保留 action/target/result/detail）。"""
+    from case_runner.core.executor import record_self_heal
+
+    def block(params, c):
+        record_self_heal(
+            {
+                "action": "close_port",
+                "target": "simcon:4800",
+                "result": "ok",
+                "detail": "409 端口被占，已抢占后重试",
+            }
+        )
+        return {"state": "pass", "detail": "档案已下发"}
+
+    register_block("archive.add", block)
+    result = execute_case(make_case(["archive.add"]), ctx())
+    decisions = result.to_dict()["decisions"]
+    assert [d["kind"] for d in decisions] == ["self_heal"]
+    entry = decisions[0]
+    assert entry["step_id"] == "archive.add" and entry["block_id"] == "archive.add"
+    assert entry["attempts"] == 1
+    assert "409" in entry["reason"]
+    # 四项留痕原样保留（证据可回指「动过谁」）
+    assert entry["action"] == "close_port"
+    assert entry["target"] == "simcon:4800"
+    assert entry["result"] == "ok"
+    assert entry["detail"] == "409 端口被占，已抢占后重试"
+    # 自愈是自动决策，不是人/AI 介入
+    assert result.to_dict()["interventions"] == []
+    assert result.verdict == OUTCOME_PASS, "自愈成功照常 pass，不因留痕改判"
+
+
+def test_decisions_wait_and_timeout_from_poll_detail() -> None:
+    """等待型块的「等了 N 秒 / 探测 K 次」→ ``wait``；等满仍不满足 → 追加 ``timeout``。"""
+    register_block(
+        "nwk.topology",
+        _poll_block(
+            "入网判定通过（等了 4 秒，只读探测 3 次）",
+            actual={"探测次数": 3, "等待秒": 4.0},
+        ),
+    )
+    register_block(
+        "nwk.route_status",
+        _poll_block(
+            "学习态（等了 300 秒仍处学习态，只读探测 151 次）",
+            state="unknown",
+            actual={"探测次数": 151, "等待秒": 300.0},
+        ),
+    )
+    result = execute_case(
+        make_case(["nwk.topology", "nwk.route_status"]), ctx()
+    )
+    decisions = result.to_dict()["decisions"]
+    by_kind = {(d["kind"], d["step_id"]): d for d in decisions}
+
+    wait_ok = by_kind[("wait", "nwk.topology")]
+    assert wait_ok["attempts"] == 3 and wait_ok["waited_s"] == 4.0
+    assert "3 次" in wait_ok["reason"] and "4 秒" in wait_ok["reason"]
+    # 等到判据满足 = 正常等待，不是超时
+    assert ("timeout", "nwk.topology") not in by_kind
+
+    wait_learning = by_kind[("wait", "nwk.route_status")]
+    assert wait_learning["attempts"] == 151 and wait_learning["waited_s"] == 300.0
+    timeout = by_kind[("timeout", "nwk.route_status")]
+    assert "预算耗尽" in timeout["reason"] and "unknown" in timeout["reason"]
+    # 每一轮轮询都是一次自动决策，但块态判定没被改写：still unknown → inconclusive
+    assert result.blocks[1].state == "unknown"
+    assert result.verdict == OUTCOME_INCONCLUSIVE
+
+
+def test_decisions_wait_parsed_from_detail_only() -> None:
+    """没有结构化 ``actual`` 时仍能从 detail 抠出「等了 N 秒 / 探测 K 次」。"""
+    register_block(
+        "nwk.nodes_online", _poll_block("在网数 2（等了 8 秒，只读探测 5 次）")
+    )
+    result = execute_case(make_case(["nwk.nodes_online"]), ctx())
+    decisions = result.to_dict()["decisions"]
+    assert [d["kind"] for d in decisions] == ["wait"]
+    assert decisions[0]["attempts"] == 5
+    assert decisions[0]["waited_s"] == 8.0
+
+
+def test_decisions_from_block_declared_channel() -> None:
+    """块显式导出的决策（``BlockResult.decisions`` / 返回映射里的 decisions）照收。"""
+    from case_runner.core.executor import BlockResult
+
+    register_block(
+        "meter.read_645",
+        lambda params, c: BlockResult(
+            state="pass",
+            detail="第 2 次重发后收到应答",
+            decisions=[
+                {"kind": "retry", "attempts": 2, "reason": "首帧无应答，重发一次"}
+            ],
+        ),
+    )
+    register_block(
+        "reset.sta",
+        lambda params, c: {
+            "state": "pass",
+            "decisions": [
+                {"kind": "retry", "attempts": 1, "reason": "从返回映射里导出的决策"}
+            ],
+        },
+    )
+    result = execute_case(make_case(["reset.sta", "meter.read_645"]), ctx())
+    decisions = result.to_dict()["decisions"]
+    assert [(d["kind"], d["step_id"], d["attempts"]) for d in decisions] == [
+        ("retry", "reset.sta", 1),
+        ("retry", "meter.read_645", 2),
+    ]
+    assert decisions[1]["reason"] == "首帧无应答，重发一次"
+
+
+def test_decisions_auto_derive_matches_public_helper() -> None:
+    """``auto_decisions(blocks)`` 与 ``to_dict()['decisions']`` 同源（不写两套）。"""
+    from case_runner.core.executor import record_self_heal
+
+    def block(params, c):
+        record_self_heal({"action": "reopen", "target": "simeter", "result": "ok"})
+        return {"state": "pass"}
+
+    register_block("simeter.session", block)
+    result = execute_case(make_case(["simeter.session"]), ctx())
+    assert result.to_dict()["decisions"] == auto_decisions(result.blocks)
+    assert result.resolved_decisions() == auto_decisions(result.blocks)
+
+
+def test_interventions_always_empty_in_to_dict() -> None:
+    register_block("b1", lambda params, c: {"state": "pass"})
+    data = execute_case(make_case(["b1"]), ctx()).to_dict()
+    assert data["interventions"] == []
+    # 另外单独构造（如 run 级 preflight 结果）也必须给空数组
+    assert CaseRunResult(case_id="c", verdict=OUTCOME_BLOCKED).to_dict()["interventions"] == []
+
+
+def test_non_empty_interventions_makes_run_invalid() -> None:
+    """人/AI 介入一旦出现，本次运行就不成立（D4-4）→ 构造期直接拒绝。"""
+    with pytest.raises(ValueError) as excinfo:
+        CaseRunResult(
+            case_id="c",
+            verdict=OUTCOME_PASS,
+            interventions=[{"actor": "human", "what": "手动补了一条参数"}],
+        )
+    assert "interventions" in str(excinfo.value)
+
+
+def test_decisions_are_json_serializable_and_complete() -> None:
+    """每条 decision 必带 ``kind/step_id/block_id/attempts/reason``（D4-4 最小字段面）。"""
+    from case_runner.core.executor import DECISION_FIELDS, record_self_heal
+
+    def block(params, c):
+        record_self_heal({"action": "close_port", "target": "simcon", "result": "ok"})
+        return {
+            "state": "pass",
+            "detail": "（等了 2 秒，只读探测 2 次）",
+            "actual": {"探测次数": 2, "等待秒": 2},
+        }
+
+    register_block("nwk.topology", block)
+    data = execute_case(make_case(["nwk.topology"]), ctx()).to_dict()
+    decisions = data["decisions"]
+    assert {d["kind"] for d in decisions} == {"self_heal", "wait"}
+    for entry in decisions:
+        for field in DECISION_FIELDS:
+            assert field in entry, (field, entry)
+        assert entry["attempts"] >= 1
+        assert entry["reason"], "每条决策都要有理由"
+    json.dumps(data, ensure_ascii=False)  # 落盘不能因怪对象炸
+
+
+# --- J 断言层红线：用例级断言也不许出现 blocked（D2-4） -----------------------
+
+
+def test_case_assert_evaluator_returning_blocked_is_downgraded() -> None:
+    """求值器误回 ``blocked``（结论层口径）→ 断言层只能落 inconclusive，不许扩三态。"""
+    register_block("b1", lambda params, c: {"state": "pass"})
+    case = make_case(["b1"], asserts=[{"kind": "onnet", "value": 1}])
+    result = execute_case(
+        case,
+        ctx(assert_evaluator=lambda decl, c: {"outcome": "blocked", "message": "台架问题"}),
+    )
+    assert result.assertions[-1].outcome == "inconclusive"
+    assert result.assertions[-1].outcome in ASSERTION_OUTCOMES
+    assert result.verdict == OUTCOME_INCONCLUSIVE
+
+
+def test_every_produced_assertion_stays_three_valued() -> None:
+    """跑一条混合用例，逐条断言 outcome 都落在三态集合里（守卫）。"""
+    register_block("a", lambda params, c: {"state": "pass"})
+    register_block("b", lambda params, c: {"state": "skipped"})
+    register_block("c", lambda params, c: {"state": "unknown"})
+    register_block("d", lambda params, c: {"state": "fail"})
+    result = execute_case(make_case(["a", "b", "c", "d"]), ctx())
+    assert result.verdict == OUTCOME_FAIL
+    outcomes = {a.outcome for a in result.assertions}
+    assert outcomes <= ASSERTION_OUTCOMES
+    assert "blocked" not in outcomes
+    # 但结论层与块级摘要能看到 blocked
+    assert result.blocks[1].outcome == OUTCOME_BLOCKED
+    assert result.to_dict()["steps"][1]["outcome"] == OUTCOME_BLOCKED

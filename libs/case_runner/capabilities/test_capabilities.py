@@ -86,6 +86,7 @@ def _simeter(routes=None, errors=None, **kwargs):
 
 STATUS_OK = ("GET", "/api/simcon/status")
 LEASE_OK = ("GET", "/api/ai/v2/simcon/lease")
+SIMCON_CLOSE = ("POST", "/api/simcon/close")
 BUILD_OK = ("POST", "/api/simcon/build")
 FRAMES = ("GET", "/api/simcon/frames")
 VERIFY = ("POST", "/api/ai/v2/verification-runs")
@@ -307,6 +308,49 @@ def test_simcon_frames_no_session_404():
     assert result["ok"] is False and result["error"] == "http_404"
     assert "会话" in result["detail"]
     assert transport.count(*FRAMES) == 1
+
+
+# --------------------------------------------------------------------------
+# simcon.close（自愈层 closer：REQS-0042 §3.4 / D2-7）
+# --------------------------------------------------------------------------
+
+def test_simcon_close_posts_to_close_endpoint():
+    """走 ``POST /api/simcon/close``（不是 AI 闸门那条），空 body，零真实网络。"""
+    cap, transport = _simcon({SIMCON_CLOSE: (200, {"open": False})})
+    result = cap.close()
+    assert result["ok"] is True and result["error"] is None
+    assert transport.count(*SIMCON_CLOSE) == 1
+    call = transport.calls[0]
+    assert call["method"] == "POST" and call["path"] == "/api/simcon/close"
+    assert call["body"] == {}
+    # 幂等：口本来没开（open=false）也算成功，不自己判失败
+    assert result["open"] is False
+
+
+def test_simcon_close_passes_server_payload_through():
+    """服务端应答原样透传：自愈层写「抢占了谁」要从这些字段挖（_preempt_note）。"""
+    payload = {"open": False, "actor": "alice", "session_id": "sc-7",
+               "run_id": "run-42", "job_id": "job-9", "port": "/dev/ttyS3",
+               "detail": "已关闭模拟集中器会话"}
+    cap, transport = _simcon({SIMCON_CLOSE: (200, payload)})
+    result = cap.close()
+    assert result["ok"] is True
+    for key in ("actor", "session_id", "run_id", "job_id", "port", "detail", "open"):
+        assert result[key] == payload[key], key
+    assert result["raw"] == payload          # 原样留一份，键改名也不丢
+    assert result["status"] == 200
+
+
+def test_simcon_close_transport_error_is_not_raised():
+    """传输异常收敛成 ``ok=False + error``，绝不抛（自愈层 close 调用必须在异常下手稳）。"""
+    down = _simcon(errors={SIMCON_CLOSE: ConnectionRefusedError("拒绝连接")})
+    result = down[0].close()                 # 不抛
+    assert result["ok"] is False and result["error"] == "unreachable"
+    assert "拒绝连接" in result["detail"]
+
+    broken = _simcon(errors={SIMCON_CLOSE: RuntimeError("transport 崩了")})
+    result = broken[0].close()               # 不抛
+    assert result["ok"] is False and result["error"] == "transport_error"
 
 
 # --------------------------------------------------------------------------

@@ -248,6 +248,11 @@ def _case(blocks, *, needs=(), case_id="case.t"):
 
 
 def test_execute_case_bench_unknown_is_skipped_not_pass():
+    """台架探测不到 → 块 ``skipped`` → 用例 ``blocked``（不是 pass，也不是 inconclusive）。
+
+    语义来源 REQS-0042 §3.5 / D2-4：块态 ``skipped`` = **台架不具备条件**，聚合处映射成
+    ``blocked``（``unknown`` 才是 ``inconclusive``）。
+    """
     _register_all()
     spec = BlockSpec.model_validate({
         "id": fix.BLOCK_SIMETER_SESSION, "title": "台架", "action": {"kind": "probe_bench"},
@@ -256,7 +261,7 @@ def test_execute_case_bench_unknown_is_skipped_not_pass():
     ctx[fix.EXTRAS_SIMETER] = _simeter({})   # 404 → no → skipped
     result = execute_case(_case([fix.BLOCK_SIMETER_SESSION]), ctx)
     assert result.blocks[0].state == BLOCK_SKIPPED
-    assert result.verdict == "inconclusive"
+    assert result.verdict == "blocked"
     assert result.counts["pass"] == 0, "绝不假 PASS"
     assert result.blocked_block == fix.BLOCK_SIMETER_SESSION
 

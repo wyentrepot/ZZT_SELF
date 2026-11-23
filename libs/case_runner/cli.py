@@ -25,20 +25,62 @@
 ``blocked_block``）；``--json`` 输出机器可读（``run`` 为完整 ``CaseRunResult.to_dict()``，
 错误态为 ``{"ok": false, "error": ...}``），**stdout 永远是纯 JSON**，可供 ``json.loads``。
 
-退出码（固定契约，写进 ``--help``）
------------------------------------
-=====  ==================================================
-0      全部 pass
-1      有 fail
-2      有 unknown/skipped 但无 fail（**未完成验证**）
-3      用法/参数错误（含 ``--params`` 校验失败、id 不存在）
+退出码（固定契约，写进 ``--help``；REQS-0042 D2-6 / 变更 4 D4-5）
+------------------------------------------------------------------
+=====  ==========================================================
+0      pass（全部 pass）
+1      fail（被测对象真失败）
+2      inconclusive（**说不清**：超时无应答 / 解析不出 / 等待超时）
+3      用法/参数错误（含 ``--params`` 校验失败、id 不存在、``--timeout`` 非法）
 4      声明加载失败（JSON 非法 / 引用未注册的块或事实）
-=====  ==================================================
+5      blocked（**台架/前置不具备**：预检不过 / 端口被占 / 缺参 / 整轮超时前已耗尽预算）
+=====  ==========================================================
 
-绝不假 PASS（REQS RU-3）
-------------------------
+顺序即语义：**blocked 比 inconclusive 严重、比 fail 轻**，与聚合优先级
+``fail > blocked > inconclusive > pass`` 完全一致（REQS §3.5）。单用例结论与方案整体结论
+用同一张表（:func:`exit_code_for_verdict` / :func:`_overall_exit_code`）。
+
+绝不假 PASS（REQS RU-3 / VF-3）
+------------------------------
 ``unknown`` / ``skipped`` 永不计入 PASS 计数，且在输出里单独成列；``probe --all``
 在台架未就绪时**全部 unknown**——块没有跑出确定结论就不许出现 pass。
+
+run 级硬上限（REQS-0042 D2-6 / D4-5）
+------------------------------------
+``run --timeout``（秒，默认 :data:`DEFAULT_RUN_TIMEOUT` = 600；``0`` 关闭）是**整轮**预算，
+不是单个块的上限（块自己的等待由 ``wait_s`` / ``expect_timeout`` 管）。实现口径：
+
+- 每个用例在**工作线程**里跑，主线程 ``join(剩余预算)``；
+- 超时 → 该用例结论记 ``inconclusive``，说明写「整轮超时（卡在 <case_id> / <当前块>）」；
+- 尚未开始的用例记 ``inconclusive`` +「整轮超时未执行」——**绝不**再继续跑；
+- 超时支路照常输出结果、落盘证据、给退出码（不挂死、不抛栈）。
+
+必然终局（D4-5）：任何路径都在 ``timeout`` 内落到四态之一，不允许「挂着等人」。
+
+预检（REQS-0042 D2-8 / VF-2，``--no-preflight`` 可关）
+----------------------------------------------------
+``run`` 开始前**只探「所选用例 ``needs`` 的并集」**（不是全量台架快照），有未满足
+（``no`` / ``unknown``）→ **整轮 ``blocked``**，逐项列出缺什么（事实 id + 三态 + 原因），
+**不逐用例跑一遍再报 skipped**（<1s 返回）。
+
+- 预检**排除**「本次运行内会被上游块 ``provides`` 的事实」（如 ``bench_ready`` 的
+  ``fix.*`` 会 ``provides bench.simcon_online``）：否则「用例自己能修好的前置」会被误判 blocked；
+- 预检留证据：``decisions[]`` 里一条 ``kind="preflight"``，结果进 ``result.json`` 的台架快照；
+- ``--no-preflight`` 跳过预检（诊断用：想看「逐用例的真实断点」而不是「整轮缺什么」时）。
+
+证据落盘（REQS-0042 D4-1 / D4-4 / D4-6）
+----------------------------------------
+每次 ``run`` 落盘 ``data/case_runs/<run_id>/result.json``（``--result-dir`` 可覆盖，测试用），
+含：``run_id`` / ``suite_id``·``case_ids`` / **``params``（启动瞬间冻结，D4-1）** /
+``started_at``·``finished_at``·``duration_s`` / 每用例 ``verdict`` 与断点字段 /
+``self_healed`` / ``decisions[]`` / ``interventions[]``（**恒为空数组**）/ 台架快照。
+落盘失败只 warning，**不影响退出码**（证据是附加物，不是判定的一部分）。
+
+``probe --readonly``（REQS-0042 D2-10）
+--------------------------------------
+``probe`` 默认行为**不变**（全跑，含写块：复位 / 建档 / 重启路由都会动台架）。显式
+``--readonly`` 时**只跑只读块**（块声明 ``tags`` 含 ``"readonly"``），写块记
+``skipped`` +「--readonly 已跳过写块」。起因：本轮 ``probe --all`` 曾顺手复位 STA。
 
 ``base_url`` 服务发现（REQS-0042 **D2-3** 单入口服务发现）
 --------------------------------------------------------
@@ -70,6 +112,8 @@ import json
 import os
 import re
 import sys
+import threading
+import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -79,13 +123,23 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO
 
 from case_runner.blocks import loader as decl_loader
 from case_runner.core import defaults
-from case_runner.core.executor import CaseRunResult, RunContext, execute_case
+from case_runner.core.executor import (
+    DECISION_PREFLIGHT,
+    DECISION_TIMEOUT,
+    CaseRunResult,
+    RunContext,
+    aggregate_verdict,
+    decision_entry,
+    execute_case,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
     BLOCK_SKIPPED,
     BLOCK_UNKNOWN,
+    OUTCOME_BLOCKED,
     OUTCOME_FAIL,
+    OUTCOME_INCONCLUSIVE,
     OUTCOME_PASS,
     BlockSpec,
     CaseSpec,
@@ -94,18 +148,30 @@ from case_runner.core.models import (
     SuiteSpec,
 )
 from case_runner.core.planner import FactsContext
-from case_runner.core.registry import has_block, has_fact, list_blocks, list_facts
+from case_runner.core.registry import (
+    get_block,
+    has_block,
+    has_fact,
+    list_blocks,
+    list_facts,
+    register_block,
+    unregister_block,
+)
 from test_automation.models import AssertionResult
 
 # --------------------------------------------------------------------------- #
-# 退出码契约（REQS 第四批；顺序即语义，改这里必须同步文档与 --help）
+# 退出码契约（REQS-0042 D2-6 / D4-5；顺序即语义，改这里必须同步文档与 --help）
 # --------------------------------------------------------------------------- #
 
-EXIT_PASS = 0          # 全部 pass
-EXIT_FAIL = 1          # 有 fail
-EXIT_INCOMPLETE = 2    # 有 unknown/skipped 但无 fail（未完成验证）
-EXIT_USAGE = 3         # 用法/参数错误（含 --params 校验失败）
+EXIT_PASS = 0          # pass：全部 pass
+EXIT_FAIL = 1          # fail：被测对象真失败
+EXIT_INCOMPLETE = 2    # inconclusive：说不清（超时无应答 / 解析不出 / 等待超时）
+EXIT_USAGE = 3         # 用法/参数错误（含 --params 校验失败、id 不存在、--timeout 非法）
 EXIT_DECLARATION = 4   # 声明加载失败
+EXIT_BLOCKED = 5       # blocked：台架/前置不具备（预检不过 / 端口被占 / 缺参）
+
+#: 结论字面量 → 退出码（六档契约的**唯一**落点；优先级聚合统一走
+#: :func:`case_runner.core.executor.aggregate_verdict`，本模块**不再**自己写一份）。
 
 #: 环境变量名（与 ``case_runner.capabilities.*`` 的口径一致；本模块只读这个名字，不写死地址）
 ENV_BASE_URL = "WORKBENCH_BASE"
@@ -147,12 +213,29 @@ RENAMED_PARAMS: tuple[tuple[str, str], ...] = (
     ("meters", "meter_addrs"),
 )
 
-EXIT_CODE_HELP = """退出码（固定契约）：
-  0  全部 pass
-  1  有 fail
-  2  有 unknown/skipped 但无 fail（未完成验证）
-  3  用法/参数错误（含 --params 校验失败、id 不存在）
-  4  声明加载失败（JSON 非法 / 引用未注册的块或事实）"""
+EXIT_CODE_HELP = """退出码（固定契约；顺序即语义：blocked 比 inconclusive 严重、比 fail 轻）：
+  0  pass          全部 pass
+  1  fail          被测对象真失败
+  2  inconclusive  说不清（超时无应答 / 解析不出 / 等待超时）
+  3  用法/参数错误（含 --params 校验失败、id 不存在、--timeout 非法）
+  4  声明加载失败（JSON 非法 / 引用未注册的块或事实）
+  5  blocked       台架/前置不具备（预检不过 / 端口被占 / 缺参）"""
+
+#: run 级总预算默认值（秒，REQS-0042 D2-6）：``--timeout 0`` 表示关闭。
+DEFAULT_RUN_TIMEOUT: float = 600.0
+
+#: 结果落盘根：``<仓库根>/data/case_runs/<run_id>/result.json``（REQS-0042 D4-6）。
+#: ``--result-dir`` 可覆盖（测试必须覆盖：单测不许往仓库 ``data/`` 里写东西）。
+DEFAULT_RESULT_DIR: Path = defaults.REPO_ROOT / "data" / "case_runs"
+#: 落盘文件名（API 层 ``cases_api`` 同一口径）
+RESULT_FILENAME = "result.json"
+
+#: 预检预算（秒）：预检只是「探几个事实」，超预算的对剩余事实记 unknown 并如实说明，
+#: 不把整轮拖进超时。台架全关时事实探测是「连接被拒」，实测远小于此值。
+PREFLIGHT_BUDGET_S: float = 5.0
+
+#: 只读块标记（REQS-0042 D2-10）：块声明 ``tags`` 含它，``probe --readonly`` 才执行。
+READONLY_TAG = "readonly"
 
 #: 块执行态 → 计数列（``skipped``/``unknown`` 单独成列，绝不计入 pass）
 STATE_LABELS: tuple[tuple[str, str], ...] = (
@@ -904,12 +987,23 @@ def new_run_id() -> str:
 
 @dataclass
 class RunOutcome:
-    """一次 ``run`` 的结果：走内核的结果对象 + 实际生效的入参（供输出复述）。"""
+    """一次 ``run`` 的结果：走内核的结果对象 + 实际生效的入参（供输出复述）。
+
+    ``not_run_reason``：本用例**没跑块**的原因（预检阻断 / 整轮超时 / stop_on_fail）。
+    ``stuck_block``：整轮超时那一刻正卡在哪个块（只有超时用例有值）。
+
+    ``decisions[]`` **只存在一个地方**：``result.decisions``（模型层的场子）。CLI 层的
+    自动决策（预检 / 超时收尾）用 :func:`decision_entry` 造好直接塞进去，
+    这样 ``result.to_dict()``、落盘文档、stdout 三处天然一致。
+    """
 
     case: CaseSpec
     result: CaseRunResult
     resolved_params: dict[str, Any] = field(default_factory=dict)
     skipped_reason: str = ""
+    not_run_reason: str = ""
+    stuck_block: str = ""
+    duration_s: float = 0.0
 
     @property
     def exit_code(self) -> int:
@@ -918,28 +1012,41 @@ class RunOutcome:
     def to_dict(self) -> dict[str, Any]:
         payload = self.result.to_dict()
         payload["exit_code"] = self.exit_code
+        payload["duration_s"] = round(self.duration_s, 3)
+        # D4-4：干预记录**恒为空数组**（模型层已硬拒非空，这里只是把口径写实）
+        payload["interventions"] = []
         if self.resolved_params:
             payload["params"] = dict(self.resolved_params)
         if self.skipped_reason:
             payload["skipped_reason"] = self.skipped_reason
+        if self.not_run_reason:
+            payload["not_run_reason"] = self.not_run_reason
+        if self.stuck_block:
+            payload["stuck_block"] = self.stuck_block
         return payload
 
 
 def exit_code_for_verdict(verdict: str) -> int:
+    """结论 → 退出码（六档契约，REQS-0042 D2-6：blocked 比 inconclusive 严重、比 fail 轻）。"""
     if verdict == OUTCOME_PASS:
         return EXIT_PASS
     if verdict == OUTCOME_FAIL:
         return EXIT_FAIL
+    if verdict == OUTCOME_BLOCKED:
+        return EXIT_BLOCKED
     return EXIT_INCOMPLETE
 
 
 def exit_code_for_states(states: Iterable[str]) -> int:
-    """按块/事实状态算退出码：``fail`` 优先，其次「未完成验证」。"""
+    """按块/事实状态算退出码：``fail`` 优先，其次「台架不具备」，再次「未完成验证」。"""
     seen = list(states)
     if any(state == BLOCK_FAIL for state in seen):
         return EXIT_FAIL
     if seen and all(state == BLOCK_PASS for state in seen):
         return EXIT_PASS
+    if any(state == BLOCK_SKIPPED for state in seen):
+        # ``skipped`` = 台架/前置不具备（§3.5）→ blocked 档
+        return EXIT_BLOCKED
     return EXIT_INCOMPLETE
 
 
@@ -953,17 +1060,22 @@ def build_run_context(
     fact_probe: Callable[[str, dict[str, Any]], Any] | None = None,
     stop_on_fail: bool = False,
     step_params: Mapping[str, Mapping[str, Any]] | None = None,
+    facts_ctx: FactsContext | None = None,
 ) -> RunContext:
     """装配执行上下文（事实缓存 + 块声明 + 入参 + 注入的能力替身）。
 
     ``block_params`` 是 run 级参数（按块广播，优先级最高）；``step_params`` 是按**步骤**
     覆盖（REQS-0042 D3-1，同块多次实例化要只改某一步时用）。CLI 的 ``--params`` 走前者，
     后者留给 API/后续快照层按需注入。
+
+    ``facts_ctx``：预检已经建好事实上下文时传进来，**整轮复用同一份缓存**——预检探到的
+    三态就是执行期看到的三态（不留「预检说就绪、执行时又变了」的口子），且同参只探一次。
     """
-    facts_ctx = FactsContext(
-        probe=fact_probe,  # None → 走注册表里的默认探测体
-        params={key: dict(value) for key, value in (fact_params or {}).items()},
-    )
+    if facts_ctx is None:
+        facts_ctx = FactsContext(
+            probe=fact_probe,  # None → 走注册表里的默认探测体
+            params={key: dict(value) for key, value in (fact_params or {}).items()},
+        )
     return RunContext(
         run_id=run_id,
         facts_ctx=facts_ctx,
@@ -985,6 +1097,7 @@ def run_case(
     extras: Mapping[str, Any] | None = None,
     fact_probe: Callable[[str, dict[str, Any]], Any] | None = None,
     stop_on_fail: bool = False,
+    facts_ctx: FactsContext | None = None,
 ) -> RunOutcome:
     """跑一个用例：装配 → 内核执行 → 返回结果（判定全在块与事实里）。"""
     block_params, fact_params = param_spec.split(resolved_params)
@@ -996,28 +1109,509 @@ def run_case(
         extras=extras,
         fact_probe=fact_probe,
         stop_on_fail=stop_on_fail,
+        facts_ctx=facts_ctx,
     )
     result = execute_case(case, ctx)
     return RunOutcome(case=case, result=result, resolved_params=dict(resolved_params))
 
 
-def skipped_outcome(case: CaseSpec, *, run_id: str, reason: str) -> RunOutcome:
-    """未执行（方案 stop_on_fail 或用户取消）也要有记录，且**绝不算 pass**。"""
-    record = CaseRunResult(
+def _make_verdict_result(
+    case: CaseSpec,
+    *,
+    run_id: str,
+    verdict: str,
+    reason: str,
+    assertion_id: str,
+    unmet_facts: Mapping[str, Mapping[str, Any]] | None = None,
+    decisions: Iterable[Mapping[str, Any]] = (),
+) -> CaseRunResult:
+    """造一条「没跑块、但必须有结论」的结果记录（预检阻断 / 整轮超时用）。
+
+    ``verdict`` 只走模型层的四态（``OUTCOMES``）；``assertions[]`` 仍是断言层三态
+    （``inconclusive``——``blocked`` 不许进断言层，D2-4）。
+    """
+    return CaseRunResult(
         case_id=case.id,
         run_id=run_id,
         blocks=[],
         assertions=[
             AssertionResult(
                 run_id=run_id,
-                assertion_id=f"{case.id}.not_run",
-                outcome="inconclusive",
+                assertion_id=assertion_id,
+                outcome=OUTCOME_INCONCLUSIVE,
                 message=reason,
             )
         ],
-        verdict="inconclusive",
+        verdict=verdict,
+        unmet_facts={key: dict(value) for key, value in (unmet_facts or {}).items()},
+        decisions=[dict(item) for item in decisions],
     )
-    return RunOutcome(case=case, result=record, skipped_reason=reason)
+
+
+def blocked_outcome(
+    case: CaseSpec,
+    *,
+    run_id: str,
+    reason: str,
+    unmet_facts: Mapping[str, Mapping[str, Any]] | None = None,
+    assertion_id: str = "",
+) -> RunOutcome:
+    """整轮预检不过 → 该用例记 ``blocked``（台架/前置不具备，不是产品失败）。"""
+    record = _make_verdict_result(
+        case,
+        run_id=run_id,
+        verdict=OUTCOME_BLOCKED,
+        reason=reason,
+        assertion_id=assertion_id or f"{case.id}.preflight",
+        unmet_facts=unmet_facts,
+    )
+    outcome = RunOutcome(case=case, result=record, skipped_reason=reason)
+    outcome.not_run_reason = reason
+    return outcome
+
+
+def timeout_outcome(
+    case: CaseSpec,
+    *,
+    run_id: str,
+    reason: str,
+    stuck_block: str = "",
+) -> RunOutcome:
+    """整轮超时 → 该用例记 ``inconclusive``（说不清），说明写清卡在哪（D2-6）。"""
+    record = _make_verdict_result(
+        case,
+        run_id=run_id,
+        verdict=OUTCOME_INCONCLUSIVE,
+        reason=reason,
+        assertion_id=f"{case.id}.timeout",
+        decisions=[
+            decision_entry(
+                DECISION_TIMEOUT,
+                block_id=stuck_block,
+                attempts=1,
+                reason=reason,
+                stuck_block=stuck_block,
+            )
+        ],
+    )
+    outcome = RunOutcome(case=case, result=record, skipped_reason=reason)
+    outcome.not_run_reason = reason
+    outcome.stuck_block = stuck_block
+    return outcome
+
+
+def skipped_outcome(case: CaseSpec, *, run_id: str, reason: str) -> RunOutcome:
+    """未执行（方案 stop_on_fail 或用户取消）也要有记录，且**绝不算 pass**。"""
+    record = _make_verdict_result(
+        case,
+        run_id=run_id,
+        verdict=OUTCOME_INCONCLUSIVE,
+        reason=reason,
+        assertion_id=f"{case.id}.not_run",
+    )
+    outcome = RunOutcome(case=case, result=record, skipped_reason=reason)
+    outcome.not_run_reason = reason
+    return outcome
+
+
+# --------------------------------------------------------------------------- #
+# 进度追踪（整轮超时后要能说出「卡在哪个块」，REQS-0042 D2-6）
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class BlockProgress:
+    """一个用例跑在哪儿的**可跨线程读取**的进度板。
+
+    - 写侧：用例自己的工作线程（块包装器进门就写 ``block_id``）；
+    - 读侧：主线程 ``join`` 超时后读同一块板子（D2-6 要「写明卡在哪个块」）。
+    """
+
+    case_id: str = ""
+    block_id: str = ""
+
+
+#: 本线程当前绑定的进度板（``threading.local``：每个用例线程各绑各的）
+_PROGRESS = threading.local()
+
+#: 已被本模块包过进度的块：``{block_id: (wrapper, original)}``。**成对安装/还原**，
+#: 不给注册表留残余（同进程内并发的其它 run 只会少一层追踪，不会跑错执行体）。
+_PROGRESS_WRAPPED: dict[str, tuple[Any, Any]] = {}
+_PROGRESS_LOCK = threading.Lock()
+
+
+def current_progress() -> BlockProgress:
+    """本线程绑定的进度板（没绑时返回一块空板，绝不抛）。"""
+    board = getattr(_PROGRESS, "board", None)
+    return board if isinstance(board, BlockProgress) else BlockProgress()
+
+
+def bind_progress(board: BlockProgress | None) -> None:
+    """给当前线程绑定进度板（``None`` = 解绑）。"""
+    _PROGRESS.board = board
+
+
+def _wrap_block_with_progress(block_id: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+    """给块执行体套一层「进门先记下我是谁」，**只记录、不改返回值**。"""
+
+    def wrapper(params: Any = None, ctx: Any = None) -> Any:
+        board = getattr(_PROGRESS, "board", None)
+        if isinstance(board, BlockProgress):
+            board.block_id = block_id
+        return fn(params, ctx)
+
+    wrapper.__wrapped__ = fn  # type: ignore[attr-defined]
+    return wrapper
+
+
+@contextlib.contextmanager
+def track_running_blocks(block_ids: Iterable[str]) -> Iterator[None]:
+    """临时给这些块装上进度追踪，退出时**原样还原**注册表。
+
+    只追踪本次要跑的块（不是全量替换），已装过的跳过（重入安全）。注册表是进程级全局，
+    所以这里持锁安装/还原；与并发 run 的交互见 ``_PROGRESS_WRAPPED`` 的注释。
+    """
+    installed: list[str] = []
+    with _PROGRESS_LOCK:
+        for block_id in dict.fromkeys(block_ids):
+            if not block_id or block_id in _PROGRESS_WRAPPED or not has_block(block_id):
+                continue
+            original = get_block(block_id)
+            wrapper = _wrap_block_with_progress(block_id, original)
+            unregister_block(block_id)
+            register_block(block_id, wrapper)
+            _PROGRESS_WRAPPED[block_id] = (wrapper, original)
+            installed.append(block_id)
+    try:
+        yield
+    finally:
+        with _PROGRESS_LOCK:
+            for block_id in installed:
+                entry = _PROGRESS_WRAPPED.pop(block_id, None)
+                if entry is None:
+                    continue
+                wrapper, original = entry
+                # 只有注册表里还是我们那层时才还原（别人可能已经又套/换过）
+                if has_block(block_id) and get_block(block_id) is wrapper:
+                    unregister_block(block_id)
+                    register_block(block_id, original)
+
+
+def case_block_ids(case: CaseSpec) -> list[str]:
+    """用例会执行到的块 id（``plan`` 优先、``blocks`` 兜底；步骤实例化后同块会出现多次）。"""
+    return [step.block for step in case.effective_steps()]
+
+
+# --------------------------------------------------------------------------- #
+# 预检（REQS-0042 D2-8 / VF-2）：只探本次要跑的用例 needs 并集，不满足 → 整轮 blocked
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class PreflightResult:
+    """预检结论：探到的事实三态 + 缺项清单（同时是 ``result.json`` 的台架快照）。"""
+
+    enabled: bool = True
+    #: ``{fact_id: {state, detail, evidence, params}}``——**探过的**事实（三态如实在里面）
+    facts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: 本次运行内会被上游块 ``provides`` 的事实：**不参与**阻断判定（否则误判 blocked）
+    provided_in_run: dict[str, list[str]] = field(default_factory=dict)
+    #: 不满足（``no`` / ``unknown``）的事实 → 缺项清单
+    unmet: dict[str, dict[str, Any]] = field(default_factory=dict)
+    duration_s: float = 0.0
+    skipped_reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.unmet
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "ok": self.ok,
+            "duration_s": round(self.duration_s, 3),
+            "facts": {key: dict(value) for key, value in self.facts.items()},
+            "provided_in_run": {key: list(value) for key, value in self.provided_in_run.items()},
+            "unmet_facts": {key: dict(value) for key, value in self.unmet.items()},
+            "skipped_reason": self.skipped_reason,
+        }
+
+    def decisions(self) -> list[dict[str, Any]]:
+        """D4-4 留痕：预检是**自动决策**（跑了就留；未启用也要留一条说明为什么没有）。"""
+        if not self.enabled:
+            reason = "--no-preflight：跳过预检（诊断用，结论不再包含台架就绪度）"
+        elif self.unmet:
+            reason = "预检未通过：缺 %s" % "、".join(
+                "%s=%s" % (fact_id, entry.get("state", "unknown"))
+                for fact_id, entry in self.unmet.items()
+            )
+        elif self.facts:
+            reason = "预检通过：探到 %s 全部满足" % "、".join(self.facts)
+        else:
+            reason = "预检启用：本次要跑的用例没有运行前可探的前置事实"
+        return [
+            decision_entry(
+                DECISION_PREFLIGHT,
+                attempts=len(self.facts),
+                reason=reason,
+                fact_ids=list(self.facts),
+                unmet=list(self.unmet),
+                provided_in_run={
+                    key: list(value) for key, value in self.provided_in_run.items()
+                },
+                duration_s=round(self.duration_s, 3),
+            )
+        ]
+
+
+def preflight_facts(cases: Sequence[CaseSpec], bundle: Bundle) -> tuple[list[str], dict[str, list[str]]]:
+    """算出预检要探的事实 + 「运行内自己能提供」的事实。
+
+    规则（D2-8 的细化）：**只探用例 ``needs`` 的并集**，并**排除**本次运行内任何块的
+    ``provides``——``bench_ready`` 这类用例正是靠 ``fix.*`` 块把 ``bench.simcon_online``
+    变成 satisfied 的；若预检把它算作「必须有」，「能自己修好的前置」会被误判成 blocked。
+    """
+    wanted: list[str] = []
+    for case in cases:
+        for fact_id in case.needs:
+            if fact_id not in wanted:
+                wanted.append(fact_id)
+    provided: dict[str, list[str]] = {}
+    for case in cases:
+        for block_id in case_block_ids(case):
+            spec = bundle.block_specs.get(block_id)
+            if spec is None:
+                continue
+            for fact_id in spec.provides:
+                entry = provided.setdefault(fact_id, [])
+                if block_id not in entry:
+                    entry.append(block_id)
+    facts = [fact_id for fact_id in wanted if fact_id not in provided]
+    return facts, provided
+
+
+def run_preflight(
+    cases: Sequence[CaseSpec],
+    bundle: Bundle,
+    *,
+    fact_params: Mapping[str, Mapping[str, Any]],
+    env: Env,
+    facts_ctx: FactsContext | None = None,
+) -> tuple[PreflightResult, FactsContext]:
+    """跑一次预检：探「所选用例 needs 并集」，返回结论 + 供执行期复用的同一份事实缓存。"""
+    started = time.monotonic()
+    facts, provided = preflight_facts(cases, bundle)
+    ctx = facts_ctx or FactsContext(
+        probe=env.fact_probe,
+        params={key: dict(value) for key, value in (fact_params or {}).items()},
+    )
+    result = PreflightResult(enabled=True, provided_in_run=provided)
+    unknown_facts = {spec.id for spec in bundle.facts}
+    for fact_id in facts:
+        if time.monotonic() - started > PREFLIGHT_BUDGET_S:
+            result.facts[fact_id] = {
+                "state": "unknown",
+                "detail": "预检超出 %.1fs 预算，未探测" % PREFLIGHT_BUDGET_S,
+                "evidence": [],
+                "params": dict(fact_params.get(fact_id) or {}),
+            }
+            result.unmet[fact_id] = {
+                "state": "unknown",
+                "reason": "预检超预算未探测（不是「台架没问题」，是没验出来）",
+                "detail": result.facts[fact_id]["detail"],
+            }
+            continue
+        value = ctx.get(fact_id)
+        entry = {
+            "state": value.state,
+            "detail": value.detail,
+            "evidence": list(value.evidence),
+            "params": dict(fact_params.get(fact_id) or {}),
+            "declared": fact_id in unknown_facts,
+        }
+        result.facts[fact_id] = entry
+        if value.state != "yes":
+            result.unmet[fact_id] = {
+                "state": value.state,
+                "reason": (
+                    "事实不成立（no）：台架/前置不具备" if value.state == "no"
+                    else "说不清（unknown）：没验出来，不能当就绪"
+                ),
+                "detail": value.detail,
+            }
+    result.duration_s = time.monotonic() - started
+    if not result.ok:
+        result.skipped_reason = "预检未通过：%s" % "、".join(
+            "%s=%s" % (fact_id, entry["state"]) for fact_id, entry in result.unmet.items()
+        )
+    return result, ctx
+
+
+# --------------------------------------------------------------------------- #
+# 整轮超时（REQS-0042 D2-6 / D4-5）：用例在工作线程里跑，主线程 join 剩余预算
+# --------------------------------------------------------------------------- #
+
+
+def run_timeout_of(args: argparse.Namespace) -> float:
+    """``--timeout`` 解析与校验（秒；``0`` = 关闭；负数/非数字 = 用法错误）。"""
+    raw = getattr(args, "timeout", None)
+    if raw is None:
+        return DEFAULT_RUN_TIMEOUT
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise UsageError(["--timeout 必须是数字（秒）：收到 %r" % (raw,)]) from None
+    if value < 0:
+        raise UsageError(["--timeout 不能为负：收到 %r" % (raw,)])
+    return value
+
+
+def run_case_with_deadline(
+    bundle: Bundle,
+    case: CaseSpec,
+    *,
+    deadline: float | None,
+    **kwargs: Any,
+) -> tuple[RunOutcome, bool]:
+    """在工作线程里跑一个用例，主线程最多等到 ``deadline``（``None`` = 无限）。
+
+    返回 ``(outcome, timed_out)``。超时**不杀线程**（Python 没有安全的强杀手段），
+    而是记 ``inconclusive`` 并把「卡在哪个块」如实写出来；遗留线程是 daemon，
+    本 run 剩余的用例一律不再执行，所以它不会影响后续结论（风险见模块说明）。
+    """
+    box: dict[str, Any] = {}
+    board = BlockProgress(case_id=case.id)
+
+    def work() -> None:
+        bind_progress(board)
+        try:
+            box["outcome"] = run_case(bundle, case, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - 线程内异常必须自己收住，否则主线程 join 完看不到
+            box["error"] = exc
+        finally:
+            bind_progress(None)
+
+    if deadline is None:
+        work()
+        error = box.get("error")
+        if error is not None:
+            raise error
+        return box["outcome"], False
+
+    thread = threading.Thread(target=work, name="case-%s" % case.id, daemon=True)
+    thread.start()
+    thread.join(max(0.0, deadline - time.monotonic()))
+    if thread.is_alive():
+        # 读**同一块进度板**（跨线程可读）：卡在哪个块，超时说明里就得写哪个块
+        return timeout_outcome(
+            case,
+            run_id=str(kwargs.get("run_id") or ""),
+            reason="整轮超时（卡在 %s / %s）"
+            % (case.id, board.block_id or "预处理（尚未进入任何块）"),
+            stuck_block=board.block_id,
+        ), True
+    error = box.get("error")
+    if error is not None:
+        raise error
+    return box["outcome"], False
+
+
+# --------------------------------------------------------------------------- #
+# 证据落盘（REQS-0042 D4-1 / D4-4 / D4-6）
+# --------------------------------------------------------------------------- #
+
+
+def result_dir_of(args: argparse.Namespace) -> Path:
+    """结果落盘根：``--result-dir`` > :data:`DEFAULT_RESULT_DIR`。"""
+    override = getattr(args, "result_dir", None)
+    return Path(override).expanduser() if override else DEFAULT_RESULT_DIR
+
+
+def build_result_document(
+    *,
+    run_id: str,
+    suite: SuiteSpec | None,
+    cases: Sequence[CaseSpec],
+    resolved_params: Mapping[str, Any],
+    started_at: datetime,
+    finished_at: datetime,
+    duration_s: float,
+    timeout_s: float,
+    stop_on_fail: bool,
+    base_url: str,
+    base_source: str,
+    preflight: PreflightResult,
+    outcomes: Sequence[RunOutcome],
+    decisions: Sequence[Mapping[str, Any]],
+    exit_code: int,
+    overall_verdict: str,
+) -> dict[str, Any]:
+    """组装落盘文档：**证据以「启动瞬间的快照」为准**（D4-1 参数冻结）。
+
+    ``decisions[]`` 的单一来源是 :meth:`CaseRunResult.resolved_decisions`
+    （经 ``outcome.result.to_dict()`` 读），这里只做「run 级预检 + 逐用例」的扁平合并，
+    **不再**自己派生第二套（否则方案级与用例级口径迟早漂移）。
+    """
+    merged: list[dict[str, Any]] = [dict(item) for item in decisions]
+    for outcome in outcomes:
+        for item in outcome.result.to_dict().get("decisions") or []:
+            entry = dict(item)
+            entry.setdefault("case_id", outcome.case.id)
+            entry.setdefault("blocked_block", outcome.result.blocked_block)
+            merged.append(entry)
+    self_healed: list[dict[str, Any]] = []
+    for outcome in outcomes:
+        self_healed.extend(outcome.result.self_healed_entries())
+    return {
+        "run_id": run_id,
+        "suite_id": suite.id if suite is not None else "",
+        "case_ids": [case.id for case in cases],
+        "params": dict(resolved_params),
+        "resolved_params": dict(resolved_params),  # D4-1 的别名（API/UI 两种叫法都认）
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": finished_at.isoformat(timespec="seconds"),
+        "duration_s": round(duration_s, 3),
+        "timeout_s": timeout_s,
+        "stop_on_fail": stop_on_fail,
+        "base_url": base_url,
+        "base_url_source": base_source,
+        "verdict": overall_verdict,
+        "exit_code": exit_code,
+        "preflight": preflight.to_dict(),
+        # 台架快照：预检探到的三态（没启用预检时为空 + 如实写原因）
+        "bench": {
+            "source": "preflight",
+            "facts": {key: dict(value) for key, value in preflight.facts.items()},
+            "unmet_facts": {key: dict(value) for key, value in preflight.unmet.items()},
+            "skipped_reason": preflight.skipped_reason,
+        },
+        "decisions": merged,
+        # D4-4：人/AI 介入记录必须**恒为空数组**；出现非空即本次运行不成立
+        "interventions": [],
+        "self_healed": self_healed,
+        "cases": [outcome.to_dict() for outcome in outcomes],
+    }
+
+
+def write_result_document(
+    document: Mapping[str, Any], *, result_dir: Path, run_id: str, err: TextIO | None = None
+) -> Path | None:
+    """落盘 ``<result_dir>/<run_id>/result.json``；**失败只 warning，不影响退出码**。"""
+    try:
+        target = Path(result_dir) / run_id
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / RESULT_FILENAME
+        path.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return path
+    except Exception as exc:  # noqa: BLE001 - 证据是附加物，落盘失败不许改变结论
+        _print(
+            err or sys.stderr,
+            "⚠ 结果落盘失败（不影响结论与退出码）：%s: %s" % (type(exc).__name__, exc),
+        )
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1320,7 +1914,12 @@ def _block_detail(result: CaseRunResult, ref: str) -> str:
 
 
 def _verdict_label(verdict: str) -> str:
-    return {OUTCOME_PASS: "PASS", OUTCOME_FAIL: "FAIL"}.get(verdict, "INCOMPLETE（未完成验证）")
+    return {
+        OUTCOME_PASS: "PASS",
+        OUTCOME_FAIL: "FAIL",
+        OUTCOME_BLOCKED: "BLOCKED（台架/前置不具备）",
+        OUTCOME_INCONCLUSIVE: "INCONCLUSIVE（说不清）",
+    }.get(verdict, "INCONCLUSIVE（说不清）")
 
 
 def render_probe(payload: Mapping[str, Any], *, out: TextIO) -> None:
@@ -1336,6 +1935,8 @@ def render_probe(payload: Mapping[str, Any], *, out: TextIO) -> None:
             base_url_source_label(source),
         ),
     )
+    if payload.get("readonly"):
+        _print(out, "只读闸：--readonly（写块不执行，只记 skipped）")
     _print(out)
 
     blocks = list(payload.get("blocks") or [])
@@ -2040,6 +2641,16 @@ def _select_targets(args: argparse.Namespace, bundle: Bundle) -> tuple[list[Case
 
 
 def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
+    """跑用例 / 方案：冻结入参 → 预检 → 限额执行 → 落盘证据 → 出结论（D4-1..D4-6）。
+
+    一条 run 的固定顺序（任何一步都不改判定，只决定「跑不跑、跑到哪儿」）：
+
+    1. 选目标、校验 ``--params``、**冻结**入参（D4-1：之后执行期只读这份快照）；
+    2. 预检（D2-8）：只探所选用例 ``needs`` 的并集，不满足 → 整轮 ``blocked``，不逐用例跑；
+    3. 执行（D2-6）：每例在工作线程里跑，主线程按整轮预算 ``join``；超时按 ``inconclusive`` 收尾；
+    4. 落盘（D4-6）：``data/case_runs/<run_id>/result.json``（失败只 warning）；
+    5. 输出（人读 / ``--json``）+ 退出码（六档）。
+    """
     cases, suite = _select_targets(args, bundle)
     values = parse_params_json(getattr(args, "params", None))
 
@@ -2053,78 +2664,167 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
             cases,
             bundle,
         )
-    resolved = spec.resolve(values)
+    resolved = spec.resolve(values)          # D4-1：启动瞬间冻结，执行期只读
 
     stop_on_fail = bool(getattr(args, "stop_on_fail", False)) or bool(
         suite.stop_on_fail if suite else False
     )
+    timeout_s = run_timeout_of(args)
+    preflight_enabled = not bool(getattr(args, "no_preflight", False))
     run_id = new_run_id()
+    started_at = datetime.now()
+    started_monotonic = time.monotonic()
+    run_decisions: list[dict[str, Any]] = []
+
+    _block_params, fact_params = spec.split(resolved)
+
+    # -- ① 预检（D2-8 / VF-2）：不满足就整轮 blocked，不逐用例跑 ----------------- #
+    preflight = PreflightResult(enabled=False, skipped_reason="--no-preflight：跳过预检")
+    facts_ctx: FactsContext | None = None
+    if preflight_enabled:
+        preflight, facts_ctx = run_preflight(
+            cases, bundle, fact_params=fact_params, env=env
+        )
+    run_decisions.extend(preflight.decisions())
 
     outcomes: list[RunOutcome] = []
-    stopped_at = ""
-    for case in cases:
-        if stopped_at:
+    if preflight_enabled and not preflight.ok:
+        reason = "预检未通过（整轮 blocked，未逐用例执行）：%s" % "、".join(
+            "%s=%s" % (fact_id, entry["state"]) for fact_id, entry in preflight.unmet.items()
+        )
+        for case in cases:
             outcomes.append(
-                skipped_outcome(
+                blocked_outcome(
                     case,
                     run_id=run_id,
-                    reason="方案 stop_on_fail：前序用例 %s 未通过，本用例未执行" % stopped_at,
+                    reason=reason,
+                    unmet_facts=preflight.unmet,
                 )
             )
-            continue
-        outcome = run_case(
-            bundle,
-            case,
-            resolved_params=resolved,
-            param_spec=spec,
-            run_id=run_id,
-            extras=env.extras,
-            fact_probe=env.fact_probe,
-            stop_on_fail=stop_on_fail,
+    else:
+        # -- ② 执行（D2-6）：整轮预算 deadline，超时不再往下跑 ------------------ #
+        deadline = started_monotonic + timeout_s if timeout_s > 0 else None
+        stopped_at = ""
+        track_ids = [block_id for case in cases for block_id in case_block_ids(case)]
+        tracker = (
+            track_running_blocks(track_ids) if deadline is not None
+            else contextlib.nullcontext()
         )
-        outcomes.append(outcome)
-        if stop_on_fail and outcome.result.verdict == OUTCOME_FAIL:
-            stopped_at = case.id
+        with tracker:
+            for case in cases:
+                if stopped_at:
+                    outcomes.append(
+                        skipped_outcome(
+                            case,
+                            run_id=run_id,
+                            reason="方案 stop_on_fail：前序用例 %s 未通过，本用例未执行"
+                            % stopped_at,
+                        )
+                    )
+                    continue
+                if deadline is not None and time.monotonic() >= deadline:
+                    outcome = timeout_outcome(
+                        case,
+                        run_id=run_id,
+                        reason="整轮超时未执行（预算已耗尽，上一例卡住后不再往下跑）",
+                    )
+                    outcomes.append(outcome)
+                    continue
+                case_started = time.monotonic()
+                outcome, timed_out = run_case_with_deadline(
+                    bundle,
+                    case,
+                    deadline=deadline,
+                    resolved_params=resolved,
+                    param_spec=spec,
+                    run_id=run_id,
+                    extras=env.extras,
+                    fact_probe=env.fact_probe,
+                    stop_on_fail=stop_on_fail,
+                    facts_ctx=facts_ctx,
+                )
+                outcome.duration_s = time.monotonic() - case_started
+                outcomes.append(outcome)
+                if timed_out:
+                    run_decisions.append(
+                        decision_entry(
+                            DECISION_TIMEOUT,
+                            attempts=1,
+                            reason="整轮 %gs 预算耗尽：卡在 %s / %s，剩余用例不再执行"
+                            % (timeout_s, case.id, outcome.stuck_block or "预处理"),
+                            case_id=case.id,
+                            stuck_block=outcome.stuck_block,
+                            budget_s=timeout_s,
+                        )
+                    )
+                    # 预算已经耗尽：剩下的用例一律记「未执行」，绝不再开新线程
+                    deadline = time.monotonic()
+                    continue
+                if stop_on_fail and outcome.result.verdict == OUTCOME_FAIL:
+                    stopped_at = case.id
 
     exit_code = _overall_exit_code(outcomes)
+    overall_verdict = _overall_verdict(outcomes)
+    finished_at = datetime.now()
+    duration_s = time.monotonic() - started_monotonic
+
+    # -- ③ 证据落盘（D4-1 / D4-4 / D4-6）：失败只 warning，不影响退出码 ---------- #
+    document = build_result_document(
+        run_id=run_id,
+        suite=suite,
+        cases=cases,
+        resolved_params=resolved,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_s=duration_s,
+        timeout_s=timeout_s,
+        stop_on_fail=stop_on_fail,
+        base_url=env.base_url,
+        base_source=env.base_source,
+        preflight=preflight,
+        outcomes=outcomes,
+        decisions=run_decisions,
+        exit_code=exit_code,
+        overall_verdict=overall_verdict,
+    )
+    result_path = write_result_document(
+        document, result_dir=result_dir_of(args), run_id=run_id, err=env.err
+    )
+
+    run_extras: dict[str, Any] = {
+        "ok": exit_code == EXIT_PASS,
+        "suite_id": suite.id if suite else "",
+        "case_ids": [case.id for case in cases],
+        "verdict": overall_verdict,
+        "exit_code": exit_code,
+        "stop_on_fail": stop_on_fail,
+        "timeout_s": timeout_s,
+        "base_url": env.base_url,
+        "base_url_source": env.base_source,
+        "base_url_note": base_url_notice(env.base_url, env.base_source),
+        "params": dict(resolved),
+        "preflight": preflight.to_dict(),
+        "bench": document["bench"],
+        "decisions": document["decisions"],
+        "interventions": [],
+        "self_healed": document["self_healed"],
+        "started_at": document["started_at"],
+        "finished_at": document["finished_at"],
+        "duration_s": document["duration_s"],
+        "result_path": str(result_path) if result_path else "",
+    }
 
     if env.json:
-        if len(outcomes) == 1 and not outcomes[0].skipped_reason:
+        if len(cases) == 1 and suite is None:
             payload = outcomes[0].to_dict()
-            payload["base_url"] = env.base_url
-            payload["base_url_source"] = env.base_source
-            payload["base_url_note"] = base_url_notice(env.base_url, env.base_source)
         else:
             payload = {
-                "ok": exit_code == EXIT_PASS,
                 "run_id": run_id,
-                "exit_code": exit_code,
-                "suite_id": suite.id if suite else "",
-                "stop_on_fail": stop_on_fail,
-                "base_url": env.base_url,
-                "base_url_source": env.base_source,
-                "base_url_note": base_url_notice(env.base_url, env.base_source),
-                "params": dict(resolved),
-                "cases": [
-                    {
-                        "case_id": outcome.case.id,
-                        "title": outcome.case.title,
-                        "verdict": outcome.result.verdict,
-                        "exit_code": outcome.exit_code,
-                        "failed_block": outcome.result.failed_block,
-                        "blocked_block": outcome.result.blocked_block,
-                        "unmet_facts": outcome.result.unmet_facts,
-                        "counts": outcome.result.counts,
-                        "blocks": [record.to_dict() for record in outcome.result.blocks],
-                        # 每个 step 的结论（同块多步时只有 step_id 能区分）
-                        "steps": outcome.result.step_summaries(),
-                        "skipped_reason": outcome.skipped_reason,
-                    }
-                    for outcome in outcomes
-                ],
+                "cases": [outcome.to_dict() for outcome in outcomes],
             }
-            if suite is not None:
-                payload["verdict"] = _overall_verdict(outcomes)
+        payload.update(run_extras)
+        if suite is not None:
+            payload["suite_id"] = suite.id
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=env.out)
     else:
         _print(env.out, "═══ 用例运行 ═══")
@@ -2139,8 +2839,30 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
         )
         if suite is not None:
             _print(env.out, "方案：%s —— %s" % (suite.id, suite.name))
-        _print(env.out, "用例数：%d；stop_on_fail：%s"
-               % (len(outcomes), "是" if stop_on_fail else "否"))
+        _print(
+            env.out,
+            "用例数：%d；stop_on_fail：%s；整轮上限：%s"
+            % (
+                len(cases),
+                "是" if stop_on_fail else "否",
+                ("%gs" % timeout_s) if timeout_s > 0 else "关闭",
+            ),
+        )
+        _print(
+            env.out,
+            "预检：%s"
+            % ("未启用（--no-preflight）" if not preflight.enabled else
+               ("通过（探了 %s）" % "、".join(preflight.facts) if preflight.ok
+                else "未通过 —— 缺：%s" % "、".join(
+                    "%s=%s" % (fact_id, entry["state"])
+                    for fact_id, entry in preflight.unmet.items()))),
+        )
+        for fact_id, entry in preflight.unmet.items():
+            _print(
+                env.out,
+                "  ✘ %s（%s）%s"
+                % (fact_id, entry["state"], truncate(str(entry.get("reason") or "-"), 80)),
+            )
         _print(env.out)
         for index, outcome in enumerate(outcomes, start=1):
             if index > 1:
@@ -2164,29 +2886,36 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
                         ("  " + outcome.skipped_reason) if outcome.skipped_reason else "",
                     ),
                 )
-            _print(env.out, "总退出码：%d" % exit_code)
+            _print(env.out, "总退出码：%d（%s）" % (exit_code, overall_verdict))
+        else:
+            _print(env.out, "退出码：%d（%s）" % (exit_code, overall_verdict))
+        _print(
+            env.out,
+            "证据：%s" % (result_path or "（落盘失败，见上方 warning；结论不受影响）"),
+        )
+        _print(
+            env.out,
+            "自动决策 %d 条、干预 0 条（interventions 恒空，D4-4）；耗时 %.1fs"
+            % (len(document["decisions"]), document["duration_s"]),
+        )
     return exit_code
 
 
 def _overall_exit_code(outcomes: Sequence[RunOutcome]) -> int:
-    """整次运行的退出码：有 fail → 1；全 pass → 0；否则 2（未完成验证）。"""
+    """整次运行的退出码：先聚合结论（``aggregate_verdict``），再映射六档。"""
     if not outcomes:
         return EXIT_INCOMPLETE
-    codes = [outcome.exit_code for outcome in outcomes]
-    if EXIT_FAIL in codes:
-        return EXIT_FAIL
-    if all(code == EXIT_PASS for code in codes):
-        return EXIT_PASS
-    return EXIT_INCOMPLETE
+    return exit_code_for_verdict(_overall_verdict(outcomes))
 
 
 def _overall_verdict(outcomes: Sequence[RunOutcome]) -> str:
-    codes = [outcome.exit_code for outcome in outcomes]
-    if EXIT_FAIL in codes:
-        return OUTCOME_FAIL
-    if codes and all(code == EXIT_PASS for code in codes):
-        return OUTCOME_PASS
-    return "inconclusive"
+    """整次运行的结论：**直接用模型层的** :func:`aggregate_verdict` 聚合。
+
+    §3.5 的优先级 ``fail > blocked > inconclusive > pass`` 只允许有**一处**实现
+    （``core/executor.py``）；本层不再写 if-else 链，也不再拿退出码反推结论——
+    反推会把方案级 ``blocked`` 吞成 ``inconclusive``（6 档一压成 3 档就丢语义）。
+    """
+    return aggregate_verdict(outcome.result.verdict for outcome in outcomes)
 
 
 # -- probe ------------------------------------------------------------------ #
@@ -2245,6 +2974,31 @@ def _needs_text(record_facts: Mapping[str, Any]) -> str:
         return "-"
     return "、".join("%s=%s" % (fact_id, _state_of(value))
                     for fact_id, value in record_facts.items())
+
+
+def is_readonly_block(spec: BlockSpec) -> bool:
+    """块是不是只读块（声明 ``tags`` 含 :data:`READONLY_TAG`；REQS-0042 D2-10）。"""
+    return READONLY_TAG in {str(tag).strip().lower() for tag in spec.tags}
+
+
+def readonly_skipped_entry(spec: BlockSpec) -> dict[str, Any]:
+    """``--readonly`` 下写块的记录：**记 skipped**，不执行、不发帧。
+
+    与 :func:`probe_one_block` 的「skipped → unknown」口径并存但语义不同：
+    这里的 ``skipped`` 是**用户显式要求不跑**（不是没验出来），所以照实保留 skipped，
+    并带上 ``skipped_by`` 让调用方能区分「前置不满足」与「--readonly 主动跳过」。
+    """
+    return {
+        "block_id": spec.id,
+        "title": spec.title,
+        "state": BLOCK_SKIPPED,
+        "raw_state": BLOCK_SKIPPED,
+        "needs": list(spec.needs),
+        "needs_text": "-",
+        "detail": "--readonly 已跳过写块（声明 tags 不含 %r）" % READONLY_TAG,
+        "outcome": OUTCOME_INCONCLUSIVE,
+        "skipped_by": "--readonly",
+    }
 
 
 def probe_one_block(
@@ -2307,8 +3061,13 @@ def probe_all(
     run_id: str,
     block_ids: Sequence[str] | None = None,
     fact_ids: Sequence[str] | None = None,
+    readonly: bool = False,
 ) -> tuple[dict[str, Any], int]:
-    """逐块 + 逐事实自检，返回 ``(payload, 退出码)``。"""
+    """逐块 + 逐事实自检，返回 ``(payload, 退出码)``。
+
+    ``readonly=True``（``--readonly``，D2-10）：**写块一律不执行**，记 ``skipped`` +
+    「--readonly 已跳过写块」。默认 ``False`` = 全跑（行为与改动前完全一致）。
+    """
     fact_params = probe_fact_params(bundle)
     facts_ctx = FactsContext(
         probe=env.fact_probe,
@@ -2339,6 +3098,10 @@ def probe_all(
             break  # 只自检事实时不跑块（跑块会真的下发帧，改变台架状态）
         if block_ids is not None and spec.id not in block_ids:
             continue
+        if readonly and not is_readonly_block(spec):
+            # D2-10：--readonly 下写块只留痕不执行（防「想自检台架却顺手复位 STA」）
+            blocks_payload.append(readonly_skipped_entry(spec))
+            continue
         blocks_payload.append(
             probe_one_block(bundle, spec, run_id=run_id, env=env, facts_ctx=facts_ctx)
         )
@@ -2360,11 +3123,17 @@ def probe_all(
         )
 
     passed = block_counts.get(BLOCK_PASS, 0)
+    readonly_skipped = block_counts.get(BLOCK_SKIPPED, 0) if readonly else 0
     if blocks_payload and passed:
         summary = "有 %d 个块拿到 pass，%d 个块 unknown / %d 个 fail（逐块结论见上）" % (
             passed,
             block_counts.get(BLOCK_UNKNOWN, 0),
             block_counts.get(BLOCK_FAIL, 0),
+        )
+    elif blocks_payload and readonly and readonly_skipped == len(blocks_payload):
+        summary = (
+            "全部 %d 个块都是写块，--readonly 已跳过（只读闸生效：一个帧都没发）"
+            % readonly_skipped
         )
     elif blocks_payload:
         summary = (
@@ -2378,6 +3147,8 @@ def probe_all(
             fact_counts.get("no", 0),
             fact_counts.get("unknown", 0),
         )
+    if readonly and blocks_payload and not (readonly_skipped == len(blocks_payload)):
+        summary += "；--readonly 跳过 %d 个写块" % readonly_skipped
 
     hint = ""
     if not env.base_url:
@@ -2390,6 +3161,11 @@ def probe_all(
             "按本机默认端口 %d 没拿到任何 pass —— 先确认工作台已启动"
             "（或运行时文件 data/runtime/workbench.json 是否存在）" % DEFAULT_PORT
         )
+    elif readonly and readonly_skipped:
+        hint = (
+            "%d 个写块被 --readonly 跳过（要连写块一起自检就去掉 --readonly，"
+            "注意复位/建档会真的动台架）" % readonly_skipped
+        )
 
     payload: dict[str, Any] = {
         "ok": exit_code == EXIT_PASS,
@@ -2398,6 +3174,7 @@ def probe_all(
         "base_url": env.base_url,
         "base_url_source": env.base_source,
         "base_url_note": base_url_notice(env.base_url, env.base_source),
+        "readonly": readonly,
         "blocks": blocks_payload,
         "facts": facts_payload,
         "block_counts": block_counts,
@@ -2412,6 +3189,7 @@ def probe_all(
 
 def cmd_probe(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
     run_id = new_run_id()
+    readonly = bool(getattr(args, "readonly", False))
     block_ids = None
     fact_ids = None
     if getattr(args, "block", None):
@@ -2430,7 +3208,12 @@ def cmd_probe(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
             )
 
     payload, exit_code = probe_all(
-        bundle, env=env, run_id=run_id, block_ids=block_ids, fact_ids=fact_ids
+        bundle,
+        env=env,
+        run_id=run_id,
+        block_ids=block_ids,
+        fact_ids=fact_ids,
+        readonly=readonly,
     )
 
     if env.json:
@@ -2614,15 +3397,20 @@ def build_parser() -> argparse.ArgumentParser:
             "  case_run show nwk_join                    用例名 + 步骤 + 块清单 + needs\n"
             "  case_run show archive.add                 块的 action 键 + 参数默认值（含配置默认）\n"
             "  case_run run --case nwk_join --params '{\"meter_addr\":\"123456789012\"}'\n"
-            "  case_run run --case meter_read --json      零参可跑（地址走两层配置默认）\n"
+            "  case_run run --case meter_daily --json     零参可跑（地址走两层配置默认）\n"
             "  case_run run --suite smoke --base-url http://<host>:<port> --json\n"
+            "  case_run run --suite meter_smoke_min --timeout 600 --json  整轮 600s 硬上限\n"
+            "  case_run run --case meter_daily --no-preflight --json      跳过预检（诊断用）\n"
             "  case_run probe --all --json               逐块/逐事实自检（无台架 → 全 unknown）\n"
+            "  case_run probe --all --readonly --json    只读闸：写块跳过，绝不动台架\n"
             "  case_run probe --block archive.add        单块自检\n"
             "  case_run check                            声明校验\n\n"
             "参数名：REQS 0042 D2-1 起地址参数只叫 meter_addr（多值 meter_addrs）；\n"
             "传旧名 addr / meters 会直接报参数错误（退出码 3），不给兼容别名。\n\n"
             "工作台地址发现顺序（D2-3）：--base-url > 环境变量 WORKBENCH_BASE >\n"
             "运行时文件 data/runtime/workbench.json（工作台启动时写）> 本机默认端口。\n\n"
+            "每次 run 都会落盘 data/case_runs/<run_id>/result.json（--result-dir 可改），\n"
+            "含参数快照 / 断点 / decisions[] / interventions[]（恒空）/ 台架快照。\n\n"
             + EXIT_CODE_HELP
         ),
     )
@@ -2674,6 +3462,15 @@ def build_parser() -> argparse.ArgumentParser:
                          "执行前校验缺必填/多余/类型非法；传旧名 addr/meters 直接报错（D2-1）")
     rp.add_argument("--stop-on-fail", action="store_true",
                     help="首块非 pass 即跳过下游块（方案自身 stop_on_fail 也会生效）")
+    rp.add_argument("--timeout", type=float, default=DEFAULT_RUN_TIMEOUT, metavar="SEC",
+                    help="整轮总预算（秒，默认 %g；0 = 关闭）。超时按 inconclusive 收尾并写明"
+                         "卡在哪个块，剩余用例记「整轮超时未执行」（REQS-0042 D2-6）"
+                         % DEFAULT_RUN_TIMEOUT)
+    rp.add_argument("--no-preflight", action="store_true",
+                    help="跳过运行前预检（诊断用）。默认会先探所选用例 needs 的并集，"
+                         "不满足就整轮 blocked + 点名缺什么（D2-8 / VF-2）")
+    rp.add_argument("--result-dir", default=None, metavar="PATH",
+                    help="结果落盘根（默认 data/case_runs；每次 run 写 <结果根>/<run_id>/result.json）")
     _add_base_url(rp)
     _add_data_dir(rp)
     _add_json(rp)
@@ -2689,10 +3486,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--all",
         action="store_true",
         help="全部块 + 全部事实（注意：块自检会**真的下发帧**——复位/建档/组网都会动台架，"
-             "只想看就绪度请用 --fact）",
+             "只想看就绪度请用 --fact，或加 --readonly 只跑只读块）",
     )
     target.add_argument("--block", metavar="BLOCK_ID", help="只自检一个块")
     target.add_argument("--fact", metavar="FACT_ID", help="只自检一个事实")
+    pp.add_argument("--readonly", action="store_true",
+                    help="只读闸（D2-10）：只跑声明 tags 含 readonly 的块；写块记 skipped + "
+                         "「--readonly 已跳过写块」。默认**不加**（行为与改动前一致）")
     _add_base_url(pp)
     _add_data_dir(pp)
     _add_json(pp)
@@ -2834,10 +3634,16 @@ __all__ = [
     "EXIT_INCOMPLETE",
     "EXIT_USAGE",
     "EXIT_DECLARATION",
+    "EXIT_BLOCKED",
     "EXIT_CODE_HELP",
+    "OUTCOME_BLOCKED",
     "ENV_BASE_URL",
     "DEFAULT_PORT",
     "DEFAULT_BASE_URL",
+    "DEFAULT_RUN_TIMEOUT",
+    "DEFAULT_RESULT_DIR",
+    "PREFLIGHT_BUDGET_S",
+    "READONLY_TAG",
     "RUNTIME_FILE",
     "BASE_URL_SOURCE_LABELS",
     "RENAMED_PARAMS",
@@ -2848,6 +3654,7 @@ __all__ = [
     "ParamDef",
     "CaseParamSpec",
     "RunOutcome",
+    "PreflightResult",
     "build_parser",
     "main",
     "load_bundle",
@@ -2858,7 +3665,22 @@ __all__ = [
     "suite_param_spec",
     "probe_fact_params",
     "probe_all",
+    "probe_one_block",
+    "is_readonly_block",
+    "readonly_skipped_entry",
     "run_case",
+    "run_case_with_deadline",
+    "case_block_ids",
+    "preflight_facts",
+    "run_preflight",
+    "run_timeout_of",
+    "build_result_document",
+    "write_result_document",
+    "result_dir_of",
+    "track_running_blocks",
+    "current_progress",
+    "bind_progress",
+    "BlockProgress",
     "new_run_id",
     "exit_code_for_verdict",
     "exit_code_for_states",

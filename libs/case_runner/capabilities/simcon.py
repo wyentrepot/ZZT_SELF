@@ -44,6 +44,7 @@ verify 步骤结果字段契约（``verify`` / ``job`` / ``poll_job`` 共用）:
 端点契约（实测自 ``libs/sim_concentrator/api.py``、``apps/workbench/ai_v2_api.py``）::
 
     GET  /api/simcon/status                     -> {open, port, pending_frames, session, ...}
+    POST /api/simcon/close                      -> {open: false, ...}（幂等；占用自愈用）
     POST /api/simcon/build                      -> {hex: "68 0F ...", length: 15}
     GET  /api/simcon/frames?after_seq=&run_id=  -> {session_id, entries[], next_after_seq, has_more, counts}
     GET  /api/ai/v2/simcon/lease                -> {held, holder}
@@ -131,7 +132,7 @@ def _http_detail(payload: Any, status: int) -> str:
 
 
 class SimconCapability:
-    """模拟集中器能力：probe / build / verify / frames（+ status / lease 只读快照）。"""
+    """模拟集中器能力：probe / build / verify / frames（+ status / lease 只读快照 + close）。"""
 
     name = "simcon"
 
@@ -252,6 +253,39 @@ class SimconCapability:
         if lease.get("ok") and lease.get("held"):
             reason += "；lease 被占用"
         return Health(ok=True, reason=reason)
+
+    # -------------------------------------------------- 释放（自愈层 closer） ----
+
+    def close(self) -> Dict[str, Any]:
+        """``POST /api/simcon/close``：关串口、释放占用 —— 自愈层的 close 能力。
+
+        接口契约（REQS-0042 §3.4 / D2-7，由 ``blocks/common.py`` 的
+        ``with_self_heal`` 经 ``capability_closer`` 按 ``SIMCON_CLOSER_NAMES``
+        找到本方法，**零参**调用）：
+
+        - **幂等**：口本来没开时后端照样回 2xx（``{"open": false}``），这里直接按
+          成功透传，**不**自己判失败；
+        - **不抛异常**：失败一律 ``{"ok": False, "error": ..., "detail": ...}``
+          （同本文件其余动作方法）；
+        - 服务端应答**原样透传**（``actor / holder / owner / session / session_id /
+          run_id / job_id / port / device`` …）：自愈层要靠这些字段写「抢占了谁」
+          （见 ``blocks/common.py`` 的 ``_preempt_note``），所以既铺在顶层，
+          也保留在 ``raw`` 里。
+        """
+        result = self._request("POST", "/api/simcon/close", {})
+        if not result["ok"]:
+            return result
+        data = result["data"] if isinstance(result["data"], dict) else {}
+        closed: Dict[str, Any] = dict(data)      # 先铺服务端字段（抢占对象在这里）
+        closed.update({
+            # 2xx 即关成功（幂等：不看 open 字段，也未开时后端同样回 2xx）
+            "ok": True,
+            "error": None,
+            "detail": str(data.get("detail") or data.get("message") or ""),
+            "status": result["status"],
+            "raw": data,
+        })
+        return closed
 
     # ---------------------------------------------------------------- 构帧 ----
 

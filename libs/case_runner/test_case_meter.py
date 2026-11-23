@@ -1,0 +1,759 @@
+"""抄表两条用例（REQS-0042 v9 **D9-1 / D9-2**）：日常主线与首次组网**拆开**。
+
+真机实测驱动（2026-11-23）：**复位 STA 后链路恢复要十几分钟量级**（16:20 复位 → 16:45
+才恢复到 2.5s；17:18 复位 → 30 分钟后表口仍静默），而读取本身只要 2.3–2.6s。且
+``nwk.topology`` 在复位后**立刻就能通过**（CCO 节点计数残留）——**「组网判定通过」≠
+「链路可用」**。所以「复位」不能塞在日常回归里，一条用例也承担不了两种节奏：
+
+=============================  =============================================
+用例                           结构
+=============================  =============================================
+``meter_daily``（**不复位**）   5 步：档案 → 组网 → 绑表 → 抄表（电能/电压）
+``meter_first_join``（**含复位**） 6 步：复位 → 档案 → 组网 → 绑表 → 抄表（电能/电压）
+=============================  =============================================
+
+用户裁决（v9）：**拆成两条用例**；D9-2 方案映射 ``meter_smoke_min=[bench_ready,
+meter_daily]``、``smoke_meter=[bench_ready, meter_first_join]``。旧的单条 ``meter_read``
+（复位 + 档案 + 组网 + 绑表 + 抄表 5 动作 6 步）已删除，语义被上面两条完整覆盖。
+
+**关键断言**（本文件的核心守卫）：``meter_daily`` **不得**含 ``reset.sta``；
+``meter_first_join`` **必须**含 ``reset.sta`` 且复位排在第一步。
+
+覆盖：
+
+1. 两条用例均可加载：``plan`` 5 步 / 6 步、step id 唯一、引用的块/事实都存在
+   （``problems == []``）；
+2. 块序列与顺序被钉死；``on_fail`` 全为 ``stop``；``needs`` 分别只含
+   ``bench.simcon_online``（daily）/ 再加 ``bench.sta_online``（first_join）；
+3. 组网步骤**不得**在用例里改 ``wait_s``（默认 300s 由块给，压小会把「还在入网」判成
+   假 FAIL）；``meter.addr_probe`` / ``meter.read_645`` 的 ``wait_s`` 延展口**预留但不写进
+   plan**（默认 0 = 只探一次）；
+4. 同一块 ``meter.read_645`` 两步、DI 不同 → 规划出两个 step，参数互不污染；
+5. 645 帧里 DI 的**字节序**用单测锁死（显示序 → 传输序 +33H，``02010100`` → ``33343435``）；
+6. 期望值比较口径（浮点 + 相对容差）与「上行数据单元为空」的行为。
+
+**无台架**：不连 8790、不开串口、单测零真实等待。复位 / 档案 / 组网三块的**块级判据**
+分别由 ``blocks/test_fix_reset.py``、``blocks/test_archive_nwk.py`` 覆盖；本文件执行段把
+它们换成桩（``_stub_non_meter_blocks``），只验证用例编排与表侧三个动作的真判据。
+"""
+
+from __future__ import annotations
+
+import json
+import pathlib
+
+import pytest
+
+import case_runner.cli as cli
+import case_runner.core.executor as executor
+from case_runner.blocks import loader
+from case_runner.blocks.common import block_action_params, meter_addr_wire
+from case_runner.blocks.meter import (
+    CONTROL_READ_ADDR,
+    build_645_read_frame,
+    build_645_request,
+    di_echo_hex,
+    judge_read_645,
+)
+from case_runner.capabilities.frames import FramesCapability
+from case_runner.core.executor import RunContext, effective_params, execute_case
+from case_runner.core.models import BLOCK_FAIL, BLOCK_PASS, BLOCK_SKIPPED, CaseSpec
+from case_runner.core.planner import FactsContext, plan
+
+# --------------------------------------------------------------------------- #
+# 两条用例的定稿结构（D9-1）
+# --------------------------------------------------------------------------- #
+
+DAILY = "meter_daily"
+FIRST_JOIN = "meter_first_join"
+
+#: ``meter_daily``：**不复位**的日常主线（4 动作 / 5 步）
+DAILY_STEP_IDS = ["s1", "s2", "s3", "s4", "s5"]
+DAILY_BLOCK_ORDER = [
+    "archive.add",
+    "nwk.topology",
+    "meter.addr_probe",
+    "meter.read_645",
+    "meter.read_645",
+]
+DAILY_NEEDS = ["bench.simcon_online"]
+DAILY_TAGS = ["meter", "645", "voltage", "daily", "smoke"]
+
+#: ``meter_first_join``：**含复位**的首次组网（5 动作 / 6 步）
+JOIN_STEP_IDS = ["s1", "s2", "s3", "s4", "s5", "s6"]
+JOIN_BLOCK_ORDER = [
+    "reset.sta",
+    "archive.add",
+    "nwk.topology",
+    "meter.addr_probe",
+    "meter.read_645",
+    "meter.read_645",
+]
+JOIN_NEEDS = ["bench.sta_online", "bench.simcon_online"]
+JOIN_TAGS = ["meter", "645", "first-join"]
+
+#: 两条用例共用的两个数值（台架寄存器既有事实）
+ENERGY_DI = "00010000"
+ENERGY_VALUE = 1234.56
+VOLTAGE_DI = "02010100"
+VOLTAGE_VALUE = 220.1
+
+#: 台架事实：模拟电表脑地址（``case_defaults.meter_addr`` 同值；645 帧地址域不反转）
+BENCH_ADDR = "123456789012"
+
+#: 用例里**显式钉死**的读等待上限（实测单数据项往返 2.3–2.6s → 15s = 6 倍余量；
+#: 显式值存在时块不再查 03H-F7，避免按 t+5s 空等 95s）
+READ_EXPECT_TIMEOUT = 15
+
+#: 块级判据另有专项测试覆盖的三个块；执行段用桩替换（只测编排 + 表侧判据）
+STUBBED_BLOCKS = ("reset.sta", "archive.add", "nwk.topology")
+
+#: ``nwk.topology`` 块声明里的等待上限默认值（用例不得覆盖）
+TOPOLOGY_WAIT_S = 300.0
+
+#: 表侧三步的参数覆盖（按块而不是按 step id，两条用例共用：同一个块同一份参数）
+#: 三步读的等待预算（真机实测驱动）：
+#: - ``expect_timeout`` = 15s（单数据项往返 2.3–2.6s 的 6 倍余量；显式值存在时不查 03H-F7）
+#: - ``wait_s`` = 绑表 60s / 两次读 30s（吸收冷启动瞬态；``meter_first_join`` 绑表 180s）
+READ_PARAMS = {
+    "meter.addr_probe": {"expect_timeout": READ_EXPECT_TIMEOUT, "wait_s": 60},
+    "meter.read_645": [
+        {"di": ENERGY_DI, "expect_value": ENERGY_VALUE,
+         "expect_timeout": READ_EXPECT_TIMEOUT, "wait_s": 30},
+        {"di": VOLTAGE_DI, "expect_value": VOLTAGE_VALUE,
+         "expect_timeout": READ_EXPECT_TIMEOUT, "wait_s": 30},
+    ],
+}
+
+DATA_DIR = pathlib.Path(loader.DATA_DIR)
+REAL_FRAMES = FramesCapability()
+
+
+# --------------------------------------------------------------------------- #
+# 隔离：绝不碰真工作台（地址兜底显式关掉）+ 注册表就绪
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def no_bench(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """整个文件默认状态：没有任何工作台地址可被发现。
+
+    - 运行时文件指到 ``tmp_path``（绝不读仓库里那份真实端口文件）；
+    - 末档 ``DEFAULT_BASE_URL = ""`` + 清 ``WORKBENCH_BASE`` → 什么都没发现；
+    - 顺手重注册领域模块（别的测试可能 ``clear_registries()`` 过）。
+    """
+    loader.register_domain_modules(strict=False)
+    monkeypatch.setattr(cli, "RUNTIME_FILE", tmp_path / "runtime" / "workbench.json")
+    monkeypatch.setattr(cli, "DEFAULT_BASE_URL", "")
+    monkeypatch.delenv(cli.ENV_BASE_URL, raising=False)
+    monkeypatch.delenv("WORKBENCH_BASE", raising=False)
+
+
+@pytest.fixture
+def stub_non_meter_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把复位 / 档案 / 组网三块换成 pass 桩（块级判据见各自 ``blocks/test_*.py``）。
+
+    桩打在 ``executor.get_block``（执行器执行前才解析执行体），因此用例声明、规划、
+    参数优先级、表侧三个动作仍是**真**实现。``meter_daily`` 不含 ``reset.sta``，桩对它
+    无害（不会被调用）。
+    """
+
+    real_get_block = executor.get_block
+
+    def fake_get_block(block_id: str):
+        if block_id not in STUBBED_BLOCKS:
+            return real_get_block(block_id)
+
+        def run(params, ctx=None):  # noqa: ANN001 - 对标块执行体签名
+            return executor.BlockResult(
+                state=BLOCK_PASS,
+                detail="夹具桩：%s 直接 pass（块级判据由 blocks/test_*.py 覆盖）" % block_id,
+            )
+
+        return run
+
+    monkeypatch.setattr(executor, "get_block", fake_get_block)
+
+
+# --------------------------------------------------------------------------- #
+# 素材与工具（帧构造走「与块同口径」的换算，不手写第二套字节序）
+# --------------------------------------------------------------------------- #
+
+
+def bcd_le(digits: str) -> bytes:
+    """十进制整数串 → 645 数据域 BCD（**低字节在前**）：``"2201"`` → ``01 22``。"""
+    padded = digits if len(digits) % 2 == 0 else "0" + digits
+    return bytes(reversed(bytes.fromhex(padded)))
+
+
+def read_reply_645(
+    addr: str, di: str, value_digits: str, *, control: int = 0x91
+) -> str:
+    """构一帧 645 读数据应答：``68|地址域|68|91|L|DI 传输序 + 数值|CS|16``。
+
+    数据域整段逐字节 +33H（645 数据域加密口径），数值为台架寄存器里那个数的 BCD。
+    """
+    plain = bytes(reversed(bytes.fromhex(di))) + bcd_le(value_digits)
+    data = bytes((byte + 0x33) & 0xFF for byte in plain)
+    body = b"\x68" + meter_addr_wire(addr) + bytes([0x68, control, len(data)]) + data
+    return (body + bytes([sum(body) & 0xFF, 0x16])).hex().upper()
+
+
+def read_addr_reply_645(addr: str, comm_addr: str = BENCH_ADDR) -> str:
+    """构一帧 645 读通信地址（13H）应答：数据域 6 字节通信地址，**不加 33H**。"""
+    data = bytes.fromhex(comm_addr)
+    body = b"\x68" + meter_addr_wire(addr) + bytes([0x68, 0x93, len(data)]) + data
+    return (body + bytes([sum(body) & 0xFF, 0x16])).hex().upper()
+
+
+def up_frame_with(inner_hex: str, protocol: int = 2) -> str:
+    """把内嵌 645 帧包成 02H-F1 上行帧（用真实门面构帧，只读、不连服务）。"""
+    built = REAL_FRAMES.build(
+        "1376.2",
+        {"afn": "02", "fn": 1,
+         "data": {"params": {"protocol": protocol, "payload": inner_hex}}},
+    )
+    assert built.get("ok"), built
+    return str(built["frame_hex"]).upper()
+
+
+class FakeSimcon:
+    """假 simcon：按「请求内嵌 645 帧」回对应的 02H-F1 上行帧（无 HTTP、无台架）。"""
+
+    name = "simcon"
+
+    #: 单测注入虚拟时钟/睡眠：``meter`` 块的 ``poll_hooks`` 会优先读取能力对象上的
+    #: ``clock`` / ``sleeper`` —— 因此带 ``wait_s`` 的用例**零真实等待**（实测省 ~180s）。
+    clock = staticmethod(lambda: 0.0)
+    sleeper = staticmethod(lambda seconds: None)
+
+    def __init__(self, replies: dict[str, str]) -> None:
+        self.replies = {key.upper(): value.upper() for key, value in replies.items()}
+        self.sent: list[str] = []
+        #: 收到过几次「03H-F7 取 t」前置查询（用例显式钉 expect_timeout 后应当为 0）
+        self.timeout_queries = 0
+
+    def verify(self, steps, max_poll_seconds=None):  # noqa: ANN001 - 对标能力层签名
+        send = steps[0]["send"]
+        if str(send.get("afn", "")).upper() == "03":
+            # 前置「03H-F7 取 t」查询（REQS-0042 D5-2）：本夹具不模拟该应答，
+            # 按「模块不支持该帧」失败 → 块回落到 60s（不污染 ``sent`` 的三个读步）
+            self.timeout_queries += 1
+            return {"ok": False, "error": "job_not_passed", "detail": "夹具不支持 03H-F7",
+                    "steps": [{"result": "fail", "reason": "夹具不支持 03H-F7"}]}
+        payload = str(send["params"]["payload"]).upper()
+        self.sent.append(payload)
+        up = self.replies.get(payload)
+        if not up:
+            return {"ok": False, "error": "job_not_passed", "detail": "",
+                    "steps": [{"result": "fail", "reason": "没有匹配的 02H-F1 上行帧"}]}
+        return {"ok": True, "run_id": "run-fake",
+                "steps": [{"index": 0, "name": "step", "matched": up, "result": "pass"}]}
+
+    def frames(self, **_kwargs):  # noqa: ANN003
+        return {"ok": False, "error": "unused", "entries": []}
+
+
+def all_yes(_fact_id: str, _params: dict) -> str:
+    """事实桩：任何前置事实都算满足（真实探测会连工作台，单测一律不查）。"""
+    return "yes"
+
+
+def block_specs() -> dict:
+    return {spec.id: spec for spec in loader.load_blocks()}
+
+
+def load_case(case_id: str) -> CaseSpec:
+    cases = {case.id: case for case in loader.load_cases()}
+    assert case_id in cases, "没找到用例声明 %s（现有：%s）" % (case_id, sorted(cases))
+    return cases[case_id]
+
+
+def structure(case_id: str) -> tuple[list[str], list[str]]:
+    """``(step ids, block order)``：两条用例的结构对照表。"""
+    return (
+        (DAILY_STEP_IDS, DAILY_BLOCK_ORDER)
+        if case_id == DAILY
+        else (JOIN_STEP_IDS, JOIN_BLOCK_ORDER)
+    )
+
+
+def read_slice(case_id: str) -> slice:
+    """两个抄表步（电能 / 电压）在 plan 里的下标区间。"""
+    offset = 0 if case_id == DAILY else 1  # first_join 的 s1 是复位
+    return slice(offset + 3, offset + 5)
+
+
+def payloads_for(_case_id: str = DAILY) -> dict[str, str]:
+    """三个读步各自下发的内嵌 645 请求帧（用与块同口径的构帧器算，不手写 hex）。
+
+    两条用例的表侧三步完全相同（同一块、同一份参数），所以只算一份。
+    """
+    addr13, err13 = build_645_request(
+        REAL_FRAMES, addr=BENCH_ADDR, control=CONTROL_READ_ADDR
+    )
+    assert not err13, err13
+    energy, err2 = build_645_read_frame(BENCH_ADDR, ENERGY_DI)
+    voltage, err3 = build_645_read_frame(BENCH_ADDR, VOLTAGE_DI)
+    assert not err2 and not err3, (err2, err3)
+    return {"addr": addr13, "energy": energy, "voltage": voltage}
+
+
+def fake_bench(*, voltage_digits: str = "2201", energy_digits: str = "00123456"):
+    """假台架：三个读步各回一帧 02H-F1（复位/档案/组网是桩，不碰能力层）。"""
+    sent = payloads_for()
+    simcon = FakeSimcon({
+        sent["addr"]: up_frame_with(read_addr_reply_645(BENCH_ADDR)),
+        sent["energy"]: up_frame_with(read_reply_645(BENCH_ADDR, ENERGY_DI, energy_digits)),
+        sent["voltage"]: up_frame_with(read_reply_645(BENCH_ADDR, VOLTAGE_DI, voltage_digits)),
+    })
+    return simcon, sent
+
+
+def run_case(case_id: str, simcon) -> object:
+    ctx = RunContext(
+        run_id="run-%s" % case_id,
+        facts_ctx=FactsContext(probe=all_yes),
+        block_specs=block_specs(),
+        extras={"simcon": simcon},
+    )
+    return execute_case(load_case(case_id), ctx)
+
+
+# --------------------------------------------------------------------------- #
+# 1. 声明：两条用例都 5 步 / 6 步、id 唯一、引用的块/事实存在、没有搜表/重启路由
+# --------------------------------------------------------------------------- #
+
+
+def test_declarations_load_without_problems() -> None:
+    report = loader.load_all(register_modules=True, require_registered=True)
+    assert report.problems == [], "声明问题：\n" + "\n".join(report.problems)
+    assert report.ok is True
+
+
+def test_meter_read_case_is_gone() -> None:
+    """D9-1：旧的单条 ``meter_read`` 已删除，语义被两条新用例完整覆盖。"""
+    cases = {case.id for case in loader.load_cases()}
+    assert "meter_read" not in cases, "meter_read 已被 D9-1 拆成两条用例，不该再存在"
+    assert {DAILY, FIRST_JOIN} <= cases
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_case_is_plan_only_with_declared_step_order(case_id: str) -> None:
+    case = load_case(case_id)
+    step_ids, block_order = structure(case_id)
+    assert case.uses_plan is True, "必须用 plan 显式声明（同块两次实例化）"
+    assert case.blocks == [], "blocks 是冗余的：plan 已完整表达执行序"
+    assert [step.id for step in case.plan] == step_ids
+    assert len({step.id for step in case.plan}) == len(step_ids), "step id 必须唯一"
+    assert [step.block for step in case.plan] == block_order, (
+        "%s 的块序列被改了：期望 %s" % (case_id, block_order)
+    )
+    assert all(step.on_fail == "stop" for step in case.plan), "每步 on_fail 必须显式 stop"
+
+
+def test_meter_daily_has_no_reset_step() -> None:
+    """★ D9-1 核心守卫：日常主线**不复位** —— 复位是物理副作用，且复位后链路要十几分钟才好。"""
+    case = load_case(DAILY)
+    used = {step.block for step in case.plan} | set(case.blocks)
+    assert "reset.sta" not in used, (
+        "meter_daily 不得含 reset.sta：日常回归不复位（真机实测复位后链路恢复要十几分钟量级，"
+        "而读取本身只要 2.3–2.6s）；复位只属于 meter_first_join"
+    )
+    assert case.needs == DAILY_NEEDS, (
+        "不复位就不该依赖 bench.sta_online：needs 只留 bench.simcon_online，实际 %s" % case.needs
+    )
+    assert "不复位" in case.title and "日常" in case.title, case.title
+
+
+def test_meter_first_join_starts_with_reset() -> None:
+    """★ D9-1 核心守卫：首次组网**必须复位**，且复位排在第一步（先复位再建档组网）。"""
+    case = load_case(FIRST_JOIN)
+    used = {step.block for step in case.plan} | set(case.blocks)
+    assert "reset.sta" in used, (
+        "meter_first_join 必须含 reset.sta：用户原话「第一次组网需要复位 sta。之后就按需复位。」"
+    )
+    assert case.plan[0].block == "reset.sta", (
+        "复位必须是第一步：先复位再建档组网，才能避免把复位打断造成的失败算到档案/组网头上"
+    )
+    assert case.needs == JOIN_NEEDS, (
+        "复位要 bench.sta_online，其余动作要 bench.simcon_online，实际 %s" % case.needs
+    )
+    assert "含复位" in case.title and "首次组网" in case.title, case.title
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_plan_has_no_search_meter_or_route_restart(case_id: str) -> None:
+    """D6-2：搜表（11H-F5）与重启路由（12H-F1）不是入网手段，禁止进用例。"""
+    case = load_case(case_id)
+    used = {step.block for step in case.plan} | set(case.blocks)
+    assert "nwk.active_registration" not in used, "搜表块禁止进用例（用户原话「不要多出什么搜表之类的」）"
+    assert "nwk.route_restart" not in used, "重启路由是可选路由控制，不是入网手段"
+    assert "meter.brain_local" not in used, "表端脑本地对照已移出：用例只做抄表主线"
+    _, block_order = structure(case_id)
+    assert used == set(block_order), "除了主线动作的块，不许出现别的块：%s" % sorted(used)
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_plan_references_only_known_blocks_and_facts(case_id: str) -> None:
+    known_blocks = {spec.id for spec in loader.load_blocks()}
+    known_facts = {spec.id for spec in loader.load_facts()}
+    case = load_case(case_id)
+    assert [step.block for step in case.plan if step.block not in known_blocks] == []
+    assert [fact for fact in case.needs if fact not in known_facts] == []
+
+    # 每个块的块级 needs 都被用例 needs 覆盖（否则执行期逐块探测，等于没声明）
+    specs = block_specs()
+    declared = set(case.needs)
+    for step in case.plan:
+        missing = set(specs[step.block].needs) - declared
+        assert missing == set(), f"步骤 {step.id} 的块前置事实 {sorted(missing)} 未进用例 needs"
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_plan_carries_the_two_numeric_expectations(case_id: str) -> None:
+    step_ids, _ = structure(case_id)
+    steps = {step.id: step for step in load_case(case_id).plan}
+    addr_id = "s3" if case_id == DAILY else "s4"
+    energy_id = "s4" if case_id == DAILY else "s5"
+    voltage_id = "s5" if case_id == DAILY else "s6"
+    # 数值/超时口径必须一致；``wait_s`` 因用例而异（first_join 绑表 180s），由
+    # ``test_plan_writes_wait_budget_to_absorb_cold_start`` 单独校验
+    def subset(actual: dict, expected: dict) -> None:
+        # 只比数值/超时口径；``wait_s`` 因用例而异（first_join 绑表 180s），另有用例校验
+        for key, value in expected.items():
+            if key == "wait_s":
+                continue
+            assert actual.get(key) == value, "%s 期望 %r 实际 %r" % (key, value, actual.get(key))
+
+    subset(steps[addr_id].params, READ_PARAMS["meter.addr_probe"])
+    assert "expect_value" not in steps[addr_id].params, "13H 只判地址，不判数值"
+    subset(steps[energy_id].params, READ_PARAMS["meter.read_645"][0])
+    subset(steps[voltage_id].params, READ_PARAMS["meter.read_645"][1])
+    # 档案 / 组网（以及 first_join 的复位）一律「用块声明参数」，用例里不写任何覆盖
+    plain_steps = step_ids[:2] if case_id == DAILY else step_ids[:3]
+    for step_id in plain_steps:
+        assert steps[step_id].params == {}, (
+            "步骤 %s 不得覆盖块参数（尤其 nwk.topology 的 wait_s，压小 = 假 FAIL）" % step_id
+        )
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_plan_pins_read_wait_budget_and_skips_03h_f7(case_id: str) -> None:
+    """三个读步显式 ``expect_timeout``：预算可控，且**不再走 03H-F7 取 t**（D5-2 的回落口）。
+
+    为什么必须钉死：台架 03H-F7 若回 t=90s，每步等待会变成 t+5s=95s，三步就能吃掉
+    285s，叠上组网 300s 会顶穿整轮 600s 上限。显式值存在时
+    ``resolve_expect_timeout`` 直接返回（**不查 03H-F7**），口径 = 实测往返 2.3–2.6s 的
+    6 倍余量。组网（唯一等待型判据）仍保持块默认 300s，不在这里压。
+    """
+    step_ids, _ = structure(case_id)
+    steps = {step.id: step for step in load_case(case_id).plan}
+    read_ids = step_ids[-3:]
+    for step_id in read_ids:
+        assert steps[step_id].params.get("expect_timeout") == READ_EXPECT_TIMEOUT, step_id
+    for step_id in step_ids[:-3]:
+        assert "expect_timeout" not in steps[step_id].params, (
+            f"{step_id} 不该改等待上限：复位/档案/组网用块声明默认"
+        )
+
+    specs = block_specs()
+    ctx = RunContext(run_id="r", block_specs=specs)
+    planned = plan(load_case(case_id), FactsContext(probe=all_yes), block_specs=specs)
+    effective = effective_params(specs["meter.read_645"], planned[-1], ctx)
+    assert float(effective["expect_timeout"]) == float(READ_EXPECT_TIMEOUT)
+
+
+#: 等待预算（2026-11-23 真机实测：复位后链路恢复≈10 分钟；冷启动存在瞬态）
+EXPECTED_WAIT_S = {
+    DAILY: {"s3": 60, "s4": 30, "s5": 30},
+    FIRST_JOIN: {"s4": 180, "s5": 30, "s6": 30},
+}
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_plan_writes_wait_budget_to_absorb_cold_start(case_id: str) -> None:
+    """读步显式带 ``wait_s``：吸收「桥刚起 / CCO 忙」这类冷启动瞬态。
+
+    为什么现在要写（推翻此前的"延展口先预留"）：真机实测 23% 的冷启动首探会回空帧，
+    而重试一次即通过；不给预算就必须人工重跑，违反零参与。
+    预算上限仍受 PLAN §0.4 约束：整轮最坏 < 600s。
+    """
+    expected = EXPECTED_WAIT_S[case_id]
+    got = {step.id: (step.params or {}).get("wait_s", 0) for step in load_case(case_id).plan}
+    for step_id, want in expected.items():
+        assert got.get(step_id) == want, (
+            "%s 的 %s 等待预算应为 %ss，实际 %r" % (case_id, step_id, want, got.get(step_id))
+        )
+    # 非读步一律不写 wait_s（复位/档案/组网用块声明默认；组网 300s 不得压）
+    for step_id, value in got.items():
+        if step_id not in expected:
+            assert value == 0, "%s 的 %s 不该写 wait_s" % (case_id, step_id)
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_plan_does_not_shrink_nwk_wait_budget(case_id: str) -> None:
+    """D6-1 + 等待预算硬规则：**一个用例只允许一个等待型判据**，且不改默认值。"""
+    specs = block_specs()
+    ctx = RunContext(run_id="r", block_specs=specs)
+    planned = plan(load_case(case_id), FactsContext(probe=all_yes), block_specs=specs)
+    topology = [item for item in planned if item.block_id == "nwk.topology"]
+    assert len(topology) == 1, "组网判据必须恰好一个（10H-F21），实际 %d" % len(topology)
+    effective = effective_params(specs["nwk.topology"], topology[0], ctx)
+    # 用例里没有任何顶层扁平覆盖（扁平字段优先，写了就会盖掉块声明）
+    assert "wait_s" not in effective and "poll_interval_s" not in effective
+    # 块真正看到的参数（嵌套 params 打平后）仍必须是 300s
+    assert float(block_action_params(effective)["wait_s"]) == TOPOLOGY_WAIT_S, (
+        "nwk.topology 的 wait_s 必须仍是块声明默认 300s：台架实测一轮入网约 240s，"
+        "压小会把「还在入网」判成「明确不足」→ 假 FAIL"
+    )
+    # 其余等待型块一次都不该出现在用例里（多块默认值叠加会顶穿整轮 600s 上限）
+    waiting_blocks = {"nwk.topology", "nwk.route_status", "nwk.nodes_online"}
+    used_waiting = [step.block_id for step in planned if step.block_id in waiting_blocks]
+    assert used_waiting == ["nwk.topology"], (
+        "一个用例只允许一个等待型判据，实际出现：%s" % used_waiting
+    )
+
+
+def test_steps_text_documents_five_steps_for_daily() -> None:
+    """``meter_daily`` 人读说明 5 步，每步写清判据与出处；标题写明「不复位，日常」。"""
+    case = load_case(DAILY)
+    assert [step.no for step in case.steps] == list(range(1, 6))
+    archive, nwk, addr, energy, voltage = case.steps
+
+    assert "11H-F1" in archive.do and "00H-F1" in archive.expect and "回查" in archive.expect
+    assert "不复位" in archive.do, "第 1 步就要交代本用例不复位（与首次组网区分）"
+    assert "10H-F21" in nwk.do and "0.98" in nwk.expect and "ceil" in nwk.expect, (
+        "组网判据要照 KB 写：入网从节点数 ≥ ceil(档案数 × 0.98)"
+    )
+    assert "13H" in addr.do and "不是抄表" in addr.do, (
+        "13H 回本表地址 ≠ 抄表：文案里必须写明，避免又被当成「抄表通了」"
+    )
+    assert "正向有功总电能" in energy.do and str(ENERGY_VALUE) in energy.expect
+    assert "A 相电压" in voltage.do and str(VOLTAGE_VALUE) in voltage.expect
+    # 读的等待上限必须在人读说明里交代清楚（15s、6 倍余量、不再查 03H-F7）
+    for step in (addr, energy, voltage):
+        assert "15s" in step.do, step.do
+    assert "6 倍余量" in addr.do, addr.do
+    assert "03H-F7" in addr.do, addr.do
+
+    assert set(DAILY_TAGS) <= set(case.tags), case.tags
+    for action in ("档案", "组网", "绑表", "抄表"):
+        assert action in case.title, "标题要能一眼看出动作：缺 %r" % action
+
+
+def test_steps_text_documents_six_steps_for_first_join() -> None:
+    """``meter_first_join`` 人读说明 6 步；复位步要写明「复位成立 ≠ 链路已恢复」。"""
+    case = load_case(FIRST_JOIN)
+    assert [step.no for step in case.steps] == list(range(1, 7))
+    reset, archive, nwk, addr, energy, voltage = case.steps
+
+    assert "复位" in reset.do and "重启指纹" in reset.expect
+    assert "十几分钟" in reset.do, (
+        "复位步要写明真机教训：复位后链路恢复要十几分钟量级（D9-1 的实测依据）"
+    )
+    assert "11H-F1" in archive.do and "00H-F1" in archive.expect and "回查" in archive.expect
+    assert "10H-F21" in nwk.do and "0.98" in nwk.expect and "ceil" in nwk.expect
+    assert "残留" in nwk.expect and "≠ 链路可用" in nwk.expect, (
+        "组网步必须写明「拓扑立刻通过 ≠ 链路可用」（CCO 节点计数残留）"
+    )
+    assert "13H" in addr.do and "不是抄表" in addr.do
+    assert "wait_s" in addr.do, (
+        "绑表步要预留 wait_s 延展口说明（复位后链路恢复慢时用），但 plan 里不写"
+    )
+    assert "正向有功总电能" in energy.do and str(ENERGY_VALUE) in energy.expect
+    assert "A 相电压" in voltage.do and str(VOLTAGE_VALUE) in voltage.expect
+    for step in (addr, energy, voltage):
+        assert "15s" in step.do, step.do
+    assert "6 倍余量" in addr.do, addr.do
+    assert "03H-F7" in addr.do, addr.do
+
+    assert set(JOIN_TAGS) <= set(case.tags), case.tags
+    for action in ("复位", "档案", "组网", "绑表", "抄表"):
+        assert action in case.title, "标题要能一眼看出动作：缺 %r" % action
+
+
+@pytest.mark.parametrize("file_name", ["meter_daily.json", "meter_first_join.json"])
+def test_case_json_still_carries_no_frame_hex(file_name: str) -> None:
+    """用例只做编排：DI / 期望值是参数，不是帧 hex（全局门禁的同口径补测）。"""
+    raw = json.loads((DATA_DIR / "cases" / file_name).read_text(encoding="utf-8"))
+    text = json.dumps(raw, ensure_ascii=False)
+    assert "68123456789012681104" not in text
+    assert all(isinstance(entry, dict) for entry in raw["plan"])
+
+
+# --------------------------------------------------------------------------- #
+# 2. 规划：步序、同块两步参数互不污染
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_planner_yields_steps_in_declared_order(case_id: str) -> None:
+    step_ids, block_order = structure(case_id)
+    specs = block_specs()
+    planned = plan(load_case(case_id), FactsContext(probe=all_yes), block_specs=specs)
+    assert [item.step_id for item in planned] == step_ids
+    assert [item.block_id for item in planned] == block_order
+    assert all(item.runnable for item in planned)
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_planner_yields_two_read_645_steps_with_own_params(case_id: str) -> None:
+    specs = block_specs()
+    planned = plan(load_case(case_id), FactsContext(probe=all_yes), block_specs=specs)
+
+    ctx = RunContext(run_id="r", block_specs=specs)
+    read_spec = specs["meter.read_645"]
+    energy, voltage = planned[read_slice(case_id)]
+    s_energy = effective_params(read_spec, energy, ctx)
+    s_voltage = effective_params(read_spec, voltage, ctx)
+    assert (s_energy["di"], s_energy["expect_value"]) == (ENERGY_DI, ENERGY_VALUE)
+    assert (s_voltage["di"], s_voltage["expect_value"]) == (VOLTAGE_DI, VOLTAGE_VALUE)
+    # 同一块声明只写一份 di，两步各自覆盖，互不污染
+    assert read_spec.action["params"]["di"] == ENERGY_DI
+
+
+def test_step_params_override_does_not_leak_across_same_block_steps() -> None:
+    """``ctx.step_params``（D3-2 第 3 层）只改指定步骤，另一步保持原样。"""
+    specs = block_specs()
+    planned = plan(load_case(DAILY), FactsContext(probe=all_yes), block_specs=specs)
+    ctx = RunContext(run_id="r", block_specs=specs)
+    ctx.step_params["s5"] = {"di": "02020100", "expect_value": 220.2}
+    read_spec = specs["meter.read_645"]
+    s4 = effective_params(read_spec, planned[3], ctx)
+    s5 = effective_params(read_spec, planned[4], ctx)
+    assert (s4["di"], s4["expect_value"]) == (ENERGY_DI, ENERGY_VALUE)
+    assert (s5["di"], s5["expect_value"]) == ("02020100", 220.2)
+    # run 级 --params 仍是最高层，但它是按块广播（两步同时变），不用于「只改一步」
+    ctx.block_params["meter.read_645"] = {"expect_value": 1}
+    assert effective_params(read_spec, planned[3], ctx)["expect_value"] == 1
+    assert effective_params(read_spec, planned[4], ctx)["expect_value"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# 3. 执行（假能力 + 三块桩，无台架）：真读数值的判据
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_full_case_passes_and_reads_both_numbers(case_id: str, stub_non_meter_blocks) -> None:  # noqa: ANN001
+    step_ids, block_order = structure(case_id)
+    simcon, sent = fake_bench()
+    result = run_case(case_id, simcon)
+
+    assert result.verdict == "pass", result.to_dict()
+    assert [record.step_id for record in result.blocks] == step_ids
+    assert [record.block_id for record in result.blocks] == block_order
+    assert [record.state for record in result.blocks] == [BLOCK_PASS] * len(step_ids)
+    # 表侧三步真的发了三帧不同的内嵌 645 请求（13H / 11H 电能 / 11H 电压）
+    assert simcon.sent == [sent["addr"], sent["energy"], sent["voltage"]]
+    assert simcon.sent[0] != simcon.sent[1] != simcon.sent[2]
+    # 三步都显式给了 expect_timeout → 块**不再查 03H-F7**（省掉一次 26s 级的前置查询）
+    assert simcon.timeout_queries == 0, (
+        "用例已显式钉 expect_timeout=15s，块不该再去查 03H-F7 取 t（实测 %d 次）"
+        % simcon.timeout_queries
+    )
+    # 数值判据进入 detail（不再只说「地址对了」）
+    assert "1234.56 kWh" in result.blocks[-2].detail
+    assert "220.1 V" in result.blocks[-1].detail
+    assert "与期望值 220.1 一致" in result.blocks[-1].detail
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_voltage_value_mismatch_is_fail_not_pass(case_id: str, stub_non_meter_blocks) -> None:  # noqa: ANN001
+    simcon, _sent = fake_bench(voltage_digits="2192")  # 219.2 V ≠ 220.1 V
+    result = run_case(case_id, simcon)
+    assert result.verdict != "pass"
+    voltage = result.blocks[-1]
+    assert voltage.state == BLOCK_FAIL, voltage.detail
+    assert "数值不匹配" in voltage.detail and "220.1" in voltage.detail and "219.2" in voltage.detail
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_voltage_di_echo_mismatch_is_fail(case_id: str, stub_non_meter_blocks) -> None:  # noqa: ANN001
+    """请求 A 相电压却回了正向有功总电能（DI 回显不对）→ fail，不能当抄表成功。"""
+    simcon, sent = fake_bench()
+    simcon.replies[sent["voltage"]] = up_frame_with(
+        read_reply_645(BENCH_ADDR, ENERGY_DI, "00123456")
+    )
+    result = run_case(case_id, simcon)
+    voltage = result.blocks[-1]
+    assert voltage.state == BLOCK_FAIL, voltage.detail
+    assert "未回显 DI" in voltage.detail and VOLTAGE_DI in voltage.detail
+
+
+@pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
+def test_on_fail_stop_skips_downstream_steps(case_id: str, stub_non_meter_blocks) -> None:  # noqa: ANN001
+    """每步显式 ``on_fail="stop"``：电能步失败后，电压步记 skipped 而不是照跑。"""
+    simcon, _sent = fake_bench(energy_digits="00123457")  # 电能 1234.57 ≠ 1234.56
+    result = run_case(case_id, simcon)
+    energy = result.blocks[-2]
+    voltage = result.blocks[-1]
+    assert energy.state == BLOCK_FAIL, energy.detail
+    assert voltage.state == BLOCK_SKIPPED, voltage.detail
+    # 跳过原因要点名「前序哪一步非 pass」+ 明说下游跳过
+    assert energy.step_id in voltage.detail and "下游跳过" in voltage.detail
+
+
+def test_empty_data_unit_on_uplink_is_fail_with_reason() -> None:
+    """真机「上行数据单元为空」（645 应答 L=0）时的现有口径：**fail**，原因点名未回显 DI。"""
+    body = bytes([0x68]) + meter_addr_wire(BENCH_ADDR) + bytes([0x68, 0x91, 0x00])
+    empty_reply = (body + bytes([sum(body) & 0xFF, 0x16])).hex().upper()
+    verdict = judge_read_645(
+        up_frame_with(empty_reply), expect_di=VOLTAGE_DI, expect_value=VOLTAGE_VALUE
+    )
+    assert verdict.state == BLOCK_FAIL, verdict.detail
+    assert "未回显 DI" in verdict.detail
+    assert verdict.block_state_of() == BLOCK_FAIL
+
+
+# --------------------------------------------------------------------------- #
+# 4. 645 帧里 DI 的字节序（锁死，防以后改错）
+# --------------------------------------------------------------------------- #
+
+
+def test_di_transport_order_is_locked() -> None:
+    """DI 显示序 → 传输序 = **4 字节整体反序 + 逐字节 33H**。
+
+    ``00010000`` → ``33 33 34 33``（台架实测帧里就是这个）
+    ``02010100`` → ``33 34 34 35``
+    """
+    assert di_echo_hex(ENERGY_DI) == "33333433"
+    assert di_echo_hex(VOLTAGE_DI) == "33343435"
+    # 反向核对：解码器把传输序还原成显示序（parser_lib 645 适配器口径）
+    assert di_echo_hex(VOLTAGE_DI) != VOLTAGE_DI, "传输序与显示序必须不同，否则没做换算"
+
+
+def test_read_request_frames_lock_di_bytes_and_cs() -> None:
+    """11H 读数据请求帧逐字节锁死（台架实测：地址域不反转、DI 传输序、CS 合法）。"""
+    energy, err = build_645_read_frame(BENCH_ADDR, ENERGY_DI)
+    voltage, err2 = build_645_read_frame(BENCH_ADDR, VOLTAGE_DI)
+    assert (err, err2) == ("", "")
+    assert energy == "68123456789012681104333334336816"
+    assert voltage == "68123456789012681104333434356B16"  # DI 段 33 34 34 35
+    assert voltage[20:28] == "33343435"
+    for frame in (energy, voltage):
+        raw = bytes.fromhex(frame)
+        assert raw[0] == 0x68 and raw[7] == 0x68 and raw[-1] == 0x16
+        assert raw[-2] == sum(raw[:-2]) % 256, "CS 必须是整帧除尾 2 字节求和低 8 位"
+
+
+def test_expect_value_comparison_is_float_with_tolerance() -> None:
+    """``expect_value`` 口径：float 比较 + 相对容差（1e-6），**不是字符串精确相等**。
+
+    ``220.1`` 这种带小数的值不会因解析/浮点表示判错（220.10 / 220.1 都算一致），
+    差 0.1 V 就必须判 fail。
+    """
+    for expect, ok in ((220.1, True), ("220.1", True), (220.10, True), (220.2, False),
+                       (220, False)):
+        verdict = judge_read_645(
+            up_frame_with(read_reply_645(BENCH_ADDR, VOLTAGE_DI, "2201")),
+            expect_di=VOLTAGE_DI,
+            expect_value=expect,
+        )
+        assert (verdict.state == BLOCK_PASS) is ok, (expect, verdict.state, verdict.detail)
+    assert judge_read_645(
+        up_frame_with(read_reply_645(BENCH_ADDR, ENERGY_DI, "00123456")),
+        expect_di=ENERGY_DI,
+        expect_value=1234.56,
+    ).state == BLOCK_PASS

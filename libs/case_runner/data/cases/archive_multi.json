@@ -15,7 +15,7 @@
     {
       "no": 3,
       "do": "本用例只用于单测：证明「同一个块在一条用例里能按不同参数实例化多次」（REQS-0042 变更 3 的步骤实例化与多表能力口径）",
-      "expect": "台架只有 1 块真表，第二块表不存在，所以真机不跑本用例；真机验收走 meter_smoke_min / meter_read。第二块表要真验，需先把另一块表接到 STA 表口上"
+      "expect": "台架只有 1 块真表，第二块表不存在，所以真机不跑本用例；真机验收走 meter_smoke_min（meter_daily，不复位）/ smoke_meter（meter_first_join，含复位）。第二块表要真验，需先把另一块表接到 STA 表口上"
     }
   ],
   "needs": [

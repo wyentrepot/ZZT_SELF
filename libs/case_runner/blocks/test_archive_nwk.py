@@ -341,6 +341,7 @@ def test_fact_declarations_match_core_models():
 def test_archive_add_confirm_received_but_not_landed_is_fail():
     """★ 核心：00H-F1 确认到了，但 10H-F2 查不到该地址 → 必须 FAIL。"""
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # 幂等预查：空表（已查全）
         job_ok(step_pass(raw_confirm())),                        # 判据 1：确认
         job_ok(step_pass(raw_archive_table(1, [ADDR2]))),        # 判据 2：表里只有 ADDR2
     )
@@ -351,11 +352,12 @@ def test_archive_add_confirm_received_but_not_landed_is_fail():
     assert "确认已收到但档案未落地" in result.detail
     assert ADDR in result.detail
     assert result.facts == {}          # 失败块绝不回写 provides 事实
-    assert len(fake.calls) == 2        # 两次独立提交：建档 / 回查
+    assert len(fake.calls) == 3        # 三次独立提交：幂等预查 / 建档 / 回查
 
 
 def test_archive_add_double_criterion_passes_and_reports_both():
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, [])), job_id="job-pre"),
         job_ok(step_pass(raw_confirm()), job_id="job-add"),
         job_ok(step_pass(raw_archive_table(2, [ADDR, ADDR2])), job_id="job-query"),
     )
@@ -365,12 +367,14 @@ def test_archive_add_double_criterion_passes_and_reports_both():
     assert result.state == "pass", result.detail
     assert "双判据成立" in result.detail
     assert result.facts["archive.contains"]["state"] == "yes"
-    assert result.evidence_ids == ["job-add", "job-query"]
+    assert result.evidence_ids == ["job-pre", "job-add", "job-query"]
+    # 第 0 次是幂等预查（只读 10H-F2），第 1 次才是建档
+    assert fake.calls[0][0]["send"]["afn"] == 0x10 and fake.calls[0][0]["send"]["fn"] == 2
     # 下发的建档帧参数就是块参数（语义化构帧，不写死 hex）
-    sent = fake.calls[0][0]["send"]
+    sent = fake.calls[1][0]["send"]
     assert sent["afn"] == 0x11 and sent["fn"] == 1
     assert sent["params"] == {"action": "add", "addr": ADDR, "protocol": 3}
-    assert fake.calls[0][0]["expect"]["afn"] == 0x00
+    assert fake.calls[1][0]["expect"]["afn"] == 0x00
 
 
 def test_archive_add_declaration_does_not_provide_parameterized_fact():
@@ -397,6 +401,7 @@ def test_archive_add_does_not_poison_fact_cache_for_other_addresses():
                      for item in raw["assert"]]
     spec = BlockSpec.model_validate(raw)
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # 幂等预查
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),
     )
@@ -418,7 +423,10 @@ def test_archive_add_does_not_poison_fact_cache_for_other_addresses():
 
 
 def test_archive_add_confirm_timeout_is_fail_when_frame_was_actually_sent():
-    fake = FakeSimcon(job_ok(step_timeout()))
+    fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # 幂等预查：不存在
+        job_ok(step_timeout()),
+    )
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
     assert result.state == "fail"
@@ -426,7 +434,10 @@ def test_archive_add_confirm_timeout_is_fail_when_frame_was_actually_sent():
 
 
 def test_archive_add_deny_frame_is_fail_with_error_word():
-    fake = FakeSimcon(job_ok(step_pass(raw_deny(7))))
+    fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # 幂等预查：不存在
+        job_ok(step_pass(raw_deny(7))),
+    )
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
     assert result.state == "fail"
@@ -468,6 +479,9 @@ def test_archive_add_declared_afn_mismatch_is_fail():
 def test_archive_add_truncated_window_is_unknown_not_fail():
     """只查到一页且 total 更大 → 不能断定「不存在」，必须 unknown。"""
     fake = FakeSimcon(
+        # 幂等预查必须**查全**（total=1 且已查到 1 条）才敢说「不存在」；
+        # 真正要验的是**下发后**那次回查被窗口截断 → unknown
+        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(40, [ADDR2]))),
     )
@@ -482,6 +496,7 @@ def test_archive_add_truncated_window_is_unknown_not_fail():
 def test_archive_add_query_answer_without_total_is_unknown_not_fail():
     """10H-F2 应答解析不出「从节点总数量」→ 不能当空表判 FAIL。"""
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),        # 幂等预查：已查全、不含 ADDR
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(build_frame(direction="up", afn=0x10, fn=2, appdata=b""))),
     )
@@ -498,6 +513,7 @@ def test_archive_add_query_answer_without_total_is_unknown_not_fail():
 
 def test_archive_del_passes_when_address_gone():
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR]))),         # 幂等预查：目标还在
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(0, []))),
     )
@@ -508,6 +524,7 @@ def test_archive_del_passes_when_address_gone():
 
 def test_archive_del_fails_when_address_still_present():
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR]))),         # 幂等预查：目标还在
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),
     )
@@ -549,15 +566,17 @@ def test_archive_del_ignores_declaration_assert_addr_too():
 def test_archive_del_explicit_addr_runs_normal_flow():
     """显式给地址 → 正常删档流程不变：一帧 11H-F2（档案地址）+ 一帧 10H-F2 回查。"""
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR])), job_id="job-pre"),
         job_ok(step_pass(raw_confirm()), job_id="job-del"),
         job_ok(step_pass(raw_archive_table(0, [])), job_id="job-query"),
     )
     result = archive.block_del(
         action_of("11", 2, meter_addrs=[METER_ADDR]), ctx_with(fake))
     assert result.state == "pass", result.detail
-    assert fake.calls[0][0]["send"]["params"] == {"meters": [ADDR]}
-    assert len(fake.calls) == 2                       # 删档 + 回查，两次独立提交
-    assert result.evidence_ids == ["job-del", "job-query"]
+    assert fake.calls[0][0]["send"]["afn"] == 0x10    # 幂等预查（只读）
+    assert fake.calls[1][0]["send"]["params"] == {"meters": [ADDR]}
+    assert len(fake.calls) == 3                       # 预查 + 删档 + 回查，三次独立提交
+    assert result.evidence_ids == ["job-pre", "job-del", "job-query"]
 
 
 def test_archive_query_contains_addr_pass_and_absent_fail():
@@ -653,6 +672,7 @@ def test_archive_add_frame_carries_archive_addr_of_meter_addr():
     """★ ``archive.add(meter_addr="123456789012")``：帧里发的是**档案地址**
     ``129078563412``，其 6 字节线上线序仍等于 ``bytes.fromhex("123456789012")``。"""
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # 幂等预查
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(1, ["129078563412"]))),
     )
@@ -662,7 +682,7 @@ def test_archive_add_frame_carries_archive_addr_of_meter_addr():
     )
     assert result.state == "pass", result.detail
 
-    sent = fake.calls[0][0]["send"]
+    sent = fake.calls[1][0]["send"]
     assert sent["params"]["addr"] == "129078563412"
     assert sent["params"]["addr"] == common.archive_addr_of("123456789012")
     # 1376.2 编码器把多字节字段按低字节在前摆 → 档案人读地址的线序 == 电表 645 线序
@@ -675,13 +695,14 @@ def test_archive_del_judges_every_address_it_deleted():
     「删了 3 只只验第 1 只」= 另外 2 只没验就判 PASS；「删 A 回查 B」= 删档假 PASS。
     """
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(2, [ADDR, ADDR2]))),  # 幂等预查：两只都在
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(1, [ADDR2]))),   # ADDR 已删、ADDR2 还在
     )
     result = archive.block_del(
         action_of("11", 2, meter_addrs=[METER_ADDR, METER_ADDR2]), ctx_with(fake)
     )
-    assert fake.calls[0][0]["send"]["params"] == {"meters": [ADDR, ADDR2]}
+    assert fake.calls[1][0]["send"]["params"] == {"meters": [ADDR, ADDR2]}
     assert result.state == "fail", result.detail
     assert "档案仍在" in result.detail
     assert "仍查得到 %s" % ADDR2 in result.detail
@@ -697,6 +718,7 @@ def test_archive_add_prefers_assert_addr_over_config_default():
     建档/删档落在 A、回查却在 B —— 那是最典型的假 PASS。
     """
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),         # 幂等预查：空表（已查全）
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),     # 表里只有 ADDR
     )
@@ -705,7 +727,7 @@ def test_archive_add_prefers_assert_addr_over_config_default():
     result = archive.block_add(params, ctx_with(fake))
 
     assert result.state == "pass", result.detail
-    assert fake.calls[0][0]["send"]["params"]["addr"] == ADDR
+    assert fake.calls[1][0]["send"]["params"]["addr"] == ADDR
 
 
 def test_archive_add_falls_back_to_config_default_addr():
@@ -714,12 +736,13 @@ def test_archive_add_falls_back_to_config_default_addr():
     assert fallback, "出厂 case_defaults.json 应给出台架表地址"
     archive_addr = common.archive_addr_of(fallback)
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # 幂等预查
         job_ok(step_pass(raw_confirm())),
         job_ok(step_pass(raw_archive_table(1, [archive_addr]))),
     )
     result = archive.block_add(action_of("11", 1, action="add", protocol=2), ctx_with(fake))
     assert result.state == "pass", result.detail
-    assert fake.calls[0][0]["send"]["params"]["addr"] == archive_addr
+    assert fake.calls[1][0]["send"]["params"]["addr"] == archive_addr
 
 
 def test_archive_add_rejects_invalid_given_addr_instead_of_using_default():
@@ -847,8 +870,11 @@ def test_nwk_nodes_online_fail_when_answered_zero_and_all_qualities_zero():
         job_ok(step_pass(raw_route(0x06, route_word=0x03, total=12, answered=0, relay=12))),
         job_ok(step_pass(raw_archive_nodes(REAL_NODE_COUNT, [0] * REAL_NODE_COUNT))),
     )
-    result = nwk.block_nodes_online(action_of("10", 4, min=1), ctx_with(fake))
+    # wait_s=0 = **显式单次探测**：只探一轮、不 sleep、不重试（轮询行为由
+    # blocks/test_nwk_topology.py 覆盖）。本用例只验三态判定的结论句。
+    result = nwk.block_nodes_online(action_of("10", 4, min=1, wait_s=0), ctx_with(fake))
     assert result.state == "fail", result.detail
+    assert len(fake.calls) == 2, "wait_s=0 时只探一次（F4 + F2 各一跳）"
     assert "两路证据都明确为 0" in result.detail
     assert "已抄=0" in result.detail
     # 两路各自读数都要出现在 detail 里（便于人工复核）
@@ -873,8 +899,9 @@ def test_nwk_nodes_online_real_bench_frame_with_zero_quality_fails():
     # step_pass 自己会 decode；先确认真实帧解出的关键字段口径
     assert real["items"][1]["name"] == "运行状态字"
     assert "路由完成=1" in real["items"][1]["desc"]
-    result = nwk.block_nodes_online(action_of("10", 4, min=1), ctx_with(fake))
+    result = nwk.block_nodes_online(action_of("10", 4, min=1, wait_s=0), ctx_with(fake))
     assert result.state == "fail", result.detail
+    assert len(fake.calls) == 2, "wait_s=0 时只探一次"
     assert result.facts == {}          # 失败块绝不回写 provides 事实
 
 
@@ -886,7 +913,7 @@ def test_nwk_nodes_online_pass_when_answered_count_positive():
         job_ok(step_pass(raw_archive_nodes(REAL_NODE_COUNT, [0] * REAL_NODE_COUNT)),
                job_id="job-f2"),
     )
-    ok = nwk.block_nodes_online(action_of("10", 4, min=2), ctx_with(fake))
+    ok = nwk.block_nodes_online(action_of("10", 4, min=2, wait_s=0), ctx_with(fake))
     assert ok.state == "pass", ok.detail
     assert "10H-F4 已抄从节点数量=3" in ok.detail
     assert "10H-F2 信号品质>0 的节点数=0" in ok.detail
@@ -901,7 +928,7 @@ def test_nwk_nodes_online_pass_on_signal_quality_alone():
         job_ok(step_pass(raw_route(0x00, route_word=0x03, total=12, answered=0, relay=0))),
         job_ok(step_pass(raw_archive_nodes(REAL_NODE_COUNT, signals))),
     )
-    ok = nwk.block_nodes_online(action_of("10", 4, min=1), ctx_with(fake))
+    ok = nwk.block_nodes_online(action_of("10", 4, min=1, wait_s=0), ctx_with(fake))
     assert ok.state == "pass", ok.detail
     assert "10H-F2 信号品质>0 的节点数=1" in ok.detail
     assert "信号品质>0 的节点 1 个" in ok.detail
@@ -910,8 +937,9 @@ def test_nwk_nodes_online_pass_on_signal_quality_alone():
 def test_nwk_nodes_online_unknown_when_both_channels_unavailable():
     """两路都取不到（F4 无应答 + F2 无应答）→ unknown，绝不判 pass。"""
     fake = FakeSimcon(job_ok(step_timeout()), job_ok(step_timeout()))
-    result = nwk.block_nodes_online(action_of("10", 4, min=1), ctx_with(fake))
+    result = nwk.block_nodes_online(action_of("10", 4, min=1, wait_s=0), ctx_with(fake))
     assert result.state == "unknown", result.detail
+    assert len(fake.calls) == 2, "wait_s=0 时只探一次（不重试）"
     assert "两路证据都取不到" in result.detail
     assert result.facts == {}
 
@@ -922,8 +950,9 @@ def test_nwk_nodes_online_uses_only_available_channel():
         job_ok(step_timeout()),                                   # F4 无应答
         job_ok(step_pass(raw_archive_nodes(REAL_NODE_COUNT, [0] * REAL_NODE_COUNT))),
     )
-    result = nwk.block_nodes_online(action_of("10", 4, min=1), ctx_with(fake))
+    result = nwk.block_nodes_online(action_of("10", 4, min=1, wait_s=0), ctx_with(fake))
     assert result.state == "fail", result.detail
+    assert len(fake.calls) == 2, "wait_s=0 时只探一次"
     assert "可得的唯一一路证据明确为 0" in result.detail
     assert "10H-F4 路由运行状态查询未得到可判定应答" in result.detail   # 两路明细里说明 A 路为何缺
 
@@ -934,8 +963,9 @@ def test_nwk_nodes_online_never_uses_archive_total():
         job_ok(step_pass(raw_route(0x06, route_word=0x03, total=12, answered=0, relay=12))),
         job_ok(step_pass(raw_archive_nodes(12, [0] * 12))),
     )
-    result = nwk.block_nodes_online(action_of("10", 4, min=1), ctx_with(fake))
+    result = nwk.block_nodes_online(action_of("10", 4, min=1, wait_s=0), ctx_with(fake))
     assert result.state == "fail"
+    assert len(fake.calls) == 2, "wait_s=0 时只探一次"
     assert "两路证据都明确为 0" in result.detail
     assert "档案数=12" in result.detail        # 档案数只作旁证出现在明细里
 
@@ -946,7 +976,7 @@ def test_nwk_nodes_online_min_defaults_to_one():
         job_ok(step_pass(raw_route(0x00, route_word=0x03, total=1, answered=1))),
         job_ok(step_pass(raw_archive_nodes(1, [0]))),
     )
-    ok = nwk.block_nodes_online(action_of("10", 4), ctx_with(fake))
+    ok = nwk.block_nodes_online(action_of("10", 4, wait_s=0), ctx_with(fake))
     assert ok.state == "pass", ok.detail
     assert ok.expected == "在网节点数 ≥ 1"
 
@@ -961,7 +991,7 @@ def test_nwk_nodes_online_bad_min_is_fail_before_any_frame():
 def test_nwk_route_status_default_expects_running():
     """工作状态=抄表 → pass；detail 里带上路由完成标志/档案数/已抄。"""
     fake = FakeSimcon(job_ok(step_pass(raw_route(0x00, route_word=0x03, total=12, answered=12))))
-    ok = nwk.block_route_status(action_of("10", 4), ctx_with(fake))
+    ok = nwk.block_route_status(action_of("10", 4, wait_s=0), ctx_with(fake))
     assert ok.state == "pass", ok.detail
     assert "工作状态=抄表" in ok.detail
     assert ok.actual["分类"] == "running"
@@ -975,8 +1005,10 @@ def test_nwk_route_status_learning_with_route_done_is_inconclusive_not_fail():
     """
     raw = bytes.fromhex(REAL_ROUTE_F4_HEX)
     fake = FakeSimcon(job_ok(step_pass(raw)))
-    result = nwk.block_route_status(action_of("10", 4), ctx_with(fake))
+    # wait_s=0 = **显式单次探测**：验学习态分层口径，不验轮询（轮询见 test_nwk_topology.py）
+    result = nwk.block_route_status(action_of("10", 4, wait_s=0), ctx_with(fake))
     assert result.state == "unknown", result.detail
+    assert len(fake.calls) == 1, "wait_s=0 时只探一次"
     assert result.state != "fail"
     assert BLOCK_TO_OUTCOME[result.state] == "inconclusive"
     assert "inconclusive" in result.detail
@@ -991,26 +1023,32 @@ def test_nwk_route_status_learning_without_route_done_is_unknown_not_fail():
     """学习 + 路由完成标志=0：单帧证明不了「持续」，默认 unknown；learning_fail=true 才 fail。"""
     raw = raw_route(0x02, route_word=0x00, total=3, answered=2)
     fake = FakeSimcon(job_ok(step_pass(raw)))
-    default = nwk.block_route_status(action_of("10", 4), ctx_with(fake))
+    default = nwk.block_route_status(action_of("10", 4, wait_s=0), ctx_with(fake))
     assert default.state == "unknown", default.detail
+    assert len(fake.calls) == 1, "wait_s=0 时只探一次"
     assert default.actual["分类"] == "learning_incomplete"
 
     fake2 = FakeSimcon(job_ok(step_pass(raw)))
-    strict = nwk.block_route_status(action_of("10", 4, learning_fail=True), ctx_with(fake2))
+    strict = nwk.block_route_status(
+        action_of("10", 4, learning_fail=True, wait_s=0), ctx_with(fake2))
     assert strict.state == "fail", strict.detail
+    assert len(fake2.calls) == 1, "wait_s=0 时只探一次"
     assert "learning_fail=true" in strict.detail
 
 
 def test_nwk_route_status_missing_fields_is_unknown():
     """应答里没有工作状态/当前状态 → unknown（不是 fail）。"""
     fake = FakeSimcon(job_ok(step_pass(build_frame(direction="up", afn=0x10, fn=4, appdata=b""))))
-    result = nwk.block_route_status(action_of("10", 4), ctx_with(fake))
+    # wait_s=0：unknown 结论本身不需要轮询（否则会真 sleep 满默认 60s）
+    result = nwk.block_route_status(action_of("10", 4, wait_s=0), ctx_with(fake))
     assert result.state == "unknown", result.detail
+    assert len(fake.calls) == 1, "wait_s=0 时只探一次"
 
 
 def test_nwk_route_status_explicit_expect_can_match_current_state():
     fake = FakeSimcon(job_ok(step_pass(raw_route(0x40))))     # 当前状态=搜表
-    result = nwk.block_route_status(action_of("10", 4, expect=["搜表"]), ctx_with(fake))
+    result = nwk.block_route_status(
+        action_of("10", 4, expect=["搜表"], wait_s=0), ctx_with(fake))
     assert result.state == "pass", result.detail
     assert "当前状态=搜表" in result.detail
 
@@ -1034,7 +1072,12 @@ def _transport_factory(post_response, get_response=None):
 
 
 def test_verify_409_is_skipped_and_post_is_not_retried():
-    """★ 409 = 闸门/会话忙：不自动重试 POST，结果绝不判 pass。"""
+    """★ 409 = 闸门/会话忙：先抢占释放一次再重试一次（SH-1 / D2-7），仍失败则 skipped。
+
+    口径变更（REQS-0042 v7 D7-1）：自愈层落地后，409 不再"只发一次"——
+    时序为 ``POST verify(409) → POST /api/simcon/close → POST verify(重试一次)``。
+    断言改成：close 恰好 1 次、verify 恰好 2 次（首发 + 重试），结果绝不判 pass。
+    """
     from case_runner.capabilities.simcon import SimconCapability
 
     transport, calls = _transport_factory((409, {"detail": "simcon 会话忙（lease 被占用）"}))
@@ -1043,9 +1086,12 @@ def test_verify_409_is_skipped_and_post_is_not_retried():
                                ctx_with(cap))
 
     assert result.state == "skipped", result.detail
-    assert "409" in result.detail and "不自动重试" in result.detail
+    assert "409" in result.detail
     posts = [call for call in calls if call[0] == "POST"]
-    assert len(posts) == 1, calls          # 只发一次，没有重试
+    verify_posts = [c for c in posts if c[1].endswith("/verification-runs")]
+    close_posts = [c for c in posts if c[1].endswith("/api/simcon/close")]
+    assert len(close_posts) == 1, calls      # 抢占释放恰好一次
+    assert len(verify_posts) == 2, calls     # 首发 + 重试一次，绝不无限重试
 
 
 def test_poll_timeout_is_unknown_not_fail():
@@ -1063,6 +1109,7 @@ def test_poll_timeout_is_unknown_not_fail():
 def test_frames_404_gives_skipped_not_pass():
     """★ 步骤 pass 但没有 parsed、帧日志又回 404 → 看不到应答帧 ⇒ skipped。"""
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),        # 幂等预查：已查全、不含 ADDR
         job_ok(step_pass_without_parsed(raw_confirm())),
         frames_result={"ok": False, "error": "http_404",
                        "detail": "当前没有帧日志会话（先 open 串口或执行 verify/step）"},
@@ -1079,6 +1126,7 @@ def test_frames_log_supplies_missing_parsed_instead_of_trusting_pass():
     """步骤没给 parsed 但帧日志能补到 → 用日志里的真实解析结果判定。"""
     raw = raw_confirm()
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),        # 幂等预查：不含 ADDR
         job_ok(step_pass_without_parsed(raw)),
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),
         frames_result={"ok": True, "entries": [
@@ -1281,6 +1329,11 @@ def test_facts_reuse_block_judgement_functions(monkeypatch):
 
 
 def test_unknown_fact_makes_downstream_block_skipped_not_pass():
+    """前置事实不满足 → 块 ``skipped`` → 用例 ``blocked``（台架不具备，绝不是 pass）。
+
+    语义来源 REQS-0042 §3.5 / D2-4：``skipped`` 聚合到 ``blocked``；``unknown`` 才是
+    ``inconclusive``。这里事实是 ``unknown``，但块因此 skipped，所以结论是 blocked。
+    """
     spec = BlockSpec(
         id="archive.add", title="加档案", needs=["archive.contains"],
         provides=["archive.contains"],
@@ -1297,7 +1350,7 @@ def test_unknown_fact_makes_downstream_block_skipped_not_pass():
                      extras={"simcon": fake})
     outcome = execute_case(case, ctx)
 
-    assert outcome.verdict == "inconclusive"
+    assert outcome.verdict == "blocked"
     assert outcome.blocks[0].state == "skipped"
     assert "archive.contains" in outcome.blocks[0].detail
     assert outcome.counts["pass"] == 0
@@ -1307,6 +1360,7 @@ def test_unknown_fact_makes_downstream_block_skipped_not_pass():
 def test_case_orchestration_archive_then_nwk():
     """用例编排：档案 → 组网重启 → **真实可达节点数**（顺序由 CaseSpec.blocks 决定）。"""
     fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),             # archive.add 幂等预查
         job_ok(step_pass(raw_confirm())),                       # archive.add 判据 1
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),         # archive.add 判据 2
         job_ok(step_pass(raw_confirm())),                       # nwk.route_restart 确认
@@ -1340,8 +1394,8 @@ def test_case_orchestration_archive_then_nwk():
 
     assert outcome.verdict == "pass", [b.to_dict() for b in outcome.blocks]
     assert outcome.passed_blocks() == ["archive.add", "nwk.route_restart", "nwk.nodes_online"]
-    # 5 次下发：建档 / 回查 / 路由重启 / 10H-F4 / 10H-F2
-    assert len(fake.calls) == 5
+    # 6 次下发：幂等预查 / 建档 / 回查 / 路由重启 / 10H-F4 / 10H-F2
+    assert len(fake.calls) == 6
 
 
 # --------------------------------------------------------------------------- #
@@ -1370,14 +1424,19 @@ def test_nwk_frame_not_sent_is_unknown_not_fail():
 
 
 def test_nwk_verify_409_is_skipped_and_post_not_retried():
-    """409 = 闸门/会话忙 → skipped（不重试 POST，也不判设备失败）。"""
+    """409 = 闸门/会话忙 → 抢占释放一次 + 重试一次后仍失败 → skipped（不判设备失败）。
+
+    口径变更（REQS-0042 v7 D7-1）：同 archive 侧，409 会触发 SH-1 自愈一次。
+    """
     from case_runner.capabilities.simcon import SimconCapability
 
     transport, calls = _transport_factory((409, {"detail": "simcon 会话忙（lease 被占用）"}))
     cap = SimconCapability(base_url="http://127.0.0.1:6553", transport=transport)
     result = nwk.block_onnet_count(action_of("10", 1, min=1), ctx_with(cap))
     assert result.state == "skipped", result.detail
-    assert len([call for call in calls if call[0] == "POST"]) == 1
+    posts = [call for call in calls if call[0] == "POST"]
+    assert len([c for c in posts if c[1].endswith("/api/simcon/close")]) == 1
+    assert len([c for c in posts if c[1].endswith("/verification-runs")]) == 2
 
 
 def test_verify_unreachable_bench_is_skipped_not_fail():
@@ -1492,3 +1551,254 @@ def test_live_archive_query_is_readonly_and_parseable():
         )
     assert isinstance(snapshot.get("total"), int)
     assert isinstance(snapshot.get("addresses"), list)
+
+
+# --------------------------------------------------------------------------- #
+# C3. 幂等（REQS-0042 §3.2 / **ID-1** / **ID-2**）
+#     「同一方案连跑两次，两次结论一致」—— 不靠 CCO 容忍重复建档/重复删档。
+# --------------------------------------------------------------------------- #
+
+
+class FakeArchiveBench:
+    """**有状态**的假台架：真按帧改档案表，用来验幂等闭环（连跑两次）。
+
+    与 :class:`FakeSimcon`（脚本化队列）不同，这里按「台架现在的档案表」应答：
+
+    ========================= ====================================================
+    ``11H-F1``（建档）        地址已在 → **回 00H-F2 否认帧（错误字 7「表号不存在」）**
+                              这是真实 CCO 对重复建档的最坏反应；地址不在 → 加进表 + 00H-F1
+    ``11H-F2``（删档）        逐个从表里删掉 + 00H-F1
+    ``10H-F2``（查档）        回当前档案表（total = len(表)）
+    ========================= ====================================================
+
+    于是「幂等一旦失效」不是悄悄过，而是第二次建档就被否认帧判 FAIL —— 用例会红。
+    """
+
+    name = "simcon"
+
+    def __init__(self, addrs=()):
+        self.addrs: list[str] = [str(addr) for addr in addrs]
+        #: 每次 verify 的 (afn, fn)，按发生顺序
+        self.sent: list[tuple[int, int]] = []
+        #: 下发过几次 11H-F1 建档帧（幂等生效时应为 1；第二次跑必须是 1 不变）
+        self.add_frames = 0
+        #: 下发过几次 11H-F2 删档帧
+        self.del_frames = 0
+
+    # -- 能力契约 ---------------------------------------------------------- #
+    def probe(self):
+        return Health(ok=True, reason="fake archive bench")
+
+    def verify(self, steps):
+        step = steps[0]
+        send = step["send"]
+        afn = int(send["afn"])
+        fn = int(send["fn"])
+        params = send.get("params") or {}
+        self.sent.append((afn, fn))
+
+        if afn == 0x11 and fn == 1:                    # 建档
+            self.add_frames += 1
+            addr = str(params.get("addr") or "")
+            if addr in self.addrs:
+                # 真实 CCO：重复建档 → 00H-F2 否认帧（错误状态字 7 = 表号不存在）
+                return job_ok(step_pass(raw_deny(7)))
+            self.addrs.append(addr)
+            return job_ok(step_pass(raw_confirm()))
+        if afn == 0x11 and fn == 2:                    # 删档
+            self.del_frames += 1
+            for addr in params.get("meters") or []:
+                if addr in self.addrs:
+                    self.addrs.remove(addr)
+            return job_ok(step_pass(raw_confirm()))
+        if afn == 0x10 and fn == 2:                    # 查档
+            return job_ok(step_pass(raw_archive_table(len(self.addrs), list(self.addrs))))
+        raise AssertionError("FakeArchiveBench: 不该收到 afn=0x%02X fn=%d" % (afn, fn))
+
+    def frames(self, **kwargs):  # pragma: no cover - 幂等路径不该翻帧日志
+        raise AssertionError("FakeArchiveBench: 幂等路径不该查会话帧日志")
+
+
+def test_archive_add_already_exists_is_pass_with_zero_send():
+    """★ 幂等（ID-1）：档案已在 → ``pass`` +「已存在，跳过下发」，**零 11H-F1 帧**。
+
+    「零次下发」用 fake 的调用次数断言：只允许一次**只读** 10H-F2 预查，
+    不允许任何 11H 帧，也不允许去翻会话帧日志（那里什么都没有）。
+    """
+    fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR])), job_id="job-pre"),
+    )
+    result = archive.block_add(
+        action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2), ctx_with(fake)
+    )
+
+    assert result.state == "pass", result.detail
+    assert "已存在，跳过下发" in result.detail
+    assert len(fake.calls) == 1, fake.calls          # 只有那一次只读预查
+    sends = [step["send"] for call in fake.calls for step in call]
+    assert [(step["afn"], step["fn"]) for step in sends] == [(0x10, 2)]   # 零 11H-F1
+    assert fake.frames_calls == []                   # 不翻帧日志
+    assert result.evidence_ids == ["job-pre"]        # pass 必须挂在那次真实查询上
+    assert ADDR in (result.actual or "") and ADDR in result.detail
+    assert result.facts["archive.contains"]["state"] == "yes"
+
+
+def test_archive_add_incomplete_precheck_is_unknown_and_sends_nothing():
+    """★ 没查全 ≠ 不存在（ID-1 边界）：预查被窗口截断 → ``unknown``，绝不据此下发。
+
+    这是本需求最容易写错的一条：把 ``complete=False`` 当「不存在」去建档，
+    就等于「不知道就先破坏一次」。
+    """
+    fake = FakeSimcon(job_ok(step_pass(raw_archive_table(40, [ADDR2]))))   # 40 条只看到 1 条
+    result = archive.block_add(
+        action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2,
+                  count=1, max_pages=1),
+        ctx_with(fake),
+    )
+
+    assert result.state == "unknown", result.detail
+    assert "未查全" in result.detail
+    assert "不能当作「不存在」去下发" in result.detail and "11H-F1" in result.detail
+    assert "未覆盖全部档案" in result.detail          # 来自 judge_contains 的同一份判据
+    assert len(fake.calls) == 1
+    assert all(step["send"]["afn"] == 0x10 for call in fake.calls for step in call)
+
+
+def test_archive_add_precheck_without_answer_is_unknown_not_send():
+    """预查帧发出但没应答 → ``unknown``（不表示设备没建档），且不据此下发建档帧。"""
+    fake = FakeSimcon(job_ok(step_timeout()))
+    result = archive.block_add(
+        action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2), ctx_with(fake))
+
+    assert result.state == "unknown", result.detail
+    assert "未得到可判定应答" in result.detail and "11H-F1" in result.detail
+    assert len(fake.calls) == 1
+
+
+def test_archive_add_twice_on_same_bench_is_pass_both_times():
+    """★ 幂等闭环（ID-1）：同一有状态台架连跑两次 ``archive.add`` → **两次都 pass**。
+
+    第二次必须走「已存在，跳过下发」，且**不再发第二颗 11H-F1** —— 否则台架会回
+    00H-F2 否认帧（本 fake 就照着最坏反应实现），第二次就会 FAIL。
+    """
+    bench = FakeArchiveBench()
+    call = action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2)
+
+    first = archive.block_add(call, ctx_with(bench))
+    second = archive.block_add(call, ctx_with(bench))
+
+    assert first.state == "pass", first.detail
+    assert "双判据成立" in first.detail
+    assert second.state == "pass", second.detail
+    assert "已存在，跳过下发" in second.detail
+    assert bench.add_frames == 1, bench.sent        # 建档帧全程只发了一次
+    assert bench.sent == [(0x10, 2), (0x11, 1), (0x10, 2), (0x10, 2)]
+    assert bench.addrs == [ADDR]                    # 档案表仍是唯一一条
+
+
+def test_archive_add_precheck_compares_archive_addr_not_meter_addr():
+    """★ 地址角色守卫：预查按**档案地址**比对。
+
+    表里只有电表口径那串（``METER_ADDR = 010000000000``）而档案口径的 ``ADDR`` 不在，
+    必须判「不存在」→ 照常下发；若拿电表口径去比对，这里会被误判成「已存在」而跳过建档。
+    """
+    fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [METER_ADDR]))),      # 表里是电表口径
+        job_ok(step_pass(raw_confirm())),
+        job_ok(step_pass(raw_archive_table(1, [ADDR]))),            # 建档后按档案口径落地
+    )
+    result = archive.block_add(
+        action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2), ctx_with(fake))
+
+    assert result.state == "pass", result.detail
+    assert "双判据成立" in result.detail            # 没有被误判成「已存在，跳过下发」
+    assert len(fake.calls) == 3
+    assert fake.calls[1][0]["send"]["params"]["addr"] == ADDR
+
+
+def test_archive_del_target_already_absent_is_pass_with_zero_delete_frame():
+    """★ 幂等（ID-2）：目标本就不存在 → ``pass`` +「本就不存在」，**零 11H-F2 删档帧**。"""
+    fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR2])), job_id="job-pre"))
+    result = archive.block_del(
+        action_of("11", 2, meter_addrs=[METER_ADDR]), ctx_with(fake))
+
+    assert result.state == "pass", result.detail
+    assert result.state != "fail"
+    assert "本就不存在" in result.detail
+    assert "未发 11H-F2" in result.detail
+    sends = [step["send"] for call in fake.calls for step in call]
+    assert [(step["afn"], step["fn"]) for step in sends] == [(0x10, 2)]   # 零删档帧
+    assert result.evidence_ids == ["job-pre"]
+
+
+def test_archive_del_only_sends_addresses_still_present():
+    """预查显示 ADDR 已不在 → 删档帧只带 **仍存在** 的 ADDR2。
+
+    把「表号不存在」的地址塞进 11H-F2，真实 CCO 会回 00H-F2 否认帧 → 假 FAIL；
+    但后置判据仍逐个验**调用方要求的全部目标**，不因为少发一只就少验一只。
+    """
+    fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),      # 预查：只剩 ADDR2
+        job_ok(step_pass(raw_confirm())),
+        job_ok(step_pass(raw_archive_table(0, []))),
+    )
+    result = archive.block_del(
+        action_of("11", 2, meter_addrs=[METER_ADDR, METER_ADDR2]), ctx_with(fake))
+
+    assert result.state == "pass", result.detail
+    assert fake.calls[1][0]["send"]["params"] == {"meters": [ADDR2]}
+    assert "未纳入删档帧" in result.detail and ADDR in result.detail
+
+
+def test_archive_del_incomplete_precheck_is_unknown_and_sends_no_delete():
+    """一个都查不到却「没查全」→ 既不能说「本就不存在」，也不能猜着删。"""
+    fake = FakeSimcon(job_ok(step_pass(raw_archive_table(40, [ADDR2]))))
+    result = archive.block_del(
+        action_of("11", 2, meter_addrs=[METER_ADDR], count=1, max_pages=1), ctx_with(fake))
+
+    assert result.state == "unknown", result.detail
+    assert "未发 11H-F2" in result.detail
+    assert len(fake.calls) == 1
+
+
+def test_archive_del_twice_on_same_bench_is_pass_both_times():
+    """★ 幂等闭环（ID-2）：同一有状态台架连跑两次 ``archive.del`` → 两次都 pass。"""
+    bench = FakeArchiveBench(addrs=[ADDR])
+    call = action_of("11", 2, meter_addrs=[METER_ADDR])
+
+    first = archive.block_del(call, ctx_with(bench))
+    second = archive.block_del(call, ctx_with(bench))
+
+    assert first.state == "pass", first.detail
+    assert "双判据成立" in first.detail
+    assert second.state == "pass", second.detail
+    assert "本就不存在" in second.detail
+    assert bench.del_frames == 1, bench.sent        # 删档帧全程只发了一次
+    assert bench.addrs == []
+
+
+def test_default_addr_guard_add_takes_it_del_refuses_it(monkeypatch):
+    """★ 默认地址不被滥用（D2-2）：同一个配置默认地址——
+    ``archive.add`` 不传 → 允许用它；``archive.del`` 不传 → ``fail`` 且**零帧**
+    （连只读预查都不发，避免「预查顺手看到了默认那只表」被当成授权）。
+
+    ``monkeypatch`` 掉 ``default_meter_addr`` 是为了不依赖现场 ``config/case_defaults.json``
+    ——无台架单测必须把地址兜底钉死，否则别人的现场配置会让本用例漂。
+    """
+    monkeypatch.setattr(archive, "default_meter_addr", lambda: METER_ADDR)
+
+    add_fake = FakeSimcon(
+        job_ok(step_pass(raw_archive_table(0, []))),           # 幂等预查：不存在
+        job_ok(step_pass(raw_confirm())),
+        job_ok(step_pass(raw_archive_table(1, [ADDR]))),
+    )
+    added = archive.block_add(action_of("11", 1, action="add", protocol=2), ctx_with(add_fake))
+    assert added.state == "pass", added.detail
+    assert add_fake.calls[1][0]["send"]["params"]["addr"] == ADDR   # 确实用了默认表
+
+    del_fake = FakeSimcon()
+    deleted = archive.block_del(action_of("11", 2), ctx_with(del_fake))
+    assert deleted.state == "fail", deleted.detail
+    assert "破坏性动作" in deleted.detail and "不接受配置默认地址" in deleted.detail
+    assert del_fake.calls == []                       # 零帧：连预查都不发

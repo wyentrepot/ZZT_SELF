@@ -1,6 +1,6 @@
 """组网类原子块：``nwk.route_restart`` / ``nwk.active_registration`` /
-``nwk.archive_count``（兼容别名 ``nwk.onnet_count``）/ ``nwk.nodes_online`` /
-``nwk.route_status``（REQS-0041 §10.5 BL-3）。
+``nwk.archive_count``（兼容别名 ``nwk.onnet_count``）/ ``nwk.topology`` /
+``nwk.nodes_online`` / ``nwk.route_status``（REQS-0041 §10.5 BL-3、REQS-0042 S2-A）。
 
 判据
 ----
@@ -11,10 +11,27 @@
                             缺参在**下发前**就 fail 并点名缺哪个（REQS §10.7 事实 I：
                             ``encode_app_data(0x11, 5, {})`` 会抛「缺少参数 duration」）
 ``nwk.archive_count``       10H-F1（无参）→ 上行「从节点总数量」= **路由档案数** ≥ ``min``
+``nwk.topology``            **入网权威判据**：10H-F21「节点总数量」≥
+                            ``ceil(档案数 × min_ratio)``（默认 0.98 = 98%）
 ``nwk.nodes_online``        **真实可达（在网）节点数**：10H-F4「已抄从节点数量」与
                             10H-F2 逐节点「信号品质>0」两路交叉，> 0 才可能 pass
 ``nwk.route_status``        10H-F4 → 「工作状态/当前状态」+「运行状态字」路由完成标志分层
 ==========================  ==================================================
+
+等待轮询（REQS-0042 S2-A）
+--------------------------
+组网是**过程**，单帧要么把正常注册中的 CCO 判失败，要么把还没入网的节点判通过。
+三个只读块因此都带 ``wait_s`` / ``poll_interval_s``：反复探测直到满足判据，
+等满 ``wait_s`` 仍不满足才出结论（``nodes_online`` 90s / ``route_status`` 60s /
+``topology`` 60s，间隔 2s）。铁律：
+
+- **等待期只发只读查询**：``10H-F21`` / ``10H-F1`` / ``10H-F4`` / ``10H-F2``
+  （``READONLY_AFN_FNS`` 白名单 + :func:`readonly_violations` 闸门，测试逐跳断言）；
+- **等待可注入**：``clock`` / ``sleep`` 两个块参数（callable），或能力对象上的
+  ``clock`` / ``sleeper`` 属性，取不到才回落到 :data:`_clock` / :data:`_sleep`
+  —— 单测注入虚拟时钟即可零真实睡眠跑完 60s/90s 等待；
+- **不乱判**：等满仍不足 → ``fail``（明确不足）；应答取不到/解析不出 → ``unknown``；
+  档案数为 0 → ``unknown``（「没有可入网目标」不是产品失败）。
 
 历史缺陷（真实台架已复现）
 --------------------------
@@ -45,7 +62,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+import math
+import time
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用方再导出
     AFN_CONFIRM,
@@ -56,6 +75,7 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
     DEFAULT_TIMEOUT,
     EVIDENCE_ARCHIVED,
     EVIDENCE_QUALITY,
+    FN_ARCHIVE_QUERY,
     FN_CONFIRM,
     FN_ONNET_COUNT,
     FN_ROUTE_STATUS,
@@ -73,12 +93,15 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
     ROUTE_UNKNOWN,
     WORK_LEARNING,
     WORK_RUNNING,
+    afn_int,
     archive_count_snapshot,
     block_action_params,
     call_verify,
     capability_gate,
     classify_route_state,
+    coerce_float,
     flag_of,
+    fn_int,
     int_of,
     item_value,
     items_of,
@@ -104,6 +127,7 @@ from case_runner.core.executor import BlockResult
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
+    BLOCK_SKIPPED,
     BLOCK_UNKNOWN,
     FACT_NO,
     FACT_UNKNOWN,
@@ -125,6 +149,7 @@ BLOCK_ACTIVE_REGISTRATION = "nwk.active_registration"
 BLOCK_ARCHIVE_COUNT = "nwk.archive_count"
 #: **兼容别名**：旧 id 内部委托 ``nwk.archive_count``（判的一直是档案数，历史命名错误）
 BLOCK_ONNET_COUNT = "nwk.onnet_count"
+BLOCK_TOPOLOGY = "nwk.topology"
 BLOCK_NODES_ONLINE = "nwk.nodes_online"
 BLOCK_ROUTE_STATUS = "nwk.route_status"
 
@@ -136,6 +161,65 @@ AFN_ROUTE_CONTROL = 0x12        # 12H：路由控制
 FN_ROUTE_RESTART = 1            # 12H-F1 启动路由（重新组网）
 AFN_NWK_SET = 0x11              # 11H：路由设置
 FN_ACTIVE_REGISTRATION = 5      # 11H-F5 激活从节点主动注册
+FN_TOPO_QUERY = 21              # 10H-F21 查询网络拓扑信息（入网权威判据）
+
+# --------------------------------------------------------------------------- #
+# 等待轮询与 10H-F21 相关常量（REQS-0042 S2-A）
+# --------------------------------------------------------------------------- #
+
+#: 模块级时钟/睡眠：单测可 ``monkeypatch.setattr(nwk, "_clock", ...)``；
+#: 运行期可经块参数 ``clock=`` / ``sleep=``（callable）或能力对象上的
+#: ``clock`` / ``sleeper`` / ``sleep`` 属性注入 —— 注入后**零真实睡眠**。
+_clock: Callable[[], float] = time.monotonic
+_sleep: Callable[[float], None] = time.sleep
+
+#: 轮询间隔默认 2s（协议没有规定探测周期，按台架观测网络拓扑的刷新节奏取 2s）
+DEFAULT_POLL_INTERVAL = 2.0
+#: 三个只读块的等待上限（组网是过程：学习/注册/抄表都要时间）。
+#:
+#: **共同依据（别拍脑袋调小）**：台架实测一轮入网约 **240s**（4 分钟），学习态转抄表
+#: 发生在这之后。等待期是逐轮探测 + 达标即停，所以：
+#:
+#: - **成功路径不付这个代价**：已入网的站最多等 1 个 ``poll_interval_s``（2s）就 pass；
+#: - 只有「确实不达标」才走满预算 —— 这正是该等的，也是唯一能给出 ``fail`` 的路径；
+#: - 预算 < 实测入网时长（例如曾用的 60s）会把「还在入网」判成「明确不足 → fail」，
+#:   即**假 FAIL**，比等得久伤得多。
+#:
+#: ⇒ 统一按「实测 240s + 60s 余量 = **300s**」给预算；``nodes_online`` 判的是「至少 1 个
+#: 节点抄通」（首个节点入网通常 10~60s），给 **180s**（实测值的一半 + 余量）即可，
+#: 不必占用整站预算。
+DEFAULT_WAIT_TOPOLOGY = 300.0
+DEFAULT_WAIT_NODES_ONLINE = 180.0
+DEFAULT_WAIT_ROUTE_STATUS = 300.0
+
+#: 轮询期**只读**帧白名单：AFN → 允许的 Fn 集合。写帧（12H-F1 / 11H-F1 / 01H-F2 …）
+#: 一旦混进等待循环就被 :func:`readonly_violations` 拦下，块不下发。
+READONLY_AFN_FNS: Dict[int, frozenset] = {
+    AFN_ROUTE_QUERY: frozenset({FN_TOPO_QUERY, FN_ONNET_COUNT, FN_ROUTE_STATUS, FN_ARCHIVE_QUERY}),
+}
+
+#: 10H-F21 上行字段名（解析器实际输出的名字；``n`` 后缀是协议文档的写法）
+ITEM_TOPO_TOTAL = "节点总数量"
+ITEM_TOPO_START = "节点起始序号"
+ITEM_TOPO_ANSWERED = "本次应答的节点数量"
+ITEM_TOPO_ANSWERED_ALIAS = "本次应答的节点数量n"
+#: 10H-F21 上行逐节点记录的前后缀（``节点1地址`` / ``节点1网络拓扑``）
+TOPO_RECORD_PREFIX = "节点"
+TOPO_ADDR_SUFFIX = "地址"
+TOPO_INFO_SUFFIX = "网络拓扑"
+#: 节点角色里的主节点（节点信息 D4~D7 = 0x4，见 KB 全帧类型 F21 位表）
+TOPO_ROLE_MASTER = "主节点CCO"
+
+#: 10H-F21 下行默认：起始序号 **1 起编号**、本次查询 32 条
+DEFAULT_TOPO_START = 1
+DEFAULT_TOPO_COUNT = 32
+#: 入网验收比例（KB 业务层 37：节点总数量 = 档案个数的 98%~100%）
+DEFAULT_MIN_RATIO = 0.98
+
+TOPO_START_NOTE = (
+    "10H-F21 的节点起始序号按 **1 起编号**（KB 用例库/CCO/台账/146:62 用例 87"
+    "「起始序号=1，节点数量=2」；协议层/104 与 协议层/91 同为「首帧从 1 开始」）"
+)
 
 #: 协议里「工作状态 / 当前状态」的合法取值（文档用；判定实现见 common）
 WORK_STATES = (WORK_RUNNING, WORK_LEARNING)
@@ -246,6 +330,421 @@ def registration_payload(action: Mapping[str, Any]) -> Tuple[Optional[Dict[str, 
     payload = dict(time_payload or {})
     payload.update(values)
     return payload, ""
+
+
+# --------------------------------------------------------------------------- #
+# 等待轮询基础设施（只读 + 可注入）
+# --------------------------------------------------------------------------- #
+
+
+def format_seconds(value: Any) -> str:
+    """等待时长 → 人读秒数：整数秒不带小数点（detail 里统一写「等了 N 秒」）。"""
+    seconds = coerce_float(value, 0.0)
+    rounded = round(seconds)
+    if abs(seconds - rounded) < 1e-6:
+        return "%d" % int(rounded)
+    return "%.1f" % seconds
+
+
+def readonly_violations(steps: Any) -> List[str]:
+    """检查一组步骤里有没有**非只读**帧，返回违例说明（空列表 = 全是只读查询）。
+
+    为什么要有这道闸门：``nwk.route_restart`` / ``nwk.active_registration`` 会发写帧
+    （12H-F1 / 11H-F5），一旦被误当成"探测"放进等待循环，就会在等组网的 90 秒里反复
+    重启路由/重开注册窗口，把被测设备打乱。白名单只有 :data:`READONLY_AFN_FNS`。
+    """
+    violations: List[str] = []
+    for step in steps or []:
+        send = step.get("send") if isinstance(step, Mapping) else None
+        if not isinstance(send, Mapping):
+            violations.append("步骤缺少 send 段，无法确认是只读查询：%r" % (step,))
+            continue
+        afn = afn_int(send.get("afn"))
+        fn = fn_int(send.get("fn"))
+        allowed = READONLY_AFN_FNS.get(afn if isinstance(afn, int) else -1, frozenset())
+        if fn not in allowed:
+            violations.append(
+                "非只读帧 afn=%r fn=%r（等待期只允许 10H-F21/F1/F4/F2 只读查询）"
+                % (send.get("afn"), send.get("fn"))
+            )
+    return violations
+
+
+def _first_callable(*candidates: Any) -> Optional[Callable]:
+    for candidate in candidates:
+        if callable(candidate):
+            return candidate
+    return None
+
+
+def poll_hooks(action: Mapping[str, Any], cap: Any = None) -> Tuple[Callable, Callable]:
+    """解析注入的 ``(clock, sleep)``：块参数 → 能力对象属性 → 模块默认（真实时钟）。
+
+    块参数里的 ``clock`` / ``sleep`` 只可能是 callable（JSON 里的字符串会被忽略），
+    所以声明文件写不出"注入"来，注入只发生在测试或外部装配层。
+    """
+    clock = _first_callable(action.get("clock"), getattr(cap, "clock", None), _clock)
+    sleeper = _first_callable(
+        action.get("sleep"),
+        action.get("sleeper"),
+        getattr(cap, "sleeper", None),
+        getattr(cap, "sleep", None),
+        _sleep,
+    )
+    return clock, sleeper
+
+
+def poll_snapshot(
+    probe: Callable[[], Any],
+    *,
+    wait_s: Any = 0.0,
+    interval_s: Any = DEFAULT_POLL_INTERVAL,
+    stop: Optional[Callable[[Any], Optional[str]]] = None,
+    clock: Any = None,
+    sleep: Any = None,
+) -> Dict[str, Any]:
+    """反复调**只读**探针 ``probe()``，直到 ``stop(snapshot)`` 返回原因或等满 ``wait_s``。
+
+    返回::
+
+        {"snapshot": 最后一次快照, "attempts": 探测次数, "waited": 等了 N 秒,
+         "reason": "satisfied"/"timed_out"/自定义原因, "timed_out": bool,
+         "snapshots": [每轮快照]}
+
+    终止性保证（三条，缺一条就会挂测试或打爆台架）：
+
+    1. ``wait_s=0`` → 只探一次、不 sleep（既有单测/``show`` 口径不变）；
+    2. ``attempts`` 上限 ``ceil(wait_s / tick) + 1`` —— 即使注入的时钟不动
+       （或 ``poll_interval_s=0`` 不真 sleep）也一定收敛，不会无限循环；
+    3. ``waited`` 取 ``max(真实经过时间, (attempts-1) × tick)``，
+       所以虚拟时钟/不睡眠模式下 detail 里的「等了 N 秒」仍是协议口径的秒数。
+    """
+    now = clock if callable(clock) else _clock
+    pause = sleep if callable(sleep) else _sleep
+    limit = coerce_float(wait_s, 0.0)
+    interval = coerce_float(interval_s, DEFAULT_POLL_INTERVAL)
+    tick = interval if interval > 0 else DEFAULT_POLL_INTERVAL
+    max_attempts = int(math.ceil(limit / tick)) + 1 if limit > 0 else 1
+    started = float(now())
+    attempts = 0
+    snapshots: List[Any] = []
+    while True:
+        snapshot = probe()
+        attempts += 1
+        snapshots.append(snapshot)
+        elapsed = max(float(now()) - started, 0.0)
+        waited = max(elapsed, (attempts - 1) * tick)
+        reason = ""
+        if stop is not None:
+            reason = str(stop(snapshot) or "")
+        if reason:
+            return {
+                "snapshot": snapshot, "attempts": attempts, "waited": waited,
+                "reason": reason, "timed_out": False, "snapshots": snapshots,
+            }
+        if elapsed >= limit or attempts >= max_attempts:
+            return {
+                "snapshot": snapshot, "attempts": attempts, "waited": waited,
+                "reason": "timed_out", "timed_out": True, "snapshots": snapshots,
+            }
+        if interval > 0:
+            pause(interval)
+
+
+def waited_text(loop: Mapping[str, Any], *, tail: str = "") -> str:
+    """轮询结果的统一 detail 后缀：「（等了 N 秒{:tail}，只读探测 K 次）」。"""
+    return "（等了 %s 秒%s，只读探测 %d 次）" % (
+        format_seconds(loop.get("waited")),
+        tail,
+        int(loop.get("attempts") or 0),
+    )
+
+
+def merge_evidence_ids(*groups: Any) -> List[str]:
+    """合并多轮探测的 job/证据 id（去重保序，人工复核时能一路翻回去）。"""
+    merged: List[str] = []
+    for group in groups:
+        for item in group or []:
+            text = str(item or "")
+            if text and text not in merged:
+                merged.append(text)
+    return merged
+
+
+def _snapshot_unavailable(snapshot: Any) -> bool:
+    """快照是不是「台架/能力不可用」（等待无意义，直接 skipped）。"""
+    if not isinstance(snapshot, Mapping):
+        return False
+    if str(snapshot.get("state") or "") in ("unavailable", "busy"):
+        return True
+    return str(snapshot.get("block_state") or "") == BLOCK_SKIPPED
+
+
+# --------------------------------------------------------------------------- #
+# 10H-F21 网络拓扑（入网权威判据）
+# --------------------------------------------------------------------------- #
+
+
+def required_topology_count(archive_total: Any, min_ratio: Any = DEFAULT_MIN_RATIO) -> Optional[int]:
+    """节点总数量门槛 = ``ceil(档案数 × min_ratio)``；输入非法 → ``None``（不猜）。
+
+    减 ``1e-9`` 是为了吃掉浮点误差：``100 × 0.98`` 在二进制浮点里是
+    ``98.00000000000001``，直接 ``ceil`` 会得到 99（把 98% 抬成 99%）。
+    """
+    if isinstance(archive_total, bool) or not isinstance(archive_total, int) or archive_total < 0:
+        return None
+    ratio = coerce_float(min_ratio, -1.0)
+    if ratio <= 0 or ratio > 1:
+        return None
+    return int(math.ceil(archive_total * ratio - 1e-9))
+
+
+def topo_node_index_of(name: Any) -> Optional[int]:
+    """``节点3地址`` / ``节点3网络拓扑`` → ``3``（其它名字 → ``None``）。
+
+    ``节点总数量`` / ``节点起始序号`` / ``节点1TEI`` / ``节点1代理节点标识`` 都不命中，
+    所以逐节点记录只按「地址 + 网络拓扑」两件聚合。
+    """
+    text = str(name or "")
+    if not text.startswith(TOPO_RECORD_PREFIX):
+        return None
+    rest = text[len(TOPO_RECORD_PREFIX):]
+    for suffix in (TOPO_ADDR_SUFFIX, TOPO_INFO_SUFFIX):
+        if rest.endswith(suffix):
+            return int_of(rest[: -len(suffix)])
+    return None
+
+
+def topo_nodes_of(parsed: Any) -> List[Dict[str, Any]]:
+    """10H-F21 上行逐节点记录 → ``[{addr, topology, role, master}]``。
+
+    ``role`` 取自解析器把 5B 网络拓扑信息渲染成的 ``层级=N 角色=末梢节点STA`` 文本；
+    主节点识别用 ``角色=主节点CCO``（节点信息 D4~D7 = 0x4）。
+    """
+    slots: Dict[int, Dict[str, Any]] = {}
+    order: List[int] = []
+    for item in items_of(parsed):
+        index = topo_node_index_of(item.get("name"))
+        if index is None:
+            continue
+        if index not in slots:
+            slots[index] = {"addr": "", "topology": "", "role": "", "master": False}
+            order.append(index)
+        name = str(item.get("name") or "")
+        value = str(item.get("value") or "")
+        if name.endswith(TOPO_ADDR_SUFFIX):
+            slots[index]["addr"] = value.strip()
+            continue
+        slots[index]["topology"] = value
+        slots[index]["role"] = value.split("角色=")[-1].strip() if "角色=" in value else ""
+        slots[index]["master"] = TOPO_ROLE_MASTER in value
+    return [dict(slots[index]) for index in order]
+
+
+def _first_int_item(parsed: Any, names: Sequence[str]) -> Optional[int]:
+    for name in names:
+        value = int_of(item_value(parsed, name))
+        if value is not None:
+            return value
+    return None
+
+
+def topology_snapshot(
+    *,
+    cap: Any = None,
+    ctx: Any = None,
+    start: Any = DEFAULT_TOPO_START,
+    count: Any = DEFAULT_TOPO_COUNT,
+    expect_timeout: Any = DEFAULT_TIMEOUT,
+) -> Dict[str, Any]:
+    """发 10H-F21 查网络拓扑（**只读**），返回归一化快照。
+
+    字段布局照 KB ``03_QGDW10376.2_全帧类型.md:1154-1180``：下行「节点起始序号 BIN 2 +
+    节点数量 BIN 1」；上行「节点总数量 BIN 2 + 节点起始序号 BIN 2 + 本次应答节点数量
+    BIN 1 + n×(节点地址 BIN 6 + 网络拓扑信息 BIN 5)」。
+
+    返回 ``{state, block_state, total, start_echo, answered, nodes, masters, detail,
+    job_ids, step}``；``state == "answered"`` 才表示拿到了可判定的应答。
+    """
+    blank: Dict[str, Any] = {
+        "state": "unknown",
+        "block_state": BLOCK_UNKNOWN,
+        "total": None,
+        "start_echo": None,
+        "answered": None,
+        "nodes": [],
+        "masters": 0,
+        "detail": "",
+        "job_ids": [],
+        "step": None,
+    }
+    capability, injected = (cap, True) if cap is not None else resolve_simcon(ctx)
+    gate = capability_gate(capability, injected)
+    if gate is not None:
+        return dict(blank, state="unavailable", block_state=gate.state, detail=gate.detail)
+
+    query = {"start": int(start), "count": int(count)}
+    steps = [
+        send_step(
+            "查询网络拓扑信息（10H-F21 start=%d count=%d）" % (query["start"], query["count"]),
+            AFN_ROUTE_QUERY,
+            FN_TOPO_QUERY,
+            query,
+            expect_afn=AFN_ROUTE_QUERY,
+            expect_fn=FN_TOPO_QUERY,
+            timeout=expect_timeout,
+        )
+    ]
+    violations = readonly_violations(steps)
+    if violations:
+        return dict(
+            blank, state="config", detail="只读闸门拒绝下发：%s" % "；".join(violations)
+        )
+
+    result = call_verify(capability, steps)
+    job_ids = [str(result.get("job_id") or "")] if result.get("job_id") else []
+    got_steps = steps_of(result)
+    if not got_steps:
+        state, why = verify_failure_state(result)
+        return dict(
+            blank, state=snapshot_kind(state, result), block_state=state,
+            detail=why, job_ids=job_ids,
+        )
+    step = got_steps[-1]
+    verdict = judge_step(
+        step,
+        want_afn=AFN_ROUTE_QUERY,
+        want_fn=FN_TOPO_QUERY,
+        label="10H-F21 网络拓扑查询",
+        cap=capability,
+        job=result,
+    )
+    if verdict["kind"] != "answered":
+        return dict(
+            blank,
+            state=snapshot_kind(verdict["state"], None, verdict["kind"]),
+            block_state=verdict["state"],
+            detail=verdict["detail"],
+            job_ids=job_ids,
+            step=step,
+        )
+
+    parsed = verdict.get("parsed")
+    total = int_of(item_value(parsed, ITEM_TOPO_TOTAL))
+    start_echo = int_of(item_value(parsed, ITEM_TOPO_START))
+    answered = _first_int_item(parsed, (ITEM_TOPO_ANSWERED, ITEM_TOPO_ANSWERED_ALIAS))
+    nodes = topo_nodes_of(parsed)
+    masters = sum(1 for node in nodes if node.get("master"))
+    return {
+        "state": "answered",
+        "block_state": BLOCK_PASS,
+        "total": total,
+        "start_echo": start_echo,
+        "answered": answered,
+        "nodes": nodes,
+        "masters": masters,
+        "detail": "%s；节点总数量=%s、起始序号=%s、本次应答=%s 条、其中主节点 %d 个"
+        % (
+            verdict["detail"],
+            total if total is not None else "缺失",
+            start_echo if start_echo is not None else "缺失",
+            answered if answered is not None else "缺失",
+            masters,
+        ),
+        "job_ids": job_ids,
+        "step": step,
+    }
+
+
+def judge_topology(
+    probe: Any,
+    *,
+    min_ratio: Any = DEFAULT_MIN_RATIO,
+    master_included: Any = False,
+) -> Tuple[str, str, Dict[str, Any]]:
+    """拓扑是否达到「档案数 × min_ratio」门槛（三态；块唯一判定入口）。
+
+    口径与出处：
+
+    - 门槛 = ``ceil(档案数 × min_ratio)``，默认 0.98 —— KB ``业务层/37_双模测试用例_业务.md:42-48``
+      「节点总数量 = 档案个数的 98%–100% …… 计时器超时 → 不通过」；
+    - **档案数**取 ``10H-F1`` 的「从节点总数量」（``common.ARCHIVE_COUNT_NOTE``：
+      元数据原文「当前路由档案中的从节点总数」）。为什么不用 10H-F4 的那份：10H-F4 是
+      16B 路由运行状态结构体，档案数只是它的一个字段（且有长度门限历史缺陷），
+      F1 的**第一个字段就是**档案数、无旁支，且块/事实已共用同一份
+      ``common.archive_count_snapshot``（FT-2 单源），本块不另造取数路径；
+    - **节点总数量含主节点**（KB 用例 87：无档案时 节点总数量=1「只包含主节点」），
+      因此有两种口径，**默认严格**：
+
+      * ``master_included=False``（**默认**）=「仅从节点」：分子 = ``节点总数量 − 主节点数``。
+        我们要判的是「**STA 是否都入网**」，主节点本来就一定在，把它算进分子会让判据虚高
+        （12 档案时 11 个从节点在网 = 91.7% 也会 pass，属漏判）。KB 的「节点总数量 =
+        档案个数的 98%~100%」是**验收线的意图**，不是让主节点混进分子；
+      * ``master_included=True`` = 「照原文直接比」：分子 = ``节点总数量`` 原值，
+        逐字对应 KB 业务层 37 的句子，保留作可选口径（用例可显式传）。
+
+      两种口径的读数都写进 detail/actual，人工复核不必再算。
+    - 档案数 0 → ``unknown``：没有可入网目标不是产品失败。
+
+    返回 ``(FACT_YES|FACT_NO|FACT_UNKNOWN, detail, actual)``。
+    """
+    probe = probe if isinstance(probe, Mapping) else {}
+    archive = probe.get("archive") if isinstance(probe.get("archive"), Mapping) else {}
+    topology = probe.get("topology") if isinstance(probe.get("topology"), Mapping) else {}
+    archive_total = archive.get("total") if isinstance(archive.get("total"), int) else None
+    total = topology.get("total") if isinstance(topology.get("total"), int) else None
+    masters = topology.get("masters") if isinstance(topology.get("masters"), int) else 0
+    required = required_topology_count(archive_total, min_ratio)
+    include_master = flag_of(master_included, False)
+    actual = {
+        "节点总数量": total,
+        "档案数": archive_total,
+        "门槛": required,
+        "节点起始序号": topology.get("start_echo"),
+        "本次应答节点数": topology.get("answered"),
+        "主节点数": masters,
+        "口径": "含主节点" if include_master else "仅从节点",
+    }
+
+    if archive_total == 0:
+        return FACT_UNKNOWN, (
+            "档案数=0（10H-F1「%s」=0）：没有可入网目标，不判失败"
+            "（这不是产品失败），本块不给出入网结论" % ITEM_TOTAL
+        ), actual
+    if archive_total is None:
+        return FACT_UNKNOWN, (
+            "取不到档案数（10H-F1「%s」），算不出 %.0f%% 门槛：%s"
+            % (ITEM_TOTAL, DEFAULT_MIN_RATIO * 100, archive.get("detail") or "查询未得到可判定应答")
+        ), actual
+    if required is None:
+        return FACT_UNKNOWN, "min_ratio=%r 非法（需 0 < ratio ≤ 1），算不出门槛" % (min_ratio,), actual
+    if str(topology.get("state") or "") != "answered":
+        return FACT_UNKNOWN, "10H-F21 网络拓扑查询未得到可判定应答（%s）：%s" % (
+            topology.get("state") or "unknown",
+            topology.get("detail") or "",
+        ), actual
+    if total is None:
+        return FACT_UNKNOWN, (
+            "10H-F21 应答里没有可解析的「%s」，无法判定（解析口径见 KB 全帧类型 F21 上行）"
+            % ITEM_TOPO_TOTAL
+        ), actual
+
+    slaves = max(total - masters, 0)
+    effective = total if include_master else slaves
+    ratio_text = "%g" % coerce_float(min_ratio, DEFAULT_MIN_RATIO)
+    if include_master:
+        head = "节点总数量"
+        both = "含主节点口径（主节点 %d 个；按仅从节点则为 %d）" % (masters, slaves)
+    else:
+        head = "入网从节点"
+        both = "仅从节点口径 = 节点总数量 %d − 主节点 %d" % (total, masters)
+    actual["在网从节点数"] = slaves
+    verdict = FACT_YES if effective >= required else FACT_NO
+    detail = "%s=%d %s 门槛 %d（档案数=%d × %s 向上取整；%s）" % (
+        head, effective, "≥" if verdict == FACT_YES else "<", required,
+        archive_total, ratio_text, both,
+    )
+    return verdict, detail, actual
 
 
 # --------------------------------------------------------------------------- #
@@ -467,6 +966,160 @@ def block_onnet_count(params: Any, ctx: Any = None) -> BlockResult:
     )
 
 
+def block_topology(params: Any, ctx: Any = None) -> BlockResult:
+    """``nwk.topology``：10H-F21 查网络拓扑，判**STA 是否都入网（档案数的 98%）**。
+
+    判据（KB ``业务层/37_双模测试用例_业务.md:42-48``「节点总数量 = 档案个数的
+    98%–100%」）：**判定读数 ≥ ``ceil(档案数 × min_ratio)``**（默认 0.98）。档案数取
+    10H-F1「从节点总数量」（理由见 :func:`judge_topology` 文档）。
+
+    判定读数按 ``master_included`` 二选一，**默认严格（仅从节点）**：
+
+    - ``master_included=false``（**默认**）→ 读数 = ``节点总数量 − 主节点数``。
+      要判的是「STA 是否都入网」，主节点 CCO 本来就一定在，算进分子会让判据虚高
+      （12 档案时 11 个从节点在网 = 91.7% 也 pass，属漏判）；
+    - ``master_included=true`` → 读数 = ``节点总数量`` 原值（逐字照 KB 原句，可选口径）。
+      依据：KB 用例 87 证明「节点总数量」含主节点（无档案时 节点总数量=1「只包含主节点」）。
+      detail/actual 两种口径的读数**都**输出，人工复核不用再算。
+
+    三态（**不得假 PASS**）：
+
+    ==========================  ==================================================
+    达标                        ``pass``
+    明确不足且已等满 ``wait_s``  ``fail``（detail 写「等了 N 秒」+ 实测/门槛）
+    档案数本身为 0              ``unknown``（「没有可入网目标」不是产品失败）
+    应答取不到/超时/解析失败     ``unknown``
+    台架不可用                  ``skipped``（块未执行，不是设备结论）
+    ==========================  ==================================================
+
+    参数：``start``（节点起始序号，默认 1 = 本模块档案 1 起编号）、``count``（本次查询
+    条数，默认 32）、``wait_s``（默认 **300**：台架实测一轮入网约 4 分钟，60s 会把
+    「还在入网」判成「明确不足」→ 假 FAIL）、``poll_interval_s``（默认 2）、
+    ``min_ratio``（默认 0.98）、``master_included``（默认 **false** = 严格仅从节点；
+    true = 照 KB 原句把主节点计入）、``clock`` / ``sleep``（注入用 callable，测试零真实睡眠）。
+    逐轮探测 + 达标即停：成功路径最多等 1 个 ``poll_interval_s``，不付 ``wait_s`` 的代价。
+
+    等待期**只发只读查询**：每轮 = 10H-F1（档案数）+ 10H-F21（拓扑），两跳都过
+    :func:`readonly_violations` 白名单闸门。
+    """
+    target, error = require_target(params, AFN_ROUTE_QUERY, FN_TOPO_QUERY, BLOCK_TOPOLOGY)
+    if target is None:
+        return BlockResult(state=BLOCK_FAIL, detail=error)
+    action = block_action_params(params)
+
+    raw_start = action.get("start", DEFAULT_TOPO_START)
+    start_index = DEFAULT_TOPO_START if raw_start in (None, "") else int_of(raw_start)
+    if start_index is None or not 0 <= start_index <= 0xFFFF:
+        return BlockResult(
+            state=BLOCK_FAIL,
+            detail="%s 参数 start 必须是 0~65535 的整数（节点起始序号，默认 1；%s）：%r"
+            % (BLOCK_TOPOLOGY, TOPO_START_NOTE, raw_start),
+        )
+    raw_count = action.get("count", DEFAULT_TOPO_COUNT)
+    count = DEFAULT_TOPO_COUNT if raw_count in (None, "") else int_of(raw_count)
+    if count is None or not 1 <= count <= 0xFF:
+        return BlockResult(
+            state=BLOCK_FAIL,
+            detail="%s 参数 count 必须是 1~255 的整数（本次查询的节点条数，默认 %d）：%r"
+            % (BLOCK_TOPOLOGY, DEFAULT_TOPO_COUNT, raw_count),
+        )
+    raw_ratio = action.get("min_ratio", DEFAULT_MIN_RATIO)
+    ratio = coerce_float(raw_ratio, -1.0)
+    if ratio <= 0 or ratio > 1:
+        return BlockResult(
+            state=BLOCK_FAIL,
+            detail="%s 参数 min_ratio 必须落在 (0,1]（默认 %g，即节点总数量 ≥ 档案数的 %g%%）：%r"
+            % (BLOCK_TOPOLOGY, DEFAULT_MIN_RATIO, DEFAULT_MIN_RATIO * 100, raw_ratio),
+        )
+    master_included = flag_of(action.get("master_included"), False)
+    wait_s = coerce_float(action.get("wait_s"), DEFAULT_WAIT_TOPOLOGY)
+    interval = coerce_float(action.get("poll_interval_s"), DEFAULT_POLL_INTERVAL)
+    expect_timeout = action.get("expect_timeout", DEFAULT_TIMEOUT)
+
+    cap, injected = resolve_simcon(ctx)
+    gate = capability_gate(cap, injected)
+    if gate is not None:
+        return gate
+    clock, sleeper = poll_hooks(action, cap)
+
+    def probe() -> Dict[str, Any]:
+        return {
+            "archive": archive_count_snapshot(cap=cap, expect_timeout=expect_timeout),
+            "topology": topology_snapshot(
+                cap=cap, start=start_index, count=count, expect_timeout=expect_timeout
+            ),
+        }
+
+    def stop(snapshot: Any) -> Optional[str]:
+        fact, _why, _actual = judge_topology(
+            snapshot, min_ratio=ratio, master_included=master_included
+        )
+        if fact == FACT_YES:
+            return "satisfied"
+        archive = snapshot.get("archive") if isinstance(snapshot, Mapping) else {}
+        topology = snapshot.get("topology") if isinstance(snapshot, Mapping) else {}
+        if isinstance((archive or {}).get("total"), int) and archive.get("total") == 0:
+            return "no_target"          # 没有可入网目标：等下去也不会变
+        if _snapshot_unavailable(archive) and _snapshot_unavailable(topology):
+            return "bench"              # 台架/能力不可用：等待无意义
+        if str((topology or {}).get("state") or "") == "config":
+            return "config"             # 构帧失败是参数错，不会自愈
+        return None
+
+    loop = poll_snapshot(
+        probe, wait_s=wait_s, interval_s=interval, stop=stop, clock=clock, sleep=sleeper
+    )
+    latest = loop["snapshot"] if isinstance(loop["snapshot"], Mapping) else {}
+    archive = latest.get("archive") or {}
+    topology = latest.get("topology") or {}
+    job_ids = merge_evidence_ids(
+        *[snap.get("archive", {}).get("job_ids") for snap in loop["snapshots"]],
+        *[snap.get("topology", {}).get("job_ids") for snap in loop["snapshots"]],
+    )
+    fact, detail, actual = judge_topology(
+        latest, min_ratio=ratio, master_included=master_included
+    )
+    actual.update({"探测次数": loop["attempts"], "等待秒": round(float(loop["waited"]), 3)})
+    suffix = waited_text(loop)
+    # 期望值与判定口径同源：严格口径期望「入网从节点」，可选口径期望「节点总数量」
+    expected_label = "节点总数量" if master_included else "入网从节点"
+    expected = (
+        "%s ≥ %d" % (expected_label, actual["门槛"])
+        if isinstance(actual.get("门槛"), int)
+        else ""
+    )
+
+    if loop["reason"] == "bench":
+        return BlockResult(
+            state=BLOCK_SKIPPED,
+            detail="%s：台架/能力不就绪，块未执行（不是 FAIL）：%s"
+            % (BLOCK_TOPOLOGY, archive.get("detail") or topology.get("detail") or ""),
+            evidence_ids=job_ids,
+        )
+    if fact == FACT_YES:
+        return BlockResult(
+            state=BLOCK_PASS,
+            detail="%s：%s%s" % (BLOCK_TOPOLOGY, detail, suffix),
+            evidence_ids=job_ids,
+            expected=expected,
+            actual=actual,
+        )
+    if fact == FACT_NO:
+        return BlockResult(
+            state=BLOCK_FAIL,
+            detail="%s：明确不足 —— %s%s（等待期只发只读查询，未下发任何写帧）"
+            % (BLOCK_TOPOLOGY, detail, suffix),
+            evidence_ids=job_ids,
+            expected=expected,
+            actual=actual,
+        )
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail="%s：%s%s" % (BLOCK_TOPOLOGY, detail, suffix),
+        evidence_ids=job_ids,
+        expected=expected,
+        actual=actual,
+    )
 def block_nodes_online(params: Any, ctx: Any = None) -> BlockResult:
     """``nwk.nodes_online``：判**真实在网/可达**节点数（两路只读证据交叉）。
 
@@ -477,7 +1130,18 @@ def block_nodes_online(params: Any, ctx: Any = None) -> BlockResult:
     - 任一路取不到 → 只用可得那路；两路都取不到 → unknown；
     - **绝不**用「从节点总数量」（档案数）推断在网。
 
-    参数：``min``（期望在网节点数下限，默认 1）、``count``（10H-F2 查询条数，默认 32）。
+    参数：``min``（期望在网节点数下限，默认 1）、``count``（10H-F2 查询条数，默认 32）、
+    ``wait_s``（等待上限，默认 **180**）、``poll_interval_s``（探测间隔，默认 2）、
+    ``clock`` / ``sleep``（注入用 callable）。
+
+    等待轮询（REQS-0042 S2-A）：每轮只发 **10H-F4 + 10H-F2** 两条只读查询，轮询到
+    「已抄数 ≥ min 或 信号品质>0 的节点数 ≥ min」即 pass；等满 ``wait_s`` 仍不满足才按
+    上面的原三态口径给 fail/unknown（detail 写「等了 N 秒」）。
+
+    ``wait_s`` 默认值的依据（**别拍脑袋调小**）：台架实测一轮入网约 **240s**，学习态转
+    抄表还要在这之后。本块只判「至少 1 个节点抄通」，首个节点入网通常 10~60s，故给
+    「实测的一半 + 余量 = **180s**」；原先的 90s 在冷启动/大衰减下会把「还没抄通」判成
+    明确不足 → **假 FAIL**。达标即停，所以成功路径最多付 1 个 ``poll_interval_s``。
 
     块声明的 ``afn/fn`` 取 **10H-F4**（主证据 A 就在这条应答里），本块另发**一次**
     10H-F2（带 ``start=0 / count=``）取逐节点信号品质；两条都是只读查询。
@@ -501,13 +1165,30 @@ def block_nodes_online(params: Any, ctx: Any = None) -> BlockResult:
     gate = capability_gate(cap, injected)
     if gate is not None:
         return gate
-    snapshot = nodes_online_snapshot(
-        cap=cap,
-        count=action.get("count", DEFAULT_NODES_ONLINE_COUNT),
-        max_pages=action.get("max_pages"),
-        expect_timeout=action.get("expect_timeout", DEFAULT_TIMEOUT),
+    wait_s = coerce_float(action.get("wait_s"), DEFAULT_WAIT_NODES_ONLINE)
+    interval = coerce_float(action.get("poll_interval_s"), DEFAULT_POLL_INTERVAL)
+    count = action.get("count", DEFAULT_NODES_ONLINE_COUNT)
+    max_pages = action.get("max_pages")
+    expect_timeout = action.get("expect_timeout", DEFAULT_TIMEOUT)
+    clock, sleeper = poll_hooks(action, cap)
+
+    def probe() -> Dict[str, Any]:
+        return nodes_online_snapshot(
+            cap=cap, count=count, max_pages=max_pages, expect_timeout=expect_timeout
+        )
+
+    def stop(candidate: Any) -> Optional[str]:
+        if judge_nodes_online(candidate, minimum)[0] == FACT_YES:
+            return "satisfied"
+        if _snapshot_unavailable(candidate):
+            return "bench"
+        return None
+
+    loop = poll_snapshot(
+        probe, wait_s=wait_s, interval_s=interval, stop=stop, clock=clock, sleep=sleeper
     )
-    job_ids = list(snapshot.get("job_ids") or [])
+    snapshot = loop["snapshot"]
+    job_ids = merge_evidence_ids(*[snap.get("job_ids") for snap in loop["snapshots"]])
     channel_a = snapshot.get("channel_a") or {}
     channel_b = snapshot.get("channel_b") or {}
     readings = {
@@ -515,11 +1196,19 @@ def block_nodes_online(params: Any, ctx: Any = None) -> BlockResult:
         EVIDENCE_QUALITY: channel_b.get("value"),
         "档案数（不参与判定）": snapshot.get("archive_total"),
     }
+    if loop["reason"] == "bench":
+        return BlockResult(
+            state=BLOCK_SKIPPED,
+            detail="%s：台架/能力不就绪，块未执行（不是 FAIL）：%s"
+            % (BLOCK_NODES_ONLINE, snapshot.get("detail") or ""),
+            evidence_ids=job_ids,
+        )
     state, detail = judge_nodes_online(snapshot, minimum)
     # 判定结论后面追加两路证据明细（扫描条数/各自读数），人工复核时不用再翻 job
     evidence_text = snapshot.get("detail") or ""
     if evidence_text:
         detail = "%s（两路证据明细：%s）" % (detail, evidence_text)
+    detail = "%s%s" % (detail, waited_text(loop))
     if state == FACT_YES:
         return BlockResult(
             state=BLOCK_PASS,
@@ -567,6 +1256,15 @@ def block_route_status(params: Any, ctx: Any = None) -> BlockResult:
     - ``ROUTE_UNKNOWN``（字段缺失/取值非法）→ unknown。
 
     显式 ``params.expect``（字符串/数组）仍按原口径匹配「工作状态/当前状态」。
+
+    等待轮询（REQS-0042 S2-A）：``wait_s`` 默认 **300**、``poll_interval_s`` 默认 **2**，
+    每轮只发 **10H-F4** 一条只读查询；轮询到「工作状态=抄表」即 pass。学习态（协议正常
+    注册过程）持续到超时 → ``unknown`` + detail「等了 N 秒仍处学习态」，分层口径不变。
+
+    ``wait_s`` 默认值的依据（**别拍脑袋调小**）：台架实测一轮入网约 **240s**，而「学习态
+    → 抄表」的切换发生在这之后，所以预算必须 ≥ 实测入网时长 + 余量 = **300s**。原先的
+    60s 会让这块在真台上**几乎恒判 unknown(inconclusive)**（永远停在入网中段），等于这条
+    判据没有信息量；它不误判失败，但也从不说通过。达标即停，成功路径最多付 1 个间隔。
     """
     target, error = require_target(params, AFN_ROUTE_QUERY, FN_ROUTE_STATUS, BLOCK_ROUTE_STATUS)
     if target is None:
@@ -578,18 +1276,51 @@ def block_route_status(params: Any, ctx: Any = None) -> BlockResult:
     gate = capability_gate(cap, injected)
     if gate is not None:
         return gate
-    snapshot = route_snapshot(
-        cap=cap, expect_timeout=action.get("expect_timeout", DEFAULT_TIMEOUT)
+    wait_s = coerce_float(action.get("wait_s"), DEFAULT_WAIT_ROUTE_STATUS)
+    interval = coerce_float(action.get("poll_interval_s"), DEFAULT_POLL_INTERVAL)
+    expect_timeout = action.get("expect_timeout", DEFAULT_TIMEOUT)
+    clock, sleeper = poll_hooks(action, cap)
+
+    def probe() -> Dict[str, Any]:
+        return route_snapshot(cap=cap, expect_timeout=expect_timeout)
+
+    def stop(candidate: Any) -> Optional[str]:
+        # 用与最终判定**同一份**口径（含显式 expect）判「已满足」，避免 expect 命中时
+        # 还要白等满 wait_s；默认口径下只有「工作状态=抄表」才算满足。
+        if judge_route_status(candidate, expect, learning_fail=learning_fail)[0] == FACT_YES:
+            return "satisfied"
+        if _snapshot_unavailable(candidate):
+            return "bench"
+        return None
+
+    loop = poll_snapshot(
+        probe, wait_s=wait_s, interval_s=interval, stop=stop, clock=clock, sleep=sleeper
     )
-    job_ids = list(snapshot.get("job_ids") or [])
+    snapshot = loop["snapshot"]
+    job_ids = merge_evidence_ids(*[snap.get("job_ids") for snap in loop["snapshots"]])
+    if loop["reason"] == "bench":
+        return BlockResult(
+            state=BLOCK_SKIPPED,
+            detail="%s：台架/能力不就绪，块未执行（不是 FAIL）：%s"
+            % (BLOCK_ROUTE_STATUS, snapshot.get("detail") or ""),
+            evidence_ids=job_ids,
+        )
     if snapshot.get("state") != "answered":
         return BlockResult(
             state=str(snapshot.get("block_state") or BLOCK_UNKNOWN),
-            detail="%s：%s" % (BLOCK_ROUTE_STATUS, snapshot.get("detail") or "查询未得到可判定应答"),
+            detail="%s：%s%s"
+            % (
+                BLOCK_ROUTE_STATUS,
+                snapshot.get("detail") or "查询未得到可判定应答",
+                waited_text(loop),
+            ),
             evidence_ids=job_ids,
         )
     label, reason = classify_route_state(snapshot)
     state, detail = judge_route_status(snapshot, expect, learning_fail=learning_fail)
+    # 学习态一直是"过程"：等满 wait_s 仍处学习态 → detail 明确写「等了 N 秒仍处学习态」
+    learning = label in (ROUTE_LEARNING_INCONCLUSIVE, ROUTE_LEARNING_INCOMPLETE)
+    suffix = waited_text(loop, tail="仍处学习态" if learning else "")
     actual = {
         "分类": label,
         "工作状态": snapshot.get("work_state"),
@@ -597,25 +1328,27 @@ def block_route_status(params: Any, ctx: Any = None) -> BlockResult:
         "路由完成标志": snapshot.get("route_done"),
         "档案数": snapshot.get("archive_total"),
         "已抄": snapshot.get("answered_total"),
+        "探测次数": loop["attempts"],
+        "等待秒": round(float(loop["waited"]), 3),
     }
     if state == FACT_YES:
         return BlockResult(
             state=BLOCK_PASS,
-            detail="%s：%s" % (BLOCK_ROUTE_STATUS, detail),
+            detail="%s：%s%s" % (BLOCK_ROUTE_STATUS, detail, suffix),
             evidence_ids=job_ids,
             actual=actual,
         )
     if state == FACT_NO:
         return BlockResult(
             state=BLOCK_FAIL,
-            detail="%s：%s（分类=%s）" % (BLOCK_ROUTE_STATUS, detail, label),
+            detail="%s：%s（分类=%s）%s" % (BLOCK_ROUTE_STATUS, detail, label, suffix),
             evidence_ids=job_ids,
             expected=expect,
             actual=actual,
         )
     return BlockResult(
         state=BLOCK_UNKNOWN,
-        detail="%s：%s（分类=%s）" % (BLOCK_ROUTE_STATUS, detail, label),
+        detail="%s：%s（分类=%s）%s" % (BLOCK_ROUTE_STATUS, detail, label, suffix),
         evidence_ids=job_ids,
         actual=actual,
     )
@@ -630,6 +1363,7 @@ _BLOCKS = {
     BLOCK_ACTIVE_REGISTRATION: block_active_registration,
     BLOCK_ARCHIVE_COUNT: block_archive_count,
     BLOCK_ONNET_COUNT: block_onnet_count,        # 兼容别名（内部委托 archive_count）
+    BLOCK_TOPOLOGY: block_topology,
     BLOCK_NODES_ONLINE: block_nodes_online,
     BLOCK_ROUTE_STATUS: block_route_status,
 }
@@ -663,6 +1397,7 @@ __all__ = [
     "BLOCK_ACTIVE_REGISTRATION",
     "BLOCK_ARCHIVE_COUNT",
     "BLOCK_ONNET_COUNT",      # 兼容别名
+    "BLOCK_TOPOLOGY",
     "BLOCK_NODES_ONLINE",
     "BLOCK_ROUTE_STATUS",
     "FACT_ONNET_COUNT_MIN",   # 兼容别名事实（判档案数）
@@ -672,11 +1407,25 @@ __all__ = [
     "FN_ROUTE_RESTART",
     "AFN_NWK_SET",
     "FN_ACTIVE_REGISTRATION",
+    "FN_TOPO_QUERY",
     "WORK_STATES",
     "CURRENT_STATES",
     "ROUTE_LABELS",
     "DEFAULT_MIN_ARCHIVE",
     "DEFAULT_MIN_ONNET",
+    "DEFAULT_TOPO_START",
+    "DEFAULT_TOPO_COUNT",
+    "DEFAULT_MIN_RATIO",
+    "DEFAULT_POLL_INTERVAL",
+    "DEFAULT_WAIT_TOPOLOGY",
+    "DEFAULT_WAIT_NODES_ONLINE",
+    "DEFAULT_WAIT_ROUTE_STATUS",
+    "READONLY_AFN_FNS",
+    "ITEM_TOPO_TOTAL",
+    "ITEM_TOPO_START",
+    "ITEM_TOPO_ANSWERED",
+    "TOPO_START_NOTE",
+    "TOPO_ROLE_MASTER",
     "time6_to_digits",
     "registration_time_params",
     "registration_payload",
@@ -684,6 +1433,7 @@ __all__ = [
     "block_active_registration",
     "block_archive_count",
     "block_onnet_count",
+    "block_topology",
     "block_nodes_online",
     "block_route_status",
     "register_blocks",
@@ -691,6 +1441,17 @@ __all__ = [
     # 再导出（事实模块与旧调用方从 nwk 取这些名字仍然可用；实现只有 common 一份）
     "archive_count_snapshot",
     "judge_archive_count_min",
+    "topology_snapshot",
+    "judge_topology",
+    "required_topology_count",
+    "topo_nodes_of",
+    "topo_node_index_of",
+    "poll_snapshot",
+    "poll_hooks",
+    "readonly_violations",
+    "waited_text",
+    "merge_evidence_ids",
+    "format_seconds",
     "onnet_snapshot",          # 兼容别名
     "judge_onnet_min",         # 兼容别名
     "nodes_online_snapshot",

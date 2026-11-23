@@ -1,4 +1,4 @@
-"""P1-1 模型层测试（REQS v3 §10.2 / PLAN P1-1）。
+"""P1-1 模型层测试（REQS v3 §10.2 / PLAN P1-1；REQS-0042 §3.5 / D2-4 四态）。
 
 覆盖点：
 - 缺 ``action`` 的 BlockSpec、``blocks`` 为空且无 ``plan`` 的 CaseSpec → ValidationError（不静默跳过）
@@ -7,18 +7,33 @@
 - ``steps[]`` 每项必须有 ``do`` 与 ``expect``（UI 展示口径）
 - JSON 里写 ``assert`` 要能落到 ``assert_``，且 ``model_dump(by_alias=True)`` 还原成 ``assert``
 - 事实三态常量与 ``Health`` / ``Capability`` 契约
+- **结论四态**（REQS-0042 D2-4）：``OUTCOMES`` 四值、优先级顺序、
+  块态仍是老四态（``blocked`` **不得**渗进块层）、断言层仍是三态（**守卫用例**）
 """
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from test_automation.models import ASSERTION_OUTCOMES
 
 from case_runner.core.models import (
+    BLOCK_FAIL,
+    BLOCK_PASS,
+    BLOCK_SKIPPED,
+    BLOCK_STATES,
+    BLOCK_UNKNOWN,
     FACT_NO,
     FACT_STATES,
     FACT_UNKNOWN,
     FACT_YES,
+    OUTCOME_BLOCKED,
+    OUTCOME_FAIL,
+    OUTCOME_INCONCLUSIVE,
+    OUTCOME_PASS,
+    OUTCOME_PRIORITY,
+    OUTCOMES,
+    OUTCOMES_ASSERTION,
     BlockSpec,
     Capability,
     CaseSpec,
@@ -161,6 +176,55 @@ def test_fact_state_constants() -> None:
     assert FACT_STATES == frozenset({"yes", "no", "unknown"})
     # unknown 必须与 yes 不同的是非值，绝不能被当作 pass
     assert FACT_UNKNOWN != FACT_YES
+
+
+# --- 结论四态（REQS-0042 §3.5 / D2-4） --------------------------------------
+
+
+def test_outcome_four_states() -> None:
+    """用例 / 方案 verdict 是**四态**：多出来的是 ``blocked``（台架不具备条件）。"""
+    assert (OUTCOME_PASS, OUTCOME_FAIL, OUTCOME_BLOCKED, OUTCOME_INCONCLUSIVE) == (
+        "pass",
+        "fail",
+        "blocked",
+        "inconclusive",
+    )
+    assert OUTCOMES == frozenset({"pass", "fail", "blocked", "inconclusive"})
+    assert len(OUTCOMES) == 4
+
+
+def test_outcome_priority_order_is_fail_blocked_inconclusive_pass() -> None:
+    """优先级（同一用例/方案内取最严重）：``fail > blocked > inconclusive > pass``。"""
+    assert OUTCOME_PRIORITY == (
+        OUTCOME_FAIL,
+        OUTCOME_BLOCKED,
+        OUTCOME_INCONCLUSIVE,
+        OUTCOME_PASS,
+    )
+    assert list(OUTCOME_PRIORITY) == ["fail", "blocked", "inconclusive", "pass"]
+    assert set(OUTCOME_PRIORITY) == OUTCOMES
+
+
+def test_block_states_stay_four_and_have_no_blocked() -> None:
+    """块态仍是 ``pass/fail/skipped/unknown``：``blocked`` **只活在 verdict 层**（D2-4）。"""
+    assert BLOCK_STATES == frozenset({"pass", "fail", "skipped", "unknown"})
+    assert {BLOCK_PASS, BLOCK_FAIL, BLOCK_SKIPPED, BLOCK_UNKNOWN} == BLOCK_STATES
+    assert OUTCOME_BLOCKED not in BLOCK_STATES
+
+
+def test_assertion_layer_not_extended_to_four_states() -> None:
+    """**守卫用例（§5 红线 / D2-4）**：断言层严格三值，不许为了「四态一致」扩它。
+
+    这条红了说明有人顺手把 ``ASSERTION_OUTCOMES`` 或本模块的镜像改成四态 ——
+    那是破红线，不是「功能增强」。``blocked`` 只允许出现在用例 / 方案 verdict 层。
+    """
+
+    assert ASSERTION_OUTCOMES == frozenset({"pass", "fail", "inconclusive"})
+    assert OUTCOMES_ASSERTION == frozenset({"pass", "fail", "inconclusive"})
+    assert OUTCOMES_ASSERTION == ASSERTION_OUTCOMES
+    assert OUTCOME_BLOCKED not in ASSERTION_OUTCOMES
+    # 断言层三态必须是 verdict 四态的真子集（差的那一个只能是 blocked）
+    assert OUTCOMES - ASSERTION_OUTCOMES == {OUTCOME_BLOCKED}
 
 
 def test_health_is_frozen_dataclass() -> None:
