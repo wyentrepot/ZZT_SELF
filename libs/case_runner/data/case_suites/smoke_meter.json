@@ -1,0 +1,13 @@
+{
+  "id": "smoke_meter",
+  "name": "抄表冒烟（首次组网：台架自检 → 复位 STA → 档案 → 组网 → 抄表）",
+  "case_ids": [
+    "bench_ready",
+    "sta_reset",
+    "archive_ready",
+    "nwk_join",
+    "meter_read"
+  ],
+  "stop_on_fail": true,
+  "notes": "用途：新上电/换板/第一次组网的抄表冒烟。顺序理由（用户原话口径）：「第一步可以先做抄表测试用例，先测试组网，档案，复位等步骤。第一次组网需要复位 sta。之后就按需复位。」——复位排在建档与组网之前，因为 STA 复位会清掉正在跑的入网/路由状态，先复位再建档组网才能避免把复位打断造成的失败算到档案或组网头上。第 1 步 bench_ready 是父任务清单外补的只读自检：复位有物理副作用，先用只读块确认台架齐（STA 口 / 模拟集中器 / 模拟电表）再动手；不需要时从 case_ids 删掉第一项即可。stop_on_fail=true：首个非通过用例即停并标剩余跳过，断点落在哪一步一眼可见。注意 archive_ready 与 nwk_join 都含添加档案（nwk_join 内联是为了单条用例在 UI 上「立即运行」时能独立成立），因此冒烟时同一表地址会被建档两次；该重复下发未上台架验证，若 CCO 对重复建档回否认帧，把 nwk_join 的 blocks 里第一项 archive.add 去掉即可（届时依赖前置的 archive_ready）。"
+}

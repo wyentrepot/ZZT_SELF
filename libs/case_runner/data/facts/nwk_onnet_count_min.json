@@ -1,0 +1,18 @@
+{
+  "id": "nwk.onnet_count_min",
+  "title": "【兼容别名】路由档案中的从节点数量 ≥ 期望下限（10H-F1 只读探测；档案数不等于在网数，真在网用 nwk.nodes_online_min）",
+  "probe": "nwk.onnet_count_min",
+  "params_schema": {
+    "min": {
+      "type": "integer",
+      "minimum": 0,
+      "required": true,
+      "description": "期望的档案数下限，如 1（不是期望在网数）"
+    },
+    "expect_timeout": {
+      "type": "number",
+      "default": 5.0,
+      "description": "应答超时（秒）"
+    }
+  }
+}

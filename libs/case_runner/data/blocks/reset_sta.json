@@ -1,0 +1,38 @@
+{
+  "id": "reset.sta",
+  "title": "复位 STA（经 sta-main 会话发 reboot）",
+  "needs": [
+    "bench.sta_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "reset_sta",
+    "mapping_id": "sta-main",
+    "module": "sta",
+    "text": "reboot",
+    "append_newline": true,
+    "retry": 1,
+    "timeout_s": 30.0,
+    "fingerprint_window_s": 15.0,
+    "poll_interval_s": 1.0,
+    "lines": 400,
+    "stop_observation": false
+  },
+  "assert": [
+    {
+      "type": "boot_fingerprint",
+      "any_of": [
+        "reset reason:",
+        "SFT_GLB_RST",
+        "Unicorn Bootloader",
+        "Run image0, wait a moment, please!"
+      ],
+      "detail": "判据取下发时刻 t0 之后的会话日志（RX），不是 reboot 命令的返回码"
+    }
+  ],
+  "tags": [
+    "bench",
+    "reset",
+    "first-batch"
+  ]
+}

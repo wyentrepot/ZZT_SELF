@@ -1,0 +1,29 @@
+{
+  "id": "bench.simeter_online",
+  "title": "模拟电表台架在线（simeter 子应用可达）",
+  "probe": "bench.simeter_online",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "base_url": {
+        "type": "string",
+        "description": "工作台地址；缺省取环境变量 WORKBENCH_BASE（本文件不写死端口）"
+      },
+      "mapping_id": {
+        "type": "string",
+        "default": "listener",
+        "description": "模拟电表逻辑口别名"
+      },
+      "require_serial_open": {
+        "type": "boolean",
+        "default": false,
+        "description": "严格口径：表口未打开即判 no（默认只看服务是否可达）"
+      },
+      "probe_timeout": {
+        "type": "number",
+        "default": 5.0
+      }
+    },
+    "additionalProperties": true
+  }
+}

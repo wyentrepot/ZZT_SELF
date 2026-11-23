@@ -1,0 +1,15 @@
+{
+  "id": "nwk.route_restart",
+  "title": "启动路由重新组网（12H-F1 无参，判据 00H-F1 确认；组网前应先有档案）",
+  "needs": ["bench.simcon_online"],
+  "provides": [],
+  "action": {
+    "afn": "12",
+    "fn": 1,
+    "params": {}
+  },
+  "assert": [
+    {"type": "confirm", "frame": "00H-F1"}
+  ],
+  "tags": ["nwk", "batch-1", "precondition-archive"]
+}

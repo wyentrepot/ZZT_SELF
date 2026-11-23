@@ -1,0 +1,37 @@
+{
+  "id": "meter.brain_local",
+  "title": "表端脑本地自检（simeter handle_hex，不占串口；请求帧缺省按 addr+di 动态构造，判 reply_hex / note.value / DI 回显）",
+  "needs": ["bench.simeter_online"],
+  "provides": [],
+  "action": {
+    "semantic": "simeter.handle_hex",
+    "params": {
+      "addr": "000000000001",
+      "di": "00010000",
+      "request_hex": null,
+      "expect_reply": true
+    },
+    "_params_note": "request_hex 可选：缺省/为 null 时按 addr+di 动态构造 645 读数据帧（68|地址域|68|11|04|DI 传输序|CS|16）；显式给值仍以显式值为准。addr 为 645 地址域线序，人读 123456789012 → 线序 12 34 56 78 90 12。"
+  },
+  "assert": [
+    {
+      "type": "simeter_handle_hex",
+      "case": "positive_self_check",
+      "addr": "000000000001",
+      "di": "00010000",
+      "expect_reply": true,
+      "di_echo": "33333433",
+      "note_value": "non_empty",
+      "note": "请求帧按 addr+di 动态构造：addr=000000000001 → 6800000000000168110433333433B316；addr=123456789012 → 68123456789012681104333334336816（均为真实台架验证过的帧）"
+    },
+    {
+      "type": "simeter_handle_hex",
+      "case": "negative_addr_mismatch",
+      "request_hex": "68111111111111681104333334331816",
+      "expect_reply": false,
+      "note_mine": false,
+      "note": "显式给定的地址不符有效帧（CS 合法）：期望表端脑不应答（不应答就是期望，判 pass）"
+    }
+  ],
+  "tags": ["meter", "645", "simeter", "smoke"]
+}

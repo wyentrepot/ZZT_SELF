@@ -1,0 +1,12 @@
+{
+  "id": "smoke_meter_noreset",
+  "name": "抄表冒烟·不复位（第一次组网之后：台架自检 → 档案 → 组网 → 抄表）",
+  "case_ids": [
+    "bench_ready",
+    "archive_ready",
+    "nwk_join",
+    "meter_read"
+  ],
+  "stop_on_fail": true,
+  "notes": "用途：台架已经入过网（或刚做过 smoke_meter）之后的日常回归。依据用户原话：「第一次组网需要复位 sta。之后就按需复位。」——本方案刻意不含 sta_reset，避免每次回归都重启 STA 打断入网状态（复位后重新入网要十几到二十秒，还可能撞上功耗门限）。只有出现「组网一直不通 / 在网数为 0」时，才改用 smoke_meter 或临时单跑 sta_reset 这条用例。stop_on_fail=true，断点定位同 smoke_meter。"
+}

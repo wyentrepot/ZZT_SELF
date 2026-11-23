@@ -1,0 +1,34 @@
+{
+  "id": "archive.contains",
+  "title": "档案表含指定从节点地址（10H-F2 只读探测）",
+  "probe": "archive.contains",
+  "params_schema": {
+    "addr": {
+      "type": "string",
+      "pattern": "^[0-9]{12}$",
+      "required": true,
+      "description": "12 位 BCD 表地址，如 000000000001"
+    },
+    "start": {
+      "type": "integer",
+      "default": 0,
+      "description": "查询起始序号（现场模块档案 1 起编号时设为 1）"
+    },
+    "count": {
+      "type": "integer",
+      "default": 16,
+      "maximum": 255,
+      "description": "每页条数"
+    },
+    "max_pages": {
+      "type": "integer",
+      "default": 4,
+      "description": "最多翻页数（防止无限翻页）"
+    },
+    "expect_timeout": {
+      "type": "number",
+      "default": 5.0,
+      "description": "单页应答超时（秒）"
+    }
+  }
+}

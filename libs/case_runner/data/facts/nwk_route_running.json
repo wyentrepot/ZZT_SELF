@@ -1,0 +1,12 @@
+{
+  "id": "nwk.route_running",
+  "title": "路由在运行（10H-F4「工作状态」=抄表；工作状态=学习时按「运行状态字」D1 路由完成标志分层：路由已完成+档案>0 → inconclusive(unknown)，不是 fail）",
+  "probe": "nwk.route_running",
+  "params_schema": {
+    "expect_timeout": {
+      "type": "number",
+      "default": 5.0,
+      "description": "应答超时（秒）"
+    }
+  }
+}

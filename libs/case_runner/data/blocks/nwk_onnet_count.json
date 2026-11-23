@@ -1,0 +1,28 @@
+{
+  "id": "nwk.onnet_count",
+  "title": "【兼容别名】nwk.onnet_count → nwk.archive_count：查询路由档案中的从节点数量（10H-F1，判据 档案数 ≥ min；档案数不等于真实可达节点数）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "afn": "10",
+    "fn": 1,
+    "params": {
+      "min": 1
+    }
+  },
+  "assert": [
+    {
+      "type": "archive_count_min",
+      "min": 1
+    }
+  ],
+  "tags": [
+    "nwk",
+    "batch-1",
+    "readonly",
+    "compat-alias",
+    "archive-count"
+  ]
+}

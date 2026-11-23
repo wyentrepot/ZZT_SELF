@@ -1,0 +1,27 @@
+{
+  "id": "nwk.nodes_online_min",
+  "title": "真实在网/可达节点数 ≥ 期望下限（10H-F4「已抄从节点数量」+ 10H-F2「信号品质>0」两路只读交叉；绝不用 10H-F1 档案数推断）",
+  "probe": "nwk.nodes_online_min",
+  "params_schema": {
+    "min": {
+      "type": "integer",
+      "default": 1,
+      "description": "期望的在网节点数下限（默认 1）"
+    },
+    "count": {
+      "type": "integer",
+      "default": 32,
+      "description": "10H-F2 每页查询条数"
+    },
+    "max_pages": {
+      "type": "integer",
+      "default": 4,
+      "description": "10H-F2 最多翻几页"
+    },
+    "expect_timeout": {
+      "type": "number",
+      "default": 5.0,
+      "description": "应答超时（秒）"
+    }
+  }
+}

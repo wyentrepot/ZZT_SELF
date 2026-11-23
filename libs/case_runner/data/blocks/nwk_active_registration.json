@@ -1,0 +1,20 @@
+{
+  "id": "nwk.active_registration",
+  "title": "激活从节点主动注册（11H-F5，必填 time6 + duration + retry + slices，判据 00H-F1 确认）",
+  "needs": ["bench.simcon_online"],
+  "provides": [],
+  "action": {
+    "afn": "11",
+    "fn": 5,
+    "params": {
+      "time6": "000012231126",
+      "duration": 5,
+      "retry": 3,
+      "slices": 10
+    }
+  },
+  "assert": [
+    {"type": "confirm", "frame": "00H-F1"}
+  ],
+  "tags": ["nwk", "batch-1", "precondition-archive", "required-params"]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "nwk.archive_count",
+  "title": "查询路由档案中的从节点数量（10H-F1 无参，判据 档案数（从节点总数量）≥ min；档案数不等于真实可达节点数，可达性由 nwk.nodes_online 判）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "afn": "10",
+    "fn": 1,
+    "params": {
+      "min": 1
+    }
+  },
+  "assert": [
+    {
+      "type": "archive_count_min",
+      "min": 1
+    }
+  ],
+  "tags": [
+    "nwk",
+    "batch-1",
+    "readonly",
+    "archive-count"
+  ]
+}

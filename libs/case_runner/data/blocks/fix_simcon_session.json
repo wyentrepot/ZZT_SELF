@@ -1,0 +1,26 @@
+{
+  "id": "fix.simcon_session",
+  "title": "台架：模拟集中器会话在线检查",
+  "needs": [],
+  "provides": [
+    "bench.simcon_online"
+  ],
+  "action": {
+    "kind": "probe_bench",
+    "capability": "simcon",
+    "mapping_id": "simcon",
+    "require_port_open": false,
+    "probe_timeout": 5.0
+  },
+  "assert": [
+    {
+      "type": "capability_ready",
+      "capability": "simcon",
+      "detail": "/api/simcon/status 可达即视为台架在位；无会话只影响 frames 读取，不影响本块"
+    }
+  ],
+  "tags": [
+    "bench",
+    "first-batch"
+  ]
+}

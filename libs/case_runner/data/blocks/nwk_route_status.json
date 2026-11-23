@@ -1,0 +1,24 @@
+{
+  "id": "nwk.route_status",
+  "title": "查询路由运行状态（10H-F4，判据：工作状态=抄表→通过；路由已完成(运行状态字D1=1)+档案数>0 但工作状态=学习→inconclusive(unknown，不是失败)；字段缺失/取值非法→unknown；用例可用 params.expect=[...] 指定显式期望）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "afn": "10",
+    "fn": 4,
+    "params": {}
+  },
+  "assert": [
+    {
+      "type": "route_state",
+      "expect_work_state": "抄表"
+    }
+  ],
+  "tags": [
+    "nwk",
+    "batch-1",
+    "readonly"
+  ]
+}

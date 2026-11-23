@@ -1,0 +1,29 @@
+{
+  "id": "fix.simeter_session",
+  "title": "台架：模拟电表表口打开并能应答（没开就 open_port 开，开完不关）",
+  "needs": [],
+  "provides": [
+    "bench.simeter_online"
+  ],
+  "action": {
+    "kind": "probe_bench",
+    "capability": "simeter",
+    "mapping_id": "listener",
+    "probe_timeout": 5.0,
+    "params": {
+      "ensure_open": true,
+      "port": "simeter"
+    }
+  },
+  "assert": [
+    {
+      "type": "capability_ready",
+      "capability": "simeter",
+      "detail": "表口必须真的打开（serial_open=true）才算就绪：没开就调 POST /api/simeter/open（mapping_id=port，默认值 simeter 是工作台的逻辑口别名，物理串口号由端口映射决定）；开口失败 409 端口被占用 / 404 子应用未挂载 / 服务不可达 → skipped，其他 4xx/5xx、bad_response → unknown，绝不假 pass；开口成功后端口保持打开，供后续 meter.* 抄表块使用"
+    }
+  ],
+  "tags": [
+    "bench",
+    "first-batch"
+  ]
+}

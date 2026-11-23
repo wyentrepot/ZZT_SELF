@@ -1,0 +1,18 @@
+{
+  "id": "archive.query",
+  "title": "查询从节点档案表（10H-F2；addr / expect_total / expect_empty 由用例覆盖）",
+  "needs": ["bench.simcon_online"],
+  "provides": [],
+  "action": {
+    "afn": "10",
+    "fn": 2,
+    "params": {
+      "start": 0,
+      "count": 16
+    }
+  },
+  "assert": [
+    {"type": "query_answered", "frame": "10H-F2"}
+  ],
+  "tags": ["archive", "batch-1", "readonly"]
+}

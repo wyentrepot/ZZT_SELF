@@ -1,0 +1,35 @@
+{
+  "id": "bench_ready",
+  "title": "台架就绪自检（STA 控制台口 + 模拟集中器 + 模拟电表）",
+  "steps": [
+    {
+      "no": 1,
+      "do": "只读探测 STA 控制台口（sta-main）的串口桥可用状态",
+      "expect": "口可用（前置事实 bench.sta_online 成立）；不可用则本用例直接停在断点，并点名是 STA 控制台口，不进入后续台架块"
+    },
+    {
+      "no": 2,
+      "do": "探测模拟集中器服务（simcon）是否在位",
+      "expect": "服务可达即该步通过；不可达时该步判跳过并写明原因（台架缺失不等于设备失败）"
+    },
+    {
+      "no": 3,
+      "do": "探测模拟电表服务（simeter）是否在位",
+      "expect": "服务可达即该步通过；不可达时该步判跳过并写明原因（台架缺失不等于设备失败）"
+    }
+  ],
+  "needs": [
+    "bench.sta_online"
+  ],
+  "blocks": [
+    "fix.simcon_session",
+    "fix.simeter_session"
+  ],
+  "asserts": [],
+  "tags": [
+    "bench",
+    "first-batch",
+    "smoke",
+    "readonly"
+  ]
+}

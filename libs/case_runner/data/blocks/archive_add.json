@@ -1,0 +1,20 @@
+{
+  "id": "archive.add",
+  "title": "添加从节点档案（11H-F1 建档 + 10H-F2 回查双判据）",
+  "needs": ["bench.simcon_online"],
+  "provides": [],
+  "action": {
+    "afn": "11",
+    "fn": 1,
+    "params": {
+      "action": "add",
+      "addr": "000000000001",
+      "protocol": 2
+    }
+  },
+  "assert": [
+    {"type": "confirm", "frame": "00H-F1"},
+    {"type": "archive_contains", "addr": "000000000001"}
+  ],
+  "tags": ["archive", "batch-1"]
+}

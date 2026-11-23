@@ -1,0 +1,11 @@
+{
+  "id": "meter_only",
+  "name": "只抄表（不复位：档案 → 抄表）",
+  "case_ids": [
+    "bench_ready",
+    "archive_ready",
+    "meter_read"
+  ],
+  "stop_on_fail": true,
+  "notes": "用途：网络已经组好、只想快速验证「档案在 + 抄得到」这两件事时的最短方案。依据用户原话「之后就按需复位」：复位是例外不是常态，所以本方案不含 sta_reset，也不含 nwk_join 的路由重启（重启路由会打断一次抄表窗口）。若本方案抄表失败，再按需单跑 nwk_join 看组网，或用 smoke_meter 从复位重来。stop_on_fail=true：档案没加成功就不必再发抄读帧。 【2026-11-23 领导修正】首项补 bench_ready：模拟电表必须在 COM20 上开口才能应答 STA 的 645 请求（真实链路 simcon→CCO→STA→485→模拟电表），而开口动作由 bench_ready 里的 fix.simeter_session 完成；缺它则 meter_read 在真实台架上必超时。bench.simeter_online 事实保持「服务可达」宽松口径，因为 meter.brain_local 走 handle_hex 纯函数不占串口；「能应答」的严格语义由 fix.simeter_session 块承担。"
+}
