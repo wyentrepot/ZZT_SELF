@@ -50,13 +50,13 @@
 - [ ] 3 条端到端用例：`upgrade_15f1` / `nwk_join` / `mclt_collect`
 - [ ] 门禁：`grep shell_ro` = 0；外部路径残留 = 0
 
-## P4：API 层
+## P4：API 层 —— ⏭️ 已移入 REQS-0042（2026-11-23 用户决定 API+UI 归下一个 req）
 - [ ] `cases_api.py` 工厂 + `app.py` 挂载（紧邻 autotest）
 - [ ] 9 类端点：cases / blocks / facts / suites(3) / run / runs / compare
 - [ ] 资源未满足 409 + 明确原因
 - [ ] 单测 + `/api/autotest/*` 不回归
 
-## P5：UI
+## P5：UI —— ⏭️ 已移入 REQS-0042（同上）
 - [ ] 新页面「用例库」：用例名 + 块清单（可展开）
 - [ ] 勾选 + 方案下拉 + 存为方案；刷新后勾选随方案恢复
 - [ ] 「立即运行」单例 + 「按方案运行」两入口
@@ -64,7 +64,17 @@
 - [ ] 主题令牌合规（0 issue）
 - [ ] 浏览器实测：勾选→存方案→刷新→运行→见断点
 
-## P6：收口
+## P6：收口 —— ⏭️ 收口条件随 P4/P5 一并移入 REQS-0042；本需求代码交付物已入库
+
+> **交付状态（2026-11-23 收口记录）**
+> - 已入库 `71551b6`：`libs/case_runner/`（67 文件 / 19050 行 + 31 JSON 声明）+ `tools/scripts/case_run.py`
+> - 测试：`pytest libs/case_runner -q` → **444 passed / 2 skipped**；`test_layering.py` 10 passed
+> - 真实台架：`meter_read` 3/3 PASS（1234.56 kWh）、`reset.sta` 真实复位成功、`archive.add` 双判据成立
+> - 资产：15 块 / 8 事实 / 5 用例 / 3 方案，`loader problems == []`
+> - API + UI 未做，按用户决定整体移入 `reqs/0042-blackbox-case-autorun-and-console/`
+> - 遗留待办（0042 一并处理）：`meter.py` 错误码表与 `common.verify_failure_state` 口径统一
+
+## 原 P6 收口清单（已移入 0042）
 - [ ] DoD 9 条逐项验证留证
 - [ ] `docs/api-endpoints-inventory.md` 补 `/api/cases/*`
 - [ ] DONE.md + REQS-INDEX 状态更新
