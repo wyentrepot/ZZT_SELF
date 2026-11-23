@@ -431,12 +431,16 @@ def create_workbench_app(
     _profile_store = _ProfileStore(runtime_dir=_prof_dir())
     _simcon_open = getattr(getattr(_simcon_sub, "state", None), "simcon_open_io", None)
     _simcon_close = getattr(getattr(_simcon_sub, "state", None), "simcon_close_io", None)
+    _simcon_current_port = getattr(
+        getattr(_simcon_sub, "state", None), "simcon_current_port", None)
     _simcon_adapter = None
     if _simcon_open is not None and _simcon_close is not None:
         try:
             from sim_concentrator.serial_io import resolve_serial_config
             _simcon_adapter = SimconProfileAdapter(
-                open_io=_simcon_open, close_io=_simcon_close, resolve=resolve_serial_config,
+                open_io=_simcon_open, close_io=_simcon_close,
+                resolve=resolve_serial_config,
+                current_port=_simcon_current_port,
             )
         except Exception:  # noqa: BLE001 - 依赖缺失则 simcon 槽跳过
             _simcon_adapter = None
@@ -484,6 +488,17 @@ def create_workbench_app(
     from .dict_api import router as dict_router
     app.include_router(dict_router)
 
+    # ---- 4.6 用例自动测试（autotest/ 框架的 UI 门面，subprocess 同源 runner CLI）----
+    from .autotest_api import create_autotest_router
+    app.include_router(create_autotest_router(storage_dir=storage_dir))
+
+    # ---- 4.7 用例库 / 方案 / 台架快照 / 黑盒运行（REQS-0042 §3.6 API-1..4）----
+    # 紧跟 autotest 之后挂载：同一套「台架独占」口径（单并发 job、冲突 409）。
+    # 结果落 <storage_dir>/case_runs/<run_id>/result.json；工作台地址不写死
+    # （body.base_url > WORKBENCH_BASE > 本次请求 origin）。
+    from .cases_api import create_cases_router
+    app.include_router(create_cases_router(storage_dir=storage_dir))
+
     # ---- 4. 静态外壳（页签式 SPA）----
     _wb_static = _workbench_static_dir()
     if _wb_static.exists():
@@ -495,7 +510,9 @@ def create_workbench_app(
 
         idx = _wb_static / "index.html"
         if idx.exists():
-            return FileResponse(idx)
+            # 外壳 HTML 必须每次回源：被浏览器缓存住会继续引用旧的 ?v= 资源，
+            # 改了 app.js/index.html 却“看着没生效”（2026-11-19 现场）。
+            return FileResponse(idx, headers={"Cache-Control": "no-cache, must-revalidate"})
         return {"app": "workbench", "static": "missing"}
 
     @app.get("/api/platform-version")

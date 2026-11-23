@@ -14,6 +14,10 @@
 - [ ] 复核台架：`GET /api/serial-bridge/status` 5 口 usable（simcon=COM4 / simeter=COM20 / sta-main=COM18 / cco-main=COM12）
 - [ ] `PLAN.md` 生成（writing-plans）
 
+## P1：地址角色化 ✅（已交付，见 DONE.md）
+
+> 以下勾选状态截至 2026-11-23 S6 收口。
+
 ## P1：地址角色化（AD-*，消除 G-1，本需求技术核心）
 - [ ] `common.archive_addr_of()` / `common.meter_addr_wire()` 唯一实现 + 双向单测
 - [ ] 5 块参数 `addr` → `meter_addr`（`addr` 保留别名 + warning）

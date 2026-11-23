@@ -12,6 +12,11 @@
 (function () {
   "use strict";
 
+  // 全局 Dock 总开关（必须最先声明：菜单/快捷键/推送等入口在文件各处引用它）。
+  // 暂屏蔽（2026-11-19 用户要求：悬浮窗碍事，功能先不显示）。
+  // 恢复：这里改回 true，并删掉 index.html 里 #wbDock / #wbSbDock / #wbMenuDock 的 hidden。
+  const DOCK_ENABLED = false;
+
   // 页面注册表：id / title / src / group（验证 | 设备 | 辅助 | 维护）
   const PAGES = [
     { id: "workbench", title: "验证工作台", src: "/static/workbench.html", group: "验证" },
@@ -23,13 +28,14 @@
     { id: "trace", title: "报文追踪", src: "/static/pages/trace/trace.html", group: "辅助" },
     { id: "dict", title: "协议字典", src: "/static/pages/dict/dict.html", group: "辅助" },
     { id: "scenario", title: "场景脚本", src: "/static/pages/scenario/scenario.html", group: "辅助" },
+    { id: "cases", title: "用例库", src: "/static/pages/cases/cases.html", group: "辅助" },
     { id: "maintenance", title: "工作台状态", src: "/static/pages/maintenance/maintenance.html", group: "维护" },
   ];
 
   const GROUPS = [
     { name: "验证", pages: ["workbench"] },
     { name: "设备", pages: ["serial-profile", "module", "listener", "simcon", "simeter"] },
-    { name: "辅助", pages: ["trace", "dict", "scenario"] },
+    { name: "辅助", pages: ["trace", "dict", "scenario", "cases"] },
     { name: "维护", pages: ["maintenance"] },
   ];
 
@@ -44,6 +50,7 @@
     trace: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     dict: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
     scenario: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+    cases: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8"/><path d="m8 13 1.6 1.6L12 12"/><path d="M14 14h2"/><path d="m8 18 1.6 1.6L12 17"/><path d="M14 19h2"/>',
     maintenance: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51.55.22 1.18.09 1.63-.26"/>'
   };
 
@@ -229,7 +236,7 @@
           event.preventDefault();
           toggleSidebar();
         }
-      } else if (key === "j") {
+      } else if (key === "j" && DOCK_ENABLED) {
         event.preventDefault();
         setDockFold(!dockEl.classList.contains("wb-dock-fold"));
       }
@@ -291,7 +298,7 @@
   if (menuRailEl) {
     menuRailEl.addEventListener("click", function () { closeMenus(); toggleSidebar(); });
   }
-  const menuDockEl = document.getElementById("wbMenuDock");
+  const menuDockEl = DOCK_ENABLED ? document.getElementById("wbMenuDock") : null;
   if (menuDockEl) {
     menuDockEl.addEventListener("click", function () {
       closeMenus();
@@ -331,7 +338,7 @@
   }
 
   // ---------- 全局 Dock（REQS-0031 P1：跨模块"示波器"） ----------
-  const dockEl = document.getElementById("wbDock");
+  const dockEl = DOCK_ENABLED ? document.getElementById("wbDock") : null;
   const dockViews = {
     frame: document.getElementById("wbDockViewFrame"),
     log: document.getElementById("wbDockViewLog"),
@@ -343,6 +350,8 @@
   const sbThemeEl = document.getElementById("wbSbTheme");
   const DOCK_FOLD_KEY = "wb-dock-fold";
   const DOCK_HEIGHT_KEY = "wb-dock-height";
+  const DOCK_MODE_KEY = "wb-dock-mode";   // "dock"=固定到底部 | "float"=悬浮窗
+  const DOCK_POS_KEY = "wb-dock-pos";
   let dockTxCount = 0;
   let dockRxCount = 0;
   let dockMaxRows = 300;
@@ -352,12 +361,119 @@
     dockEl.classList.toggle("wb-dock-fold", fold);
     if (sbDockEl) sbDockEl.textContent = fold ? "折叠" : "展开";
     try { localStorage.setItem(DOCK_FOLD_KEY, fold ? "1" : "0"); } catch (error) {}
+    if (fold) {
+      if (dockIdleTimer) { clearTimeout(dockIdleTimer); dockIdleTimer = null; }
+    } else {
+      scheduleDockAutoFold();
+    }
+  }
+
+  // 全局面板是"按需"示波器：展开后 15s 没有新推送就自己收起，不再常驻占位。
+  const DOCK_IDLE_FOLD_MS = 15000;
+  let dockIdleTimer = null;
+  function scheduleDockAutoFold() {
+    if (dockIdleTimer) { clearTimeout(dockIdleTimer); dockIdleTimer = null; }
+    if (!dockEl || dockEl.classList.contains("wb-dock-fold")) return;
+    dockIdleTimer = setTimeout(function () {
+      dockIdleTimer = null;
+      if (dockEl && !dockEl.classList.contains("wb-dock-fold")) setDockFold(true);
+    }, DOCK_IDLE_FOLD_MS);
+  }
+  function cancelDockAutoFold() {
+    if (dockIdleTimer) { clearTimeout(dockIdleTimer); dockIdleTimer = null; }
   }
 
   function setDockHeight(px) {
     if (!dockEl) return;
     dockEl.style.height = px + "px";
     try { localStorage.setItem(DOCK_HEIGHT_KEY, String(px)); } catch (error) {}
+  }
+
+  function readDockPos() {
+    try { return JSON.parse(localStorage.getItem(DOCK_POS_KEY) || "null"); } catch (error) { return null; }
+  }
+
+  function saveDockPos(pos) {
+    try { localStorage.setItem(DOCK_POS_KEY, JSON.stringify(pos)); } catch (error) {}
+  }
+
+  /* 面板形态：dock=固定在底部（占布局高度）/ float=悬浮窗（脱离布局，可拖动，不占空间） */
+  function setDockMode(mode, persist) {
+    if (!dockEl) return;
+    const floating = mode === "float";
+    dockEl.classList.toggle("wb-dock-float", floating);
+    const btn = document.getElementById("wbDockMode");
+    if (btn) {
+      btn.textContent = floating ? "固定" : "悬浮";
+      btn.title = floating ? "固定到底部（占布局高度）" : "改成悬浮窗（不占布局空间，标题栏可拖动）";
+    }
+    if (floating) {
+      const pos = readDockPos();
+      if (pos && typeof pos.left === "number") {
+        // 有保存位置：left/top 定位，必须把 right/bottom 置 auto（否则 CSS 的
+        // right:18px 与 left 同时生效 → 宽度被拉满，折叠药丸变成一条横幅）
+        dockEl.style.right = "auto";
+        dockEl.style.bottom = "auto";
+        dockEl.style.left = Math.min(Math.max(6, pos.left), Math.max(6, window.innerWidth - 160)) + "px";
+        dockEl.style.top = Math.min(Math.max(6, pos.top), Math.max(6, window.innerHeight - 44)) + "px";
+      } else {
+        dockEl.style.left = "auto";
+        dockEl.style.top = "auto";
+        dockEl.style.right = "";
+        dockEl.style.bottom = "";
+      }
+    } else {
+      dockEl.style.left = "auto";
+      dockEl.style.top = "auto";
+      dockEl.style.right = "";
+      dockEl.style.bottom = "";
+    }
+    if (persist !== false) {
+      try { localStorage.setItem(DOCK_MODE_KEY, floating ? "float" : "dock"); } catch (error) {}
+    }
+    scheduleDockAutoFold();
+  }
+
+  function bindDockDrag() {
+    const head = dockEl.querySelector(".wb-dock-h");
+    if (!head) return;
+    head.addEventListener("mousedown", function (event) {
+      if (!dockEl.classList.contains("wb-dock-float")) return;
+      if (event.target.closest("button, input, select, a")) return;
+      const rect = dockEl.getBoundingClientRect();
+      const dx = event.clientX - rect.left;
+      const dy = event.clientY - rect.top;
+      function onMove(ev) {
+        const left = Math.min(Math.max(6, ev.clientX - dx), window.innerWidth - 140);
+        const top = Math.min(Math.max(6, ev.clientY - dy), window.innerHeight - 44);
+        dockEl.style.left = left + "px";
+        dockEl.style.top = top + "px";
+        dockEl.style.right = "auto";
+        dockEl.style.bottom = "auto";
+      }
+      // 拖动时会划过子页面 iframe：事件会被 iframe 吞掉（框不再跟随、mouseup 也丢），
+      // 因此拖拽期间盖一层透明遮罩，把指针事件锁在顶层文档里。
+      const veil = document.createElement("div");
+      veil.className = "wb-dock-drag-veil";
+      document.body.appendChild(veil);
+      function onUp() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        if (veil.parentNode) veil.parentNode.removeChild(veil);
+        saveDockPos({
+          left: parseFloat(dockEl.style.left) || 0,
+          top: parseFloat(dockEl.style.top) || 0,
+        });
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      event.preventDefault();
+    });
+    window.addEventListener("resize", function () {
+      if (!dockEl.classList.contains("wb-dock-float") || !dockEl.style.left || dockEl.style.left === "auto") return;
+      dockEl.style.left = Math.min(parseFloat(dockEl.style.left) || 0, Math.max(6, window.innerWidth - 140)) + "px";
+      dockEl.style.top = Math.min(parseFloat(dockEl.style.top) || 0, Math.max(6, window.innerHeight - 44)) + "px";
+    });
   }
 
   if (dockEl) {
@@ -367,6 +483,10 @@
         setDockFold(!dockEl.classList.contains("wb-dock-fold"));
       });
     }
+    dockEl.addEventListener("mouseenter", cancelDockAutoFold);
+    dockEl.addEventListener("mouseleave", scheduleDockAutoFold);
+    dockEl.addEventListener("focusin", cancelDockAutoFold);
+    dockEl.addEventListener("focusout", scheduleDockAutoFold);
     dockEl.querySelectorAll(".wb-dock-tab").forEach(function (tab) {
       tab.addEventListener("click", function () {
         dockEl.querySelectorAll(".wb-dock-tab").forEach(function (item) {
@@ -400,8 +520,20 @@
       });
       document.addEventListener("mouseup", function () { dragging = false; });
     }
+    const dockModeBtn = document.getElementById("wbDockMode");
+    if (dockModeBtn) {
+      dockModeBtn.addEventListener("click", function (event) {
+        event.stopPropagation();
+        setDockMode(dockEl.classList.contains("wb-dock-float") ? "dock" : "float");
+      });
+    }
+    bindDockDrag();
     try {
-      if (localStorage.getItem(DOCK_FOLD_KEY) === "1") setDockFold(true);
+      // 默认悬浮（不占页面高度）；用户点「固定」才回到占布局的底部面板。
+      // 启动一律折叠：全局面板是"按需"示波器，不沿用上次展开状态。
+      const savedMode = localStorage.getItem(DOCK_MODE_KEY);
+      setDockMode(savedMode === "dock" ? "dock" : "float", false);
+      setDockFold(true);
       const savedH = parseInt(localStorage.getItem(DOCK_HEIGHT_KEY) || "", 10);
       if (savedH >= 34) setDockHeight(savedH);
     } catch (error) {}
@@ -441,9 +573,11 @@
     row.querySelector(".wb-dock-text").textContent = String(message.text || "");
     host.insertBefore(row, host.firstChild);
     while (host.children.length > dockMaxRows) host.removeChild(host.lastChild);
+    scheduleDockAutoFold();   // 有新推送就续命，停推 15s 后自动收起
   }
 
   window.addEventListener("message", function (event) {
+    if (!DOCK_ENABLED) return;
     const data = event.data;
     if (!data || data.type !== "wb-dock-push") return;
     try { dockPush(data); } catch (error) {}

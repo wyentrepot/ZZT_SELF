@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用例库 · 黑盒用例自动运行</title>
+<link rel="stylesheet" href="/static/tokens-v2.css">
+<!-- 防主题闪跳（与既有子页面同口径）：iframe 内独立渲染，先按 --theme-registry 白名单应用已保存主题 -->
+<script>
+(function () {
+  try {
+    var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+      return s.split("|")[0].trim();
+    }).filter(Boolean);
+    var _saved = localStorage.getItem("wb-theme");
+    var _t;
+    if (_saved && _keys.indexOf(_saved) > -1) {
+      _t = _saved;
+    } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+               && _keys.indexOf("daylight") > -1) {
+      _t = "daylight";
+    } else {
+      _t = _keys[0] || "midnight";
+    }
+    document.documentElement.dataset.theme = _t;
+  } catch (e) {}
+})();
+</script>
+<script>
+window.addEventListener("message", function (e) {
+  if (e.data && e.data.type === "wb-theme-change") {
+    var _reg = getComputedStyle(document.documentElement).getPropertyValue("--theme-registry") || "";
+    var _keys = _reg.replace(/["']/g, "").split(",").map(function (s) {
+      return s.split("|")[0].trim();
+    }).filter(Boolean);
+    if (_keys.indexOf(e.data.theme) > -1) document.documentElement.dataset.theme = e.data.theme;
+  }
+});
+</script>
+<style>
+/* 用例库页面样式：只用 REQS-0012 三层 token 的语义层变量（var(--color-*)），
+   禁止裸色值；四态着色 pass 绿 / fail 红 / blocked 灰 / inconclusive 黄。 */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--color-fg-default);background:var(--color-bg-canvas);overflow:auto}
+.mono{font-family:var(--font-mono);font-variant-ligatures:none}
+.spacer{flex:1}
+
+/* ---------- 顶栏 ---------- */
+.topbar{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);position:sticky;top:0;z-index:8;flex-wrap:wrap}
+.topbar h1{font-size:15px;font-weight:600;margin-right:2px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:var(--radius-full);font-size:12px;border:1px solid var(--color-border-strong);color:var(--color-fg-muted)}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--color-fg-muted)}
+.pill.ok{color:var(--color-status-pass);border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
+.pill.ok .dot{background:var(--color-status-pass)}
+.pill.bad{color:var(--color-status-fail);border-color:var(--color-status-fail-border);background:var(--color-status-fail-bg)}
+.pill.bad .dot{background:var(--color-status-fail)}
+.pill.warn{color:var(--color-status-warn);border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
+.pill.warn .dot{background:var(--color-status-warn)}
+
+button{font:inherit;cursor:pointer;border:1px solid var(--color-border-strong);background:var(--color-bg-raised);color:var(--color-fg-default);border-radius:var(--radius-md);padding:4px 11px}
+button:hover{border-color:var(--color-border-emphasis);color:var(--color-accent-fg)}
+button.primary{background:var(--color-accent-emphasis);border-color:var(--color-accent-emphasis);color:var(--color-fg-inverse);font-weight:600}
+button.primary:hover{color:var(--color-fg-inverse);filter:brightness(1.08)}
+button:disabled{opacity:.42;cursor:not-allowed;filter:none}
+button.mini{padding:2px 9px;font-size:12px;border-radius:var(--radius-sm)}
+
+/* ---------- 台架就绪横幅（UI-2） ---------- */
+.bench{margin:10px 16px 0;border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-raised);padding:8px 12px 6px}
+.bench.is-ready{border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
+.bench.is-blocked{border-color:var(--color-status-fail-border);background:var(--color-status-fail-bg)}
+.bench.is-unknown{border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
+.bench-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bench-head b{font-size:13px}
+.bench-state{font-size:12px;font-weight:600}
+.bench.is-ready .bench-state{color:var(--color-status-pass)}
+.bench.is-blocked .bench-state{color:var(--color-status-fail)}
+.bench.is-unknown .bench-state{color:var(--color-status-warn)}
+.bench-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.bench-group .glabel{font-size:11px;color:var(--color-fg-muted);min-width:34px}
+.port,.fact{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px;border-radius:var(--radius-full);border:1px solid var(--color-border-strong);color:var(--color-fg-muted);background:var(--color-bg-surface)}
+.port .dot,.fact .dot{width:6px;height:6px;border-radius:50%;background:var(--color-fg-muted)}
+.port.on,.fact.yes{color:var(--color-status-pass);border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
+.port.on .dot,.fact.yes .dot{background:var(--color-status-pass)}
+.port.off,.fact.no{color:var(--color-status-fail);border-color:var(--color-status-fail-border);background:var(--color-status-fail-bg)}
+.port.off .dot,.fact.no .dot{background:var(--color-status-fail)}
+.fact.unknown{color:var(--color-status-warn);border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
+.fact.unknown .dot{background:var(--color-status-warn)}
+.bench-reasons{list-style:none;margin:6px 0 2px;padding:0}
+.bench-reasons li{font-size:12px;color:var(--color-status-fail);padding:1px 0}
+.bench-reasons li:before{content:"✕ ";font-weight:700}
+.bench-reasons li.heal{color:var(--color-status-info)}
+
+/* ---------- 筛选工具条 ---------- */
+.toolbar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);flex-wrap:wrap;position:sticky;top:0;z-index:7}
+.toolbar input[type=search],.toolbar input[type=text]{font:inherit;padding:3px 9px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
+.toolbar input[type=search]{width:180px}
+.toolbar input[type=text]{width:150px}
+select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
+.hint{color:var(--color-fg-muted);font-size:12px}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--color-fg-muted);cursor:pointer;user-select:none}
+
+/* ---------- 主体：左侧分组栏 + 用例列表 ---------- */
+.layout{display:flex;align-items:flex-start;gap:0}
+.rail{flex:0 0 214px;width:214px;border-right:1px solid var(--color-border-default);padding:10px 10px 24px;position:sticky;top:41px;max-height:calc(100vh - 41px);overflow:auto}
+.rail-head{display:flex;align-items:center;gap:6px;justify-content:space-between;margin-bottom:6px}
+.rail-head b{font-size:12px;color:var(--color-fg-muted);font-weight:600}
+.rail select{width:100%;margin-bottom:8px}
+.rail-item{display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:var(--radius-sm);cursor:pointer;font-size:12px;color:var(--color-fg-default)}
+.rail-item:hover{background:var(--color-bg-hover)}
+.rail-item.on{background:var(--color-accent-soft);color:var(--color-accent-fg);font-weight:600}
+.rail-item .rcount{margin-left:auto;font-size:11px;color:var(--color-fg-muted);font-variant-numeric:tabular-nums}
+.rail-item .swatch{width:6px;height:6px;border-radius:50%;background:var(--color-border-emphasis)}
+.list{flex:1;min-width:0;padding:12px 16px 32px}
+
+.group{margin-bottom:14px}
+.group-head{display:flex;align-items:center;gap:8px;margin:0 0 6px;padding-bottom:4px;border-bottom:1px solid var(--color-border-default)}
+.group-head b{font-size:12px;letter-spacing:.02em}
+.group-head .gcount{font-size:11px;color:var(--color-fg-muted)}
+.group-head .gbar{height:3px;border-radius:var(--radius-full);background:var(--color-accent-emphasis);opacity:.55;width:18px}
+
+.case{border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-surface);margin-bottom:6px;padding:6px 10px}
+.case:hover{border-color:var(--color-border-strong)}
+.case-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.case-head .pick{width:14px;height:14px;accent-color:var(--color-accent-emphasis);cursor:pointer}
+.case-title{font-weight:600}
+.case-id{font-size:11px;color:var(--color-fg-muted)}
+.case-steps{font-size:11px;color:var(--color-fg-muted);border:1px solid var(--color-border-default);border-radius:var(--radius-sm);padding:0 6px}
+.case-sum{margin-top:3px;font-size:12px;color:var(--color-fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.case-cat{margin-top:3px;display:flex;gap:5px;flex-wrap:wrap}
+.tag{display:inline-block;font-size:11px;color:var(--color-fg-muted);border:1px dashed var(--color-border-strong);border-radius:var(--radius-sm);padding:0 6px}
+.tag.uncat{color:var(--color-status-warn);border-color:var(--color-status-warn-border);border-style:solid}
+.steps{list-style:none;margin:8px 0 2px;padding:6px 0 0;border-top:1px dashed var(--color-border-default)}
+.step{display:flex;gap:8px;padding:4px 8px;border-left:2px solid var(--color-border-default);border-radius:var(--radius-sm);margin-bottom:4px}
+.step-no{flex:0 0 20px;height:20px;line-height:20px;text-align:center;font-size:11px;border-radius:50%;background:var(--color-bg-raised);color:var(--color-fg-muted);font-variant-numeric:tabular-nums}
+.step-do{font-size:12px}
+.step-expect{font-size:12px;color:var(--color-fg-muted)}
+.step-expect b{color:var(--color-fg-dim);font-weight:600}
+
+/* ---------- 四态着色（UI-6）：pass 绿 / fail 红 / blocked 灰 / inconclusive 黄 ---------- */
+.verdict{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;letter-spacing:.04em;padding:0 8px;border-radius:var(--radius-full);border:1px solid var(--color-border-strong);color:var(--color-fg-muted);background:var(--color-bg-raised)}
+.verdict .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.verdict-pass{color:var(--color-status-pass);border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
+.verdict-fail{color:var(--color-status-fail);border-color:var(--color-status-fail-border);background:var(--color-status-fail-bg)}
+/* blocked = 台架不具备条件，不是产品问题：灰 */
+.verdict-blocked{color:var(--color-fg-muted);border-color:var(--color-border-strong);background:var(--color-bg-raised)}
+/* inconclusive = 说不清：黄（warn 语义令牌） */
+.verdict-inconclusive{color:var(--color-status-warn);border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
+.verdict-unknown{color:var(--color-fg-muted);border-color:var(--color-border-strong);background:var(--color-bg-raised)}
+
+/* ---------- 运行结果与断点（UI-4 / UI-5） ---------- */
+#job-panel{position:sticky;bottom:0;border-top:2px solid var(--color-border-strong);background:var(--color-bg-raised);padding:8px 16px;display:none;max-height:46vh;overflow:auto;z-index:9}
+#job-panel.show{display:block}
+.job-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.job-head b{font-size:13px}
+.job-stage{font-size:12px;color:var(--color-fg-muted)}
+.progress{height:6px;border-radius:var(--radius-full);background:var(--color-bg-canvas);border:1px solid var(--color-border-default);overflow:hidden;margin:6px 0;flex:1 1 180px;min-width:120px}
+.progress > b{display:block;height:100%;width:0;background:var(--color-accent-emphasis);transition:width .2s ease}
+.case-result{border:1px solid var(--color-border-default);border-left-width:3px;border-radius:var(--radius-md);background:var(--color-bg-surface);padding:6px 10px;margin:6px 0}
+.case-result.is-pass{border-left-color:var(--color-status-pass)}
+.case-result.is-fail{border-left-color:var(--color-status-fail)}
+.case-result.is-blocked{border-left-color:var(--color-border-emphasis)}
+.case-result.is-inconclusive{border-left-color:var(--color-status-warn)}
+.cr-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cr-title{font-size:12px;color:var(--color-fg-muted)}
+.cr-body{margin-top:6px}
+.bp{border-left:2px solid var(--color-status-fail);background:var(--color-status-fail-bg);border-radius:var(--radius-sm);padding:4px 10px;margin:6px 0}
+.bp-item{font-size:12px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;padding:1px 0}
+.bp-item .k{font-weight:600;min-width:64px}
+.bp-failed .k,.bp-failed .v{color:var(--color-status-fail)}
+.bp-blocked{border-left-color:var(--color-border-emphasis);background:var(--color-bg-raised)}
+.bp-blocked .k{color:var(--color-fg-muted)}
+.bp-fact .k{color:var(--color-status-warn)}
+.bp-heal{border-left-color:var(--color-status-info);background:var(--color-status-info-bg)}
+.bp-heal .k{color:var(--color-status-info)}
+.bp code{font-family:var(--font-mono);font-size:11px;padding:0 5px;border-radius:var(--radius-sm);background:var(--color-bg-raised);border:1px solid var(--color-border-default)}
+.bp-note{font-size:12px;color:var(--color-fg-muted)}
+.run-steps{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px}
+.run-steps th,.run-steps td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--color-border-default);vertical-align:top}
+.run-steps th{font-size:11px;color:var(--color-fg-muted);font-weight:600}
+.run-steps tr.st-pass td{border-left:2px solid var(--color-status-pass)}
+.run-steps tr.st-fail td{border-left:2px solid var(--color-status-fail);background:var(--color-status-fail-bg)}
+.run-steps tr.st-blocked td{border-left:2px solid var(--color-border-emphasis);background:var(--color-bg-raised);color:var(--color-fg-muted)}
+.run-steps tr.st-inconclusive td{border-left:2px solid var(--color-status-warn);background:var(--color-status-warn-bg)}
+.run-steps tr.st-fail td:first-child,.run-steps tr.st-blocked td:first-child{font-weight:700}
+.block-state{font-size:11px;font-weight:700;letter-spacing:.03em}
+.block-state.pass{color:var(--color-status-pass)}
+.block-state.fail{color:var(--color-status-fail)}
+.block-state.blocked{color:var(--color-fg-muted)}
+.block-state.inconclusive{color:var(--color-status-warn)}
+.job-log{font-family:var(--font-mono);font-size:11px;background:var(--color-bg-canvas);border:1px solid var(--color-border-default);border-radius:var(--radius-sm);padding:6px 8px;max-height:120px;overflow:auto;white-space:pre-wrap;margin-top:6px;color:var(--color-fg-muted)}
+
+/* ---------- 空态 / 提示 / 存方案对话框 ---------- */
+.empty{padding:36px 16px;text-align:center;color:var(--color-fg-muted)}
+.empty b{display:block;margin-bottom:6px;color:var(--color-fg-default)}
+.degraded{padding:10px 16px;color:var(--color-status-warn);font-size:12px}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--color-accent-emphasis);color:var(--color-fg-inverse);padding:6px 16px;border-radius:var(--radius-md);opacity:0;transition:.25s;z-index:50;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.modal{position:fixed;inset:0;background:var(--color-bg-overlay);display:none;align-items:center;justify-content:center;z-index:40}
+.modal.show{display:flex}
+.modal .box{width:380px;max-width:92vw;border:1px solid var(--color-border-strong);border-radius:var(--radius-lg);background:var(--color-bg-surface);padding:14px 16px}
+.modal h2{font-size:14px;margin-bottom:10px}
+.modal .row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.modal .row label{font-size:12px;color:var(--color-fg-muted);min-width:64px}
+.modal .row input[type=text]{flex:1;font:inherit;padding:4px 8px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>用例库</h1>
+  <span class="pill" id="api-pill" data-hook="api-state"><span class="dot"></span><span id="api-pill-text">连接中…</span></span>
+  <span class="pill" id="bench-pill" data-hook="bench-state"><span class="dot"></span><span id="bench-pill-text">台架检测中…</span></span>
+  <span class="spacer"></span>
+  <span class="hint" id="sel-count" data-hook="sel-count"></span>
+  <button class="mini" id="btn-clear-sel" disabled>清除勾选</button>
+  <button class="mini" id="btn-save-suite" data-hook="suite-save">存方案</button>
+  <button class="mini" id="btn-refresh">刷新</button>
+  <button class="mini primary" id="btn-run-now" data-hook="run-now" disabled title="勾选用例后运行">▶ 立即运行</button>
+  <button class="mini primary" id="btn-run-suite" data-hook="run-suite" disabled title="选择方案后运行">▶ 按方案运行</button>
+</div>
+
+<!-- UI-2 台架就绪横幅：5 口 + 关键事实三态；不满足时运行按钮置灰并逐项给原因 -->
+<section class="bench" id="bench-banner" data-hook="bench-banner" aria-live="polite">
+  <div class="bench-head">
+    <b>台架就绪</b>
+    <span class="bench-state" id="bench-state">检测中…</span>
+    <span class="spacer"></span>
+    <span class="hint" id="bench-hint"></span>
+  </div>
+  <div class="bench-group" data-hook="bench-ports"><span class="glabel">串口</span><span class="hint">读取中…</span></div>
+  <div class="bench-group" data-hook="bench-facts"><span class="glabel">事实</span><span class="hint">读取中…</span></div>
+  <ul class="bench-reasons" id="bench-reasons" data-hook="bench-reasons"></ul>
+</section>
+
+<div class="toolbar">
+  <input type="search" id="q" data-hook="filter-search" placeholder="搜用例名 / ID / 步骤…">
+  <select id="f-usage" data-hook="filter-usage"><option value="">常用度：全部</option></select>
+  <select id="f-domain" data-hook="filter-domain"><option value="">设备域：全部</option></select>
+  <select id="f-scene" data-hook="filter-scene"><option value="">场景：全部</option></select>
+  <select id="f-region" data-hook="filter-region"><option value="">区域：全部</option></select>
+  <select id="f-protocol" data-hook="filter-protocol"><option value="">协议：全部</option></select>
+  <select id="f-sort" data-hook="filter-sort">
+    <option value="default">排序：常用度 → 设备域 → 场景 → 名称</option>
+    <option value="name">排序：名称</option>
+    <option value="steps">排序：步骤数</option>
+  </select>
+  <span class="spacer"></span>
+  <select id="suite-select" data-hook="suite-select"><option value="">（未选方案）</option></select>
+  <button class="mini" id="btn-del-suite" data-hook="suite-delete" disabled>删方案</button>
+  <input type="text" id="p-meter-addr" data-hook="param-meter-addr" placeholder="meter_addr（可选）">
+  <label class="chk" title="存方案时写入：首个用例失败即停"><input type="checkbox" id="sw-stop" checked>首败即停（存方案）</label>
+</div>
+
+<div class="layout">
+  <aside class="rail" data-hook="group-rail">
+    <div class="rail-head"><b>分组 / 筛选</b><span class="hint" id="rail-total"></span></div>
+    <select id="group-by" data-hook="group-by">
+      <option value="usage">按常用度分组</option>
+      <option value="domain">按设备域分组</option>
+      <option value="scene">按业务场景分组</option>
+      <option value="region">按省份 / 区域分组</option>
+    </select>
+    <div id="rail-body"></div>
+  </aside>
+  <main class="list" id="list-wrap" data-hook="case-list">
+    <div class="empty">加载中…</div>
+  </main>
+</div>
+
+<!-- UI-4 job 面板 + UI-5 断点可视化 -->
+<div id="job-panel" data-hook="job-panel">
+  <div class="job-head">
+    <b id="job-line">任务</b>
+    <span class="job-stage" id="job-stage"></span>
+    <span class="spacer"></span>
+    <span class="hint" id="job-summary"></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div class="progress"><b id="job-bar"></b></div>
+    <span class="hint" id="job-current"></span>
+  </div>
+  <div id="job-results" data-hook="job-results"></div>
+  <pre class="job-log" id="job-log"></pre>
+</div>
+
+<!-- 存方案对话框（UI-3） -->
+<div class="modal" id="suite-modal" data-hook="suite-modal">
+  <div class="box">
+    <h2>存为方案</h2>
+    <div class="row"><label>方案 ID</label><input type="text" id="suite-id" placeholder="如 smoke_meter"></div>
+    <div class="row"><label>方案名</label><input type="text" id="suite-name" placeholder="如 抄表冒烟"></div>
+    <div class="row"><label>备注</label><input type="text" id="suite-notes" placeholder="可选"></div>
+    <div class="hint" id="suite-cover">方案用例：0 条</div>
+    <div class="actions">
+      <button class="mini" id="suite-cancel">取消</button>
+      <button class="mini primary" id="suite-ok">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="cases.js"></script>
+</body>
+</html>

@@ -40,6 +40,63 @@ function productionPages() {
     .map((match) => match[1]);
   return ["index.html", ...children.filter((file, index) => children.indexOf(file) === index)];
 }
+
+/* 页面注册表 / 导航注册表的一致性断言。
+ *
+ * 历史实现写死了「应注册 9 个子页面」，每加一页就要改门禁——期望值容易过期，
+ * 过期后又与真实缺陷混在一起报红（0042 加用例库页时命中）。
+ * 这里改成**动态比对**：只要求 PAGES 与 GROUPS 双向一致、无重复 id，
+ * 页数由 app.js 自己决定；色值/主题/方向契约等检查一条都没放宽。 */
+function pageRegistry() {
+  const app = read("app.js");
+  const pagesArray = app.match(/\bconst\s+PAGES\s*=\s*\[([\s\S]*?)\]/);
+  if (!pagesArray) throw new Error("未找到 const PAGES 数组");
+  return [...pagesArray[1].matchAll(/\{\s*id\s*:\s*["']([^"']+)["'][^}]*\bsrc\s*:/g)].map((entry) => entry[1]);
+}
+function navRegistry() {
+  const app = read("app.js");
+  const groupsArray = app.match(/\bconst\s+GROUPS\s*=\s*\[([\s\S]*?)\];/);
+  if (!groupsArray) throw new Error("未找到 const GROUPS 数组");
+  const ids = [];
+  for (const match of groupsArray[1].matchAll(/\bpages\s*:\s*\[([^\]]*)\]/g)) {
+    for (const name of match[1].matchAll(/["']([^"']+)["']/g)) ids.push(name[1]);
+  }
+  return ids;
+}
+function checkPageRegistry() {
+  let pages;
+  let nav;
+  try {
+    pages = pageRegistry();
+  } catch (error) {
+    issues.push(`app.js 页面注册表无法读取：${error.message}`);
+    return;
+  }
+  const seen = new Set();
+  for (const id of pages) {
+    if (seen.has(id)) issues.push(`app.js PAGES 出现重复页面 id：${id}`);
+    seen.add(id);
+  }
+  try {
+    nav = navRegistry();
+  } catch (error) {
+    // 夹具只造 PAGES、不造 GROUPS（主题门禁的 fixture 就是这种形态）：
+    // 没有导航表就只做重复 id 检查，不追究「导航未引用」。真实 app.js 里
+    // GROUPS 一定存在，解析失败会在下面报出来。
+    if (/\bGROUPS\b/.test(read("app.js"))) issues.push(`app.js GROUPS 数组无法解析：${error.message}`);
+    return;
+  }
+  const navSet = new Set(nav);
+  for (const id of seen) {
+    if (!navSet.has(id)) issues.push(`app.js PAGES 注册了页面 ${id}，但 GROUPS 导航未引用（用户不可达）`);
+  }
+  for (const id of navSet) {
+    if (!seen.has(id)) issues.push(`app.js GROUPS 引用了未注册的页面 ${id}（点开会 404）`);
+  }
+  if (navSet.size !== seen.size) {
+    issues.push(`app.js 导航注册数 ${navSet.size} 与 PAGES 条目数 ${seen.size} 不一致`);
+  }
+}
 function cssFiles(html, pageFile) {
   const files = [];
   const re = /<link\b[^>]*\bhref=["']([^"']+\.css)(?:\?[^"']*)?["'][^>]*>/gi;
@@ -132,7 +189,7 @@ try {
   process.stdout.write(`主题覆盖率：0 个生产页面 / 1 issues\n- 无法读取 app.js PAGES: ${error.message}\n`);
   process.exit(1);
 }
-if (runLegacy && PAGES.length !== 10) issues.push(`app.js PAGES 应注册 9 个子页面，实际 ${PAGES.length - 1}`);
+if (runLegacy) checkPageRegistry();
 
 const tokens = read("tokens-v2.css");
 function checkDirectionContract() {

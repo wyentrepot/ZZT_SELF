@@ -434,7 +434,13 @@ def test_workbench_nav_registers_new_pages(client):
     assert r.status_code == 200
     assert '"/static/pages/trace/trace.html"' in r.text
     assert '"/static/pages/dict/dict.html"' in r.text
-    assert '{ name: "辅助", pages: ["trace", "dict", "scenario"] }' in r.text
+    # 2026-11-23 REQS-0042 D2-11：新增「用例库」页接管导航，旧「自动测试」页从导航移除
+    assert '"/static/pages/cases/cases.html"' in r.text
+    assert '{ id: "cases", title: "用例库"' in r.text
+    assert '{ name: "辅助", pages: ["trace", "dict", "scenario", "cases"] }' in r.text
+    # 反向断言：旧页不再注册进导航表（页面文件本身保留在 pages/autotest/ 下，不删）
+    assert '"/static/pages/autotest/autotest.html"' not in r.text
+    assert '"autotest"' not in r.text
 
 
 # ---------- reqs/0010 P3：场景激励任务端点 ----------

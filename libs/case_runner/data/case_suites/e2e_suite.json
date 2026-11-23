@@ -1,0 +1,10 @@
+{
+  "id": "e2e_suite",
+  "name": "E2E 方案",
+  "case_ids": [
+    "bench_ready",
+    "meter_daily"
+  ],
+  "stop_on_fail": true,
+  "notes": ""
+}
