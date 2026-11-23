@@ -23,3 +23,23 @@
 - 自愈的**真机占用**演练（单测已覆盖 409→close→重试一次）
 - `nwk.nodes_online` / `nwk.route_status` 的真机抽样（当前只有块级单测；按 D8-5 应在收口单独只读探测）
 - `meter_first_join` 的**完整长链路**验证（复位后需 ≈10 分钟恢复，单轮会顶到 600s 上限）→ 交由 REQS-0043 长跑覆盖
+
+## 2026-11-23（晚）｜ v11：结论=一句话报告 + 证据限量保留
+
+**用户反馈**：UI 不能逐步列块名（`archive.add` 用户看不懂），跑完直接出报告；证据目录不能无限存储，只留近 30 轮。
+
+**交付**
+- `libs/case_runner/core/report.py`：块 id→业务动作（16 块）、失败原因四类人话（超时/判据不成立/台架不具备/说不清）、`summarize_case`/`summarize_run`、块 id 泄漏守卫（55 例测试；13140 次真实 detail 归类 0 泄漏）
+- `core/retention.py`：`prune_runs(keep=30)`，名字优先 mtime 兜底，**当前轮永不删**；CLI `--keep-runs`、API `keep_runs`；`pruned` 进结果
+- CLI 人读输出改报告式（块表只 `--verbose`），API 增 `summary{headline,reasons,evidence_paths}` 与 `pruned`
+- UI：每用例一张报告卡（标题=用例名（结论）/一句话原因/证据路径可复制），逐步块表收进「开发者详情」折叠；台架横幅去内部词（`WORKBENCH_BASE`→「台架正忙」）；行内摘要按**块链**生成（`5 步：档案下发 → 组网 → 绑表 → 抄表`）
+- 修：`/api/cases` 对 `plan` 用例 `blocks` 恒空（改用 `effective_steps()`）；端口计数把已禁用口算成不可用；页面重复词典覆盖
+
+**真机验证**
+```
+CLI：台架就绪自检（PASS） / 抄表日常回归（PASS） → 本轮汇总 PASS，退出码 0
+     证据（运行结果）：data/case_runs/20261123-211857-139bf2/result.json
+     已清理 30 轮旧证据（保留最近 30 轮）
+浏览器：报告卡 2 张均 PASS；台架横幅「5 口全通 · 6 条关键事实成立」；默认区无块 id
+```
+**门禁**：`946 passed / 2 skipped`；冒烟 6 路径 PASS；`pages/cases` 主题 0 issue。

@@ -30,6 +30,7 @@ import io
 import json
 import os
 import pathlib
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,6 +49,7 @@ from case_runner.core.registry import (
     unregister_block,
     unregister_fact,
 )
+from case_runner.core.report import contains_block_id
 
 ADDR = "000000000001"
 ADDR2 = "000000000012"
@@ -441,8 +443,13 @@ def test_exit_code_1_and_breakpoint_on_fail(bench: FakeBench) -> None:
     assert states == {"fake.pass": "pass", "fake.fail": "fail"}
 
 
-def test_exit_code_1_human_output_shows_breakpoint(bench: FakeBench) -> None:
-    code, out, _err = run_cli(["run", "--case", "fake_fail", "--data-dir", str(bench.root)])
+def test_exit_code_1_verbose_output_shows_breakpoint(bench: FakeBench) -> None:
+    """逐步块表 / 断点定位只在 ``--verbose``（开发者详情）里出现（D11-2）。
+
+    默认人读输出是报告式、**不许**出现块 id；想看块级断点就显式要 ``--verbose``。
+    """
+    code, out, _err = run_cli(["run", "--case", "fake_fail", "--verbose",
+                               "--data-dir", str(bench.root)])
     assert code == EXIT_FAIL
     for token in ("结论：FAIL", "fake.fail", "断点定位", "failed_block：fake.fail",
                   "失败原因", "未满足的事实"):
@@ -1140,9 +1147,9 @@ def test_real_run_demo_prints_complete_json(bench: FakeBench) -> None:
     assert block["outcome"] == "pass"
     assert block["assertion_id"] == "fake_ok.fake.pass"
     assert payload["run_id"]
-    # 人读输出与 JSON 结论一致（同一份 RunOutcome）
+    # 人读输出与 JSON 结论一致（同一份 RunOutcome；v11 起人读是报告式）
     code2, out, _err = run_cli(["run", "--case", "fake_ok", "--data-dir", str(bench.root)])
-    assert code2 == EXIT_OK and "结论：PASS" in out
+    assert code2 == EXIT_OK and "假用例·全通过（PASS）" in out
 
 
 # --------------------------------------------------------------------------- #
@@ -1303,13 +1310,210 @@ def test_case_file_plan_unknown_block_is_usage_error(
     assert "不存在的块" in err
 
 
-def test_run_human_output_marks_steps_when_block_repeats(bench: FakeBench) -> None:
-    """人读输出：同块多步时按步骤顺序列明细，并给出行内步骤结论（不靠块 id 猜）。"""
+def test_verbose_output_marks_steps_when_block_repeats(bench: FakeBench) -> None:
+    """人读输出（``--verbose``）：同块多步时按步骤顺序列明细，并给出行内步骤结论。
+
+    默认报告式输出不给块/步骤名（D11-2），所以这条专门走开发者详情那一档。
+    """
     _write_plan_case(bench)
-    code, out, _err = run_cli(["run", "--case", "fake_planned",
+    code, out, _err = run_cli(["run", "--case", "fake_planned", "--verbose",
                                "--data-dir", str(bench.root)])
     assert code == EXIT_OK
     assert "按步骤顺序" in out
     assert "tenant" not in out            # 没有把别的用例的步骤混进来
     assert "add_a" in out and "add_b" in out
     assert "步骤结论：add_a=pass、add_b=pass" in out
+
+
+# --------------------------------------------------------------------------- #
+# 11. 报告式人读输出 + 证据限量保留（REQS-0042 v11 D11-1 / D11-3 / D11-4）
+# --------------------------------------------------------------------------- #
+
+#: 块 id 形状（与 ``core/report.py`` 的守卫同一口径）
+BLOCK_ID_RE = re.compile(r"(?<![A-Za-z0-9_])[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*(?![A-Za-z0-9_])")
+
+#: 长得像块 id、其实是文件名的后缀（``result.json`` / ``cli.log``）——守卫必须放行
+FILE_SUFFIXES = frozenset({"json", "jsonl", "log", "txt", "md", "csv", "yml", "yaml"})
+
+
+def block_id_tokens(text: str) -> list[str]:
+    """文本里出现的**块 id**（文件后缀名放行，与 :func:`contains_block_id` 同口径）。"""
+
+    return [
+        match.group(0)
+        for match in BLOCK_ID_RE.finditer(text)
+        if match.group(0).rsplit(".", 1)[-1] not in FILE_SUFFIXES
+    ]
+
+
+def seed_result_dirs(root: pathlib.Path, count: int, *, start: int = 0) -> list[str]:
+    """造 ``count`` 个已有运行目录（``YYYYmmdd-HHMMSS-<6 位>``，名字即运行时间）。"""
+
+    names = []
+    for offset in range(count):
+        index = start + offset
+        name = "20261101-%06d-%06x" % (index, index)
+        (root / name).mkdir(parents=True, exist_ok=True)
+        (root / name / "result.json").write_text("{}", encoding="utf-8")
+        names.append(name)
+    return names
+
+
+def test_run_default_output_is_a_report_without_block_ids(bench: FakeBench) -> None:
+    """默认人读 = 一句话结论 + 原因行 + 证据路径行，**一处块 id 都不许有**（D11-1/2/3）。"""
+
+    code, out, _err = run_cli(["run", "--case", "fake_fail", "--data-dir", str(bench.root)])
+    assert code == EXIT_FAIL, out
+
+    # ① 一句话结论（标题 + 人话原因，形状同 REQS 例子「抄表日常回归（未通过：组网超时）」）
+    assert "假用例·有失败块（未通过：" in out
+    # ② 原因行
+    assert "原因：" in out
+    # ③ 证据路径行（result.json 可点开）
+    assert "证据：" in out and "result.json" in out
+    # ④ 末尾本轮汇总
+    assert "本轮汇总" in out
+    assert "退出码：%d" % EXIT_FAIL in out
+
+    # ⑤ 默认不许出现块 id / 逐步块表 / 断点块名
+    assert block_id_tokens(out) == [], block_id_tokens(out)
+    assert not contains_block_id("假用例·有失败块（未通过：该步骤异常）")  # 自检：守卫本身没坏
+    for token in ("块执行明细", "断点定位", "failed_block", "fake.fail"):
+        assert token not in out, token
+
+
+def test_run_verbose_adds_block_table_but_keeps_the_report(bench: FakeBench) -> None:
+    """``--verbose``：块表 / 断点 / 未满足事实照旧可查，报告式结论仍在最前面。"""
+
+    code, out, _err = run_cli(["run", "--case", "fake_fail", "--verbose",
+                               "--data-dir", str(bench.root)])
+    assert code == EXIT_FAIL
+    assert "假用例·有失败块（未通过：" in out       # 报告式结论
+    assert "块执行明细" in out and "fake.fail" in out  # 开发者详情
+    assert "断点定位" in out and "failed_block：fake.fail" in out
+
+
+def test_run_json_still_has_full_detail_and_gains_summary(bench: FakeBench) -> None:
+    """``--json`` 保留全量（blocks / step_id / decisions / self_healed），并**增** ``summary``。"""
+
+    code, payload = run_json(["run", "--case", "fake_fail", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_FAIL
+    for key in ("blocks", "counts", "failed_block", "decisions", "self_healed",
+                "interventions", "summary"):
+        assert key in payload, key
+    block = payload["blocks"][0]
+    assert block["block_id"] == "fake.pass" and block["step_id"]
+
+    summary = payload["summary"]
+    assert summary["verdict"] == "fail"
+    assert summary["headline"].startswith("假用例·有失败块（未通过：")
+    assert summary["reasons"] and not contains_block_id(summary["reasons"][0])
+    assert not contains_block_id(summary["headline"])
+    paths = summary["evidence_paths"]
+    assert paths and paths[0]["path"].endswith("result.json"), paths
+    assert payload["run_id"] in paths[0]["path"]
+
+
+def test_suite_run_json_summary_is_run_level(bench: FakeBench) -> None:
+    """多用例（方案）时 ``summary`` 是**运行级**：一句话 + 逐用例摘要。"""
+
+    code, payload = run_json(["run", "--suite", "fake_suite", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_FAIL
+    summary = payload["summary"]
+    assert summary["verdict"] == "fail"
+    assert summary["headline"].startswith("假方案·两例（未通过：")
+    assert [item["verdict"] for item in summary["case_summaries"]] == ["pass", "fail"]
+    assert not contains_block_id(summary["headline"])
+    for case_summary in summary["case_summaries"]:
+        assert case_summary["case_id"] and case_summary["evidence_paths"]
+    assert "blocks" in payload["cases"][1]          # 全量明细照旧在
+
+
+def test_suite_run_human_output_prints_one_line_summary(bench: FakeBench) -> None:
+    code, out, _err = run_cli(["run", "--suite", "fake_suite", "--data-dir", str(bench.root)])
+    assert code == EXIT_FAIL
+    assert "假方案·两例（未通过：" in out
+    assert block_id_tokens(out) == [], block_id_tokens(out)
+
+
+def test_keep_runs_prunes_old_evidence(bench: FakeBench, tmp_path: pathlib.Path) -> None:
+    """``--keep-runs``（默认 30）：33 轮旧证据 + 这一轮 → 只剩 30 轮，当前轮必在。"""
+
+    runs = tmp_path / "case_runs"
+    runs.mkdir()
+    old = seed_result_dirs(runs, 33)
+
+    code, payload = run_json(["run", "--case", "fake_ok", "--json",
+                              "--result-dir", str(runs),
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert payload["keep_runs"] == 30
+    assert payload["pruned"] == old[:4], "34 轮留 30：最旧 4 轮被清（当前轮是最新的）"
+    remaining = sorted(path.name for path in runs.iterdir())
+    assert len(remaining) == 30
+    assert payload["run_id"] in remaining, "当前这一轮永不删除"
+    assert set(remaining) == set(old[4:] + [payload["run_id"]])
+
+
+def test_keep_runs_zero_disables_pruning(bench: FakeBench, tmp_path: pathlib.Path) -> None:
+    """``--keep-runs 0`` = 不限：一个目录都不许删（D11-4 的显式关闸）。"""
+
+    runs = tmp_path / "case_runs"
+    runs.mkdir()
+    old = seed_result_dirs(runs, 33)
+
+    code, payload = run_json(["run", "--case", "fake_ok", "--json", "--keep-runs", "0",
+                              "--result-dir", str(runs),
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert payload["pruned"] == []
+    assert payload["keep_runs"] == 0
+    assert sorted(path.name for path in runs.iterdir()) == sorted(old + [payload["run_id"]])
+
+
+def test_keep_runs_is_reported_in_human_output(bench: FakeBench, tmp_path: pathlib.Path) -> None:
+    """人读输出要说清楚「清了几轮、留几轮」（审计口径）。"""
+
+    runs = tmp_path / "case_runs"
+    runs.mkdir()
+    seed_result_dirs(runs, 33)
+
+    code, out, _err = run_cli(["run", "--case", "fake_ok", "--result-dir", str(runs),
+                               "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert "已清理 4 轮旧证据（保留最近 30 轮）" in out
+    assert block_id_tokens(out) == [], block_id_tokens(out)
+
+
+def test_no_prune_line_when_nothing_was_pruned(bench: FakeBench) -> None:
+    """没什么可清的时候不打印清理行（避免每轮都刷一行噪音）。"""
+
+    code, out, _err = run_cli(["run", "--case", "fake_ok", "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert "已清理" not in out
+
+
+def test_keep_runs_rejects_non_integer(bench: FakeBench) -> None:
+    """``--keep-runs abc`` → 用法错误（退出码 3），不许带着错参数跑。"""
+
+    code, _out, _err = run_cli(["run", "--case", "fake_ok", "--keep-runs", "abc",
+                                "--data-dir", str(bench.root)])
+    assert code == EXIT_USAGE
+    assert bench.recorder.block_calls == []
+
+
+def test_blocked_run_report_says_bench_missing_without_fact_ids(bench: FakeBench) -> None:
+    """预检不过（blocked）：报告说「台架不具备」，默认输出里不给事实 id。"""
+
+    bench.truth["fake.ready"] = "no"
+    code, out, _err = run_cli([
+        "run", "--case", "fake_blocked", "--params", json.dumps({"meter_addr": ADDR}),
+        "--data-dir", str(bench.root),
+    ])
+    assert code == EXIT_BLOCKED, out
+    assert "预检：未通过" in out
+    assert "假事实·台架就绪" in out            # 事实用业务标题，不给 id
+    assert block_id_tokens(out) == [], block_id_tokens(out)
+    assert "fake.ready" not in out

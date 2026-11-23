@@ -275,15 +275,195 @@ def test_cases_page_has_no_autotest_leftovers():
     assert not leftovers, f"pages/cases/ 残留旧「自动测试」引用：{leftovers}"
 
 
+# ---------- REQS-0042 v11 D11-1..3 报告式呈现 ----------
+
+REPORT_DEFAULT_BEGIN = "报告卡默认区 BEGIN"
+REPORT_DEFAULT_END = "报告卡默认区 END"
+# D11-2 点名的内部块名（含事实 id）：默认展示区一个都不许出现
+BLOCK_IDS = (
+    "archive.add",
+    "nwk.topology",
+    "meter.read_645",
+    "meter.addr_probe",
+    "reset.sta",
+    "fix.simcon_session",
+    "fix.simeter_session",
+    "archive.contains",
+    "nwk.nodes_online_min",
+    "bench.sta_online",
+)
+
+
+def report_default_region() -> str:
+    """取 cases.js 里「报告卡默认区」标记之间的源码（默认展示区的 DOM 模板都在这段）。"""
+    js = js_text()
+    assert REPORT_DEFAULT_BEGIN in js, "cases.js 缺少「报告卡默认区 BEGIN」反向守卫标记"
+    assert REPORT_DEFAULT_END in js, "cases.js 缺少「报告卡默认区 END」反向守卫标记"
+    start = js.index(REPORT_DEFAULT_BEGIN)
+    start = js.index("\n", start) + 1          # 从标记行之后开始
+    end = js.index(REPORT_DEFAULT_END)
+    return js[start:end]
+
+
+def test_report_card_dom_hooks():
+    """D11-1：每条用例一张报告卡——标题行 / 原因行 / 证据行 / 开发者详情折叠。"""
+    js = js_text()
+    html = html_text()
+    for hook in ("case-report", "report-headline", "report-reasons", "report-evidence", "dev-details"):
+        assert f'data-hook="{hook}"' in js, f"报告卡缺少钩子 data-hook=\"{hook}\""
+    # 逐步明细默认收起（hidden）
+    assert 'data-hook="dev-details" hidden' in js, "开发者详情必须默认 hidden（收起）"
+    assert 'data-hook="dev-toggle"' in js and "rc-dev-toggle" in js, "开发者详情缺少展开入口"
+    # 折叠内仍保留现有 step/block/detail 表（排查口径不回退）
+    assert "resultRowsHtml" in js and "run-steps" in js
+    assert 'data-hook="breakpoint"' in js
+    # 四态标题文案口径
+    for text in ("VERDICT_HEAD", "未通过", "台架不具备", "说不清", "PASS"):
+        assert text in js, f"报告式标题缺少文案 {text}"
+    assert 'clip(reasons.join("；"), TITLE_REASON_MAX)' in js, "非通过结论应拼成人话原因（多条用「；」连接，且标题限长）"
+    # 证据路径可点击/可复制
+    assert 'data-hook="evidence-path"' in js
+    assert "rc-copy" in js and "function copyText" in js
+    # 样式沿用四态 token（不新增裸色值），见 test_theme_tokens_only_no_raw_colors
+    for token in ("--color-status-pass", "--color-status-fail",
+                  "--color-status-warn", "--color-fg-muted"):
+        assert f"var({token})" in html, f"报告卡样式未复用令牌 {token}"
+
+
+def test_report_default_area_never_shows_block_ids():
+    """D11-2 反向守卫：默认展示区（dev-details 折叠之外）不得出现任何内部块名。"""
+    js = js_text()
+    region = report_default_region()
+    assert len(region) > 1500, f"报告卡默认区代码段过短，守卫形同虚设：{len(region)} 字符"
+
+    leaked = [block_id for block_id in BLOCK_IDS if block_id in region]
+    assert not leaked, f"默认展示区出现内部块名（只允许出现在开发者详情）：{leaked}"
+    assert "data-block=" not in region, "默认展示区不许输出 data-block（块名属性）"
+    assert 'data-hook="dev-details"' not in region, "开发者详情折叠不应在默认展示区模板里拼接"
+    # 卡片模板本身也在被守卫的区间里（否则守卫只是摆设）
+    for hook in ("case-report", "report-headline", "report-reasons", "report-evidence"):
+        assert f'data-hook="{hook}"' in region, f"报告卡模板 {hook} 不在受守卫的默认区区间内"
+
+    # 块名 → 业务动作的词典确实存在（且按 D11-2 口径翻译），只是不在默认区
+    for block_id, label in (
+        ("archive.add", "档案下发"),
+        ("nwk.topology", "组网"),
+        ("meter.read_645", "抄表"),
+        ("meter.addr_probe", "绑表（取表地址）"),
+    ):
+        assert f'["{block_id}", "{label}"]' in js, f"缺少块名翻译 {block_id} → {label}"
+    assert "actionLabel(" in region, "默认展示区必须经 actionLabel() 翻成人话"
+    assert "function actionLabel(" in js, "缺少块名 → 业务动作的翻译函数"
+
+
+def test_report_accepts_summary_or_flat_fields():
+    """D11-1/D11-3 数据来源：result.summary 对象或平铺 headline/reasons/evidence_paths。"""
+    region = report_default_region()
+    assert "obj(result.summary)" in region, "未读取 result.summary"
+    for field in ("headline", "reasons", "evidence_paths"):
+        assert field in region, f"未兼容平铺字段 {field}"
+    for field in ("result.headline", "result.reasons", "result.evidence_paths"):
+        assert field in region, f"未兼容平铺字段 {field}"
+    # 证据条目支持 {path, kind, label} 与纯字符串两种形状
+    for field in ("entry.path", "entry.kind", "EVIDENCE_KIND"):
+        assert field in region, f"证据路径归一化缺少 {field}"
+    # summary 里的 reason 单值/数组都要吃
+    assert "summary.reason" in region
+
+
+def test_report_degrades_without_summary():
+    """降级：没有 summary 也要出人话、不白屏、不泄漏块 id。"""
+    region = report_default_region()
+    for field in ("failed_block", "blocked_block", "unmet_facts", "skipped_reason"):
+        assert field in region, f"降级逻辑未消费断点字段 {field}"
+    assert "DEV_HINT" in region and "详情见开发者详情" in region
+    assert "function sanitizeHuman(" in region, "缺少人话护栏（把混进文案的块 id 换掉）"
+    assert "blockReason(" in region and "problemRowReason(" in region
+    assert "unmetFactReasons(" in region
+    # 标题永远有兜底：没有用例名/结论也不许白屏
+    assert '"未命名用例"' in region
+    assert "function reportHeadline(" in region
+    # 证据行没路径时给一句人话，而不是空白
+    assert "证据路径未提供" in region
+
+
+def test_report_reason_is_single_sentence():
+    """① 原因行只保留一句人话：截到「——」/「（」前，单条 ≤40 字，最多 3 条；全文只进开发者详情。"""
+    region = report_default_region()
+    for token in ("REASON_MAX", "TITLE_REASON_MAX", "oneLineReason", "tightenReason", "clip"):
+        assert token in region, f"缺少原因收敛能力：{token}"
+    assert '"——"' in region and '"（"' in region and '"；"' in region
+    # 已知后缀收敛：组网：明确不足 → 组网未完成
+    assert 'return match[1] + "未完成"' in region
+    # summary.reasons 优先（后端已做人话映射），没有才走降级收敛
+    assert "if (summary.reasons.length)" in region
+    assert "clip(sanitizeHuman(item), REASON_MAX)" in region
+    assert "oneLineReason(item)" in region
+    # 最多 3 条；其余（含块层原始 detail）折叠进开发者详情
+    assert ".slice(0, 3)" in region
+    assert "allReasons.length > 3" in js_text()
+    assert "全部原因" in js_text()
+
+
+def test_bench_banner_humanizes_internal_details():
+    """② 台架横幅：默认区只出一句人话；WORKBENCH_BASE / http / 0x / 事实 id 只进开发者详情。"""
+    js = js_text()
+    html = html_text()
+    # 开发者详情折叠（默认收起）与原始明细容器
+    assert 'data-hook="bench-dev-details"' in html and " hidden" in html
+    assert 'data-hook="bench-dev-toggle"' in html
+    assert 'id="bench-raw"' in html
+    # 内部词识别 + 一句人话映射
+    assert "hasInternalToken" in js and "WORKBENCH_BASE" in js
+    assert "台架正忙（上一轮运行未结束）" in js
+    assert "function oneLineBenchReason(" in js
+    assert "BENCH_REASON_MAX" in js
+    assert "scrubInternal" in js and "injected_base_url" in js
+    # 事实条只显示人话，id 落在 data-fact（不显示给用户）
+    assert "factLabel(fact.id)" in js
+    assert 'data-fact="' in js
+    assert """'<span class="dot"></span>' + esc(fact.id)""" not in js
+    # 原始 errors/detail 落进开发者详情
+    assert "S.benchRaw" in js and "rawBox.textContent" in js
+    assert 'raw.push("事实 " + fact.id' in js
+    assert 'raw.push("端口 " + port.id' in js
+
+
+def test_list_row_summary_is_business_chain():
+    """③ 行内摘要 = 业务动作链（5 步：档案 → 组网 → 绑表 → 抄表）；帧标识只留在展开区。"""
+    js = js_text()
+    for token in ("STEP_ACTION", "FRAME_TOKEN", "stepAction", "stepChain", "stepSummary"):
+        assert token in js, f"行内摘要缺少 {token}"
+    assert '" → "' in js, "业务动作链应用「 → 」连接"
+    assert "H[-\\s]?F" in js, "缺少帧标识（如 11H-F1 / 10H-F21）剥离规则"
+    for action in ('"档案"', '"组网"', '"绑表"', '"抄表"', '"复位"'):
+        assert action in js, f"动作链缺少业务动作 {action}"
+    # 展开区仍保留 do/expect 原文（不裁剪排查信息）
+    assert 'data-hook="case-steps"' in js and "step.expect" in js
+
+
+def test_report_summary_is_one_sentence():
+    """顶部汇总一句话：本轮 2 例全部通过 / 本轮 1 例通过、1 例未通过（组网超时）。"""
+    js = js_text()
+    assert "本轮 " in js
+    assert '" 例全部通过"' in js
+    assert '" 例通过"' in js and '" 例未通过"' in js
+    assert '" 例台架不具备"' in js and '" 例说不清"' in js
+    # 汇总与卡片共用一套原因口径（reasonList），不另起一套
+    assert 'reasonList(result, "fail"' in js
+
+
 # ---------- 运行时冒烟：node + 最小 DOM 桩跑页面逻辑（无浏览器） ----------
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="需要 node 才能跑用例库页面的逻辑冒烟")
 def test_page_logic_smoke():
-    """跑 testdata/cases_smoke.js 的 4 条路径：
+    """跑 testdata/cases_smoke.js 的 6 条路径：
 
     ① 后端全 404 → 降级不白屏；② 正常路径（分组/排序/方案恢复/运行/轮询/断点）；
-    ③ 台架未就绪 → 运行置灰 + 逐项原因；④ 刷新接回上一轮 job。
+    ③ 台架未就绪 → 运行置灰 + 逐项原因；④ 刷新接回上一轮 job；
+    ⑤ 报告卡（后端给 summary 直接渲染 / 不给则降级，默认区无块 id）；
+    ⑥ 报告卡（全通过 → 「本轮 N 例全部通过」）。
     断言失败时把 node 的 stdout/stderr 全带进 message，便于定位。
     """
     node = shutil.which("node")
@@ -295,6 +475,7 @@ def test_page_logic_smoke():
     output = (completed.stdout or "") + (completed.stderr or "")
     assert completed.returncode == 0, "用例库页面逻辑冒烟失败：\n" + output
     assert "SMOKE PASS" in completed.stdout, "冒烟未打印 SMOKE PASS：\n" + output
-    # 4 条路径都要有 OK 标记（少跑一条等同静默降级）
-    for case in ("后端 404 降级", "正常路径（含断点渲染）", "台架未就绪置灰", "刷新接回上一轮 job"):
+    # 6 条路径都要有 OK 标记（少跑一条等同静默降级）
+    for case in ("后端 404 降级", "正常路径（含断点渲染）", "台架未就绪置灰", "刷新接回上一轮 job",
+                 "报告卡（summary 与降级）", "报告卡（全部通过）"):
         assert "OK  " + case in completed.stdout, f"冒烟未覆盖「{case}」：\n" + output

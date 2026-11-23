@@ -4,6 +4,8 @@
 - :mod:`case_runner.core.registry`：块/事实执行体注册表（按 id 对应 JSON 声明）
 - :mod:`case_runner.core.planner`：事实求值（带缓存）与块规划（unknown → 不可执行）
 - :mod:`case_runner.core.executor`：顺序执行 + 聚合断言（落 ``AssertionResult``）
+- :mod:`case_runner.core.report`：一句话报告（块 id → 业务动作、失败原因人话化、
+  证据路径；REQS-0042 v11 D11-1/D11-2/D11-3），CLI / API / UI 共用唯一口径
 """
 
 from __future__ import annotations
@@ -64,6 +66,14 @@ from .registry import (
     register_block,
     register_fact,
 )
+from .report import (
+    action_label,
+    classify_failure,
+    contains_block_id,
+    evidence_paths,
+    summarize_case,
+    summarize_run,
+)
 
 __all__ = [
     # models
@@ -118,4 +128,11 @@ __all__ = [
     "RunContext",
     "coerce_block_return",
     "execute_case",
+    # report（D11-1/D11-2：一句话报告，CLI / API / UI 共用）
+    "action_label",
+    "classify_failure",
+    "contains_block_id",
+    "evidence_paths",
+    "summarize_case",
+    "summarize_run",
 ]

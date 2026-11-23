@@ -91,6 +91,9 @@ button.mini{padding:2px 9px;font-size:12px;border-radius:var(--radius-sm)}
 .bench-reasons li{font-size:12px;color:var(--color-status-fail);padding:1px 0}
 .bench-reasons li:before{content:"✕ ";font-weight:700}
 .bench-reasons li.heal{color:var(--color-status-info)}
+.bench-dev-head{margin:2px 0 0}
+.dev-raw{font-family:var(--font-mono);font-size:11px;background:var(--color-bg-canvas);border:1px solid var(--color-border-default);
+  border-radius:var(--radius-sm);padding:5px 8px;max-height:110px;overflow:auto;white-space:pre-wrap;color:var(--color-fg-muted)}
 
 /* ---------- 筛选工具条 ---------- */
 .toolbar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);flex-wrap:wrap;position:sticky;top:0;z-index:7}
@@ -162,9 +165,28 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .case-result.is-fail{border-left-color:var(--color-status-fail)}
 .case-result.is-blocked{border-left-color:var(--color-border-emphasis)}
 .case-result.is-inconclusive{border-left-color:var(--color-status-warn)}
-.cr-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.cr-title{font-size:12px;color:var(--color-fg-muted)}
-.cr-body{margin-top:6px}
+/* ---------- 报告卡（D11-1/D11-2/D11-3）：一句结论 + 人话原因 + 证据路径 ---------- */
+.case-result.report{padding:7px 11px}
+.rc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rc-title{font-size:13px}
+.rc-id{margin-left:auto;font-size:11px;color:var(--color-fg-muted)}
+.rc-reasons{margin-top:4px;font-size:12px;color:var(--color-fg-default)}
+.case-result.is-fail .rc-reasons{color:var(--color-status-fail)}
+.case-result.is-blocked .rc-reasons{color:var(--color-fg-muted)}
+.case-result.is-inconclusive .rc-reasons{color:var(--color-status-warn)}
+.rc-evidence{margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px}
+.rc-elabel,.rc-ekind{color:var(--color-fg-muted);font-size:11px}
+.rc-ev{display:inline-flex;align-items:center;gap:4px;max-width:100%}
+.rc-path{display:inline-block;max-width:52ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--font-mono);font-size:11px;padding:0 6px;border-radius:var(--radius-sm);
+  border:1px solid var(--color-border-default);background:var(--color-bg-raised);color:var(--color-fg-muted);cursor:pointer}
+.rc-path:hover{color:var(--color-accent-fg);border-color:var(--color-border-emphasis)}
+.rc-copy{padding:0 6px;font-size:11px}
+.rc-empty{color:var(--color-fg-dim);font-size:11px}
+.rc-dev-head{margin-top:5px}
+.rc-dev-toggle{padding:1px 8px;font-size:11px;color:var(--color-fg-muted)}
+.rc-dev{margin-top:5px;border-top:1px dashed var(--color-border-default);padding-top:5px}
+.rc-dev[hidden]{display:none}
 .bp{border-left:2px solid var(--color-status-fail);background:var(--color-status-fail-bg);border-radius:var(--radius-sm);padding:4px 10px;margin:6px 0}
 .bp-item{font-size:12px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;padding:1px 0}
 .bp-item .k{font-weight:600;min-width:64px}
@@ -233,6 +255,13 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
   <div class="bench-group" data-hook="bench-ports"><span class="glabel">串口</span><span class="hint">读取中…</span></div>
   <div class="bench-group" data-hook="bench-facts"><span class="glabel">事实</span><span class="hint">读取中…</span></div>
   <ul class="bench-reasons" id="bench-reasons" data-hook="bench-reasons"></ul>
+  <!-- 内部细节（端口/事实 id、原始 errors/detail、注入变量）只放这里，默认收起 -->
+  <div class="bench-dev-head" id="bench-dev-head" hidden>
+    <button class="mini rc-dev-toggle" id="bench-dev-toggle" data-hook="bench-dev-toggle" aria-expanded="false">开发者详情 ▸</button>
+  </div>
+  <div class="rc-dev" data-hook="bench-dev-details" hidden>
+    <pre class="dev-raw" id="bench-raw"></pre>
+  </div>
 </section>
 
 <div class="toolbar">

@@ -35,6 +35,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -482,14 +483,18 @@ def _ensure_registered() -> None:
             register_fact(fact_id, _probe(state))
 
 
-def _make_client(tmp_path, fake_root, *, provider=_bridge_snapshot) -> TestClient:
+def _make_client(tmp_path, fake_root, *, provider=_bridge_snapshot, keep_runs=None) -> TestClient:
     app = FastAPI()
+    router_kwargs = {}
+    if keep_runs is not None:            # 只在显式指定时覆盖（缺省走服务自己的 30）
+        router_kwargs["keep_runs"] = keep_runs
     app.include_router(
         create_cases_router(
             storage_dir=tmp_path / "storage",
             data_dir=fake_root,
             register_domain=False,
             bridge_snapshot_provider=provider,
+            **router_kwargs,
         )
     )
     return TestClient(app)
@@ -1202,7 +1207,7 @@ _REQUIRED_RESULT_KEYS = {
     "stop_on_fail", "timeout_s", "created_at", "started_at", "finished_at",
     "duration_seconds", "progress", "verdict", "exit_code", "counts", "case_counts",
     "results", "decisions", "interventions", "self_healed", "bench", "preflight",
-    "error", "result_path",
+    "error", "result_path", "summary", "pruned",
 }
 
 
@@ -1573,3 +1578,186 @@ def test_bench_snapshot_budget_is_separate_from_preflight_budget() -> None:
     assert cases_api.BENCH_SNAPSHOT_BUDGET_S > cases_api.PREFLIGHT_BUDGET_S, (
         "快照预算必须大于预检预算（预检只探 needs 并集，快照要探全部事实）"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 报告式读模型 + 证据限量保留（REQS-0042 v11 D11-1 / D11-3 / D11-4）
+#
+# 用户口径：「用例跑完直接生成报告即可…把日志或证据路径列出来即可，不用这么一步步的
+# 说明，**尤其是列出 archive.add 这种名字，压根无法被用户理解**。其次证据目录也不能
+# 无限存储，只保留近 30 轮的记录。」
+# --------------------------------------------------------------------------- #
+
+#: 块 id 形状（与 ``core/report.py`` 的守卫同一口径）
+BLOCK_ID_RE = re.compile(r"(?<![A-Za-z0-9_])[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*(?![A-Za-z0-9_])")
+#: 长得像块 id、其实是文件名的后缀（``result.json`` / ``cli.log``）——守卫必须放行
+FILE_SUFFIXES = frozenset({"json", "jsonl", "log", "txt", "md", "csv", "yml", "yaml"})
+
+
+def block_ids_in(text: str) -> list[str]:
+    """文本里的块 id（文件后缀名放行，与 ``report.contains_block_id`` 同口径）。"""
+
+    return [
+        match.group(0)
+        for match in BLOCK_ID_RE.finditer(text)
+        if match.group(0).rsplit(".", 1)[-1] not in FILE_SUFFIXES
+    ]
+
+
+def seed_run_dirs(root: Path, count: int, *, start: int = 0) -> list[str]:
+    """造 ``count`` 个历史运行目录（``YYYYmmdd-HHMMSS-<6 位>``，名字即运行时间）。"""
+
+    names = []
+    for offset in range(count):
+        index = start + offset
+        name = "20261101-%06d-%06x" % (index, index)
+        (root / name).mkdir(parents=True, exist_ok=True)
+        (root / name / "result.json").write_text("{}", encoding="utf-8")
+        names.append(name)
+    return names
+
+
+def test_case_result_has_report_summary(client):
+    """每个用例结果都带 ``summary``，形状与 REQS D11-1 例子同形（``标题（PASS）``）。"""
+
+    job = _run(client, {"case_ids": ["case_pass"]})
+    result = job["results"][0]
+    summary = result["summary"]
+
+    assert summary["case_id"] == "case_pass"
+    assert summary["verdict"] == "pass"
+    assert re.fullmatch(r".+（PASS）", summary["headline"]), summary["headline"]
+    assert summary["reasons"] == [] and summary["reason"] == ""
+
+    paths = summary["evidence_paths"]
+    assert paths and paths[0]["path"].endswith("result.json"), paths
+    assert job["run_id"] in paths[0]["path"], "证据路径必须指向**这一轮**的 result.json"
+
+
+def test_failed_case_summary_uses_human_reason_and_keeps_detail(client):
+    """未通过：``标题（未通过：<人话原因>）``；块级明细仍在（全量 API 允许出现块 id）。"""
+
+    job = _run(client, {"case_ids": ["case_fail"]})
+    summary = job["results"][0]["summary"]
+
+    assert summary["verdict"] == "fail"
+    assert re.fullmatch(r".+（未通过：.+）", summary["headline"]), summary["headline"]
+    assert summary["reasons"], "未通过必须给出人话原因"
+    assert not block_ids_in(summary["headline"])
+    # D11-2 只在「给用户看的一层」禁块 id：全量明细（开发者详情）照旧可查
+    assert job["results"][0]["blocks"][0]["block_id"] == "fake.fail"
+
+
+def test_summary_never_leaks_block_ids(client):
+    """``summary``（用例级 + 运行级）任何字段都不许出现块 id。"""
+
+    job = _run(client, {"case_ids": ["case_fail", "case_skip", "case_unknown"]})
+
+    for result in job["results"]:
+        blob = json.dumps(result["summary"], ensure_ascii=False)
+        assert block_ids_in(blob) == [], blob
+    run_blob = json.dumps(job["summary"], ensure_ascii=False)
+    assert block_ids_in(run_blob) == [], run_blob
+    assert job["summary"]["case_summaries"], "运行级摘要必须带逐用例摘要"
+
+
+def test_run_summary_is_one_line_with_case_summaries(client):
+    """运行级 ``summary``：一句话结论 + ``case_summaries`` + 证据路径。"""
+
+    job = _run(client, {"suite_id": "suite_nostop"})
+    summary = job["summary"]
+
+    assert summary["verdict"] == "fail"
+    assert summary["headline"].startswith("假方案·失败后继续（未通过："), summary["headline"]
+    assert [item["case_id"] for item in summary["case_summaries"]] == [
+        "case_pass",
+        "case_fail",
+    ]
+    assert [item["verdict"] for item in summary["case_summaries"]] == ["pass", "fail"]
+    assert summary["evidence_paths"][0]["path"].endswith("result.json")
+    assert summary["reason"] and not block_ids_in(summary["reason"])
+
+
+def test_blocked_preflight_run_summary_says_bench_missing(client):
+    """预检不过（整轮 blocked）：报告说「台架不具备」，落盘记录同样带 ``summary``。"""
+
+    resp = client.post("/api/cases/run", json={"case_ids": ["case_missing"]})
+    assert resp.status_code == 200, resp.text
+    accepted = resp.json()
+    assert accepted["accepted"] is False and accepted["verdict"] == "blocked"
+
+    record = client.get("/api/cases/runs/%s" % accepted["run_id"]).json()
+    summary = record["summary"]
+    assert summary["verdict"] == "blocked"
+    assert "（台架不具备：" in summary["headline"], summary["headline"]
+    assert not block_ids_in(json.dumps(summary, ensure_ascii=False))
+
+
+def test_job_prunes_old_evidence_and_reports_pruned(tmp_path, fake_root):
+    """D11-4：job 终态后只留最近 30 轮，``pruned`` 回显；当前轮永不删。"""
+
+    runs = tmp_path / "storage" / "case_runs"
+    runs.mkdir(parents=True)
+    old = seed_run_dirs(runs, 32)
+    client = _make_client(tmp_path, fake_root)
+
+    job = _run(client, {"case_ids": ["case_pass"]})
+
+    remaining = sorted(path.name for path in runs.iterdir())
+    assert len(remaining) == 30, remaining
+    assert job["run_id"] in remaining, "当前这一轮永不删除"
+    assert job["pruned"] == old[:3], "32 旧 + 1 当前 = 33 轮，留 30 → 最旧 3 轮被清"
+
+    # 落盘记录与 job 读模型口径一致（``GET /runs/{run_id}`` 读的是 result.json）
+    record = client.get("/api/cases/runs/%s" % job["run_id"]).json()
+    assert record["pruned"] == job["pruned"]
+
+
+def test_keep_runs_zero_disables_pruning(tmp_path, fake_root):
+    """``CasesService(keep_runs=0)`` = 不限：一个目录都不删。"""
+
+    runs = tmp_path / "storage" / "case_runs"
+    runs.mkdir(parents=True)
+    old = seed_run_dirs(runs, 32)
+    client = _make_client(tmp_path, fake_root, keep_runs=0)
+
+    job = _run(client, {"case_ids": ["case_pass"]})
+
+    assert job["pruned"] == []
+    assert sorted(path.name for path in runs.iterdir()) == sorted(old + [job["run_id"]])
+
+
+def test_keep_runs_is_configurable_on_the_service(tmp_path, fake_root):
+    """构造参数可覆盖（``keep_runs=5``）：33 轮 → 只剩 5 轮。"""
+
+    runs = tmp_path / "storage" / "case_runs"
+    runs.mkdir(parents=True)
+    seed_run_dirs(runs, 32)
+    client = _make_client(tmp_path, fake_root, keep_runs=5)
+
+    job = _run(client, {"case_ids": ["case_pass"]})
+
+    remaining = sorted(path.name for path in runs.iterdir())
+    assert len(remaining) == 5, remaining
+    assert job["run_id"] in remaining
+    assert len(job["pruned"]) == 28
+
+
+def test_prune_failure_only_warns_and_job_still_completes(
+    tmp_path, fake_root, monkeypatch
+):
+    """裁剪炸了：只进 ``problems``，**不改 job 的 state / verdict**（D11-4 是附加动作）。"""
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("模拟裁剪异常")
+
+    client = _make_client(tmp_path, fake_root)
+    monkeypatch.setattr("workbench.cases_api.prune_runs", boom)
+
+    job = _run(client, {"case_ids": ["case_pass"]})
+
+    assert job["state"] == "done" and job["verdict"] == "pass"
+    assert job["pruned"] == []
+    assert any("旧证据清理异常" in item for item in job["problems"]), job["problems"]
+    # 本轮证据照旧落盘可读（清理失败不许连累证据）
+    assert Path(job["result_path"]).is_file()

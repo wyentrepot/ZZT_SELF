@@ -19,11 +19,29 @@
 参数规格的来源只有两处（不臆造第三种）：
 ``块声明的 action.params`` 与 ``事实声明的 params_schema``。
 
-两态输出
---------
-默认人读（中文、断点优先：失败块 + 原因 / ``unmet_facts`` / ``failed_block`` /
-``blocked_block``）；``--json`` 输出机器可读（``run`` 为完整 ``CaseRunResult.to_dict()``，
-错误态为 ``{"ok": false, "error": ...}``），**stdout 永远是纯 JSON**，可供 ``json.loads``。
+三态输出（REQS-0042 v11 D11-1 / D11-2 / D11-3）
+----------------------------------------------
+用户口径：「用例跑完直接生成报告即可…把日志或证据路径列出来即可，不用这么一步步的说明，
+**尤其是列出 archive.add 这种名字，压根无法被用户理解**」。所以 ``run`` 的人读输出分两档：
+
+1. **默认 = 报告式**（:func:`render_case_report` / :func:`render_run_report`）：
+   每例一行 ``标题（PASS）`` / ``标题（未通过：组网超时、档案下发异常）`` + 原因行 + 证据路径行，
+   末尾一行本轮汇总；**默认输出里不出现块 id、也不出现事实 id**（D11-2），
+   块/事实一律翻译成业务动作与业务标题（译法只有一份：``core/report.py``）。
+2. **``--verbose`` = 追加开发者详情**：块执行明细表 / 步骤结论 / ``unmet_facts`` /
+   ``failed_block`` / 自动决策条数——排查要看这些，但它们不该出现在用户报告里。
+3. **``--json`` = 全量机器可读**（``run`` 为完整 ``CaseRunResult.to_dict()``，多例时
+   ``{"run_id", "cases": [...]}``；错误态为 ``{"ok": false, "error": ...}``），
+   并在其中**增** ``summary``（:func:`case_runner.core.report.summarize_case` /
+   :func:`summarize_run` 的输出）与 ``pruned``；**stdout 永远是纯 JSON**，可直接 ``json.loads``。
+
+证据限量保留（REQS-0042 v11 D11-4）
+----------------------------------
+``data/case_runs/`` 不能无限长：``run`` 结束落盘后按 ``--keep-runs``（默认 30，``0`` /
+负数 = 不限）只留最近 N 轮（:func:`case_runner.core.retention.prune_runs`），
+**当前这一轮永不删除**，删了谁（``pruned``）如实写进 ``--json`` 与人读输出。
+裁剪是附加动作：失败只 warning，**不影响结论与退出码**；只删 ``case_runs/<run_id>/``
+目录，不碰用户方案、不碰 ``evidence/`` 仓库目录。
 
 退出码（固定契约，写进 ``--help``；REQS-0042 D2-6 / 变更 4 D4-5）
 ------------------------------------------------------------------
@@ -157,6 +175,8 @@ from case_runner.core.registry import (
     register_block,
     unregister_block,
 )
+from case_runner.core.report import scrub_block_ids, summarize_case, summarize_run
+from case_runner.core.retention import DEFAULT_KEEP_RUNS, prune_runs
 from test_automation.models import AssertionResult
 
 # --------------------------------------------------------------------------- #
@@ -1922,6 +1942,136 @@ def _verdict_label(verdict: str) -> str:
     }.get(verdict, "INCONCLUSIVE（说不清）")
 
 
+# --------------------------------------------------------------------------- #
+# 报告式人读输出（REQS-0042 v11 D11-1 / D11-2 / D11-3）
+#
+# 口径只有一份：``core/report.py`` 的 summarize_case / summarize_run。
+# 本层只做三件事：补证据路径（result.json 里没有 result_path）、排版、把事实 id 换成
+# 业务标题——**绝不自己再拼一套结论/原因文案**，否则 CLI / API / UI 迟早说三种话。
+# --------------------------------------------------------------------------- #
+
+#: 证据没落盘时的占位（不编路径，也不留空行）
+EVIDENCE_MISSING = "（本轮证据未落盘，见上方 warning；结论不受影响）"
+
+#: 事实 id 的兜底业务名（取不到声明标题时用它，**绝不回显 fact id**）
+FALLBACK_FACT_LABEL = "台架前置条件"
+
+
+def keep_runs_of(args: argparse.Namespace) -> int:
+    """``--keep-runs`` 取值（轮数；``<=0`` = 不限）。argparse 已保证是整数。"""
+
+    raw = getattr(args, "keep_runs", None)
+    if raw is None:
+        return DEFAULT_KEEP_RUNS
+    return int(raw)
+
+
+def human_fact_label(bundle: Bundle, fact_id: str) -> str:
+    """事实 id → 业务标题（默认输出不许出现 ``bench.simcon_online`` 这种 id）。
+
+    标题统一取「（」前那一段（``模拟集中器台架在线（simcon 子应用可达）`` →
+    ``模拟集中器台架在线``），再过一道 :func:`scrub_block_ids`，最后兜底成
+    :data:`FALLBACK_FACT_LABEL`——**任何情况下都不回显事实 id**。
+    """
+
+    spec = bundle.facts_by_id.get(str(fact_id or ""))
+    title = str(getattr(spec, "title", "") or "").strip()
+    label = re.split(r"[（(：:]", title, maxsplit=1)[0].strip() if title else ""
+    return scrub_block_ids(label) or FALLBACK_FACT_LABEL
+
+
+def case_report_entry(
+    outcome: RunOutcome, *, runs_dir: Path, run_id: str, result_path: str = ""
+) -> dict[str, Any]:
+    """一条用例结果 → ``summarize_*`` 的输入（补上证据路径，D11-3）。
+
+    为什么必须补：``result.json`` 里**没有** ``result_path``（它是落盘位置，不是内容），
+    不补的话报告就只有结论、没有可点开的证据。补法按 ``core/report.evidence_paths``
+    的约定：有 ``result_path`` 就记「运行结果」；它为空（落盘失败）时退到
+    ``runs_dir`` + ``run_id`` 记「运行目录」——两条都只取一条，避免报告卡重复列同一处。
+    """
+
+    entry = outcome.to_dict()
+    entry["title"] = outcome.case.title
+    entry["run_id"] = run_id
+    if result_path:
+        entry["result_path"] = result_path
+    else:
+        entry["runs_dir"] = str(runs_dir)
+    return entry
+
+
+def build_run_report(
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    run_title: str,
+    run_id: str,
+    runs_dir: Path,
+    result_path: str = "",
+    titles: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """运行级报告（``summarize_run``）：一句话结论 + 逐用例摘要 + 证据路径。"""
+
+    record: dict[str, Any] = {
+        "run_id": run_id,
+        "title": run_title,
+        "cases": [dict(entry) for entry in entries],
+        "runs_dir": str(runs_dir),
+    }
+    if result_path:
+        record["result_path"] = result_path
+    return summarize_run(record, titles=dict(titles or {}))
+
+
+def render_case_report(summary: Mapping[str, Any], *, out: TextIO) -> None:
+    """人读：一条用例一张「报告卡」——一句话结论 / 原因 / 证据路径（无块 id）。"""
+
+    _print(out, str(summary.get("headline") or ""))
+    reason = str(summary.get("reason") or "").strip()
+    if reason:
+        _print(out, "  原因：%s" % reason)
+    paths = list(summary.get("evidence_paths") or [])
+    if paths:
+        for item in paths:
+            _print(out, "  证据：%s" % item.get("path", ""))
+    else:
+        _print(out, "  证据：%s" % EVIDENCE_MISSING)
+
+
+def render_run_report(
+    summary: Mapping[str, Any],
+    *,
+    out: TextIO,
+    exit_code: int,
+    overall_verdict: str,
+    pruned: Sequence[str] = (),
+    keep_runs: int = DEFAULT_KEEP_RUNS,
+    total_cases: int = 1,
+    verbose_note: str = "",
+) -> None:
+    """人读：本轮汇总一行 + 退出码 + 证据路径（+ 清理了几轮旧证据）。"""
+
+    _print(out, "═══ 本轮汇总 ═══")
+    _print(out, str(summary.get("headline") or ""))
+    if total_cases > 1:
+        _print(out, "总退出码：%d（%s）" % (exit_code, overall_verdict))
+    else:
+        _print(out, "退出码：%d（%s）" % (exit_code, overall_verdict))
+    paths = list(summary.get("evidence_paths") or [])
+    if paths:
+        for item in paths:
+            _print(out, "证据（%s）：%s" % (item.get("label") or "证据", item.get("path", "")))
+    else:
+        _print(out, "证据：%s" % EVIDENCE_MISSING)
+    if pruned:
+        _print(
+            out,
+            "已清理 %d 轮旧证据（保留最近 %d 轮）" % (len(pruned), keep_runs),
+        )
+    if verbose_note:
+        _print(out, verbose_note)
+
+
 def render_probe(payload: Mapping[str, Any], *, out: TextIO) -> None:
     """人读：逐块 / 逐事实自检表（**没有 pass 就是没验证出来**）。"""
     _print(out, "═══ 台架自检 ═══")
@@ -2670,6 +2820,7 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
         suite.stop_on_fail if suite else False
     )
     timeout_s = run_timeout_of(args)
+    keep_runs = keep_runs_of(args)          # D11-4：本轮结束后只留最近 N 轮证据
     preflight_enabled = not bool(getattr(args, "no_preflight", False))
     run_id = new_run_id()
     started_at = datetime.now()
@@ -2787,9 +2938,19 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
         exit_code=exit_code,
         overall_verdict=overall_verdict,
     )
+    runs_dir = result_dir_of(args)
     result_path = write_result_document(
-        document, result_dir=result_dir_of(args), run_id=run_id, err=env.err
+        document, result_dir=runs_dir, run_id=run_id, err=env.err
     )
+    # -- ④ 证据限量保留（D11-4）：落盘之后再裁剪，当前这一轮永不删 ----------------- #
+    # 裁剪是附加动作：失败只 warning（不进退出码、不改结论）；只动 case_runs/<run_id>/。
+    prune_report = prune_runs(
+        runs_dir,
+        keep_runs,
+        current_run_id=run_id,
+        warn=lambda message: _print(env.err, message),
+    )
+    evidence_path = str(result_path) if result_path else ""
 
     run_extras: dict[str, Any] = {
         "ok": exit_code == EXIT_PASS,
@@ -2811,93 +2972,123 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
         "started_at": document["started_at"],
         "finished_at": document["finished_at"],
         "duration_s": document["duration_s"],
-        "result_path": str(result_path) if result_path else "",
+        "result_path": evidence_path,
+        # D11-4 审计口径：这一轮清掉了哪些旧证据、保留轮数是多少
+        "pruned": list(prune_report["pruned"]),
+        "keep_runs": keep_runs,
     }
+
+    # -- ⑤ 报告（D11-1/D11-3）：结论口径只有一份（core/report.py） --------------- #
+    entries = [
+        case_report_entry(
+            outcome, runs_dir=runs_dir, run_id=run_id, result_path=evidence_path
+        )
+        for outcome in outcomes
+    ]
+    if suite is not None:
+        run_title = suite.name or suite.id
+    elif len(cases) == 1:
+        run_title = cases[0].title
+    else:
+        run_title = "临时用例组合"
+    run_summary = build_run_report(
+        entries,
+        run_title=run_title,
+        run_id=run_id,
+        runs_dir=runs_dir,
+        result_path=evidence_path,
+        titles={case.id: case.title for case in cases},
+    )
+    case_summaries = list(run_summary.get("case_summaries") or [])
+    if len(case_summaries) != len(outcomes):  # 防御：摘要数量对不上就按用例重算一遍
+        case_summaries = [summarize_case(entry) for entry in entries]
+
+    verbose = bool(getattr(args, "verbose", False))
 
     if env.json:
         if len(cases) == 1 and suite is None:
             payload = outcomes[0].to_dict()
+            payload["summary"] = case_summaries[0]
         else:
             payload = {
                 "run_id": run_id,
                 "cases": [outcome.to_dict() for outcome in outcomes],
+                "summary": run_summary,
             }
         payload.update(run_extras)
         if suite is not None:
             payload["suite_id"] = suite.id
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=env.out)
+        return exit_code
+
+    _print(env.out, "═══ 用例运行 ═══")
+    _print(env.out, "运行号：%s" % run_id)
+    _print(
+        env.out,
+        "工作台地址：%s（%s）"
+        % (
+            env.base_url or "未提供（缺台架时块 skipped / 事实 unknown，不是 fail）",
+            base_url_source_label(env.base_source),
+        ),
+    )
+    if suite is not None:
+        _print(env.out, "方案：%s —— %s" % (suite.id, suite.name))
+    _print(
+        env.out,
+        "用例数：%d；stop_on_fail：%s；整轮上限：%s"
+        % (
+            len(cases),
+            "是" if stop_on_fail else "否",
+            ("%gs" % timeout_s) if timeout_s > 0 else "关闭",
+        ),
+    )
+    if not preflight.enabled:
+        preflight_text = "未启用（--no-preflight）"
+    elif preflight.ok:
+        preflight_text = "通过（探了 %d 项台架前置）" % len(preflight.facts)
     else:
-        _print(env.out, "═══ 用例运行 ═══")
-        _print(env.out, "运行号：%s" % run_id)
+        preflight_text = "未通过 —— 整轮 blocked（缺 %d 项台架前置，逐项见下）" % (
+            len(preflight.unmet)
+        )
+    _print(env.out, "预检：%s" % preflight_text)
+    # D11-2：这里点名**业务标题**（「模拟集中器台架在线」），不给 bench.simcon_online
+    for fact_id, entry in preflight.unmet.items():
         _print(
             env.out,
-            "工作台地址：%s（%s）"
+            "  ✘ %s：%s"
             % (
-                env.base_url or "未提供（缺台架时块 skipped / 事实 unknown，不是 fail）",
-                base_url_source_label(env.base_source),
+                human_fact_label(bundle, fact_id),
+                truncate(scrub_block_ids(str(entry.get("reason") or "-")), 80),
             ),
         )
-        if suite is not None:
-            _print(env.out, "方案：%s —— %s" % (suite.id, suite.name))
-        _print(
-            env.out,
-            "用例数：%d；stop_on_fail：%s；整轮上限：%s"
-            % (
-                len(cases),
-                "是" if stop_on_fail else "否",
-                ("%gs" % timeout_s) if timeout_s > 0 else "关闭",
-            ),
-        )
-        _print(
-            env.out,
-            "预检：%s"
-            % ("未启用（--no-preflight）" if not preflight.enabled else
-               ("通过（探了 %s）" % "、".join(preflight.facts) if preflight.ok
-                else "未通过 —— 缺：%s" % "、".join(
-                    "%s=%s" % (fact_id, entry["state"])
-                    for fact_id, entry in preflight.unmet.items()))),
-        )
-        for fact_id, entry in preflight.unmet.items():
-            _print(
-                env.out,
-                "  ✘ %s（%s）%s"
-                % (fact_id, entry["state"], truncate(str(entry.get("reason") or "-"), 80)),
-            )
-        _print(env.out)
-        for index, outcome in enumerate(outcomes, start=1):
-            if index > 1:
-                _print(env.out)
-            _print(env.out, "── 第 %d/%d 例 ──" % (index, len(outcomes)))
-            render_case_result(outcome, out=env.out, head=False)
-        if len(outcomes) > 1 or suite is not None:
+    _print(env.out)
+    for index, (outcome, case_summary) in enumerate(
+        zip(outcomes, case_summaries), start=1
+    ):
+        if index > 1:
             _print(env.out)
-            _print(env.out, "═══ 汇总 ═══")
-            id_width = max(
-                [display_width(outcome.case.id) for outcome in outcomes] + [8]
-            )
-            for outcome in outcomes:
-                _print(
-                    env.out,
-                    "  %s  %s  退出码 %d%s"
-                    % (
-                        pad(outcome.case.id, id_width),
-                        pad(_verdict_label(outcome.result.verdict), 24),
-                        outcome.exit_code,
-                        ("  " + outcome.skipped_reason) if outcome.skipped_reason else "",
-                    ),
-                )
-            _print(env.out, "总退出码：%d（%s）" % (exit_code, overall_verdict))
-        else:
-            _print(env.out, "退出码：%d（%s）" % (exit_code, overall_verdict))
-        _print(
-            env.out,
-            "证据：%s" % (result_path or "（落盘失败，见上方 warning；结论不受影响）"),
-        )
-        _print(
-            env.out,
+        _print(env.out, "── 第 %d/%d 例 ──" % (index, len(outcomes)))
+        render_case_report(case_summary, out=env.out)
+        if verbose:
+            _print(env.out)
+            _print(env.out, "【开发者详情（--verbose）】")
+            render_case_result(outcome, out=env.out, head=False)
+    _print(env.out)
+    render_run_report(
+        run_summary,
+        out=env.out,
+        exit_code=exit_code,
+        overall_verdict=overall_verdict,
+        pruned=prune_report["pruned"],
+        keep_runs=keep_runs,
+        total_cases=len(outcomes),
+        verbose_note=(
             "自动决策 %d 条、干预 0 条（interventions 恒空，D4-4）；耗时 %.1fs"
-            % (len(document["decisions"]), document["duration_s"]),
-        )
+            % (len(document["decisions"]), document["duration_s"])
+            if verbose
+            else ""
+        ),
+    )
     return exit_code
 
 
@@ -3401,6 +3592,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  case_run run --suite smoke --base-url http://<host>:<port> --json\n"
             "  case_run run --suite meter_smoke_min --timeout 600 --json  整轮 600s 硬上限\n"
             "  case_run run --case meter_daily --no-preflight --json      跳过预检（诊断用）\n"
+            "  case_run run --case meter_daily --verbose          追加块表/断点定位（默认报告式，不给块名）\n"
+            "  case_run run --suite smoke --keep-runs 10          只留最近 10 轮证据（默认 30，0=不限）\n"
             "  case_run probe --all --json               逐块/逐事实自检（无台架 → 全 unknown）\n"
             "  case_run probe --all --readonly --json    只读闸：写块跳过，绝不动台架\n"
             "  case_run probe --block archive.add        单块自检\n"
@@ -3471,6 +3664,14 @@ def build_parser() -> argparse.ArgumentParser:
                          "不满足就整轮 blocked + 点名缺什么（D2-8 / VF-2）")
     rp.add_argument("--result-dir", default=None, metavar="PATH",
                     help="结果落盘根（默认 data/case_runs；每次 run 写 <结果根>/<run_id>/result.json）")
+    rp.add_argument("--keep-runs", type=int, default=DEFAULT_KEEP_RUNS, metavar="N",
+                    help="证据保留轮数（默认 %d；本轮结束后只留最近 N 轮 <结果根>/<run_id> 目录，"
+                         "0 或负数 = 不限）。当前这一轮永不删除（REQS-0042 D11-4）"
+                         % DEFAULT_KEEP_RUNS)
+    rp.add_argument("--verbose", action="store_true",
+                    help="追加开发者详情（块执行明细 / 步骤结论 / 未满足事实 / 断点块名）。"
+                         "默认人读输出是报告式：一句话结论 + 人话原因 + 证据路径，"
+                         "不出现块 id（REQS-0042 D11-1 / D11-2）")
     _add_base_url(rp)
     _add_data_dir(rp)
     _add_json(rp)
@@ -3675,6 +3876,13 @@ __all__ = [
     "run_preflight",
     "run_timeout_of",
     "build_result_document",
+    "build_run_report",
+    "case_report_entry",
+    "keep_runs_of",
+    "human_fact_label",
+    "render_case_report",
+    "render_run_report",
+    "EVIDENCE_MISSING",
     "write_result_document",
     "result_dir_of",
     "track_running_blocks",

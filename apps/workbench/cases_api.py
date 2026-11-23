@@ -65,6 +65,7 @@ import io
 import json
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -109,6 +110,8 @@ from case_runner.core.executor import (
 from case_runner.core.models import BlockSpec, CaseSpec, CaseStep, FactSpec, SuiteSpec
 from case_runner.core.planner import FactsContext
 from case_runner.core.registry import has_block, has_fact
+from case_runner.core.report import summarize_case, summarize_run
+from case_runner.core.retention import DEFAULT_KEEP_RUNS, prune_runs
 
 # --------------------------------------------------------------------------- #
 # 常量与状态口径
@@ -338,12 +341,39 @@ class CaseRunView(BaseModel):
     exit_code: Optional[int] = None
     duration_s: float = 0.0
     params: dict[str, Any] = Field(default_factory=dict)
+    #: 报告式结论（REQS-0042 v11 D11-1 / D11-2 / D11-3，唯一口径 ``core/report.py``）：
+    #: ``{headline, reasons[], reason, evidence_paths[{label,path}], verdict, case_id, title}``。
+    #: 块 id 一律已翻译成业务动作，界面**直接消费这个字段**，不需要也不应该再看 ``blocks``。
+    summary: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def from_outcome(cls, outcome: RunOutcome) -> "CaseRunView":
-        """内核 ``RunOutcome.to_dict()`` → 读模型（不做任何字段改写，四态原样透传）。"""
+    def from_outcome(
+        cls,
+        outcome: RunOutcome,
+        *,
+        runs_dir: Path | str | None = None,
+        run_id: str = "",
+        result_path: str = "",
+        summary: Mapping[str, Any] | None = None,
+    ) -> "CaseRunView":
+        """内核 ``RunOutcome.to_dict()`` → 读模型（不做任何字段改写，四态原样透传）。
+
+        ``summary`` 由调用方（:meth:`CasesService.view`）算好传进来——它需要
+        ``runs_dir`` / ``run_id`` 才能组出证据路径，而 ``RunOutcome`` 里没有落盘位置。
+        不传时不编造：只给结论与人话原因，证据路径留空（绝不编一个打不开的假路径）。
+        """
         payload = outcome.to_dict()
         payload["title"] = outcome.case.title
+        if summary is not None:
+            payload["summary"] = dict(summary)
+        elif runs_dir is not None or result_path:
+            entry = dict(payload)
+            if result_path:
+                entry["result_path"] = result_path
+            elif runs_dir:
+                entry["runs_dir"] = str(runs_dir)
+                entry["run_id"] = run_id or str(payload.get("run_id") or "")
+            payload["summary"] = summarize_case(entry, title=outcome.case.title)
         return cls.model_validate(payload)
 
 
@@ -473,6 +503,10 @@ class RunRecordView(BaseModel):
     #: 台架快照：启动瞬间的逻辑口可用性 + 预检探到的事实三态（D4-6 证据）
     bench: dict[str, Any] = Field(default_factory=dict)
     preflight: dict[str, Any] = Field(default_factory=dict)
+    #: 报告式一句话结论（D11-1）：``{headline, reasons[], reason, case_summaries[], evidence_paths[]}``
+    summary: dict[str, Any] = Field(default_factory=dict)
+    #: D11-4 旧证据清理留痕：本轮结束时被删掉的 ``run_id`` 列表（从旧到新）
+    pruned: list[str] = Field(default_factory=list)
     error: str = ""
     result_path: str = ""
     problems: list[str] = Field(default_factory=list)
@@ -706,6 +740,9 @@ class _Job:
     run_decisions: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
     result_path: str = ""
+    #: D11-4：本轮结束时被清掉的旧证据（run_id，从旧到新）+ 清理失败原因（进 problems）
+    pruned: list[str] = field(default_factory=list)
+    prune_error: str = ""
 
     @property
     def suite_id(self) -> Optional[str]:
@@ -909,8 +946,10 @@ def _case_view(
         id=case.id,
         title=case.title,
         steps=list(case.steps),
-        blocks=list(case.blocks),
-        block_count=len(case.blocks),
+        # 块清单必须按**可执行步骤**展开（plan 用例的 `case.blocks` 恒为空——
+        # 2026-11-23 浏览器实测：页面行摘要因此显示"0 步/错链"）
+        blocks=[step.block for step in case.effective_steps()],
+        block_count=len(case.effective_steps()),
         step_count=len(case.effective_steps()),
         needs=list(case.needs),
         tags=list(case.tags),
@@ -987,6 +1026,7 @@ class CasesService:
         register_domain: bool = True,
         bridge_snapshot_provider: Any = None,
         env_lock_timeout_s: float = DEFAULT_ENV_LOCK_TIMEOUT_S,
+        keep_runs: int = DEFAULT_KEEP_RUNS,
     ) -> None:
         self.storage_dir = Path(storage_dir)
         #: 用户方案目录里的坏文件问题（不拖垮整表，随读表回显）
@@ -1008,6 +1048,9 @@ class CasesService:
         self.env_lock_timeout_s = max(float(env_lock_timeout_s), 0.0)
         #: 被「未来字段容忍」剥掉键的用例：``{case_id: [字段...]}``
         self._tolerated: dict[str, list[str]] = {}
+        #: 证据保留轮数（REQS-0042 v11 D11-4）：每轮 job 终态后只留最近 N 轮
+        #: ``case_runs/<run_id>``，``<=0`` = 不限；**当前这一轮永不删除**。
+        self.keep_runs = int(keep_runs)
 
     # -- 声明装载 ----------------------------------------------------------- #
 
@@ -1805,6 +1848,9 @@ class CasesService:
         ]
         job.finished_at = _now()
         job.finished_monotonic = time.monotonic()
+        # D11-4：预检阻断的那一轮同样只留最近 N 轮（本轮目录已占位，永不删）
+        self._prepare_run_dir(job)
+        self._prune_evidence(job)
         try:
             self._persist(job)
         except Exception as exc:  # noqa: BLE001 - 落盘失败不能让 422/500 掩盖 blocked 结论
@@ -1843,6 +1889,51 @@ class CasesService:
             result_path=job.result_path,
             result_url="/api/cases/runs/%s" % job.run_id,
         )
+
+    def _prepare_run_dir(self, job: _Job) -> None:
+        """给本轮结果目录**占位**（``<runs_dir>/<run_id>/``）并记下 ``result_path``。
+
+        为什么要提前建目录：裁剪按「含本轮在内」的名额算（``keep`` 是总轮数），
+        不先占位就等于少算一轮；顺带让落盘记录的 ``result_path`` 在写盘前就位。
+
+        建不出来**不在这里抛**（在 ``finally`` 里抛异常会把 job 永远留在 running）：
+        交给紧接着的 :meth:`_persist` 报错，由它把 job 置 ``failed`` + 写清原因。
+        """
+        target_dir = self.runs_dir / job.run_id
+        job.result_path = str(target_dir / RESULT_FILENAME)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+
+    def _prune_evidence(self, job: _Job) -> None:
+        """证据限量保留（REQS-0042 v11 D11-4）：只留最近 ``keep_runs`` 轮。
+
+        三条硬约束（都是「附加动作不许影响结论」的延伸）：
+
+        1. **当前这一轮永不删除**（``current_run_id=job.run_id``）——正在写的那一轮
+           被自己清掉是荒唐的，宁可多留一轮；
+        2. 删除失败**只 warning**（``core/retention.prune_runs`` 内部已捕获并回调），
+           失败原因记进 ``job.prune_error`` → 读模型 ``problems[]``，
+           **不改 job.state / verdict**；
+        3. 调用点在**终态落盘之前**（:meth:`_prepare_run_dir` 之后，:meth:`_persist` 之前）：
+           落盘那次写入就带上了 ``pruned``，``GET /api/cases/jobs/{job_id}``（读内存）与
+           ``GET /api/cases/runs/{run_id}``（读盘）看到的 ``pruned`` 天然一致。
+        """
+        try:
+            report = prune_runs(
+                self.runs_dir,
+                self.keep_runs,
+                current_run_id=job.run_id,
+                warn=lambda message: print(message, file=sys.stderr),
+            )
+        except Exception as exc:  # noqa: BLE001 - 裁剪是附加动作，绝不拖垮 job
+            job.prune_error = "旧证据清理异常（不影响结论）：%s: %s" % (
+                type(exc).__name__,
+                exc,
+            )
+            return
+        job.pruned = list(report.get("pruned") or [])
 
     def _prune_locked(self) -> None:
         """只保留最近 50 个 job 的内存视图（历史结果永远可从 ``runs/<run_id>`` 读）。"""
@@ -1948,6 +2039,11 @@ class CasesService:
         finally:
             job.finished_monotonic = time.monotonic()
             job.finished_at = _now()
+            # D11-4 证据限量保留：**先占位本轮目录 → 再裁旧轮 → 最后置终态落盘**。
+            # 顺序不能反：占位晚了名额会多算一轮；裁剪晚了读者会先看到
+            # 「已结束但 pruned 还是空」的中间态（还得二次写盘才补得上）。
+            self._prepare_run_dir(job)
+            self._prune_evidence(job)
             if job.state != JOB_FAILED:
                 job.state = JOB_DONE
             try:
@@ -1994,13 +2090,71 @@ class CasesService:
                 merged.append(entry)
         return merged
 
+    @staticmethod
+    def _run_title(job: _Job) -> str:
+        """运行级报告的标题：方案名 > 单例用例标题 > 「临时用例组合」。
+
+        只给**业务名**（``抄表日常回归``），``core/report._short_title`` 会再按「（」截一次，
+        所以「抄表日常回归（不复位，日常）：…」这种长标题到这里已经是干净的一句话。
+        """
+        if job.suite is not None:
+            return job.suite.name or job.suite.id
+        if len(job.cases) == 1:
+            return job.cases[0].title
+        return "临时用例组合"
+
+    def summary_entry(self, outcome: RunOutcome, *, result_path: str = "") -> dict[str, Any]:
+        """一条用例结果 → ``summarize_*`` 的输入（补证据路径，D11-3）。
+
+        ``result.json`` 里没有 ``result_path``（它是落盘位置，不是内容），所以证据路径
+        必须由本层用 ``runs_dir`` + ``run_id``（或已落盘的 ``result_path``）拼进去，
+        否则界面上的报告卡就只有结论、没有可点开的证据。
+        """
+        entry = outcome.to_dict()
+        entry["title"] = outcome.case.title
+        entry["run_id"] = outcome.result.run_id or ""
+        if result_path:
+            entry["result_path"] = result_path
+        else:
+            entry["runs_dir"] = str(self.runs_dir)
+        return entry
+
     def view(self, job: _Job) -> RunRecordView:
-        """job → 读模型快照（同一把锁内取结果列表，避免读到半截结果）。"""
+        """job → 读模型快照（同一把锁内取结果列表，避免读到半截结果）。
+
+        v11 起多两个报告字段（D11-1 / D11-4）：
+
+        - 每条用例带 ``summary``（一句话结论 + 人话原因 + 证据路径），界面直接消费；
+        - 运行级 ``summary`` 与 ``pruned``（本轮清掉了哪些旧证据）。
+
+        两者都由 ``core/report.py`` / ``core/retention.py`` 产出，本层只负责把
+        ``runs_dir`` / ``run_id`` 这些「只有服务才知道的落盘位置」喂进去。
+        """
         with self._lock:
             outcomes = list(job.outcomes)
             current_id = job.current_case_id
             current_title = job.current_case_title
-        results = [CaseRunView.from_outcome(outcome) for outcome in outcomes]
+        result_path = job.result_path
+        summary_entries = [
+            self.summary_entry(outcome, result_path=result_path) for outcome in outcomes
+        ]
+        run_summary = summarize_run(
+            {
+                "run_id": job.run_id,
+                "title": self._run_title(job),
+                "cases": summary_entries,
+                "runs_dir": str(self.runs_dir),
+                **({"result_path": result_path} if result_path else {}),
+            },
+            titles={outcome.case.id: outcome.case.title for outcome in outcomes},
+        )
+        case_summaries = list(run_summary.get("case_summaries") or [])
+        if len(case_summaries) != len(outcomes):  # 防御：对不上就逐例重算，绝不半截
+            case_summaries = [summarize_case(entry) for entry in summary_entries]
+        results = [
+            CaseRunView.from_outcome(outcome, summary=case_summaries[index])
+            for index, outcome in enumerate(outcomes)
+        ]
         verdicts = [item.verdict for item in results]
         verdict = _aggregate_verdict(verdicts)
         total = len(job.case_ids)
@@ -2057,12 +2211,25 @@ class CasesService:
                 "skipped_reason": job.preflight.skipped_reason,
             },
             preflight=job.preflight.to_dict(),
+            summary=run_summary,
+            pruned=list(job.pruned),
             error=job.error,
             result_path=job.result_path,
-            problems=[
-                "interventions[] 出现 %d 条记录（D4-4 要求恒为空数组，本次运行不成立）" % len(leaked)
-            ] if leaked else [],
+            problems=self._problems(job, leaked),
         )
+
+    @staticmethod
+    def _problems(job: _Job, leaked: Sequence[Mapping[str, Any]]) -> list[str]:
+        """读模型的问题清单（只报「本次运行不成立」与「附加动作失败」，不改结论）。"""
+        problems: list[str] = []
+        if leaked:
+            problems.append(
+                "interventions[] 出现 %d 条记录（D4-4 要求恒为空数组，本次运行不成立）"
+                % len(leaked)
+            )
+        if job.prune_error:
+            problems.append(job.prune_error)
+        return problems
 
     def _persist(self, job: _Job) -> None:
         """把终态结果写 ``<storage_dir>/case_runs/<run_id>/result.json``。"""
@@ -2129,6 +2296,7 @@ def create_cases_router(
     fact_probe: Any = None,
     register_domain: bool = True,
     bridge_snapshot_provider: Any = None,
+    keep_runs: int = DEFAULT_KEEP_RUNS,
 ) -> APIRouter:
     """创建 ``/api/cases/*`` 路由（10 个端点，REQS-0042 §3.6）。
 
@@ -2144,6 +2312,7 @@ def create_cases_router(
         fact_probe=fact_probe,
         register_domain=register_domain,
         bridge_snapshot_provider=bridge_snapshot_provider,
+        keep_runs=keep_runs,
     )
     rt = APIRouter(prefix="/api/cases", tags=["cases"])
 

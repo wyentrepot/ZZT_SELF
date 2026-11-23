@@ -114,6 +114,7 @@
       title: String(item.title || item.name || item.id || ""),
       steps: steps,
       step_count: num(item.step_count) || steps.length,
+      block_count: num(item.block_count) || arr(item.blocks).length,
       blocks: arr(item.blocks).map(String),
       needs: arr(item.needs).map(String),
       tags: arr(item.tags).map(String),
@@ -138,7 +139,13 @@
     if (Array.isArray(source)) {
       list = source.map(function (raw) {
         var port = obj(raw);
-        return { id: String(port.id || port.name || ""), usable: port.usable === true, errors: arr(port.errors).map(String) };
+        return {
+          id: String(port.id || port.port_id || port.mapping_id || port.name || ""),
+          // enabled=false 的口（如 ecu-biz/ecu-mgmt）本就不参与台架，不能被算成「不可用」
+          enabled: port.enabled !== false,
+          usable: port.usable === true,
+          errors: arr(port.errors).map(String)
+        };
       });
     } else {
       Object.keys(obj(source)).forEach(function (key) {
@@ -217,7 +224,8 @@
     suiteId: "",
     bench: null,
     benchMode: "checking",       // checking | ready | blocked | unavailable | unknown
-    benchReasons: [],
+    benchReasons: [],            // 默认区：每条一句人话
+    benchRaw: [],                // 开发者详情：端口/事实 id、原始 errors/detail
     benchInfo: [],               // 信息性事实（不参与运行闸门，仅展示）
     benchPorts: [],
     benchFacts: [],
@@ -300,9 +308,13 @@
       S.benchPorts = [];
       S.benchFacts = [];
       S.benchMode = "unavailable";
-      S.benchReasons = [error && error.status === 404
+      var missing = error && error.status === 404;
+      S.benchReasons = [missing
         ? "后端未就绪：GET /api/cases/bench 尚未提供，无法预检台架（运行按钮保持可用，整轮可能判 blocked）"
-        : ("台架快照获取失败：" + (error && error.message ? error.message : String(error)))];
+        : "台架快照获取失败（见开发者详情）"];
+      S.benchRaw = [missing
+        ? "GET /api/cases/bench → HTTP 404"
+        : ("GET /api/cases/bench 失败：" + (error && error.message ? error.message : String(error)))];
     });
   }
 
@@ -310,33 +322,52 @@
     var bench = S.bench || {};
     S.benchPorts = normPorts(bench);
     S.benchFacts = normFacts(bench);
+    S.benchInfo = [];
     // 运行闸门只看**必需事实**（后端 unmet_required = 用例库 needs 并集里不成立的）；
     // 信息性事实（如学习态的 nwk.* / 未注入能力的 sta.meter_addr_known）恒 unknown，
     // 若参与闸门会让按钮无谓置灰（2026-11-23 真机回归）。后端未给该字段时退化为全量口径。
     var requiredUnmet = (bench.unmet_required && typeof bench.unmet_required === "object")
       ? bench.unmet_required : null;
-    var reasons = [];
+    var reasons = [];   // 默认区：一句人话
+    var raw = [];       // 开发者详情：技术细节原样保留
     S.benchPorts.forEach(function (port) {
-      if (!port.usable) {
-        reasons.push("串口 " + port.id + " 不可用" + (port.errors.length ? "：" + port.errors.join("；") : ""));
-      }
+      if (port.enabled === false) return;   // 已禁用口不参与就绪判定
+      if (port.usable) return;
+      var detail = port.errors.join("；");
+      raw.push("端口 " + port.id + "：不可用" + (detail ? "；" + detail : ""));
+      reasons.push(clip("串口 " + port.id + " 不可用" +
+        (detail ? "（" + oneLineBenchReason(detail) + "）" : ""), BENCH_REASON_MAX));
     });
     S.benchFacts.forEach(function (fact) {
       if (fact.state === "yes") return;
-      var line = "事实 " + fact.id + (fact.state === "no" ? " 未成立" : " 状态未知") +
-        (fact.detail ? "：" + fact.detail : "");
       var required = requiredUnmet ? Object.prototype.hasOwnProperty.call(requiredUnmet, fact.id) : true;
-      if (required) reasons.push(line); else S.benchInfo.push(line);
+      var label = factLabel(fact.id);
+      var stateText = fact.state === "no" ? "未成立" : "状态未知";
+      var detail = String(fact.detail || "");
+      raw.push("事实 " + fact.id + "：" + (fact.state === "no" ? "no" : "unknown") +
+        (detail ? "；" + detail : "") + (required ? "（必需）" : "（信息性）"));
+      var human;
+      if (detail && hasInternalToken(detail)) {
+        human = clip(label + "：" + oneLineBenchReason(detail), BENCH_REASON_MAX);
+      } else if (detail) {
+        human = clip(label + "：" + stateText + "（" + oneLineBenchReason(detail) + "）", BENCH_REASON_MAX);
+      } else {
+        human = label + "：" + stateText;
+      }
+      if (required) reasons.push(human); else S.benchInfo.push(human);
     });
     if (bench.ready === false && !reasons.length) {
-      reasons.push("后端判定台架未就绪（ready=false，未给出明细）");
+      reasons.push("台架未就绪（后端未给出明细，见开发者详情）");
+      raw.push("后端 ready=false，且未给出端口/事实明细");
     }
     if (!S.benchPorts.length && !S.benchFacts.length) {
       S.benchMode = "unknown";
-      S.benchReasons = ["台架快照为空（既无端口也无事实），无法预检"];
+      S.benchReasons = ["台架快照为空（既无端口也无事实），未做预检"];
+      S.benchRaw = raw.length ? raw : ["GET /api/cases/bench 返回空快照"];
       return;
     }
     S.benchReasons = reasons;
+    S.benchRaw = raw;
     S.benchMode = (bench.ready === false || reasons.length) ? "blocked" : "ready";
   }
 
@@ -435,7 +466,7 @@
     }
     if (hintEl) {
       hintEl.textContent = S.benchMode === "ready"
-        ? (S.benchPorts.length + " 口全通 · " + S.benchFacts.filter(function (f) { return f.state === "yes"; }).length + " 条关键事实成立")
+        ? (S.benchPorts.filter(function (p) { return p.enabled !== false; }).length + " 口全通 · " + S.benchFacts.filter(function (f) { return f.state === "yes"; }).length + " 条关键事实成立")
         : "";
     }
 
@@ -451,12 +482,15 @@
     }
     var factsBox = document.querySelector('[data-hook="bench-facts"]');
     if (factsBox) {
+      var stateName = { yes: "成立", no: "未成立", unknown: "未知" };
       factsBox.innerHTML = '<span class="glabel">事实</span>' + (S.benchFacts.length
         ? S.benchFacts.map(function (fact) {
           var cls = fact.state === "yes" ? "yes" : (fact.state === "no" ? "no" : "unknown");
-          var label = fact.state === "yes" ? "yes" : (fact.state === "no" ? "no" : "unknown");
-          return '<span class="fact ' + cls + '" title="' + esc(fact.detail || label) + '">' +
-            '<span class="dot"></span>' + esc(fact.id) + " · " + esc(label) + "</span>";
+          // 只显示人话（事实 id 放 data-fact 供排查，不显示给用户）
+          return '<span class="fact ' + cls + '" data-fact="' + esc(fact.id) + '" title="' +
+            esc(factLabel(fact.id) + " · " + (stateName[fact.state] || "未知")) + '">' +
+            '<span class="dot"></span>' + esc(factLabel(fact.id)) + " · " +
+            esc(stateName[fact.state] || "未知") + "</span>";
         }).join("")
         : '<span class="hint">—</span>');
     }
@@ -467,6 +501,12 @@
           esc(reason) + "</li>";
       }).join("");
     }
+    var rawBox = $("bench-raw");
+    if (rawBox) {
+      rawBox.textContent = (S.benchRaw || []).join("\n");
+    }
+    var rawHead = $("bench-dev-head");
+    if (rawHead) rawHead.hidden = !(S.benchRaw || []).length;
   }
 
   // ---------- 渲染：筛选与分组 ----------
@@ -644,12 +684,62 @@
     return tags.join("");
   }
 
-  function stepSummary(item) {
-    var parts = item.steps.slice(0, 3).map(function (step) {
-      return step.no + ". " + (step.do || "—");
+  // 列表行摘要：业务动作链（档案 → 组网 → 绑表 → 抄表），不再把 do 全文/帧标识怼给用户；
+  // 完整 do/expect 留给「展开」（D11-1 的列表侧口径）。
+  var STEP_ACTION = [
+    [/(复位|重启|reboot|reset)/i, "复位"],
+    [/(档案|建档|archive)/i, "档案"],
+    [/(组网|拓扑|入网|onnet|topolog|nwk)/i, "组网"],
+    [/(绑表|建档表|表地址|addr_probe)/i, "绑表"],
+    [/(抄表|抄读|电能|read_645|645)/i, "抄表"],
+    [/(自检|预检|诊断|preflight|自愈|simcon|simeter|串口)/i, "台架自检"]
+  ];
+  // 帧标识/协议指令号（11H-F1、10H-F21、645 DI…）：行内摘要一律剥掉
+  var FRAME_TOKEN = /\b\d{1,3}H[-\s]?F\d+\b|\b(?:645|698|376\.2|1376\.2)\s*(?:DI|AFN|FN)\b/gi;
+
+  function stepAction(step) {
+    // 「不复位 STA」这类否定表述先剥掉，否则会被 /复位/ 误判成复位动作
+    var text = String(step.do || "").replace(/不\s*(复位|重启|reboot|reset|改动|影响)/gi, "");
+    for (var i = 0; i < STEP_ACTION.length; i += 1) {
+      if (STEP_ACTION[i][0].test(text)) return STEP_ACTION[i][1];
+    }
+    var plain = text.replace(FRAME_TOKEN, " ").replace(/\s{2,}/g, " ").trim();
+    return clip(plain || "动作", 10);
+  }
+
+  function blockChain(item) {
+    var blocks = arr(item.blocks);
+    var labels = [];
+    blocks.forEach(function (id) {
+      // 复用文件后部唯一的 actionLabel 词典；行内摘要去掉「（取表地址）」这类补充说明
+      var label = String(actionLabel(String(id || "")) || "").split("（")[0].trim();
+      if (!label) return;
+      if (labels[labels.length - 1] === label) return;   // 连续重复动作只留一个
+      labels.push(label);
     });
-    if (item.steps.length > 3) parts.push("…（共 " + item.steps.length + " 步）");
-    return parts.join("　") || "（声明无步骤）";
+    return labels;
+  }
+
+  function stepChain(item) {
+    var fromBlocks = blockChain(item);
+    if (fromBlocks.length) return fromBlocks;   // 优先用**可执行块链**（plan 用例也准）
+    var labels = [];
+    item.steps.forEach(function (step) {
+      var label = stepAction(step);
+      if (!label) return;
+      if (labels[labels.length - 1] === label) return;   // 连续重复动作只留一个
+      labels.push(label);
+    });
+    return labels;
+  }
+
+  function stepSummary(item) {
+    // 步数取**可执行步数**（block_count/blocks），不是人读说明条数
+    var count = num(item.block_count) || arr(item.blocks).length || item.step_count || item.steps.length || 0;
+    var chain = stepChain(item);
+    if (!chain.length) return "（声明无步骤）";
+    var shown = chain.slice(0, 5);
+    return count + " 步：" + shown.join(" → ") + (chain.length > shown.length ? " → …" : "");
   }
 
   function renderSteps(item) {
@@ -671,7 +761,8 @@
       (S.sel[item.id] ? " checked" : "") + ' aria-label="勾选 ' + esc(item.id) + '">';
     html += "<b class=\"case-title\">" + esc(item.title) + "</b>";
     html += '<span class="case-id mono">' + esc(item.id) + "</span>";
-    html += '<span class="case-steps">' + item.step_count + " 步</span>";
+    var execSteps = num(item.block_count) || arr(item.blocks).length || item.step_count;
+    html += '<span class="case-steps">' + execSteps + " 步</span>";
     if (last) html += badge(last);
     html += '<span class="spacer"></span>';
     html += '<button class="mini run-one" data-id="' + esc(item.id) + '" title="立即运行此用例">▶</button>';
@@ -885,16 +976,45 @@
     });
   }
 
+  // 顶部汇总：一句话（D11-1），如「本轮 2 例全部通过」「本轮 1 例通过、1 例未通过（组网超时）」
   function summaryText(job) {
+    var results = arr(job.results || job.cases);
     var counts = obj(job.case_counts);
-    var parts = [];
+    var tally = { pass: 0, fail: 0, blocked: 0, inconclusive: 0 };
+    var total = 0;
     ["pass", "fail", "blocked", "inconclusive"].forEach(function (key) {
       var value = num(counts[key]);
-      if (value) parts.push(VERDICT[key].label + " " + value);
+      tally[key] = value;
+      total += value;
     });
-    if (parts.length) return parts.join(" · ");
-    if (job.verdict) return "结论 " + verdictText(job.verdict);
-    return "";
+    if (!total) {
+      results.forEach(function (raw) {
+        var verdict = normVerdict(obj(raw).verdict);
+        if (!verdict) return;
+        tally[verdict] += 1;
+        total += 1;
+      });
+    }
+    if (!total) return job.verdict ? ("结论 " + verdictText(job.verdict)) : "";
+    if (tally.pass === total) return "本轮 " + total + " 例全部通过";
+    var failReasons = [];
+    if (tally.fail) {
+      results.forEach(function (raw) {
+        var result = obj(raw);
+        if (normVerdict(result.verdict) !== "fail") return;
+        var reasons = reasonList(result, "fail", normSummary(result));
+        if (reasons.length && failReasons.indexOf(reasons[0]) < 0) failReasons.push(reasons[0]);
+      });
+    }
+    var parts = [];
+    if (tally.pass) parts.push(tally.pass + " 例通过");
+    if (tally.fail) {
+      parts.push(tally.fail + " 例未通过" +
+        (failReasons.length ? "（" + clip(failReasons.slice(0, 2).join("；"), TITLE_REASON_MAX) + "）" : ""));
+    }
+    if (tally.blocked) parts.push(tally.blocked + " 例台架不具备");
+    if (tally.inconclusive) parts.push(tally.inconclusive + " 例说不清");
+    return "本轮 " + parts.join("、");
   }
 
   function renderJob(job) {
@@ -913,7 +1033,13 @@
     }
     if ($("job-summary")) $("job-summary").textContent = summaryText(job);
     var results = arr(job.results || job.cases);
-    if ($("job-results")) $("job-results").innerHTML = results.map(renderCaseResult).join("");
+    var resultsWrap = $("job-results");
+    if (resultsWrap) {
+      resultsWrap.innerHTML = results.map(function (result) {
+        return renderCaseResult(result, job);
+      }).join("");
+      bindReportActions(resultsWrap);
+    }
     var log = [];
     if (job.error) log.push("任务错误：" + job.error);
     if (job.result_path) log.push("证据落盘：" + job.result_path);
@@ -925,7 +1051,48 @@
     if ($("job-log")) $("job-log").textContent = log.join("\n");
   }
 
-  // ---------- 断点可视化（UI-5） ----------
+  // ---------- 开发者详情（D11-2）：内部块名只在这里与「开发者详情」折叠内出现 ----------
+  // 块名 → 业务动作词典（REQS-0042 v11 D11-2 口径）。默认展示区只消费 actionLabel() 的返回值，
+  // 词典与逐步明细一律不进默认区（反向守卫见 apps/workbench/test_cases_page.py）。
+  var BLOCK_ACTION = [
+    ["fix.simcon_session", "台架自检"],
+    ["fix.simeter_session", "台架自检"],
+    ["reset.sta", "复位 STA"],
+    ["archive.add", "档案下发"],
+    ["nwk.topology", "组网"],
+    ["meter.addr_probe", "绑表（取表地址）"],
+    ["meter.read_645", "抄表"],
+    ["nwk.nodes_online_min", "组网节点数"],
+    ["nwk.onnet_count_min", "在网节点数"],
+    ["nwk.route_running", "路由运行"],
+    ["bench.sta_online", "STA 在线"],
+    ["bench.simcon_online", "模拟集中器在线"],
+    ["bench.simeter_online", "模拟电表在线"],
+    ["sta.meter_addr_known", "表地址已知"],
+    ["archive.contains", "档案存在"]
+  ];
+
+  function normBlockKey(value) {
+    return String(value == null ? "" : value).toLowerCase().replace(/_/g, ".");
+  }
+
+  // 块名 → 人话（未知块名返回空串：宁可不显示，也不把内部 id 甩给用户）
+  function actionLabel(blockId) {
+    var key = normBlockKey(blockId);
+    if (!key) return "";
+    var best = "";
+    var bestLabel = "";
+    for (var i = 0; i < BLOCK_ACTION.length; i += 1) {
+      var known = normBlockKey(BLOCK_ACTION[i][0]);   // 词典键同样归一化：a.b_c ≡ a.b.c
+      if (key === known) return BLOCK_ACTION[i][1];
+      if (key.indexOf(known) === 0 && known.length > best.length) {
+        best = known;
+        bestLabel = BLOCK_ACTION[i][1];
+      }
+    }
+    return bestLabel;
+  }
+
   function blockDetail(result, blockId) {
     var rows = arr(result.blocks || result.steps || []);
     for (var i = 0; i < rows.length; i += 1) {
@@ -1025,18 +1192,427 @@
     return html;
   }
 
-  function renderCaseResult(raw) {
+  // 逐步明细收进「开发者详情」折叠（默认 hidden）：排查用，块名只允许出现在这里
+  function devDetailsHtml(result) {
+    var inner = breakpointHtml(result) + resultRowsHtml(result);
+    if (result.error) inner += '<div class="bp-item bp-failed"><span class="k">错误</span><span>' + esc(result.error) + "</span></div>";
+    // 默认区最多显示 3 条原因；被折叠掉的（含块层原始 detail）都在这里看全量
+    var verdict = normVerdict(result.verdict);
+    var summary = normSummary(result);
+    var allReasons = summary.reasons.length ? summary.reasons : derivedReasons(result, verdict);
+    if (allReasons.length > 3) {
+      inner += '<div class="bp-item bp-fact"><span class="k">全部原因</span><span>' +
+        esc(allReasons.join("；")) + "</span></div>";
+    }
+    if (!inner) return "";
+    return '<div class="rc-dev-head">' +
+      '<button class="mini rc-dev-toggle" data-hook="dev-toggle" aria-expanded="false">开发者详情 ▸</button>' +
+      "</div>" +
+      '<div class="rc-dev" data-hook="dev-details" hidden>' + inner + "</div>";
+  }
+
+  /* ==== 报告卡默认区 BEGIN（D11-1 / D11-3）====
+   * 反向守卫（apps/workbench/test_cases_page.py）：本区间只允许出现人话文案与证据路径，
+   * 不得出现任何内部块 id 字面量；需要块名时一律经 actionLabel() 翻成业务动作。
+   * ==== */
+  var VERDICT_HEAD = {
+    pass: "PASS",
+    fail: "未通过",
+    blocked: "台架不具备",
+    inconclusive: "说不清",
+    "": "未运行"
+  };
+  var DEV_HINT = "详情见开发者详情";
+  var BLOCK_TOKEN = /[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+/g;
+
+  // 人读文案上限：一条原因一句人话（40 字），标题括号里更短（30 字）
+  var REASON_MAX = 40;
+  var TITLE_REASON_MAX = 30;
+  var BENCH_REASON_MAX = 40;
+  // 内部词/地址/十六进制一律不进默认区（WORKBENCH_BASE 之类只留在开发者详情）
+  var INTERNAL_TOKEN = /`{0,2}WORKBENCH_BASE`{0,2}|\binjected_base_url\b|https?:\/\/[^\s，。；)）]+|\b0x[0-9a-f]+\b/gi;
+
+  function hasInternalToken(value) {
+    return /WORKBENCH_BASE|injected_base_url/i.test(String(value == null ? "" : value));
+  }
+
+  function scrubInternal(value) {
+    return String(value == null ? "" : value)
+      .replace(INTERNAL_TOKEN, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  function clip(value, max) {
+    var text = String(value == null ? "" : value).trim();
+    var limit = max || REASON_MAX;
+    if (text.length <= limit) return text;
+    // 截断处别留半截标点（如「…不足（」→「…不足」）
+    return text.slice(0, limit).replace(/[（(：:；;、,，\s]+$/, "") + "…";
+  }
+
+  // 块名/事实名 → 人话（认不出来给个中性说法，绝不回显 id）
+  function factLabel(value) {
+    return actionLabel(value) || "关键事实";
+  }
+
+  // 人话护栏：把混进文案的块 id / 内部标识换成业务动作，认不出来就丢掉——绝不把内部 id 显示给用户
+  function sanitizeHuman(value) {
+    var text = String(value == null ? "" : value);
+    if (!text) return "";
+    text = text.replace(BLOCK_TOKEN, function (token) { return actionLabel(token) || " "; });
+    text = scrubInternal(text);
+    return text
+      .replace(/\s{2,}/g, " ")
+      .replace(/^[\s；;，,、:：·\-]+/, "")
+      .replace(/[\s；;，,、:：·\-]+$/, "")
+      .trim();
+  }
+
+  // 「组网：明确不足」→「组网未完成」：只收敛少数已知后缀，不瞎改语义
+  function tightenReason(value) {
+    var match = String(value || "").match(/^(.+?)[：:](明确不足|条件不足|不满足|不足|未完成|失败|超时|异常)$/);
+    if (match) return match[1] + "未完成";
+    return String(value || "");
+  }
+
+  // 降级路径专用：只保留一句主体短语——截到第一个「——」/「（」/「；」之前，再限长；
+  // 完整 detail 一律进「开发者详情」。
+  function oneLineReason(value, max) {
+    var text = sanitizeHuman(value);
+    if (!text) return "";
+    var cut = text.length;
+    ["——", "（", "(", "；", ";"].forEach(function (sep) {
+      var index = text.indexOf(sep);
+      if (index > 0 && index < cut) cut = index;
+    });
+    text = tightenReason(text.slice(0, cut).trim());
+    return clip(text.replace(/[\s：:、,，。.]+$/, ""), max || REASON_MAX);
+  }
+
+  // 台架侧人话：内部口径 → 一句人话；技术细节只进开发者详情
+  function oneLineBenchReason(value) {
+    var raw = String(value == null ? "" : value);
+    if (hasInternalToken(raw)) return "台架正忙（上一轮运行未结束）";
+    if (/https?:\/\//i.test(raw) && /地址|base/i.test(raw)) return "台架地址异常（见开发者详情）";
+    return oneLineReason(raw, BENCH_REASON_MAX);
+  }
+
+  function toTextList(raw) {
+    if (raw === undefined || raw === null) return [];
+    var items = Array.isArray(raw) ? raw : String(raw).split(/[\n;；]+/);
+    var out = [];
+    items.forEach(function (item) {
+      if (item === undefined || item === null) return;
+      if (typeof item === "string") {
+        if (item.trim()) out.push(item);
+        return;
+      }
+      var entry = obj(item);
+      var text = clean(entry.text) || clean(entry.reason) || clean(entry.message)
+        || clean(entry.detail) || clean(entry.label);
+      if (text) { out.push(text); return; }
+      // 只给了块名：先收下，交给 sanitizeHuman 翻成业务动作
+      var block = clean(entry.block) || clean(entry.block_id) || clean(entry.target);
+      if (block) out.push(block);
+    });
+    return out;
+  }
+
+  var EVIDENCE_KIND = {
+    run: "运行目录",
+    run_dir: "运行目录",
+    dir: "运行目录",
+    workdir: "运行目录",
+    result: "result.json",
+    result_json: "result.json",
+    log: "日志",
+    logs: "日志",
+    cli_log: "日志",
+    evidence: "证据"
+  };
+
+  // 纯字符串证据没有 kind：按后缀猜一个人话标签（猜不出就当运行目录）
+  function evidenceLabel(path) {
+    var text = String(path == null ? "" : path).trim();
+    if (!text) return "";
+    if (/\.json$/i.test(text)) return "result.json";
+    if (/\.(log|txt|out)$/i.test(text)) return "日志";
+    return "运行目录";
+  }
+
+  function toEvidence(raw) {
+    if (raw === undefined || raw === null) return [];
+    if (typeof raw === "string") return toEvidence([raw]);
+    var list = [];
+    arr(raw).forEach(function (item) {
+      if (item === undefined || item === null) return;
+      if (typeof item === "string") {
+        String(item).split(/[\n;；]+/).forEach(function (chunk) {
+          var text = chunk.trim();
+          if (text) list.push({ path: text, label: evidenceLabel(text) });
+        });
+        return;
+      }
+      var entry = obj(item);
+      var path = clean(entry.path) || clean(entry.dir) || clean(entry.file) || clean(entry.value);
+      if (!path) return;
+      var kind = String(entry.kind || entry.type || "").toLowerCase();
+      list.push({ path: path, label: clean(entry.label) || EVIDENCE_KIND[kind] || evidenceLabel(path) });
+    });
+    return list;
+  }
+
+  // 兼容两种下发形状：result.summary{headline,reason(s),evidence_paths} 或平铺 headline/reasons/evidence_paths
+  // （summary 万一给成纯字符串，就当成 headline 用——后端字段形状未定型前不赌）
+  function normSummary(result) {
+    var summary = obj(result.summary);
+    var headline = clean(summary.headline) || clean(summary.title) || clean(summary.conclusion)
+      || clean(result.headline) || clean(result.summary);
+    var reasonsRaw = summary.reasons !== undefined ? summary.reasons
+      : (summary.reason !== undefined ? summary.reason
+        : (result.reasons !== undefined ? result.reasons : result.reason));
+    var evidenceRaw = summary.evidence_paths !== undefined ? summary.evidence_paths
+      : (summary.evidence !== undefined ? summary.evidence
+        : (result.evidence_paths !== undefined ? result.evidence_paths : result.evidence));
+    return { headline: headline, reasons: toTextList(reasonsRaw), evidence: toEvidence(evidenceRaw) };
+  }
+
+  function blockReason(result, blockId) {
+    if (!clean(blockId)) return "";
+    var detail = sanitizeHuman(blockDetail(result, blockId));
+    if (detail) return detail;
+    return actionLabel(blockId);
+  }
+
+  function problemRowReason(result) {
+    var rows = arr(result.blocks || result.steps || []);
+    for (var i = 0; i < rows.length; i += 1) {
+      var row = obj(rows[i]);
+      if (stepState(row) === "pass") continue;
+      var text = sanitizeHuman(row.detail || row.message || row.reason || "");
+      if (text) return text;
+      var label = actionLabel(row.block_id || row.block || row.id || "");
+      if (label) return label + "未通过";
+    }
+    return "";
+  }
+
+  // 未满足事实：优先用 detail（后端给的人话）；只有事实 id 时翻成「<业务动作>未满足」
+  function unmetFactReasons(result) {
+    var raw = result.unmet_facts;
+    var entries = [];
+    if (Array.isArray(raw)) {
+      entries = raw.map(function (item) {
+        if (typeof item === "string") return { id: item, state: "", detail: "" };
+        var fact = obj(item);
+        return {
+          id: String(fact.id || fact.fact_id || ""),
+          state: fact.state === undefined ? "" : normFactState(fact.state),
+          detail: String(fact.detail || "")
+        };
+      });
+    } else {
+      var map = obj(raw);
+      Object.keys(map).forEach(function (key) {
+        var fact = obj(map[key]);
+        return entries.push({
+          id: key,
+          state: fact.state === undefined ? (map[key] === false ? "no" : "") : normFactState(fact.state),
+          detail: String(fact.detail || "")
+        });
+      });
+    }
+    return entries.map(function (fact) {
+      var detail = sanitizeHuman(fact.detail);
+      if (detail) return detail;
+      var label = actionLabel(fact.id);
+      if (!label) return "";
+      return label + (fact.state === "yes" ? "已满足" : "未满足");
+    }).filter(Boolean);
+  }
+
+  // 无 summary 时的保守降级：verdict + 断点字段拼人话，绝不白屏、绝不显示块 id
+  function derivedReasons(result, verdict) {
+    var list = [];
+    if (verdict === "fail") {
+      list.push(blockReason(result, result.failed_block) || problemRowReason(result));
+    } else if (verdict === "blocked") {
+      list.push(clean(result.skipped_reason));
+      list.push(blockReason(result, result.blocked_block) || problemRowReason(result));
+    } else if (verdict === "inconclusive") {
+      list.push(blockReason(result, result.failed_block) || problemRowReason(result) || "抄读结果不确定");
+    }
+    list = list.concat(unmetFactReasons(result));
+    if (verdict === "fail" && !list.filter(Boolean).length && result.error) list.push(String(result.error));
+    return list.filter(Boolean);
+  }
+
+  function uniqueReasons(items) {
+    var seen = {};
+    var out = [];
+    items.forEach(function (item) {
+      var text = String(item == null ? "" : item).trim();
+      if (!text || seen[text]) return;
+      seen[text] = true;
+      out.push(text);
+    });
+    return out;
+  }
+
+  // 原因行：API 的 summary.reasons 优先（后端已做人话映射，只做 id 护栏 + 限长）；
+  // 没有 summary 时走降级——每条原因只保留一句人话，最多 3 条，其余归开发者详情。
+  function reasonList(result, verdict, summary) {
+    if (summary.reasons.length) {
+      return uniqueReasons(summary.reasons.map(function (item) {
+        return clip(sanitizeHuman(item), REASON_MAX);
+      })).slice(0, 3);
+    }
+    return uniqueReasons(derivedReasons(result, verdict).map(function (item) {
+      return oneLineReason(item);
+    })).filter(Boolean).slice(0, 3);
+  }
+
+  var GENERIC_HEAD = ["通过", "未通过", "失败", "台架不具备", "说不清",
+    "PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"];
+
+  // 标题：默认只给「用例名（结论）」——PASS / 未通过：一句原因 / 台架不具备：原因 / 说不清：原因
+  // 括号内原因总长限 30 字，超了加省略号——标题永远是一行。
+  function reportHeadline(result, verdict, summary, reasons) {
+    var title = clean(result.title) || clean(result.case_id) || "未命名用例";
+    var shortReasons = clip(reasons.join("；"), TITLE_REASON_MAX);
+    var head = sanitizeHuman(summary.headline);
+    if (head) {
+      // 后端只给了「未通过」这类空结论时，把原因补进标题（仍是人话，不含块名）
+      if (reasons.length && GENERIC_HEAD.indexOf(head) >= 0 && head.indexOf("：") < 0) {
+        head += "：" + shortReasons;
+      }
+      // 用例声明的 title 常带括号说明（「台架就绪自检（STA 控制台口 + …）」），
+      // 与后端 headline（「台架就绪自检（PASS）」）按**全称**比较会重复，故按短标题比。
+      var shortTitle = clip(String(title).split(/[（(：:]/)[0].trim() || title, 20);
+      if (head.indexOf(shortTitle) === 0) return clip(head, shortTitle.length + TITLE_REASON_MAX + 4);
+      return shortTitle + "（" + clip(head, TITLE_REASON_MAX) + "）";
+    }
+    var prefix = VERDICT_HEAD[verdict] || VERDICT_HEAD[""];
+    if (!verdict || verdict === "pass") return title + "（" + prefix + "）";
+    return title + "（" + prefix +
+      (shortReasons ? "：" + shortReasons : "，" + DEV_HINT) + "）";
+  }
+
+  // 证据路径：summary 没给就退到 result/job 上的落盘字段；一条都没有也不留空白行
+  function fallbackEvidence(result, job) {
+    var owner = obj(job);
+    var list = [];
+    function push(path, label) {
+      var text = clean(path);
+      if (!text) return;
+      for (var i = 0; i < list.length; i += 1) {
+        if (list[i].path === text) return;
+      }
+      list.push({ path: text, label: label });
+    }
+    push(result.run_dir || owner.run_dir, "运行目录");
+    push(result.result_path || owner.result_path, "result.json");
+    push(result.log_path || result.cli_log || result.log_file || owner.log_path, "日志");
+    push(result.evidence_dir, "证据");
+    return list;
+  }
+
+  function reportEvidenceHtml(result, summary, job) {
+    var items = summary.evidence.slice();
+    if (!items.length) items = fallbackEvidence(result, job);
+    var html = '<div class="rc-evidence" data-hook="report-evidence"><span class="rc-elabel">证据</span>';
+    if (!items.length) {
+      return html + '<span class="rc-empty">证据路径未提供（见任务日志）</span></div>';
+    }
+    html += items.map(function (item) {
+      return '<span class="rc-ev">' +
+        (item.label ? '<span class="rc-ekind">' + esc(item.label) + "</span>" : "") +
+        '<code class="rc-path mono" data-hook="evidence-path" data-path="' + esc(item.path) +
+        '" title="点击复制路径">' + esc(item.path) + "</code>" +
+        '<button class="mini rc-copy" data-path="' + esc(item.path) + '" title="复制路径">复制</button>' +
+        "</span>";
+    }).join("");
+    return html + "</div>";
+  }
+
+  // 每条用例一张报告卡：标题行 + 原因行 + 证据行；明细一律收进「开发者详情」
+  function renderCaseResult(raw, job) {
     var result = obj(raw);
     var verdict = normVerdict(result.verdict);
-    var cls = "case-result is-" + (verdict || "unknown");
-    var html = '<div class="' + cls + '" data-hook="case-result" data-verdict="' + esc(verdict) + '">';
-    html += '<div class="cr-head">' + badge(verdict) +
-      "<b>" + esc(result.case_id || "") + "</b>" +
-      (result.title ? '<span class="cr-title">' + esc(result.title) + "</span>" : "") +
+    var summary = normSummary(result);
+    var reasons = reasonList(result, verdict, summary);
+    var headline = reportHeadline(result, verdict, summary, reasons);
+    var html = '<article class="case-result report is-' + (verdict || "unknown") + '"' +
+      ' data-hook="case-report" data-verdict="' + esc(verdict) + '"' +
+      ' data-case-id="' + esc(result.case_id || "") + '">';
+    html += '<div class="rc-head" data-hook="report-headline">' + badge(verdict) +
+      '<b class="rc-title">' + esc(headline) + "</b>" +
+      (result.case_id ? '<span class="rc-id mono">' + esc(result.case_id) + "</span>" : "") +
       "</div>";
-    html += '<div class="cr-body">' + breakpointHtml(result) + resultRowsHtml(result) + "</div>";
-    html += "</div>";
+    if (reasons.length) {
+      html += '<div class="rc-reasons" data-hook="report-reasons">' + esc(reasons.join("；")) + "</div>";
+    }
+    html += reportEvidenceHtml(result, summary, job);
+    html += devDetailsHtml(result);
+    html += "</article>";
     return html;
+  }
+
+  /* ==== 报告卡默认区 END ==== */
+
+  // 证据路径：点击路径或「复制」按钮即复制（剪贴板不可用时提示手动选中）
+  function copyText(value) {
+    var text = String(value == null ? "" : value);
+    if (!text) return;
+    var nav = typeof navigator !== "undefined" ? navigator : null;
+    if (nav && nav.clipboard && typeof nav.clipboard.writeText === "function") {
+      nav.clipboard.writeText(text).then(function () {
+        toast("已复制：" + text);
+      }, function () {
+        toast("复制失败，请手动选中路径");
+      });
+      return;
+    }
+    try {
+      if (typeof document.createElement === "function" && document.body) {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        document.body.removeChild(area);
+        toast("已复制：" + text);
+        return;
+      }
+    } catch (error) { /* 落到下面的手动提示 */ }
+    toast("请手动选中路径复制");
+  }
+
+  function bindReportActions(wrap) {
+    Array.prototype.forEach.call(wrap.querySelectorAll(".rc-dev-toggle"), function (button) {
+      button.onclick = function () {
+        var head = button.parentNode;
+        var panel = head && head.nextElementSibling;
+        if (!panel) return;
+        var open = !!panel.hidden;
+        panel.hidden = !open;
+        button.textContent = open ? "开发者详情 ▾" : "开发者详情 ▸";
+        button.setAttribute("aria-expanded", open ? "true" : "false");
+      };
+    });
+    Array.prototype.forEach.call(wrap.querySelectorAll(".rc-path"), function (node) {
+      node.onclick = function () {
+        copyText(node.getAttribute("data-path") || node.textContent);
+      };
+    });
+    Array.prototype.forEach.call(wrap.querySelectorAll(".rc-copy"), function (node) {
+      node.onclick = function () {
+        copyText(node.getAttribute("data-path") || "");
+      };
+    });
   }
 
   // ---------- 存方案对话框（UI-3） ----------
@@ -1158,6 +1734,16 @@
         renderList();
         renderSuites();
         renderRunButtons();
+      };
+    }
+    if ($("bench-dev-toggle")) {
+      $("bench-dev-toggle").onclick = function () {
+        var panel = $("bench-dev-details");
+        if (!panel) return;
+        var open = !!panel.hidden;
+        panel.hidden = !open;
+        this.textContent = open ? "开发者详情 ▾" : "开发者详情 ▸";
+        this.setAttribute("aria-expanded", open ? "true" : "false");
       };
     }
     if ($("btn-refresh")) $("btn-refresh").onclick = function () { loadAll().then(function () { toast("已刷新"); }); };
