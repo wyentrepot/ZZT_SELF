@@ -836,7 +836,7 @@ def test_list_suites_returns_case_ids_and_stop_on_fail(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_save_suite_persists_json_and_upserts(client, fake_root):
+def test_save_suite_persists_json_and_upserts(client, fake_root, tmp_path):
     body = {
         "id": "suite_new",
         "name": "新方案",
@@ -850,7 +850,10 @@ def test_save_suite_persists_json_and_upserts(client, fake_root):
     assert saved["replaced"] is False
     assert saved["suite"]["id"] == "suite_new"
     path = Path(saved["path"])
-    assert path.is_file() and path.parent == (fake_root / "case_suites").resolve()
+    # D2-12：用户方案落 <storage>/case_suites，**绝不写进声明根**（内置方案只读）
+    assert path.is_file() and path.parent == (tmp_path / "storage" / "case_suites").resolve()
+    assert path.parent != (fake_root / "case_suites").resolve(), "用户方案不许写进仓库声明根"
+    assert not (fake_root / "case_suites" / "suite_new.json").exists()
     assert json.loads(path.read_text(encoding="utf-8")) == body
 
     listed = {item["id"] for item in client.get("/api/cases/suites").json()["suites"]}
@@ -892,17 +895,43 @@ def test_save_suite_body_shape_is_validated(client):
 # --------------------------------------------------------------------------- #
 
 
-def test_delete_suite_removes_file_then_404(client, fake_root):
-    target = fake_root / "case_suites" / "suite_nostop.json"
-    assert target.is_file()
-    resp = client.delete("/api/cases/suites/suite_nostop")
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["deleted"] is True
-    assert not target.exists()
-    listed = {item["id"] for item in client.get("/api/cases/suites").json()["suites"]}
-    assert "suite_nostop" not in listed
+def test_builtin_suite_is_readonly_and_user_suite_is_deletable(client, fake_root, tmp_path):
+    """内置方案只读（D2-12）：删内置 → 409；用户方案可保存、可删除、可覆盖内置。
 
-    missing = client.delete("/api/cases/suites/suite_nostop")
+    2026-11-23 真机回归：早先实现把用户方案写进了声明根（`libs/case_runner/data/case_suites`），
+    既污染仓库又让声明校验测试变红；此用例把「内置只读 + 用户可写」钉死。
+    """
+    # 1) 删内置 → 409 suite_readonly，且文件仍在
+    builtin = fake_root / "case_suites" / "suite_nostop.json"
+    assert builtin.is_file()
+    denied = client.delete("/api/cases/suites/suite_nostop")
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["detail"]["code"] == "suite_readonly"
+    assert builtin.is_file(), "内置方案文件不得被删除"
+
+    # 2) 用户另存同名 → 覆盖内置，且落 storage（不是声明根）
+    body = {"id": "suite_nostop", "name": "用户覆盖", "case_ids": ["case_pass"],
+            "stop_on_fail": True, "notes": "覆盖内置"}
+    saved = client.post("/api/cases/suites", json=body)
+    assert saved.status_code == 200, saved.text
+    user_path = Path(saved.json()["path"])
+    assert user_path.parent == (tmp_path / "storage" / "case_suites").resolve()
+    listed = {item["id"]: item for item in client.get("/api/cases/suites").json()["suites"]}
+    assert listed["suite_nostop"]["name"] == "用户覆盖", "同 id 时用户方案覆盖内置"
+
+    # 3) 删用户方案 → 200；列表回落成内置版本
+    ok = client.delete("/api/cases/suites/suite_nostop")
+    assert ok.status_code == 200, ok.text
+    assert not user_path.exists()
+    listed = {item["id"]: item for item in client.get("/api/cases/suites").json()["suites"]}
+    assert listed["suite_nostop"]["name"] != "用户覆盖"
+
+    # 4) 再删已经没有用户覆盖 → 409（内置只读，不是 404）
+    again = client.delete("/api/cases/suites/suite_nostop")
+    assert again.status_code == 409, again.text
+
+    # 5) 删不存在的 → 404
+    missing = client.delete("/api/cases/suites/suite_never")
     assert missing.status_code == 404, missing.text
     assert missing.json()["detail"]["code"] == "suite_not_found"
 

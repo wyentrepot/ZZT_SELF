@@ -989,6 +989,8 @@ class CasesService:
         env_lock_timeout_s: float = DEFAULT_ENV_LOCK_TIMEOUT_S,
     ) -> None:
         self.storage_dir = Path(storage_dir)
+        #: 用户方案目录里的坏文件问题（不拖垮整表，随读表回显）
+        self._suite_problems: list[str] = []
         self.data_dir = Path(data_dir) if data_dir is not None else decl_loader.DATA_DIR
         #: 注入的能力替身（``{"simcon": fake, "simeter": fake, "module": fake}``），
         #: 与 ``case_runner.cli.main(extras=...)`` 是同一个装配位（测试/共享句柄用）
@@ -1141,11 +1143,43 @@ class CasesService:
 
     @property
     def suites_dir(self) -> Path:
-        """方案落盘目录 ``<data_dir>/case_suites``（与声明根同一处，git 可 diff）。"""
+        """**用户方案**落盘目录 ``<storage_dir>/case_suites``（D2-12）。
+
+        绝不能写进声明根（``libs/case_runner/data/case_suites``）——那是**随仓库发布的
+        内置方案**，是代码资产：写进去会污染仓库、并让声明校验测试变红（2026-11-23 真机
+        回归踩过一次）。内置方案只读，用户方案存这里，同 id 时用户方案覆盖内置。
+        """
+        return self.storage_dir / decl_loader.SUITES_DIRNAME
+
+    @property
+    def builtin_suites_dir(self) -> Path:
+        """随仓库发布的**内置方案**目录（只读）。"""
         root = Path(self.data_dir)
         if root.name == decl_loader.SUITES_DIRNAME:
             return root
         return root / decl_loader.SUITES_DIRNAME
+
+    def user_suites(self) -> dict[str, "SuiteSpec"]:
+        """读用户方案目录（坏文件忽略并记 problem，不影响其它方案）。"""
+        found: dict[str, SuiteSpec] = {}
+        directory = self.suites_dir
+        if not directory.is_dir():
+            return found
+        for path in sorted(directory.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                spec = SuiteSpec.model_validate(raw)
+            except Exception as exc:  # noqa: BLE001 - 单个坏文件不拖垮整表
+                self._suite_problems.append("%s: 用户方案解析失败（%s）" % (path.name, exc))
+                continue
+            found[spec.id] = spec
+        return found
+
+    def effective_suites(self, bundle: Bundle) -> dict[str, "SuiteSpec"]:
+        """内置 + 用户（同 id 用户覆盖）后的**生效方案表**。"""
+        merged: dict[str, SuiteSpec] = {spec.id: spec for spec in bundle.suites}
+        merged.update(self.user_suites())
+        return merged
 
     # -- 地址注入（唯一改 ``WORKBENCH_BASE`` 的地方） ------------------------ #
 
@@ -1269,7 +1303,8 @@ class CasesService:
         )
 
     def suite_catalog(self, bundle: Bundle) -> SuiteListResponse:
-        suites = [SuiteView.from_spec(spec) for spec in bundle.suites]
+        merged = self.effective_suites(bundle)
+        suites = [SuiteView.from_spec(spec) for spec in merged.values()]
         return SuiteListResponse(
             suites=suites,
             total=len(suites),
@@ -1324,7 +1359,15 @@ class CasesService:
 
     def delete_suite(self, bundle: Bundle, suite_id: str) -> SuiteDeleteResponse:
         """删除方案（不存在 → 404；不在可写方案目录内的声明 → 409，不误删）。"""
-        spec = bundle.suites_by_id.get(suite_id)
+        user = self.user_suites()
+        if suite_id not in user and suite_id in bundle.suites_by_id:
+            raise _error(
+                409,
+                "suite_readonly",
+                "方案 %r 是随仓库发布的内置方案（只读）：可另存同名方案覆盖，或删除自己的方案"
+                % suite_id,
+            )
+        spec = user.get(suite_id) or bundle.suites_by_id.get(suite_id)
         if spec is None:
             raise _error(
                 404,
@@ -1332,21 +1375,15 @@ class CasesService:
                 "方案不存在：%r（已有方案：%s）"
                 % (suite_id, "、".join(sorted(bundle.suites_by_id)) or "无"),
             )
-        source = (bundle.sources.get("suites") or {}).get(suite_id, "")
-        if not source:
-            raise _error(409, "suite_source_unknown", "方案 %r 没有可定位的声明文件" % suite_id)
-        path = Path(source)
-        try:
-            inside = path.resolve().parent == self.suites_dir.resolve()
-        except OSError:
-            inside = False
-        if not inside:
+        # 用户方案固定落 <storage>/case_suites/<id>.json（D2-12）；内置方案不在这里，
+        # 上面的分支已把「只删内置」挡成 409 suite_readonly。
+        if suite_id not in user:
             raise _error(
                 409,
-                "suite_outside_writable_root",
-                "方案 %r 的声明文件不在可写方案目录（%s）内，拒绝删除：%s"
-                % (suite_id, self.suites_dir, path),
+                "suite_readonly",
+                "方案 %r 不是用户方案（内置方案只读，不可删除）：%s" % (suite_id, self.suites_dir),
             )
+        path = self.suites_dir / ("%s.json" % suite_id)
         try:
             path.unlink()
         except FileNotFoundError:
@@ -1560,7 +1597,7 @@ class CasesService:
 
         if has_suite:
             suite_id = str(body.suite_id).strip()
-            suite = bundle.suites_by_id.get(suite_id)
+            suite = self.effective_suites(bundle).get(suite_id)
             if suite is None:
                 raise _error(
                     404,
