@@ -11,11 +11,17 @@
    真声明根 + 无工作台地址；假块假事实 + 未就绪假能力）；
 4. **断点呈现**：人读输出含失败块 id 与原因、``unmet_facts``、``failed_block`` / ``blocked_block``；
 5. **两点输出**：``--json`` 的 stdout 必须是合法 JSON（``json.loads`` 可解）；
-6. **``base_url`` 注入**：``--base-url`` 优先于环境变量，执行期可见、执行后还原；
+6. **``base_url`` 服务发现四级**（REQS-0042 D2-3）：``--base-url`` > ``WORKBENCH_BASE``
+   > 运行时文件 ``data/runtime/workbench.json`` > 本机默认端口（末档打提示）；
 7. **真跑**：用假块 + 假事实探测源跑通一条用例并给出完整 ``CaseRunResult.to_dict()``。
 
+参数名口径（REQS-0042 D2-1）：地址参数只叫 ``meter_addr``（多值 ``meter_addrs``）；
+``--params`` 里传旧名 ``addr`` / ``meters`` 一律退出码 3 + 迁移提示，**没有兼容别名**。
+
 全部脱离台架：假块执行体、假事实探测体、假能力对象、临时声明根（``tmp_path``），
-不发起任何真实 HTTP、不碰真串口。
+不发起任何真实 HTTP、不碰真串口。**工作台地址发现也被整文件隔离**（见
+``isolate_service_discovery``）——仓库里真实的 ``data/runtime/workbench.json``
+（工作台一起来就有）绝不能被单测读走，否则 ``probe --all`` 会真的下发帧。
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from typing import Any
 import pytest
 
 from case_runner import cli
+from case_runner.core import defaults
 from case_runner.core.executor import BlockResult
 from case_runner.core.models import Health
 from case_runner.core.planner import FactValue
@@ -44,11 +51,16 @@ from case_runner.core.registry import (
 
 ADDR = "000000000001"
 ADDR2 = "000000000012"
+#: 台架真实表地址口径（REQS-0042 D2-2 的出厂默认）
+METER_ADDR = "123456789012"
 EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_INCOMPLETE = 2
 EXIT_USAGE = 3
 EXIT_DECLARATION = 4
+
+#: 末档默认地址（从常量推出来，测试里不重复写端口）
+DEFAULT_URL = "http://127.0.0.1:%d" % cli.DEFAULT_PORT
 
 #: 真声明根（块 + 事实已注册；用例目录不参与本轮断言）
 REAL_DATA_DIR = pathlib.Path(cli.decl_loader.DATA_DIR)
@@ -118,11 +130,11 @@ def build_fake_bench(root: pathlib.Path) -> FakeBench:
 
     _write(root / "blocks" / "fake_pass.json", {
         "id": "fake.pass", "title": "假块·通过",
-        "action": {"kind": "fake", "params": {"addr": ADDR, "mode": "ok"}},
+        "action": {"kind": "fake", "params": {"meter_addr": ADDR, "mode": "ok"}},
     })
     _write(root / "blocks" / "fake_fail.json", {
         "id": "fake.fail", "title": "假块·失败",
-        "action": {"kind": "fake", "params": {"addr": ADDR}},
+        "action": {"kind": "fake", "params": {"meter_addr": ADDR}},
     })
     _write(root / "blocks" / "fake_unknown.json", {
         "id": "fake.unknown", "title": "假块·不知道",
@@ -140,7 +152,7 @@ def build_fake_bench(root: pathlib.Path) -> FakeBench:
     _write(root / "facts" / "fake_ready.json", {
         "id": "fake.ready", "title": "假事实·台架就绪", "probe": "fake.ready",
         "params_schema": {
-            "addr": {"type": "string", "pattern": "^[0-9]{12}$", "required": True},
+            "meter_addr": {"type": "string", "pattern": "^[0-9]{12}$", "required": True},
             "count": {"type": "integer", "default": 4},
         },
     })
@@ -236,6 +248,33 @@ def _unregister_fakes() -> None:
         unregister_fact(fact_id)
 
 
+@pytest.fixture(autouse=True)
+def isolate_service_discovery(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> pathlib.Path:
+    """整文件隔离「工作台地址发现」，并返回被隔离的运行时文件路径。
+
+    为什么必须隔离（REQS-0042 D2-3 落地后的安全底线）：
+    工作台一旦启动就会写仓库里的 ``data/runtime/workbench.json``，里面是**真实端口**。
+    单测若顺着它去发现地址，``probe --all`` 会真的跑块执行体（建档 / 重启路由 /
+    复位 STA），等于单测直接动台架。所以整个文件的默认状态是：
+
+    - 运行时文件指向 ``tmp_path`` 下（**绝不读仓库里那份真实文件**）；
+    - 末档默认关掉（``DEFAULT_BASE_URL = ""``）→ 什么都没发现时 ``("", "none")``；
+    - 环境变量 ``WORKBENCH_BASE`` 清掉；cwd 换到临时目录（证明发现逻辑不靠 cwd）。
+
+    需要测末档 / 运行时文件档的用例，自己在这个 fixture 之后把对应的常量或文件写回来，
+    ``DEFAULT_URL`` 是从 ``cli.DEFAULT_PORT`` 推出来的，测试里不重复写端口。
+    """
+
+    runtime_file = tmp_path / "runtime" / "workbench.json"
+    monkeypatch.setattr(cli, "RUNTIME_FILE", runtime_file)
+    monkeypatch.setattr(cli, "DEFAULT_BASE_URL", "")
+    monkeypatch.delenv(cli.ENV_BASE_URL, raising=False)
+    monkeypatch.chdir(tmp_path)
+    return runtime_file
+
+
 @pytest.fixture
 def bench(tmp_path: pathlib.Path) -> FakeBench:
     fake = build_fake_bench(tmp_path / "data")
@@ -302,7 +341,7 @@ def test_list_json_has_blocks_facts_cases_suites(bench: FakeBench) -> None:
     assert payload["problems"] == []
     # 事实的必填参数随 list 一起给出（UI / 脚本都要能看到）
     ready = next(item for item in payload["facts"] if item["id"] == "fake.ready")
-    assert ready["required"] == ["addr"]
+    assert ready["required"] == ["meter_addr"]
 
 
 def test_list_human_is_chinese_and_names_each_kind(bench: FakeBench) -> None:
@@ -323,8 +362,8 @@ def test_show_case_lists_steps_blocks_needs_and_params(bench: FakeBench) -> None
     assert item["steps"][0]["do"] == "跑假块"
     # 参数规格来自块 action.params + 事实 params_schema
     params = payload["param_spec"]["params"]
-    assert set(params) == {"addr", "count", "mode"}
-    assert params["addr"]["required_by"] == ["fake.ready"]
+    assert set(params) == {"meter_addr", "count", "mode"}
+    assert params["meter_addr"]["required_by"] == ["fake.ready"]
 
     code, out, _err = run_cli(["show", "fake_fail", "--data-dir", str(bench.root)])
     assert code == EXIT_OK
@@ -343,6 +382,32 @@ def test_show_unknown_id_is_usage_error(bench: FakeBench) -> None:
     code, out, err = run_cli(["show", "nope", "--data-dir", str(bench.root)])
     assert code == EXIT_USAGE
     assert "找不到 id" in err
+
+
+def test_show_block_prints_real_action_keys_not_empty_object() -> None:
+    """渲染瑕疵回归：块摘要曾取错键名，常驻输出一行 ``action：{}``（纯噪音）。"""
+    code, out, _err = run_cli(["show", "archive.add"])        # 真声明根，只读
+    assert code in (EXIT_OK, EXIT_DECLARATION), code
+    assert "action：{}" not in out, out
+    assert "action 键：afn、fn、params" in out, out
+    assert "action.params：" in out, out
+
+
+def test_show_meter_addr_default_comes_from_config() -> None:
+    """``show`` 要能看见 ``meter_addr`` 的默认值，且来源是两层配置（D2-1 + D2-2）。"""
+    expected = defaults.default_meter_addr()
+    assert expected, "出厂默认 case_defaults.json 里必须有 meter_addr"
+    code, payload = run_json(["show", "archive.add", "--json"])
+    assert code in (EXIT_OK, EXIT_DECLARATION), code
+    definition = payload["param_spec"]["params"]["meter_addr"]
+    assert definition["has_default"] is True
+    assert definition["default"] == expected
+    assert definition["default_source"] == "块声明"      # loader 已把 null 解析成真值
+
+    code, out, _err = run_cli(["show", "archive.add"])
+    assert code in (EXIT_OK, EXIT_DECLARATION), code
+    assert "meter_addr" in out and expected in out
+    assert "配置默认" in out and "case_defaults.json" in out
 
 
 # --------------------------------------------------------------------------- #
@@ -392,7 +457,7 @@ def test_exit_code_2_when_block_unknown(bench: FakeBench) -> None:
 def test_exit_code_2_when_gated_by_unmet_fact(bench: FakeBench) -> None:
     bench.truth["fake.ready"] = "no"
     code, payload = run_json([
-        "run", "--case", "fake_blocked", "--params", json.dumps({"addr": ADDR}),
+        "run", "--case", "fake_blocked", "--params", json.dumps({"meter_addr": ADDR}),
         "--json", "--data-dir", str(bench.root),
     ])
     assert code == EXIT_INCOMPLETE
@@ -409,7 +474,7 @@ def test_no_fake_pass_when_fact_unknown(bench: FakeBench) -> None:
     """``unknown`` 永不折算 pass：事实不知道 → 块 skipped → 用例 inconclusive。"""
     bench.truth["fake.ready"] = "unknown"
     code, payload = run_json([
-        "run", "--case", "fake_blocked", "--params", json.dumps({"addr": ADDR}),
+        "run", "--case", "fake_blocked", "--params", json.dumps({"meter_addr": ADDR}),
         "--json", "--data-dir", str(bench.root),
     ])
     assert code == EXIT_INCOMPLETE
@@ -445,9 +510,9 @@ def test_exit_code_4_on_broken_declaration(bench: FakeBench) -> None:
         ("{not json", "--params 不是合法 JSON"),
         ("[1, 2]", "必须是 JSON 对象"),
         (json.dumps({"nope": 1}), "多余参数"),
-        (json.dumps({"addr": 123}), "类型非法"),
-        (json.dumps({"addr": ADDR, "count": "many"}), "类型非法"),
-        (json.dumps({"addr": "12345"}), "取值非法"),        # 事实 schema 的 pattern
+        (json.dumps({"meter_addr": 123}), "类型非法"),
+        (json.dumps({"meter_addr": ADDR, "count": "many"}), "类型非法"),
+        (json.dumps({"meter_addr": "12345"}), "取值非法"),        # 事实 schema 的 pattern
     ],
 )
 def test_params_validation_blocks_execution(
@@ -467,11 +532,11 @@ def test_params_validation_blocks_execution(
 
 
 def test_missing_required_param_is_usage_error(bench: FakeBench) -> None:
-    """``fake.ready`` 的 addr 是必填，而 ``fake.gated`` 没声明取值 → 必须报缺必填。"""
+    """``fake.ready`` 的 meter_addr 是必填，而 ``fake.gated`` 没声明取值 → 必须报缺必填。"""
     code, payload = run_json(["run", "--case", "fake_blocked", "--json",
                               "--data-dir", str(bench.root)])
     assert code == EXIT_USAGE
-    assert any("缺少必填参数 'addr'" in problem for problem in payload["problems"])
+    assert any("缺少必填参数 'meter_addr'" in problem for problem in payload["problems"])
     assert bench.recorder.block_calls == []
 
 
@@ -480,20 +545,66 @@ def test_required_param_falls_back_to_unique_block_declaration(bench: FakeBench)
     code, payload = run_json(["run", "--case", "fake_fail", "--json",
                               "--data-dir", str(bench.root)])
     assert code == EXIT_FAIL  # 跑起来了（不是 3），结论来自假块的 fail
-    assert payload["params"] == {"addr": ADDR}
-    assert bench.recorder.fact_calls, "事实必须拿到 addr 才会被探测"
-    assert bench.recorder.fact_calls[0][1]["addr"] == ADDR
+    assert payload["params"] == {"meter_addr": ADDR}
+    assert bench.recorder.fact_calls, "事实必须拿到 meter_addr 才会被探测"
+    assert bench.recorder.fact_calls[0][1]["meter_addr"] == ADDR
 
 
 def test_params_are_broadcast_to_block_and_fact(bench: FakeBench) -> None:
     code, _payload = run_json([
-        "run", "--case", "fake_fail", "--params", json.dumps({"addr": ADDR2}),
+        "run", "--case", "fake_fail", "--params", json.dumps({"meter_addr": ADDR2}),
         "--json", "--data-dir", str(bench.root),
     ])
     assert code == EXIT_FAIL
     block_params = [params for _kind, params in bench.recorder.block_calls]
-    assert any(item.get("addr") == ADDR2 for item in block_params), block_params
-    assert bench.recorder.fact_calls[0][1]["addr"] == ADDR2
+    assert any(item.get("meter_addr") == ADDR2 for item in block_params), block_params
+    assert bench.recorder.fact_calls[0][1]["meter_addr"] == ADDR2
+
+
+def test_meter_addr_params_override_the_declared_default(bench: FakeBench) -> None:
+    """``--params '{"meter_addr": ...}'`` 覆盖声明默认值，且真的传到块与事实。"""
+    code, payload = run_json([
+        "run", "--case", "fake_fail", "--params", json.dumps({"meter_addr": METER_ADDR}),
+        "--json", "--data-dir", str(bench.root),
+    ])
+    assert code == EXIT_FAIL, payload          # 校验通过（不是 3），跑出真实结论
+    assert payload["params"] == {"meter_addr": METER_ADDR}
+    assert METER_ADDR != ADDR                  # 确实与声明默认值不同
+    block_params = [params for _kind, params in bench.recorder.block_calls]
+    assert any(item.get("meter_addr") == METER_ADDR for item in block_params), block_params
+    assert bench.recorder.fact_calls[0][1]["meter_addr"] == METER_ADDR
+
+
+@pytest.mark.parametrize(
+    "old_name, new_name",
+    [("addr", "meter_addr"), ("meters", "meter_addrs")],
+)
+def test_old_param_name_is_hard_rejected_with_migration_hint(
+    bench: FakeBench, old_name: str, new_name: str
+) -> None:
+    """REQS-0042 D2-1：旧参数名**不留兼容别名**，直接退出码 3 + 迁移写法。"""
+    code, payload = run_json([
+        "run", "--case", "fake_fail",
+        "--params", json.dumps({old_name: ADDR}), "--json", "--data-dir", str(bench.root),
+    ])
+    assert code == EXIT_USAGE
+    assert payload["ok"] is False and payload["error"] == "usage_error"
+    joined = "\n".join(payload["problems"])
+    assert old_name in joined and new_name in joined
+    assert "D2-1" in joined and "不再兼容旧名" in joined
+    assert '{"%s"' % new_name in joined        # 给出可直接抄的迁移写法
+    # 关键：参数校验失败时块执行体与事实探测体都没被调用（不进执行体）
+    assert bench.recorder.block_calls == []
+    assert bench.recorder.fact_calls == []
+
+
+def test_old_param_name_error_is_readable_in_human_mode(bench: FakeBench) -> None:
+    code, _out, err = run_cli([
+        "run", "--case", "fake_fail", "--params", json.dumps({"addr": ADDR}),
+        "--data-dir", str(bench.root),
+    ])
+    assert code == EXIT_USAGE
+    assert "已改名" in err and "meter_addr" in err
 
 
 def test_params_json_output_is_complete_case_run_result(bench: FakeBench) -> None:
@@ -568,7 +679,12 @@ def test_help_documents_exit_codes(capsys: pytest.CaptureFixture[str]) -> None:
 def test_probe_all_real_declarations_without_bench_is_all_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """铁律（真声明根 + 真探测体）：没有工作台地址时，13 块 / 7 事实必须全 unknown。"""
+    """铁律（真声明根 + 真探测体）：没有工作台地址时，13 块 / 7 事实必须全 unknown。
+
+    **安全前提**：地址发现已被 ``isolate_service_discovery`` 隔离成 ``("", "none")``。
+    否则（工作台在本机起着时）``probe --all`` 会真的跑块执行体——建档 / 重启路由 /
+    复位 STA 都会落到台架上。单测一次台架都不许碰，这条断言就是门槛。
+    """
     monkeypatch.delenv(cli.ENV_BASE_URL, raising=False)
     code, payload = run_json(["probe", "--all", "--json"])
     if code == EXIT_DECLARATION:
@@ -662,16 +778,118 @@ def test_probe_never_reports_pass_when_gating_fact_unknown(bench: FakeBench) -> 
 
 
 # --------------------------------------------------------------------------- #
-# 6. base_url 注入（--base-url > WORKBENCH_BASE；不写死端口）
+# 6. base_url 服务发现四级（REQS-0042 D2-3：--base-url > env > 运行时文件 > 末档）
 # --------------------------------------------------------------------------- #
 
 
-def test_resolve_base_url_priority(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(cli.ENV_BASE_URL, raising=False)
+def _write_runtime_file(path: pathlib.Path, payload: dict[str, Any]) -> pathlib.Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_resolve_base_url_priority(
+    monkeypatch: pytest.MonkeyPatch, isolate_service_discovery: pathlib.Path
+) -> None:
+    """四级优先级：每一档都要能压过下一档，来源如实回报。"""
+    runtime_file = isolate_service_discovery
+    # 隔离态：运行时文件不存在 + 末档关掉 → 真的什么都没有
     assert cli.resolve_base_url(None) == ("", "none")
+
+    # 第 3 档：运行时文件（工作台启动时写）
+    _write_runtime_file(runtime_file, {
+        "host": "0.0.0.0", "port": 8790, "pid": 1,
+        "started_at": "2026-11-23T15:00:00+08:00",
+        "base_url": "http://runtime.invalid:3",
+    })
+    assert cli.resolve_base_url(None) == ("http://runtime.invalid:3", "runtime")
+
+    # 第 2 档：环境变量压过运行时文件
     monkeypatch.setenv(cli.ENV_BASE_URL, "http://env.invalid:1")
     assert cli.resolve_base_url(None) == ("http://env.invalid:1", "env")
+
+    # 第 1 档：--base-url 压过环境变量与运行时文件
     assert cli.resolve_base_url("http://cli.invalid:2") == ("http://cli.invalid:2", "cli")
+
+
+def test_default_base_url_is_the_last_tier_and_prints_notice(
+    bench: FakeBench, monkeypatch: pytest.MonkeyPatch, isolate_service_discovery: pathlib.Path
+) -> None:
+    """什么都没发现 → 末档默认地址可跑，**且必须打一行提示**（D2-3 硬要求）。"""
+    monkeypatch.setattr(cli, "DEFAULT_BASE_URL", DEFAULT_URL)
+    assert not isolate_service_discovery.exists()
+    code, out, err = run_cli(["run", "--case", "fake_env_case",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert bench.env_seen == [DEFAULT_URL], "末档地址必须真的灌进 WORKBENCH_BASE"
+    assert "未发现 workbench.json" in out
+    assert "按本机默认端口 %d" % cli.DEFAULT_PORT in out
+    assert err == "" or "未发现 workbench.json" not in err   # 人读态提示在 stdout
+
+
+def test_default_tier_notice_goes_to_stderr_in_json_mode(
+    bench: FakeBench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--json`` 时提示走 stderr：stdout 必须仍是可 ``json.loads`` 的纯 JSON。"""
+    monkeypatch.setattr(cli, "DEFAULT_BASE_URL", DEFAULT_URL)
+    code, out, err = run_cli(["run", "--case", "fake_env_case", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    payload = json.loads(out)                       # 纯 JSON，没被提示污染
+    assert payload["base_url"] == DEFAULT_URL
+    assert payload["base_url_source"] == "default"
+    assert payload["base_url_note"]
+    assert "未发现 workbench.json" in err
+
+
+def test_runtime_file_host_port_normalized_to_loopback(
+    isolate_service_discovery: pathlib.Path,
+) -> None:
+    """只有 host+port、且 host 是监听用的 ``0.0.0.0`` → 必须归一成回环才能拨号。"""
+    _write_runtime_file(isolate_service_discovery,
+                        {"host": "0.0.0.0", "port": 8790, "pid": 1})
+    assert cli.runtime_base_url() == "http://127.0.0.1:8790"
+    assert cli.resolve_base_url(None) == ("http://127.0.0.1:8790", "runtime")
+    # 显式 127.0.0.1 原样保留
+    _write_runtime_file(isolate_service_discovery, {"host": "127.0.0.1", "port": 9001})
+    assert cli.resolve_base_url(None) == ("http://127.0.0.1:9001", "runtime")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not json",
+        "[]",
+        '{"host": "127.0.0.1"}',                    # 没有 port
+        '{"port": 99999}',                          # 端口越界
+        '{"base_url": "not-a-url", "port": 0}',      # base_url 不是 http(s)
+    ],
+)
+def test_broken_runtime_file_never_raises_and_falls_through(
+    content: str, monkeypatch: pytest.MonkeyPatch, isolate_service_discovery: pathlib.Path
+) -> None:
+    """运行时文件坏掉 = 只是少一条线索：不抛异常，落到下一档。"""
+    isolate_service_discovery.parent.mkdir(parents=True, exist_ok=True)
+    isolate_service_discovery.write_text(content, encoding="utf-8")
+    assert cli.runtime_base_url() == ""
+    assert cli.resolve_base_url(None) == ("", "none")
+    monkeypatch.setattr(cli, "DEFAULT_BASE_URL", DEFAULT_URL)
+    assert cli.resolve_base_url(None) == (DEFAULT_URL, "default")
+
+
+def test_runtime_file_makes_zero_arg_run_work(
+    bench: FakeBench, isolate_service_discovery: pathlib.Path
+) -> None:
+    """零参可跑：不传 --base-url、不设环境变量，靠运行时文件发现服务。"""
+    _write_runtime_file(isolate_service_discovery, {
+        "host": "0.0.0.0", "port": 8790,
+        "base_url": "http://runtime.invalid:3",
+    })
+    code, payload = run_json(["run", "--case", "fake_env_case", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert bench.env_seen == ["http://runtime.invalid:3"]
+    assert payload["base_url_source"] == "runtime"
 
 
 def test_base_url_flag_reaches_execution_and_is_restored(
@@ -685,6 +903,8 @@ def test_base_url_flag_reaches_execution_and_is_restored(
     assert code == EXIT_OK
     assert bench.env_seen == ["http://cli.invalid:2"]       # 执行期看到 --base-url
     assert os.environ[cli.ENV_BASE_URL] == "http://env.invalid:1"   # 执行后还原
+    assert payload["base_url"] == "http://cli.invalid:2"
+    assert payload["base_url_source"] == "cli"
     assert payload["verdict"] == "pass"
 
 
@@ -698,25 +918,37 @@ def test_env_base_url_is_used_when_flag_absent(
     assert bench.env_seen == ["http://env.invalid:1"]
 
 
-def test_no_base_url_anywhere_means_empty_not_default_port(
-    bench: FakeBench, monkeypatch: pytest.MonkeyPatch
+def test_nothing_discovered_means_empty_when_default_tier_disabled(
+    bench: FakeBench,
 ) -> None:
-    monkeypatch.delenv(cli.ENV_BASE_URL, raising=False)
+    """末档常量关掉时（隔离态）不得偷偷塞任何端口：入口层不许有隐藏默认。"""
     code, payload = run_json(["run", "--case", "fake_env_case", "--json",
                               "--data-dir", str(bench.root)])
     assert code == EXIT_FAIL           # 假块在「没有地址」时给 fail，证明入口没偷偷塞默认值
     assert bench.env_seen == [""]
-    assert payload["verdict"] == "fail"
+    assert payload["base_url"] == ""
+    assert payload["base_url_source"] == "none"
 
 
-def test_sources_contain_no_hardcoded_workbench_port() -> None:
-    """入口文件不得写死工作台端口（REQS 第四批硬约束，连注释里也不许有）。"""
+def test_port_literal_only_in_the_single_default_constant() -> None:
+    """D2-3 之后端口只许出现**一处**：末档默认常量。
+
+    老口径是「入口文件里连注释都不许出现端口」；末档默认端口落地后那条断言必须换口径
+    （REQS-0042 D2-5 允许改旧预期），否则 D2-3 与它直接互斥。新口径：
+    端口字面量只能出现在定义 ``DEFAULT_PORT`` / ``DEFAULT_BASE_URL`` 的行上，
+    其它地方一律拼常量；入口脚本 ``tools/scripts/case_run.py`` 仍然一个都不许有。
+    """
     needle = "87" + "90"      # 拆开写，避免本测试文件自己成为命中项
-    for path in (
-        pathlib.Path(cli.__file__),
-        pathlib.Path(cli.__file__).resolve().parents[2] / "tools" / "scripts" / "case_run.py",
-    ):
-        assert needle not in path.read_text(encoding="utf-8"), "%s 里出现了写死端口" % path
+    text = pathlib.Path(cli.__file__).read_text(encoding="utf-8")
+    hits = [line.strip() for line in text.splitlines() if needle in line]
+    assert hits, "末档默认端口常量不见了（D2-3 要求零参可跑）"
+    for line in hits:
+        assert "DEFAULT_PORT" in line or "DEFAULT_BASE_URL" in line, line
+    entry = (
+        pathlib.Path(cli.__file__).resolve().parents[2]
+        / "tools" / "scripts" / "case_run.py"
+    )
+    assert needle not in entry.read_text(encoding="utf-8"), "入口脚本里出现了写死端口"
 
 
 # --------------------------------------------------------------------------- #
@@ -747,11 +979,11 @@ def test_suite_stop_on_fail_marks_remaining_cases_not_run(bench: FakeBench) -> N
 def test_suite_params_validated_against_union(bench: FakeBench) -> None:
     """方案里只有部分用例需要某参数时，该参数仍合法（按并集判多余）。"""
     code, payload = run_json([
-        "run", "--suite", "fake_suite", "--params", json.dumps({"addr": ADDR2}),
+        "run", "--suite", "fake_suite", "--params", json.dumps({"meter_addr": ADDR2}),
         "--json", "--data-dir", str(bench.root),
     ])
     assert code == EXIT_FAIL                        # 校验通过（不是 3），跑出真实结论
-    assert payload["params"] == {"addr": ADDR2}
+    assert payload["params"] == {"meter_addr": ADDR2}
 
     code, payload = run_json([
         "run", "--suite", "fake_suite", "--params", json.dumps({"nope": 1}),
@@ -845,3 +1077,169 @@ def test_real_run_demo_prints_complete_json(bench: FakeBench) -> None:
     # 人读输出与 JSON 结论一致（同一份 RunOutcome）
     code2, out, _err = run_cli(["run", "--case", "fake_ok", "--data-dir", str(bench.root)])
     assert code2 == EXIT_OK and "结论：PASS" in out
+
+
+# --------------------------------------------------------------------------- #
+# 10. 步骤实例化（REQS-0042 D3-1）：步骤表 / step_id / 每步参数
+# --------------------------------------------------------------------------- #
+
+
+def _write_plan_case(bench: FakeBench, case_id: str = "fake_planned", **over: Any) -> None:
+    """往临时声明根里加一条 ``plan`` 用例（同块两次、各带不同表地址）。"""
+    payload: dict[str, Any] = {
+        "id": case_id,
+        "title": "假用例·同一块两次实例化",
+        "steps": [_step("同一下发动作跑两次，各带一块表地址")],
+        "needs": [],
+        "plan": [
+            {"id": "add_a", "block": "fake.pass", "params": {"meter_addr": "000000000011"}},
+            {
+                "id": "add_b",
+                "block": "fake.pass",
+                "params": {"meter_addr": "000000000022"},
+                "on_fail": "continue",
+            },
+        ],
+        "asserts": [],
+        "tags": ["fake", "single-test-only"],
+    }
+    payload.update(over)
+    _write(bench.root / "cases" / ("%s.json" % case_id), payload)
+
+
+def test_run_json_blocks_carry_step_id(bench: FakeBench) -> None:
+    _write_plan_case(bench)
+    code, payload = run_json(["run", "--case", "fake_planned", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK, payload
+    assert [block["step_id"] for block in payload["blocks"]] == ["add_a", "add_b"]
+    assert [block["block_id"] for block in payload["blocks"]] == ["fake.pass", "fake.pass"]
+    # 同块两次 → 两次下发参数不同（用户诉求：一次下发多块不同档案）
+    assert [block["params"]["meter_addr"] for block in payload["blocks"]] == [
+        "000000000011", "000000000022",
+    ]
+    # 汇总里能看出每个 step 的结论
+    assert [item["step_id"] for item in payload["steps"]] == ["add_a", "add_b"]
+    assert [item["outcome"] for item in payload["steps"]] == ["pass", "pass"]
+
+
+def test_run_params_override_step_params(bench: FakeBench) -> None:
+    """``--params`` 覆盖 step.params（D3-2：run 级 > step.params > 声明默认）。"""
+    _write_plan_case(bench)
+    code, payload = run_json([
+        "run", "--case", "fake_planned", "--json",
+        "--params", json.dumps({"meter_addr": "999999999999"}),
+        "--data-dir", str(bench.root),
+    ])
+    assert code == EXIT_OK, payload
+    assert [block["params"]["meter_addr"] for block in payload["blocks"]] == [
+        "999999999999", "999999999999",
+    ]
+
+
+def test_run_without_params_keeps_step_params(bench: FakeBench) -> None:
+    """不传 ``--params`` 时 step.params 生效（不是被块声明的默认值盖掉）。"""
+    _write_plan_case(bench)
+    code, _payload = run_json(["run", "--case", "fake_planned", "--json",
+                               "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert [call[1].get("meter_addr") for call in bench.recorder.block_calls] == [
+        "000000000011", "000000000022",
+    ]
+
+
+def test_run_json_summarises_multiple_cases_with_step_ids(bench: FakeBench) -> None:
+    """方案（多用例）分支的每块记录也要带 step_id。"""
+    _write_plan_case(bench)
+    _write(bench.root / "case_suites" / "fake_suite_plan.json", {
+        "id": "fake_suite_plan", "name": "假方案·含 steps 实例化",
+        "case_ids": ["fake_ok", "fake_planned"], "stop_on_fail": False,
+    })
+    code, payload = run_json(["run", "--suite", "fake_suite_plan", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK, payload
+    cases = {item["case_id"]: item for item in payload["cases"]}
+    assert [b["step_id"] for b in cases["fake_planned"]["blocks"]] == ["add_a", "add_b"]
+    assert [b["step_id"] for b in cases["fake_ok"]["blocks"]] == ["fake.pass"]
+
+
+def test_show_case_has_step_table(bench: FakeBench) -> None:
+    _write_plan_case(bench)
+    code, payload = run_json(["show", "fake_planned", "--json",
+                              "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    table = payload["item"]["steps_table"]
+    assert [row["step_id"] for row in table] == ["add_a", "add_b"]
+    assert [row["block_id"] for row in table] == ["fake.pass", "fake.pass"]
+    assert table[0]["on_fail"] == "继承"           # 未显式声明 → 继承 run/方案级
+    assert table[1]["on_fail"] == "continue"
+    assert "000000000011" in json.dumps(table[0], ensure_ascii=False)
+
+    code, out, _err = run_cli(["show", "fake_planned", "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert "步骤表" in out and "add_a" in out and "add_b" in out and "on_fail" in out
+
+
+def test_show_real_case_has_step_table_readonly() -> None:
+    """真声明根：``show meter_read`` 要有步骤表（plan 为自动展开，只读不跑块）。"""
+    code, out, _err = run_cli(["show", "meter_read"])
+    assert code in (EXIT_OK, EXIT_DECLARATION), out
+    assert "步骤表" in out, out
+    assert "meter.addr_probe" in out
+
+
+def test_show_real_plan_case_lists_step_params_readonly() -> None:
+    """真声明根里的 plan 用例（archive_multi）：步骤表要显示各步参数与 on_fail。"""
+    code, out, _err = run_cli(["show", "archive_multi"])
+    assert code in (EXIT_OK, EXIT_DECLARATION), out
+    assert "add_a" in out and "add_b" in out, out
+    assert "000000000011" in out and "000000000022" in out, out
+
+
+def test_check_hints_when_blocks_and_plan_both_given(bench: FakeBench) -> None:
+    """两者都给 → 不报错，但给一条提示（说清以 plan 为准）。"""
+    _write_plan_case(bench, case_id="fake_both", blocks=["fake.pass"])
+    code, payload = run_json(["check", "--json", "--data-dir", str(bench.root)])
+    assert code == EXIT_OK, payload
+    assert payload["problems"] == []
+    notices = "\n".join(payload.get("notices") or [])
+    assert "fake_both" in notices and "plan" in notices
+
+
+def test_check_catches_plan_referencing_unknown_block(bench: FakeBench) -> None:
+    """plan 引用的块不存在 → 报错（loader 校验层），错误信息点名用例与 step。"""
+    _write_plan_case(
+        bench,
+        case_id="fake_bad_plan",
+        plan=[{"id": "ghost_step", "block": "no.such.block"}],
+    )
+    code, payload = run_json(["check", "--json", "--data-dir", str(bench.root)])
+    assert code == EXIT_DECLARATION, payload
+    joined = "\n".join(payload["problems"])
+    assert "fake_bad_plan" in joined and "ghost_step" in joined and "no.such.block" in joined
+
+
+def test_case_file_plan_unknown_block_is_usage_error(
+    bench: FakeBench, tmp_path: pathlib.Path
+) -> None:
+    case_file = tmp_path / "plan_bad.json"
+    case_file.write_text(json.dumps({
+        "id": "plan_bad", "title": "坏 plan", "steps": [_step("x")],
+        "needs": [], "plan": [{"id": "s1", "block": "no.such.block"}], "asserts": [],
+    }, ensure_ascii=False), encoding="utf-8")
+    code, _out, err = run_cli(["run", "--case-file", str(case_file),
+                               "--data-dir", str(bench.root)])
+    assert code == EXIT_USAGE
+    assert "不存在的块" in err
+
+
+def test_run_human_output_marks_steps_when_block_repeats(bench: FakeBench) -> None:
+    """人读输出：同块多步时按步骤顺序列明细，并给出行内步骤结论（不靠块 id 猜）。"""
+    _write_plan_case(bench)
+    code, out, _err = run_cli(["run", "--case", "fake_planned",
+                               "--data-dir", str(bench.root)])
+    assert code == EXIT_OK
+    assert "按步骤顺序" in out
+    assert "tenant" not in out            # 没有把别的用例的步骤混进来
+    assert "add_a" in out and "add_b" in out
+    assert "步骤结论：add_a=pass、add_b=pass" in out

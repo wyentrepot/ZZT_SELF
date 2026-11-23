@@ -558,3 +558,256 @@ def test_provides_with_explicit_params_does_not_leak_to_other_params() -> None:
     assert run.facts_ctx.peek("archive.contains").state == FACT_YES
     run.facts_ctx.params["archive.contains"] = {"addr": "A"}
     assert run.facts_ctx.peek("archive.contains") is None, "A 的结论不得由 B 的建档推出"
+
+
+# --- 步骤实例化（REQS-0042 D3-1）：同块多次 / 各自参数 / 每步失败处理 --------
+
+
+def plan_case(plan, blocks=None, needs=None) -> CaseSpec:
+    """带 ``plan`` 的用例（``blocks`` 可选，两者都给以 plan 为准）。"""
+    return CaseSpec(
+        id="archive_multi",
+        title="多档下发",
+        steps=[CaseStep(no=1, do="下发", expect="回帧")],
+        blocks=list(blocks or []),
+        plan=list(plan),
+        needs=list(needs or []),
+    )
+
+
+def _recorder_block(seen: list[dict], state: str | dict = "pass"):
+    """假块：把每次收到的 params 记下来，按需返回结论。"""
+
+    def executor(params, c):
+        seen.append(dict(params))
+        if isinstance(state, list):
+            return state[len(seen) - 1]
+        return {"state": state}
+
+    return executor
+
+
+def test_plan_steps_run_in_declared_order() -> None:
+    seen: list[str] = []
+
+    def block(name: str):
+        def executor(params, c):
+            seen.append(name)
+            return {"state": "pass"}
+
+        return executor
+
+    register_block("a", block("a"))
+    register_block("b", block("b"))
+    result = execute_case(plan_case([{"id": "s2", "block": "b"}, {"id": "s1", "block": "a"}]), ctx())
+    assert seen == ["b", "a"]
+    assert [record.step_id for record in result.blocks] == ["s2", "s1"]
+    assert [record.block_id for record in result.blocks] == ["b", "a"]
+    assert result.verdict == "pass"
+
+
+def test_step_params_do_not_leak_between_same_block_steps() -> None:
+    """同块两次实例化，各带不同 meter_addr：两次下发参数必须不同（核心诉求）。"""
+    seen: list[dict] = []
+    register_block("archive.add", _recorder_block(seen))
+    specs = {
+        "archive.add": BlockSpec(
+            id="archive.add",
+            title="下发档案",
+            action={"semantic": "fake", "params": {"meter_addr": "默认地址"}},
+        )
+    }
+    result = execute_case(
+        plan_case(
+            [
+                {"id": "add_a", "block": "archive.add", "params": {"meter_addr": "000000000011"}},
+                {"id": "add_b", "block": "archive.add", "params": {"meter_addr": "000000000022"}},
+            ]
+        ),
+        ctx(block_specs=specs),
+    )
+    assert [call.get("meter_addr") for call in seen] == ["000000000011", "000000000022"]
+    # 结果里能看到每步解析后的实际参数（D4-1 参数冻结的数据基础）
+    assert [record.params.get("meter_addr") for record in result.blocks] == [
+        "000000000011",
+        "000000000022",
+    ]
+    assert result.verdict == "pass"
+
+
+def test_run_level_block_params_beat_step_params() -> None:
+    """D3-2 优先级：run 级 ``--params``（ctx.block_params）> step.params > 块声明。"""
+    seen: list[dict] = []
+    register_block("archive.add", _recorder_block(seen))
+    specs = {
+        "archive.add": BlockSpec(
+            id="archive.add", title="t", action={"semantic": "fake", "params": {"meter_addr": "声明"}}
+        )
+    }
+    execute_case(
+        plan_case(
+            [{"id": "add_a", "block": "archive.add", "params": {"meter_addr": "步骤"}}]
+        ),
+        ctx(
+            block_specs=specs,
+            block_params={"archive.add": {"meter_addr": "运行期"}},
+        ),
+    )
+    assert seen[0]["meter_addr"] == "运行期"
+
+
+def test_step_params_beat_declared_action_params() -> None:
+    seen: list[dict] = []
+    register_block("archive.add", _recorder_block(seen))
+    specs = {
+        "archive.add": BlockSpec(
+            id="archive.add", title="t", action={"semantic": "fake", "params": {"meter_addr": "声明"}}
+        )
+    }
+    execute_case(
+        plan_case(
+            [{"id": "add_a", "block": "archive.add", "params": {"meter_addr": "步骤"}}]
+        ),
+        ctx(block_specs=specs),
+    )
+    assert seen[0]["meter_addr"] == "步骤"
+
+
+def test_ctx_step_params_override_step_spec_params() -> None:
+    """``RunContext.step_params`` 按 step_id 生效（同块多次互不覆盖的关键）。"""
+    seen: list[dict] = []
+    register_block("archive.add", _recorder_block(seen))
+    execute_case(
+        plan_case(
+            [
+                {"id": "add_a", "block": "archive.add", "params": {"meter_addr": "A"}},
+                {"id": "add_b", "block": "archive.add", "params": {"meter_addr": "B"}},
+            ]
+        ),
+        ctx(step_params={"add_b": {"meter_addr": "B2"}}),
+    )
+    assert [call.get("meter_addr") for call in seen] == ["A", "B2"]
+
+
+def test_on_fail_continue_runs_downstream() -> None:
+    register_block("b1", lambda params, c: {"state": "fail", "detail": "首步挂"})
+    register_block("b2", lambda params, c: {"state": "pass"})
+    result = execute_case(
+        plan_case(
+            [
+                {"id": "s1", "block": "b1", "on_fail": "continue"},
+                {"id": "s2", "block": "b2"},
+            ]
+        ),
+        ctx(),
+    )
+    assert [record.state for record in result.blocks] == ["fail", "pass"]
+    assert result.counts["pass"] == 1
+    assert result.verdict == "fail"
+
+
+def test_on_fail_stop_skips_downstream_and_names_step() -> None:
+    register_block("b1", lambda params, c: {"state": "fail", "detail": "首步挂"})
+    register_block("b2", lambda params, c: {"state": "pass"})
+    result = execute_case(
+        plan_case(
+            [
+                {"id": "s1", "block": "b1", "on_fail": "stop"},
+                {"id": "s2", "block": "b2"},
+            ]
+        ),
+        ctx(),
+    )
+    assert [record.state for record in result.blocks] == ["fail", "skipped"]
+    assert "s1" in result.blocks[1].detail or "b1" in result.blocks[1].detail
+    assert result.blocks[1].step_id == "s2"
+
+
+def test_legacy_blocks_case_inherits_run_level_stop_on_fail() -> None:
+    """老用例（无 plan）行为不变：stop_on_fail=False 时后续照跑。"""
+    register_block("b1", lambda params, c: {"state": "fail"})
+    register_block("b2", lambda params, c: {"state": "pass"})
+    no_stop = execute_case(make_case(["b1", "b2"]), ctx())
+    stopped = execute_case(make_case(["b1", "b2"]), ctx(), stop_on_fail=True)
+    assert [b.state for b in no_stop.blocks] == ["fail", "pass"]
+    assert [b.state for b in stopped.blocks] == ["fail", "skipped"]
+
+
+def test_plan_step_without_on_fail_inherits_run_level_default() -> None:
+    """plan 里没写 on_fail → 继承 run/方案级 stop_on_fail（而不是硬按 stop）。"""
+    register_block("b1", lambda params, c: {"state": "fail"})
+    register_block("b2", lambda params, c: {"state": "pass"})
+    case = plan_case([{"id": "s1", "block": "b1"}, {"id": "s2", "block": "b2"}])
+    assert [b.state for b in execute_case(case, ctx()).blocks] == ["fail", "pass"]
+    assert [b.state for b in execute_case(case, ctx(), stop_on_fail=True).blocks] == [
+        "fail",
+        "skipped",
+    ]
+
+
+def test_block_record_and_result_expose_step_id() -> None:
+    register_block("b1", lambda params, c: {"state": "pass"})
+    case = plan_case([{"id": "only", "block": "b1"}])
+    data = execute_case(case, ctx()).to_dict()
+    assert data["blocks"][0]["step_id"] == "only"
+    # 未显式声明 on_fail → 记录的是**继承后**的生效策略（run 级 stop_on_fail=False）
+    assert data["steps"] == [
+        {"step_id": "only", "block_id": "b1", "state": "pass", "outcome": "pass",
+         "on_fail": "continue"}
+    ]
+    assert execute_case(case, ctx()).blocks[0].assertion.assertion_id == "archive_multi.only"
+    # 显式声明时记录声明值
+    declared = execute_case(
+        plan_case([{"id": "only", "block": "b1", "on_fail": "stop"}]), ctx()
+    )
+    assert declared.to_dict()["steps"][0]["on_fail"] == "stop"
+
+
+def test_legacy_assertion_id_and_step_id_unchanged() -> None:
+    """老用例的断言 id 仍为 ``用例.块``，step_id 回填成块 id（逐字兼容）。"""
+    register_block("b1", lambda params, c: {"state": "pass"})
+    result = execute_case(make_case(["b1"]), ctx())
+    assert result.blocks[0].step_id == "b1"
+    assert result.blocks[0].assertion.assertion_id == "nwk_join.b1"
+    assert result.to_dict()["steps"][0]["step_id"] == "b1"
+
+
+def test_failed_step_and_blocked_step_point_at_the_right_instance() -> None:
+    """同块两步：第 1 步 pass、第 2 步 fail → 断点必须指向**第 2 步**（不能只给块 id）。"""
+    register_block(
+        "archive.add",
+        lambda params, c: {"state": "pass"}
+        if params.get("meter_addr") == "A"
+        else {"state": "fail", "detail": "第二块表无应答"},
+    )
+    result = execute_case(
+        plan_case(
+            [
+                {"id": "add_a", "block": "archive.add", "params": {"meter_addr": "A"}},
+                {"id": "add_b", "block": "archive.add", "params": {"meter_addr": "B"}},
+            ]
+        ),
+        ctx(),
+    )
+    data = result.to_dict()
+    assert data["failed_block"] == "archive.add"
+    assert data["failed_step"] == "add_b"
+    assert data["blocked_step"] == ""
+
+
+def test_blocked_step_when_gated_fact_missing() -> None:
+    register_fact("bench.simcon_online", lambda params: "no")
+    specs = {
+        "archive.add": BlockSpec(
+            id="archive.add",
+            title="t",
+            action={"semantic": "x"},
+            needs=["bench.simcon_online"],
+        )
+    }
+    result = execute_case(
+        plan_case([{"id": "add_a", "block": "archive.add"}]), ctx(block_specs=specs)
+    )
+    data = result.to_dict()
+    assert data["blocked_block"] == "archive.add"
+    assert data["blocked_step"] == "add_a"

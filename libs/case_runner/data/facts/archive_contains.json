@@ -2,12 +2,14 @@
   "id": "archive.contains",
   "title": "档案表含指定从节点地址（10H-F2 只读探测）",
   "probe": "archive.contains",
+  "parameterized": true,
   "params_schema": {
-    "addr": {
+    "meter_addr": {
       "type": "string",
       "pattern": "^[0-9]{12}$",
-      "required": true,
-      "description": "12 位 BCD 表地址，如 000000000001"
+      "required": false,
+      "default": null,
+      "description": "12 位 BCD 表地址（人读序）；缺省取 case_defaults.meter_addr（见 REQS 0042 D2-2）"
     },
     "start": {
       "type": "integer",

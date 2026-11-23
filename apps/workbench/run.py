@@ -4,9 +4,11 @@
 或：cd apps && python3 -m workbench.run   # 或 .venv\\Scripts\\python.exe -m workbench.run
 """
 import glob
+import json
 import os
 import stat
 import sys
+from datetime import datetime
 from pathlib import Path
 from threading import Timer
 
@@ -29,6 +31,53 @@ PORT = 8790
 
 # 用户态串口设备节点前缀：工作台通过 /dev 下的这些节点枚举串口。
 _SERIAL_NODE_GLOBS = ("/dev/ttyACM*", "/dev/ttyUSB*", "/dev/ttyXRUSB*")
+
+
+def repo_root() -> Path:
+    """仓库根（frozen 打包时取可执行文件所在目录）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+def runtime_file_path() -> Path:
+    """CLI 发现本服务的运行时文件：``<仓库根>/data/runtime/workbench.json``。
+
+    REQS-0042 D2-3「单入口服务发现」：``case_run`` 零参时要能找到工作台，
+    靠的就是启动时写下来的这份文件（读侧见 ``case_runner/cli.py`` 的
+    ``runtime_base_url`` / ``resolve_base_url``，只读、不写）。
+    路径固定在仓库根，**与声明根 / cwd 无关**。``apps/workbench/desktop.py``
+    有同名实现（桌面入口可能单独启动），两处口径必须一致。
+    """
+    return repo_root() / "data" / "runtime" / "workbench.json"
+
+
+def write_runtime_file(host: str = "0.0.0.0", port: int = PORT) -> Path | None:
+    """写运行时文件（D2-3）；**写失败只 warning，绝不阻塞启动**。
+
+    内容：``host``（监听地址）/ ``port`` / ``pid`` / ``started_at``（ISO8601）/
+    ``base_url``（客户端可拨的本机回环地址——监听 ``0.0.0.0`` 不是可拨目标）。
+    先写 ``.tmp`` 再 ``os.replace``：CLI 永远读不到半个文件。
+    """
+    target = runtime_file_path()
+    try:
+        payload = {
+            "host": str(host),
+            "port": int(port),
+            "pid": os.getpid(),
+            "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "base_url": "http://127.0.0.1:%d" % int(port),
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(tmp, target)
+        return target
+    except Exception as exc:  # noqa: BLE001 - 运行时文件只是线索，失败不影响服务本身
+        print("[workbench] warning: 写运行时文件 %s 失败（不阻塞启动）：%s" % (target, exc))
+        return None
 
 
 def _ensure_serial_nodes() -> None:
@@ -107,6 +156,9 @@ def _open() -> None:
 if __name__ == "__main__":
     _ensure_serial_nodes()
     _print_startup_preflight()
+    _runtime = write_runtime_file(host="0.0.0.0", port=PORT)
+    if _runtime is not None:
+        print(f"[workbench] 运行时文件：{_runtime}（case_run 据此发现本服务，REQS-0042 D2-3）")
     Timer(1.0, _open).start()
     # 0.0.0.0：开放局域网监听（ADR-28），本机仍可 127.0.0.1 访问；页面接口无鉴权，仅限可信局域网。
     uvicorn.run("workbench.app:app", host="0.0.0.0", port=PORT)

@@ -310,3 +310,121 @@ def test_param_fact_cache_never_leaks_yes_across_params_in_plan() -> None:
     planned = plan(make_case(["b1"]), ctx, block_specs=specs)
     assert planned[0].runnable is False
     assert planned[0].facts["archive.contains"].state == FACT_UNKNOWN
+
+
+# --- 步骤实例化（REQS-0042 D3-1） --------------------------------------------
+
+
+def make_plan_case(plan, blocks=None, needs=None) -> CaseSpec:
+    """带 ``plan`` 的用例：同一块可以在 plan 里出现多次，各自带参数。"""
+    return CaseSpec(
+        id="c_plan",
+        title="t",
+        steps=[CaseStep(no=1, do="do", expect="expect")],
+        blocks=list(blocks or []),
+        plan=list(plan),
+        needs=list(needs or []),
+    )
+
+
+def test_same_block_twice_yields_two_planned_blocks() -> None:
+    """同一个块实例化两次 → 两个 PlannedBlock，step_id 不同、参数各自独立。"""
+    case = make_plan_case(
+        [
+            {"id": "add_a", "block": "archive.add", "params": {"meter_addr": "000000000011"}},
+            {"id": "add_b", "block": "archive.add", "params": {"meter_addr": "000000000022"}},
+        ]
+    )
+    planned = plan(case, FactsContext(probe=FakeFacts({})))
+    assert [p.block_id for p in planned] == ["archive.add", "archive.add"]
+    assert [p.step_id for p in planned] == ["add_a", "add_b"]
+    assert [p.params for p in planned] == [
+        {"meter_addr": "000000000011"},
+        {"meter_addr": "000000000022"},
+    ]
+    assert all(p.runnable for p in planned)
+
+
+def test_plan_carries_on_fail_only_when_declared() -> None:
+    case = make_plan_case(
+        [
+            {"id": "s1", "block": "b1"},
+            {"id": "s2", "block": "b2", "on_fail": "continue"},
+        ]
+    )
+    planned = plan(case, FactsContext(probe=FakeFacts({})))
+    assert planned[0].on_fail is None          # 未声明 → 继承 run/方案级 stop_on_fail
+    assert planned[1].on_fail == "continue"
+
+
+def test_plan_both_blocks_and_plan_uses_plan() -> None:
+    case = make_plan_case(
+        [{"id": "s1", "block": "archive.add"}], blocks=["meter.read_645"]
+    )
+    planned = plan(case, FactsContext(probe=FakeFacts({})))
+    assert [p.block_id for p in planned] == ["archive.add"]
+
+
+def test_blocks_only_plan_is_byte_compatible_with_before() -> None:
+    """老用例（只有 blocks）规划结果与改动前逐字一致（只多一个 step_id = 块 id）。"""
+    ctx = FactsContext(probe=FakeFacts({"a": True}))
+    specs = {"b1": BlockSpec(id="b1", title="t", action={"semantic": "x"})}
+    planned = plan(make_case(["b1", "b2"], needs=["a"]), ctx, block_specs=specs)
+    dumped = [p.to_dict() for p in planned]
+    expected = [
+        {
+            "block_id": "b1",
+            "step_id": "b1",
+            "runnable": True,
+            "skip_reason": "",
+            "needs": [],
+            "facts": {"a": {"state": "yes", "detail": "", "evidence": []}},
+            "deferred": [],
+            "params": {},
+            "on_fail": None,
+        },
+        {
+            "block_id": "b2",
+            "step_id": "b2",
+            "runnable": True,
+            "skip_reason": "",
+            "needs": [],
+            "facts": {"a": {"state": "yes", "detail": "", "evidence": []}},
+            "deferred": [],
+            "params": {},
+            "on_fail": None,
+        },
+    ]
+    assert dumped == expected
+
+
+def test_blocks_only_chain_break_message_unchanged() -> None:
+    """链式断点的原因文案对老用例逐字不变（老断言靠 ``"b1" in skip_reason`` 定位）。"""
+    specs = {
+        "b1": BlockSpec(id="b1", title="t", action={"semantic": "x"}, needs=["a"]),
+        "b2": BlockSpec(id="b2", title="t", action={"semantic": "x"}),
+    }
+    ctx = FactsContext(probe=FakeFacts({"a": "no"}))
+    planned = plan(make_case(["b1", "b2"]), ctx, block_specs=specs)
+    assert planned[1].skip_reason == "前序块 b1 不可执行（链条已断，本块随之跳过）"
+
+
+def test_plan_step_chain_break_names_step_and_block() -> None:
+    """plan 形态下断点原因要能定位到**哪一步**（同块多次时只看块 id 会分不清）。"""
+    specs = {
+        "archive.add": BlockSpec(
+            id="archive.add", title="t", action={"semantic": "x"}, needs=["a"]
+        )
+    }
+    ctx = FactsContext(probe=FakeFacts({"a": "no"}))
+    case = make_plan_case(
+        [
+            {"id": "add_a", "block": "archive.add"},
+            {"id": "add_b", "block": "archive.add"},
+        ]
+    )
+    planned = plan(case, ctx, block_specs=specs)
+    assert planned[0].runnable is False
+    assert planned[1].runnable is False
+    assert "add_a" in planned[1].skip_reason
+    assert "archive.add" in planned[1].skip_reason

@@ -1,22 +1,48 @@
-"""用例执行器（REQS v3 §10.5 KE-3 / PLAN P1-4）。
+"""用例执行器（REQS v3 §10.5 KE-3 / PLAN P1-4；REQS-0042 D3-1/D3-2 起按「步骤」执行）。
 
-流程：``plan()`` → 逐块 ``get_block(id)(params, ctx)`` → 聚合。
+流程：``plan()`` → 逐步 ``get_block(id)(params, ctx)`` → 聚合。
 
 铁律（``test_executor.py`` 守门）：
 
 1. 结论**一律**落 ``test_automation.models.AssertionResult``（``outcome ∈ pass|fail|inconclusive``），
    本模块不新造结论模型。
 2. ``unknown`` 与 ``skipped`` **永不**计入 PASS 计数（REQS RU-3「绝不假 PASS」）；
-   一个用例只有在**所有块都 pass** 时才判 ``pass``。
-3. ``stop_on_fail=True`` 时首块非 pass → 下游全 ``skipped``；``stop_on_fail=False`` 时
-   其余块照常执行并各自记录（REQS KE-3）。
+   一个用例只有在**所有步骤都 pass** 时才判 ``pass``。
+3. ``stop_on_fail=True`` 时首个非 pass 步骤 → 下游全 ``skipped``；``stop_on_fail=False`` 时
+   其余步骤照常执行并各自记录（REQS KE-3）。
 4. 块返回值**只认显式结论**（``state`` / ``outcome`` / :class:`BlockResult` /
    :class:`AssertionResult`）；**不认** ``ok`` / ``passed`` —— 能力层的 ``{"ok": true}``
    只代表「服务处理成功」，不代表「设备测试通过」，折算成 PASS 就是假 PASS。
 
+步骤实例化（REQS-0042 D3-1）
+===========================
+规划单元从「块」变成「步骤」（``StepSpec``）：同一个块可以在一条用例里出现多次，
+每次带自己的参数。每条 :class:`BlockRecord` 因此带 ``step_id``（老用例等于块 id）
+与 ``params``（该步**实际下发**的参数快照，D4-1 参数冻结的数据基础）。
+
+失败策略：``on_fail`` 与 ``stop_on_fail`` 的关系
+================================================
+- 步骤**显式**写 ``on_fail``（``plan[].on_fail``）→ 以它为准：
+  ``stop`` = 本步非 pass 后下游记 ``skipped``；``continue`` = 下游照跑。
+- 步骤**没写** ``on_fail``（含 ``blocks[]`` 自动展开的所有步骤）→ 继承 run 级
+  ``stop_on_fail``（用例参数 ``stop_on_fail`` / ``ctx.stop_on_fail``，方案的
+  ``stop_on_fail`` 由 CLI 传进来）。
+- 即：``stop_on_fail`` 是**默认值**，步骤显式声明是**覆盖**；两者同时出现时以步骤声明为准。
+
+块参数优先级（REQS-0042 D3-2，低 → 高）
+======================================
+1. 块声明 ``spec.action``（含 ``action.params``，``null`` 已在加载期解析成配置默认）；
+2. 步骤声明 ``StepSpec.params``（``plan[].params``）；
+3. ``ctx.step_params[step_id]``（运行期**按步骤**覆盖，供 API/S3 快照层用）；
+4. ``ctx.block_params[block_id]``（run 级 ``--params``，**最高**；会广播到该块的所有步骤）。
+
+两者关系一句话：**调用方运行期显式给的值最高**（临时改地址复跑），其次才是用例里
+为某个步骤写死的值。注意 #4 是「按块」广播的——同一个块被实例化两次时，run 级
+``--params`` 对两次都生效；要让两次不同，把差异写进 ``plan[].params``（#2）即可。
+
 块执行体调用约定：``fn(params, ctx)`` —— ``params`` = 块声明 ``action`` 字典（含
-``afn``/``fn``/``params`` 或 ``recipe``/``semantic``）叠加 ``ctx.block_params[block_id]``，
-再叠加两个**保留键**（优先级最高，``ctx.block_params`` 覆盖不掉）：
+``afn``/``fn``/``params`` 或 ``recipe``/``semantic``）按上面的优先级叠加，再叠加两个
+**保留键**（优先级最高，任何一层都覆盖不掉）：
 
 - ``params["_assert"]``：块声明的 ``spec.assert_``（JSON 里的 ``assert``）原样副本；
 - ``params["_cleanup"]``：块声明的 ``spec.cleanup`` 原样副本。
@@ -26,6 +52,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
@@ -44,7 +71,14 @@ from .models import (
     BlockSpec,
     CaseSpec,
 )
-from .planner import FactValue, FactsContext, coerce_fact_value, describe_facts, plan
+from .planner import (
+    FactValue,
+    FactsContext,
+    coerce_fact_value,
+    describe_facts,
+    plan,
+    step_label,
+)
 from .registry import NotFound, get_block
 
 #: 块执行态 → 对外结论（``skipped``/``unknown`` 都是 inconclusive，绝不 pass）
@@ -80,7 +114,12 @@ class RunContext:
     - ``run_id``：落盘/证据的关联键（``data/case_runs/<run_id>/result.json``）
     - ``facts_ctx``：事实缓存（同 run 内事实只探测一次）
     - ``block_specs``：``{block_id: BlockSpec}``，规划器据此取块级 ``needs``/``provides``
-    - ``block_params``：``{block_id: {...}}``，运行时覆盖块声明里的 ``action``
+    - ``block_params``：``{block_id: {...}}``，**run 级**参数覆盖（最高优先级）；
+      按块广播——同一个块被实例化多次时对每一步都生效（D3-2 第 4 层）
+    - ``step_params``：``{step_id: {...}}``，**按步骤**参数覆盖（D3-2 第 3 层）。
+      同名块多步骤各自带参数时用它/或用 ``StepSpec.params``；
+      这是 0042 D3-1 的兼容落点：老的按块键（``block_params``）语义不变，
+      新代码要「只改某一步」就用这个，避免同块多步互相覆盖
     - ``assert_evaluator``：用例级断言求值器 ``(decl, result) -> AssertionResult``；
       **不提供时会用例级断言记为 inconclusive，绝不判 pass**
     - ``extras``：块/能力层自由挂载（能力句柄、HTTP 客户端、device 等）
@@ -90,6 +129,7 @@ class RunContext:
     facts_ctx: FactsContext = field(default_factory=FactsContext)
     block_specs: dict[str, BlockSpec] = field(default_factory=dict)
     block_params: dict[str, dict[str, Any]] = field(default_factory=dict)
+    step_params: dict[str, dict[str, Any]] = field(default_factory=dict)
     assert_evaluator: Callable[[dict[str, Any], Any], Any] | None = None
     stop_on_fail: bool = False
     extras: dict[str, Any] = field(default_factory=dict)
@@ -129,7 +169,7 @@ class BlockResult:
 
 @dataclass
 class BlockRecord:
-    """单块的执行记录。"""
+    """单个**步骤**的执行记录（步骤实例化：同一块可有多条记录）。"""
 
     block_id: str
     state: str
@@ -137,6 +177,9 @@ class BlockRecord:
     facts: dict[str, FactValue] = field(default_factory=dict)
     assertion: AssertionResult | None = None
     runnable: bool = True
+    step_id: str = ""
+    on_fail: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
 
     @property
     def outcome(self) -> str:
@@ -145,9 +188,13 @@ class BlockRecord:
     def to_dict(self) -> dict[str, Any]:
         return {
             "block_id": self.block_id,
+            "step_id": self.step_id or self.block_id,
             "state": self.state,
             "outcome": self.outcome,
+            "on_fail": self.on_fail,
             "detail": self.detail,
+            # D4-1 参数冻结的数据基础：该步实际下发的参数（不含 _assert/_cleanup 保留键）
+            "params": dict(self.params),
             "facts": {fid: fv.to_dict() for fid, fv in self.facts.items()},
             "assertion_id": self.assertion.assertion_id if self.assertion else "",
             "message": self.assertion.message if self.assertion else self.detail,
@@ -165,6 +212,10 @@ class CaseRunResult:
     verdict: str = OUTCOME_INCONCLUSIVE
     failed_block: str = ""
     blocked_block: str = ""
+    #: 断点所在的**步骤** id（步骤实例化后同一块可能有多步，块 id 定位不到具体那一步；
+    #: 老用例的 step_id 等于块 id，因此这两个字段与上面两个一致）
+    failed_step: str = ""
+    blocked_step: str = ""
     unmet_facts: dict[str, dict[str, Any]] = field(default_factory=dict)
     stop_on_fail: bool = False
 
@@ -186,6 +237,24 @@ class CaseRunResult:
     def passed_blocks(self) -> list[str]:
         return [b.block_id for b in self.blocks if b.state == BLOCK_PASS]
 
+    def step_summaries(self) -> list[dict[str, Any]]:
+        """每个步骤的结论摘要（``run --json`` / UI 汇总用；顺序即执行序）。
+
+        同一块被实例化多次时，``blocks[]`` 里会有多条同 ``block_id`` 的记录，
+        只有 ``step_id`` 能把它们区分开。
+        """
+
+        return [
+            {
+                "step_id": record.step_id or record.block_id,
+                "block_id": record.block_id,
+                "state": record.state,
+                "outcome": record.outcome,
+                "on_fail": record.on_fail,
+            }
+            for record in self.blocks
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "case_id": self.case_id,
@@ -193,10 +262,13 @@ class CaseRunResult:
             "verdict": self.verdict,
             "failed_block": self.failed_block,
             "blocked_block": self.blocked_block,
+            "failed_step": self.failed_step,
+            "blocked_step": self.blocked_step,
             "stop_on_fail": self.stop_on_fail,
             "counts": self.counts,
             "unmet_facts": dict(self.unmet_facts),
             "blocks": [b.to_dict() for b in self.blocks],
+            "steps": self.step_summaries(),
             "assertions": [a.to_dict() for a in self.assertions],
         }
 
@@ -324,6 +396,16 @@ def _make_assertion(
     )
 
 
+def _jsonable(value: Any) -> Any:
+    """把参数值归一成可 JSON 序列化的形状（落盘/--json 不能因一个怪对象就炸）。"""
+
+    try:
+        json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return repr(value)
+    return value
+
+
 def _record(
     block_id: str,
     state: str,
@@ -334,6 +416,9 @@ def _record(
     assertion_id: str = "",
     runnable: bool = True,
     assertion: AssertionResult | None = None,
+    step_id: str = "",
+    on_fail: str = "",
+    params: Mapping[str, Any] | None = None,
 ) -> BlockRecord:
     assertion = assertion or _make_assertion(
         run_id, assertion_id or block_id, state, detail
@@ -345,12 +430,16 @@ def _record(
         facts=dict(facts or {}),
         assertion=assertion,
         runnable=runnable,
+        step_id=step_id or block_id,
+        on_fail=on_fail,
+        params={key: _jsonable(value) for key, value in (params or {}).items()},
     )
 
 
-#: 断言 id 由「用例 id + 块 id」组成，便于结果里回指「断在哪个块的哪条断言」
-def _assertion_id(case_id: str, block_id: str) -> str:
-    return f"{case_id}.{block_id}"
+#: 断言 id 由「用例 id + 步骤 id」组成，便于结果里回指「断在哪一步的哪条断言」。
+#: 老用例（``blocks[]`` 自动展开）的步骤 id 就是块 id，因此仍是 ``用例.块``，逐字兼容。
+def _assertion_id(case_id: str, step_id: str) -> str:
+    return f"{case_id}.{step_id}"
 
 
 def _provided_fact_params(value: Any) -> Mapping[str, Any] | None:
@@ -365,14 +454,71 @@ def _provided_fact_params(value: Any) -> Mapping[str, Any] | None:
     return None
 
 
+def _field_of(item: Any, name: str) -> Any:
+    """从 ``PlannedBlock``（dataclass）或普通 dict 取字段（测试/外部装配两种都认）。"""
+
+    if isinstance(item, Mapping):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def effective_params(
+    spec: BlockSpec | None,
+    item: Any,
+    ctx: "RunContext",
+) -> dict[str, Any]:
+    """算出一个步骤**实际下发**的块参数（D3-2 优先级，不含保留键）。
+
+    低 → 高：块声明 ``action`` < 步骤声明 ``StepSpec.params`` <
+    ``ctx.step_params[step_id]`` < ``ctx.block_params[block_id]``（run 级 ``--params``）。
+
+    ``item`` 是 :class:`case_runner.core.planner.PlannedBlock`（有 ``block_id`` /
+    ``step_id`` / ``params``）；传 dict 也行（测试/外部装配）。保留键 ``_assert`` /
+    ``_cleanup`` 由 :func:`_call_params` 单独注入，这里不出现。
+    """
+
+    block_id = _field_of(item, "block_id")
+    step_id = _field_of(item, "step_id") or block_id
+    step_declared = _field_of(item, "params") or {}
+
+    params: dict[str, Any] = dict(spec.action) if spec is not None else {}
+    for layer in (
+        step_declared,
+        ctx.step_params.get(step_id),
+        ctx.block_params.get(block_id),
+    ):
+        if layer:
+            params.update(layer)
+    return params
+
+
+def _call_params(
+    spec: BlockSpec | None, item: Any, ctx: "RunContext"
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """返回 ``(调用参数含保留键, 参数快照不含保留键)``。"""
+
+    params = effective_params(spec, item, ctx)
+    snapshot = {key: value for key, value in params.items() if key not in RESERVED_PARAM_KEYS}
+    # 保留键最后写入：块级 assert / cleanup 必须进执行体（声明与实现不许漂移），
+    # 且任何一层参数覆盖**不得**覆盖它们。给副本，块改了不污染 BlockSpec。
+    params[PARAM_ASSERT] = [dict(item_) for item_ in (spec.assert_ if spec else [])]
+    params[PARAM_CLEANUP] = [dict(item_) for item_ in (spec.cleanup if spec else [])]
+    return params, snapshot
+
+
 def _run_block(
     case: CaseSpec,
     ctx: RunContext,
-    block_id: str,
+    item: Any,
     spec: BlockSpec | None,
     gating_facts: Mapping[str, FactValue],
+    *,
+    on_fail: str = "",
 ) -> BlockRecord:
-    assertion_id = _assertion_id(case.id, block_id)
+    block_id = _field_of(item, "block_id")
+    step_id = _field_of(item, "step_id") or block_id
+    assertion_id = _assertion_id(case.id, step_id)
+    params, snapshot = _call_params(spec, item, ctx)
     try:
         fn = get_block(block_id)
     except NotFound as exc:
@@ -384,16 +530,10 @@ def _run_block(
             gating_facts,
             assertion_id=assertion_id,
             runnable=False,
+            step_id=step_id,
+            on_fail=on_fail,
+            params=snapshot,
         )
-
-    params: dict[str, Any] = dict(spec.action) if spec is not None else {}
-    override = ctx.block_params.get(block_id)
-    if override:
-        params.update(override)
-    # 保留键最后写入：块级 assert / cleanup 必须进执行体（声明与实现不许漂移），
-    # 且 ctx.block_params 里的同名键**不得**覆盖它们。给副本，块改了不污染 BlockSpec。
-    params[PARAM_ASSERT] = [dict(item) for item in (spec.assert_ if spec else [])]
-    params[PARAM_CLEANUP] = [dict(item) for item in (spec.cleanup if spec else [])]
 
     try:
         raw = fn(params, ctx)
@@ -405,6 +545,9 @@ def _run_block(
             ctx.run_id,
             gating_facts,
             assertion_id=assertion_id,
+            step_id=step_id,
+            on_fail=on_fail,
+            params=snapshot,
         )
 
     coerced = coerce_block_return(raw)
@@ -439,6 +582,9 @@ def _run_block(
         facts=facts,
         assertion=assertion,
         runnable=True,
+        step_id=step_id,
+        on_fail=on_fail,
+        params={key: _jsonable(value) for key, value in snapshot.items()},
     )
 
 
@@ -553,10 +699,12 @@ def execute_case(
     *,
     stop_on_fail: bool | None = None,
 ) -> CaseRunResult:
-    """执行一个用例。
+    """执行一个用例（按**步骤**顺序执行，REQS-0042 D3-1）。
 
     - ``ctx``：:class:`RunContext`（``None`` 时新建一个空上下文）
-    - ``stop_on_fail``：``None`` = 取 ``ctx.stop_on_fail``；``True`` 时首块非 pass 后下游全 skipped
+    - ``stop_on_fail``：``None`` = 取 ``ctx.stop_on_fail``；``True`` 时首个非 pass 步骤后
+      下游全 ``skipped``。它只是**默认值**：某一步显式写了 ``on_fail`` 时以该步为准
+      （``on_fail="continue"`` 时即使 ``stop_on_fail=True`` 后续步骤也照跑）。
     """
     if ctx is None:
         ctx = RunContext()
@@ -575,7 +723,10 @@ def execute_case(
     unmet: dict[str, dict[str, Any]] = {}
     failed_block = ""
     blocked_block = ""
+    failed_step = ""
+    blocked_step = ""
     stopped_at = ""
+    stopped_why = ""
 
     # 用例级事实先落一份结论，保证「断点原因点名事实」在结果里始终可见
     if case.needs:
@@ -585,15 +736,25 @@ def execute_case(
 
     for item in planned:
         spec = ctx.block_specs.get(item.block_id)
+        step_id = item.step_id or item.block_id
+        label = step_label(step_id, item.block_id)
+        # 本步实际生效的失败策略：显式 on_fail 优先，否则继承 run/方案级 stop_on_fail
+        effective_on_fail = item.resolved_on_fail(do_stop)
+        step_kwargs = {
+            "assertion_id": _assertion_id(case.id, step_id),
+            "step_id": step_id,
+            "on_fail": effective_on_fail,
+            "params": effective_params(spec, item, ctx),
+        }
         if stopped_at:
             record = _record(
                 item.block_id,
                 BLOCK_SKIPPED,
-                f"前序块 {stopped_at} 非 pass（stop_on_fail=True），下游跳过",
+                f"前序块 {stopped_at} 非 pass（{stopped_why}），下游跳过",
                 ctx.run_id,
                 item.facts,
-                assertion_id=_assertion_id(case.id, item.block_id),
                 runnable=False,
+                **step_kwargs,
             )
         elif not item.runnable:
             record = _record(
@@ -602,8 +763,8 @@ def execute_case(
                 item.skip_reason,
                 ctx.run_id,
                 item.facts,
-                assertion_id=_assertion_id(case.id, item.block_id),
                 runnable=False,
+                **step_kwargs,
             )
         else:
             live = facts_ctx.resolve(item.needs) if item.needs else {}
@@ -615,12 +776,17 @@ def execute_case(
                     "块前置事实未满足（运行时复核）：" + describe_facts(unmet_live),
                     ctx.run_id,
                     {**item.facts, **live},
-                    assertion_id=_assertion_id(case.id, item.block_id),
                     runnable=False,
+                    **step_kwargs,
                 )
             else:
                 record = _run_block(
-                    case, ctx, item.block_id, spec, {**item.facts, **live}
+                    case,
+                    ctx,
+                    item,
+                    spec,
+                    {**item.facts, **live},
+                    on_fail=effective_on_fail,
                 )
 
         for fact_id, value in record.facts.items():
@@ -628,10 +794,23 @@ def execute_case(
                 unmet.setdefault(fact_id, value.to_dict())
         if record.state == BLOCK_FAIL and not failed_block:
             failed_block = item.block_id
+            failed_step = step_id
         if record.state == BLOCK_SKIPPED and not blocked_block:
             blocked_block = item.block_id
-        if record.state != BLOCK_PASS and do_stop and not stopped_at:
-            stopped_at = item.block_id
+            blocked_step = step_id
+        # 断链判定按**本步生效的策略**：显式 on_fail 优先，否则跟 run 级 stop_on_fail。
+        # 文案对老用例逐字不变（do_stop 且本步没声明 on_fail → "stop_on_fail=True"）。
+        if (
+            record.state != BLOCK_PASS
+            and effective_on_fail == "stop"
+            and not stopped_at
+        ):
+            stopped_at = label
+            stopped_why = (
+                "stop_on_fail=True"
+                if item.on_fail is None
+                else f"步骤 {step_id} 声明 on_fail=stop"
+            )
 
         records.append(record)
         assertions.append(record.assertion)
@@ -644,6 +823,8 @@ def execute_case(
         verdict=_verdict(records),
         failed_block=failed_block,
         blocked_block=blocked_block,
+        failed_step=failed_step,
+        blocked_step=blocked_step,
         unmet_facts=unmet,
         stop_on_fail=do_stop,
     )

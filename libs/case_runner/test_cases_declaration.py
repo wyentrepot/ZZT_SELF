@@ -11,11 +11,16 @@
 3. ``CaseSpec.needs`` 引用的事实 id **都存在**（声明集合 ∪ 注册表）。
 4. ``CaseSpec.steps`` 非空，且每项 ``do`` / ``expect`` 均有内容（CS-1：UI 展示口径）。
 5. ``SuiteSpec.case_ids`` 引用的用例 **都存在**，且无重复；每条用例至少进一个方案。
-6. **禁止项**：任何块的 ``provides`` 不得引用**参数化事实**（``required_params(...)`` 非空，
-   如 ``archive.contains`` 的 ``addr``、``nwk.onnet_count_min`` 的 ``min``）——
+6. **禁止项**：任何块的 ``provides`` 不得引用**参数化事实**（``parameterized: true``
+   显式标记，兼容旧写法 ``required_params(...)`` 非空，如 ``archive.contains`` 按表地址、
+   ``nwk.onnet_count_min`` / ``nwk.nodes_online_min`` 按 ``min`` 求值）——
    块回写事实缓存只按 ``fact_id``，跨参数会命中造成假 PASS（REQS §10.13 缺陷 3）。
+   0042 D2-2 起参数都有默认值（``"default": null`` 取 ``case_defaults.json``），
+   **必需参数可能为空**，所以「参数化」的权威口径是显式标记（``loader.is_parameterized``）。
 7. **禁止项**（CS-1）：用例 JSON 里不得出现帧 hex、不得出现参数计算 —— 帧细节归块，
-   用例只是编排（``needs[]`` + ``blocks[]`` + ``steps[]``）。
+   用例只是编排（``needs[]`` + ``blocks[]`` / ``plan[]`` + ``steps[]``）。
+8. **步骤实例化**（REQS-0042 D3-1）：``blocks[]`` 与 ``plan[]`` 至少给一个；``plan`` 内
+   step id 唯一、引用的块存在；单测专用用例（``single-test-only``）可不进方案。
 """
 
 from __future__ import annotations
@@ -65,9 +70,23 @@ FIRST_BATCH_FACTS = frozenset(
     }
 )
 
-#: 在 REQS 里点名为「参数化事实」的两个（``sta.meter_addr_known`` 的 addr 有默认值，
-#: 按 ``loader.required_params`` 口径不算参数化，故不在此列）
-PARAMETERIZED_FACTS = frozenset({"archive.contains", "nwk.onnet_count_min"})
+#: 「参数化事实」四个（结论随入参变化，REQS-0042 D2-1 定稿）：
+#: ``archive.contains`` / ``sta.meter_addr_known`` 按表地址求值，
+#: ``nwk.onnet_count_min`` / ``nwk.nodes_online_min`` 按 ``min`` 求值。
+#: 0042 D2-2 起这些事实的参数都有默认值（``"default": null`` 取 ``case_defaults.json``），
+#: 所以判据**不能**只看 ``required: true``，要用 ``loader.is_parameterized``
+#: （显式 ``parameterized: true`` ∪ 必需参数），否则门禁会变成空转。
+#: ``sta.meter_addr_known`` 原先因「是 ``meter.addr_probe`` 的 provides 目标」暂缓裁决，
+#: 主代理已裁决：**按表地址求值即参数化事实**（声明已标 ``parameterized: true``），
+#: 对应地把 ``meter.addr_probe`` 的 ``provides`` 置空（块回写只按 fact_id 缓存 → 换地址假 PASS）。
+PARAMETERIZED_FACTS = frozenset(
+    {
+        "archive.contains",
+        "sta.meter_addr_known",
+        "nwk.onnet_count_min",
+        "nwk.nodes_online_min",
+    }
+)
 
 #: 1376.2 帧的粗略特征：``68`` + 至少 8 个 hex 字符（用例里出现即违规）
 FRAME_HEX_RE = re.compile(r"(?i)\b68[0-9a-f]{8,}")
@@ -240,13 +259,31 @@ def test_suite_file_name_and_notes() -> None:
         assert str(raw.get("notes", "")).strip(), f"{path.name}: 方案缺少 notes（排序理由）"
 
 
+#: 只用于单测、**不进任何方案**的用例标签（REQS-0042 D3-5）
+#: 「台架只有 1 块真表，多 step 多地址只用单测证明」——这类用例若进了方案，
+#: 真机跑必然出现「第二块表不存在」的 fail，把验收结论污染成假失败。
+SINGLE_TEST_ONLY_TAG = "single-test-only"
+
+
 def test_every_case_belongs_to_a_suite() -> None:
+    """每条用例都要能「按方案跑」——单测专用用例除外（``single-test-only`` 标签）。
+
+    0042 D3-5 起豁免 ``single-test-only``：``archive_multi`` 故意不进方案
+    （真机只有 1 块真表），它由单测（``test_planner`` / ``test_executor``）证明
+    「同块多 step、各带不同参数」这件事，不该出现在验收方案里。
+    """
     used: Set[str] = set()
     for suite in loader.load_suites():
         used.update(suite.case_ids)
-    orphans = {case.id for case in loader.load_cases()} - used
+    single_test_only = {
+        case.id
+        for case in loader.load_cases()
+        if SINGLE_TEST_ONLY_TAG in case.tags
+    }
+    orphans = {case.id for case in loader.load_cases()} - used - single_test_only
     assert orphans == set(), (
-        f"这些用例没有被任何方案引用（UI 里只能临时单跑）：{sorted(orphans)}"
+        f"这些用例没有被任何方案引用（UI 里只能临时单跑）：{sorted(orphans)}；"
+        f"若确属单测专用，请打上 {SINGLE_TEST_ONLY_TAG!r} 标签"
     )
 
 
@@ -283,12 +320,16 @@ def test_required_suite_order_and_stop_on_fail() -> None:
 
 
 def _parameterized_fact_ids() -> Set[str]:
-    """按 ``loader.required_params`` 求出「参数化事实」（有必需参数）的集合。"""
+    """求出「参数化事实」集合：显式 ``parameterized: true`` **∪** 有必需参数的旧写法。
+
+    口径与 ``loader.is_parameterized`` 一致（0042 D2-2：参数都有默认值之后，
+    必需参数可能为空，只按 required 反推会让禁止项检查空转）。
+    """
     found = set()
     for path in _json_files(loader.FACTS_DIRNAME):
         raw = _read_json(path)
         spec = loader.load_facts()[0].__class__.model_validate(raw)
-        if loader.required_params(spec):
+        if loader.is_parameterized(spec):
             found.add(raw["id"])
     return found
 
@@ -296,7 +337,8 @@ def _parameterized_fact_ids() -> Set[str]:
 def test_parameterized_fact_set_is_not_empty() -> None:
     """守住「禁止项检查本身不会空转」：参数化事实必须被识别出来。"""
     assert PARAMETERIZED_FACTS <= _parameterized_fact_ids(), (
-        "参数化事实识别失败（``required: true`` 解析不到），禁止项检查会变成空转"
+        "参数化事实识别失败（``parameterized: true`` 与 ``required: true`` 都没解析到），"
+        "禁止项检查会变成空转"
     )
 
 
@@ -348,8 +390,12 @@ def test_cases_carry_no_frame_hex_or_arithmetic() -> None:
 
 
 def test_cases_only_use_declared_fields() -> None:
-    """用例 JSON 的字段白名单（``CaseSpec`` 是 ``extra='forbid'``，这里再从文件侧确认）。"""
-    allowed = {"id", "title", "steps", "needs", "blocks", "asserts", "tags"}
+    """用例 JSON 的字段白名单（``CaseSpec`` 是 ``extra='forbid'``，这里再从文件侧确认）。
+
+    ``plan`` 是 REQS-0042 D3-1 新增的步骤实例化字段（``blocks`` 起变为可选），
+    两种编排写法共用同一份白名单。
+    """
+    allowed = {"id", "title", "steps", "needs", "blocks", "plan", "asserts", "tags"}
     for path in _json_files(loader.CASES_DIRNAME):
         extra = set(_read_json(path)) - allowed
         assert extra == set(), f"{path.name}: 出现未知字段 {sorted(extra)}"
@@ -364,3 +410,40 @@ def test_case_blocks_are_strings_not_inline_params() -> None:
                 f"{path.name}: blocks 里出现非字符串项 {entry!r} —— "
                 "块参数属于块声明，用例只写块 id"
             )
+
+
+# --------------------------------------------------------------------------- #
+# 8. 步骤实例化资产（REQS-0042 S1.5）：meter_smoke_min / archive_multi
+# --------------------------------------------------------------------------- #
+
+
+def test_meter_smoke_min_is_the_zero_intervention_mainline() -> None:
+    """``meter_smoke_min``：≈40s 一轮、不复位不组网，是「零参与」验收主线（D3-4）。"""
+    suites = {suite.id: suite for suite in loader.load_suites()}
+    assert "meter_smoke_min" in suites, "缺少零参与验收主线方案 meter_smoke_min"
+    suite = suites["meter_smoke_min"]
+    assert suite.case_ids == ["bench_ready", "archive_ready", "meter_read"]
+    assert suite.stop_on_fail is True
+    assert "40s" in suite.notes, "notes 要写清一轮耗时（≈40s）"
+    assert "不复位不组网" in suite.notes
+    assert "sta_reset" not in suite.case_ids and "nwk_join" not in suite.case_ids
+
+
+def test_archive_multi_case_is_plan_only_and_single_test_only() -> None:
+    """``archive_multi``：同块两次实例化、各带不同表地址；只用于单测，不进方案（D3-5）。"""
+    cases = {case.id: case for case in loader.load_cases()}
+    assert "archive_multi" in cases, "缺少步骤实例化演示用例 archive_multi"
+    case = cases["archive_multi"]
+    assert case.uses_plan is True and case.blocks == []
+    assert [step.block for step in case.plan] == ["archive.add", "archive.add"]
+    addrs = [step.params.get("meter_addr") for step in case.plan]
+    assert addrs == ["000000000011", "000000000022"], addrs
+    assert "single-test-only" in case.tags, "必须标 single-test-only（台架只有 1 块真表）"
+    assert any("真机不跑" in step.expect or "真机不跑" in step.do for step in case.steps), (
+        "steps 里要写清「台架只有 1 块真表、真机不跑本用例」"
+    )
+    for suite in loader.load_suites():
+        assert "archive_multi" not in suite.case_ids, (
+            f"方案 {suite.id!r} 不能引用 archive_multi：真机只有 1 块真表，"
+            "跑起来必然出现「第二块表不存在」的假失败"
+        )

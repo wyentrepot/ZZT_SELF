@@ -1,6 +1,6 @@
 {
   "id": "archive.query",
-  "title": "查询从节点档案表（10H-F2；addr / expect_total / expect_empty 由用例覆盖）",
+  "title": "查询从节点档案表（10H-F2；表地址（meter_addr）/ expect_total / expect_empty 由用例覆盖）",
   "needs": ["bench.simcon_online"],
   "provides": [],
   "action": {

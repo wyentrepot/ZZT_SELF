@@ -7,8 +7,16 @@
                   ``test_archive_nwk.py::test_archive_add_confirm_received_but_not_landed_is_fail``）。
 ``archive.del``   00H-F1 确认 **且** 10H-F2 查不到该地址。
 ``archive.query`` 10H-F2 返回的档案表含目标地址 / 总数符合期望 / 期望空表；
-                  **一条判据都没给（无 addr / expect_total / expect_empty）→ ``unknown``**
+                  **一条判据都没给（无 meter_addr / expect_total / expect_empty）→ ``unknown``**
                   —— 什么都不断言却判 pass 就是假 PASS。
+
+地址角色（REQS-0042 §3.1 / **D2-1** / **D2-2**）
+----------------------------------------------
+调用方**只认识电表 645 表地址** ``meter_addr``（多值 ``meter_addrs[]``）；档案侧地址由
+:func:`case_runner.blocks.common.archive_addr_of` **换算**得出（12 位档案人读地址 =
+6 字节整体反转），本文件**不写任何反转逻辑**。三个块一律「先解析电表地址 → 换算成档案
+地址 → 用档案地址构 11H 帧与 10H-F2 回查判据」，**同一块内只有一只表**（action 与 assert
+不许各指一只，否则会出现「删 A 验 B」的假通过）。
 
 状态口径（REQS RU-3「绝不假 PASS」）
 -----------------------------------
@@ -33,14 +41,14 @@ job 轮询超时          ``unknown``（不表示设备失败）
 判定（``archive_snapshot`` / ``judge_contains``）都在 ``blocks/common.py`` 里，**只有一份**
 （事实 ``archive.contains`` 探测体 ``facts_nwk.py`` 也从 ``common`` 取同一对象，FT-2）。
 
-``archive.add`` **不声明** ``provides: ["archive.contains"]``：该事实的参数是 ``addr``，
+``archive.add`` **不声明** ``provides: ["archive.contains"]``：该事实的参数是 ``meter_addr``，
 块回写只按 ``fact_id`` 缓存 → 给 A 建档成功会让 B 的探测命中 yes = **跨地址假 PASS**。
 块内已做「确认 + 回查」双判据，provides 本属冗余；``loader`` 另有一道结构校验挡住复发。
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Sequence
 
 from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用方再导出
     ADDR_LEN,
@@ -58,6 +66,7 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
     SimconCapability,
     afn_int,
     afn_fn_of,
+    archive_addr_of,
     archive_snapshot,
     block_action_params,
     call_verify,
@@ -80,7 +89,8 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
     steps_of,
     verify_failure_state,
 )
-from case_runner.core.executor import BlockResult
+from case_runner.core.defaults import default_meter_addr
+from case_runner.core.executor import PARAM_ASSERT, BlockResult
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -125,6 +135,112 @@ def _query_options(action: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- #
+# 地址角色：电表 645 表地址 → 档案侧地址（REQS-0042 §3.1 / D2-1 / D2-2）
+# --------------------------------------------------------------------------- #
+
+
+def _push_addr(out: List[str], value: Any) -> None:
+    """收一个合法 12 位 BCD 表地址（去重；``None``/非法值静默跳过，不猜）。"""
+    addr = normalize_addr(value)
+    if addr and addr not in out:
+        out.append(addr)
+
+
+def _given_addr_values(action: Mapping[str, Any]) -> List[Any]:
+    """入参里**真正给了**的原始表地址值（未校验；``None``/空串不算给）。"""
+    out: List[Any] = []
+    multi = action.get("meter_addrs")
+    if isinstance(multi, (list, tuple)):
+        out.extend(item for item in multi if item not in (None, ""))
+    elif multi not in (None, ""):
+        out.append(multi)
+    single = action.get("meter_addr")
+    if single not in (None, ""):
+        out.append(single)
+    return out
+
+
+def _assert_meter_addrs(params: Any) -> List[str]:
+    """块声明 ``assert`` 里写明的电表表地址（判据侧口径，**只在入参没给时兜底**）。
+
+    为什么要读 assert：``action`` 与 ``assert`` 是声明 JSON 里两份手写字段，任一侧单独写
+    了另一只表就会变成「档案删 A、回验 B」——那是最典型的假 PASS。取 assert 侧的地址，
+    保证同一块内 action 与判据作用于**同一只表**。
+    """
+    raw = params if isinstance(params, Mapping) else {}
+    entries = raw.get(PARAM_ASSERT)
+    out: List[str] = []
+    if isinstance(entries, (list, tuple)):
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            multi = entry.get("meter_addrs")
+            if isinstance(multi, (list, tuple)):
+                for item in multi:
+                    _push_addr(out, item)
+            _push_addr(out, entry.get("meter_addr"))
+    return out
+
+
+def meter_addrs_of(
+    params: Any,
+    *,
+    allow_config_default: bool = True,
+    allow_assert_fallback: bool = True,
+) -> tuple[List[str], List[str]]:
+    """解析本块要作用的**电表 645 表地址**：返回 ``(合法地址列表, 非法入参说明列表)``。
+
+    解析顺序（REQS-0042 D2-1/D2-2）：**入参** > **声明默认**（``loader`` 已把 JSON 里的
+    ``null`` 解析成配置默认值 ``case_defaults.meter_addr``，到块里就是真值）>
+    :func:`case_runner.core.defaults.default_meter_addr`（``allow_config_default`` 时）。
+
+    三个刻意的取舍：
+
+    - **给了但不合法 ≠ 没给**：显式传了 ``"12345"`` 这种垃圾地址，绝不静默换成默认表地址
+      ——那会把「传错地址」变成「动到默认那只表」（删档尤其危险）。此时第二个返回值非空，
+      由块自己报配置错误；
+    - 入参完全没给时，先看声明 ``assert`` 写明的表地址（同一块内动作与判据必须同一只表），
+      再退配置默认；
+    - **破坏性块两个开关都关**（``archive.del``）：不猜、不兜底，只要调用方没显式给地址就
+      不执行。注意 ``loader`` 会把声明里 ``assert[].meter_addr: null`` 解析成配置默认值，
+      所以「只看 action」不够——assert 兜底也得关，否则默认表会从后门被删掉。
+    """
+    action = block_action_params(params)
+    given = _given_addr_values(action)
+    if given:
+        good: List[str] = []
+        bad: List[str] = []
+        for value in given:
+            addr = normalize_addr(value)
+            if addr:
+                if addr not in good:
+                    good.append(addr)
+            else:
+                bad.append(repr(value))
+        return good, bad
+
+    if allow_assert_fallback:
+        asserted = _assert_meter_addrs(params)
+        if asserted:
+            return asserted, []
+    if allow_config_default:
+        fallback = normalize_addr(default_meter_addr())
+        if fallback:
+            return [fallback], []
+    return [], []
+
+
+def archive_addrs_of(meter_addrs: Sequence[Any]) -> List[str]:
+    """电表侧地址 → **档案侧人读地址**（唯一换算 = ``common.archive_addr_of``）。"""
+    out: List[str] = []
+    for meter_addr in meter_addrs:
+        addr = archive_addr_of(meter_addr)
+        if addr and addr not in out:
+            out.append(addr)
+    return out
+
+
 def _fail(detail: str) -> BlockResult:
     return BlockResult(state=BLOCK_FAIL, detail=detail)
 
@@ -132,22 +248,33 @@ def _fail(detail: str) -> BlockResult:
 def block_add(params: Any, ctx: Any = None) -> BlockResult:
     """``archive.add``：11H-F1 建档，**双判据**（00H-F1 确认 + 10H-F2 回查落地）。
 
-    返回值里的 ``facts={"archive.contains": ...}`` **只作证据**（进块记录），不作为
-    ``provides`` 回写事实缓存 —— 该事实带 ``addr`` 参数，回写会造成跨地址假 PASS。
+    入参 ``meter_addr``（电表 645 表地址）→ ``archive_addr_of()`` 换算成档案地址后构帧与
+    回查；返回值里的 ``facts={"archive.contains": ...}`` **只作证据**（进块记录），不作为
+    ``provides`` 回写事实缓存 —— 该事实带 ``meter_addr`` 参数，回写会造成跨地址假 PASS。
     """
     target, error = require_target(params, AFN_ARCHIVE, FN_ARCHIVE_ADD, BLOCK_ADD)
     if target is None:
         return _fail(error)
     action = block_action_params(params)
-    addr = normalize_addr(action.get("addr"))
-    if not addr:
-        single = action.get("meters")
-        if isinstance(single, (list, tuple)) and len(single) == 1:
-            addr = normalize_addr(single[0])
-    if not addr:
+    meter_addrs, bad = meter_addrs_of(params)
+    if bad:
         return _fail(
-            "archive.add 缺少必填参数 addr（12 位 BCD 表地址，如 000000000001）"
+            "archive.add 参数 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）"
+            % "、".join(bad)
         )
+    archive_addrs = archive_addrs_of(meter_addrs)
+    if not archive_addrs:
+        return _fail(
+            "archive.add 缺少必填参数 meter_addr（12 位 BCD 电表 645 表地址，如 123456789012；"
+            "缺省取 case_defaults.meter_addr）"
+        )
+    if len(archive_addrs) > 1:
+        return _fail(
+            "archive.add 一次只能给一只表（meter_addr 单值 / meter_addrs 单个），收到 %d 个：%s"
+            % (len(archive_addrs), ",".join(meter_addrs))
+        )
+    addr = archive_addrs[0]           # 档案侧人读地址（构帧 + 回查判据都用它）
+    meter_addr = meter_addrs[0]       # 电表侧人读地址（只用于 detail 留痕）
     protocol_raw = action.get("protocol", 2)
     protocol = int_of(protocol_raw)
     if protocol is None or protocol not in (2, 3):
@@ -165,7 +292,7 @@ def block_add(params: Any, ctx: Any = None) -> BlockResult:
         cap,
         [
             send_step(
-                "添加从节点档案 %s" % addr,
+                "添加从节点档案 %s（电表表地址 %s）" % (addr, meter_addr),
                 AFN_ARCHIVE,
                 FN_ARCHIVE_ADD,
                 {"action": "add", "addr": addr, "protocol": protocol},
@@ -238,30 +365,37 @@ def block_add(params: Any, ctx: Any = None) -> BlockResult:
 
 
 def block_del(params: Any, ctx: Any = None) -> BlockResult:
-    """``archive.del``：11H-F2 删档，判据 = 00H-F1 确认 **且** 10H-F2 查不到。"""
+    """``archive.del``：11H-F2 删档，判据 = 00H-F1 确认 **且** 10H-F2 查不到。
+
+    入参 ``meter_addrs[]``（多值删档）/ ``meter_addr``（单值）；逐个 ``archive_addr_of()``
+    换算成档案地址后构帧，回查也逐个按档案地址判 —— 多值时**不允许只验第一个**
+    （删了 3 只却只回查 1 只 = 另外 2 只没验就判 PASS）。
+
+    **破坏性动作不吃默认地址**（``allow_config_default=False`` 且不取 assert 兜底）：
+    调用方没显式给地址 → 下发前一帧不发就 ``fail``。理由：``case_defaults.meter_addr``
+    是「现场那只被测表」，拿它当删档默认等于「不传参就把被测表的档案删了」；而 ``loader``
+    会把声明 ``assert`` 里的 ``null`` 解析成同一个默认值，所以 assert 兜底也必须关掉。
+    """
     target, error = require_target(params, AFN_ARCHIVE, FN_ARCHIVE_DEL, BLOCK_DEL)
     if target is None:
         return _fail(error)
     action = block_action_params(params)
-    meters_raw = action.get("meters")
-    meters: List[str] = []
-    if isinstance(meters_raw, (list, tuple)):
-        for item in meters_raw:
-            addr = normalize_addr(item)
-            if addr and addr not in meters:
-                meters.append(addr)
-    else:
-        single = normalize_addr(meters_raw)
-        if single:
-            meters.append(single)
-    if not meters:
-        single = normalize_addr(action.get("addr"))
-        if single:
-            meters.append(single)
-    if not meters:
+    meter_addrs, bad = meter_addrs_of(
+        params, allow_config_default=False, allow_assert_fallback=False
+    )
+    if bad:
         return _fail(
-            "archive.del 缺少必填参数 meters（12 位表地址数组）或 addr（单个 12 位表地址）"
+            "archive.del 参数 meter_addrs/meter_addr 非法：%s（需 12 位 BCD 数字，"
+            "如 123456789012）" % "、".join(bad)
         )
+    archive_addrs = archive_addrs_of(meter_addrs)
+    if not archive_addrs:
+        return _fail(
+            "archive.del 缺少必填参数 meter_addrs（12 位电表 645 表地址数组）"
+            "或 meter_addr（单只表地址）。删除是破坏性动作，不接受配置默认地址，"
+            "请显式给要删的表地址（--params meter_addr=... / meter_addrs=[...]）"
+        )
+    meters = archive_addrs           # 档案侧地址：构帧 + 回查判据同一份
 
     cap, injected = resolve_simcon(ctx)
     gate = capability_gate(cap, injected)
@@ -272,7 +406,8 @@ def block_del(params: Any, ctx: Any = None) -> BlockResult:
         cap,
         [
             send_step(
-                "删除从节点档案 %s" % ",".join(meters),
+                "删除从节点档案 %s（电表表地址 %s）"
+                % (",".join(meters), ",".join(meter_addrs)),
                 AFN_ARCHIVE,
                 FN_ARCHIVE_DEL,
                 {"meters": meters},
@@ -341,22 +476,34 @@ def block_del(params: Any, ctx: Any = None) -> BlockResult:
 
 
 def block_query(params: Any, ctx: Any = None) -> BlockResult:
-    """``archive.query``：10H-F2 查档案表，按 addr / expect_total / 空表 判。
+    """``archive.query``：10H-F2 查档案表，按 meter_addr / expect_total / 空表 判。
 
     判定优先级：
 
-    1. 给了 ``addr`` → 档案表必须含该地址；
+    1. 给了 ``meter_addr``（电表表地址，内部换算成档案地址后比对）→ 档案表必须含该地址；
     2. 否则给了 ``expect_total`` → 总数必须相等；
     3. 否则 ``expect_empty=true`` 或 ``count=0`` → 期望空表（total==0 且无地址）；
     4. 都没有 → **``unknown``**：一条判据都没有就什么都不该断言。
        查询应答本身可解析只说明「帧通了」，不说明「档案内容符合期望」；
        把这种情形判 pass 就是假 PASS（detail 写明原因与已看到的档案表摘要）。
+
+    **不取配置默认地址**（``allow_config_default=False``）：本块的地址就是判据，凭空塞一只
+    默认表进判据会把「没给判据」变成「给了一条可能不成立也没人要的判据」。
     """
     target, error = require_target(params, AFN_ROUTE_QUERY, FN_ARCHIVE_QUERY, BLOCK_QUERY)
     if target is None:
         return _fail(error)
     action = block_action_params(params)
-    addr = normalize_addr(action.get("addr"))
+    meter_addrs, bad = meter_addrs_of(params, allow_config_default=False)
+    if bad:
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail="%s：参数 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）"
+            "——配置问题，不是档案表结论" % (BLOCK_QUERY, "、".join(bad)),
+        )
+    archive_addrs = archive_addrs_of(meter_addrs)
+    addr = archive_addrs[0] if archive_addrs else ""
+    meter_addr = meter_addrs[0] if meter_addrs else ""
     expect_total = int_of(action.get("expect_total"))
     raw_count = action.get("count")
     expect_empty = bool(action.get("expect_empty")) or int_of(raw_count) == 0
@@ -387,7 +534,7 @@ def block_query(params: Any, ctx: Any = None) -> BlockResult:
         if state == FACT_YES:
             return BlockResult(
                 state=BLOCK_PASS,
-                detail="%s：%s" % (BLOCK_QUERY, detail),
+                detail="%s：%s（电表表地址 %s）" % (BLOCK_QUERY, detail, meter_addr),
                 evidence_ids=job_ids,
                 expected="档案表含 %s" % addr,
                 actual="含 %s" % addr,
@@ -395,14 +542,15 @@ def block_query(params: Any, ctx: Any = None) -> BlockResult:
         if state == FACT_NO:
             return BlockResult(
                 state=BLOCK_FAIL,
-                detail="%s：%s（%s）" % (BLOCK_QUERY, detail, summary),
+                detail="%s：%s（%s；电表表地址 %s）"
+                % (BLOCK_QUERY, detail, summary, meter_addr),
                 evidence_ids=job_ids,
                 expected="档案表含 %s" % addr,
                 actual="不含 %s" % addr,
             )
         return BlockResult(
             state=BLOCK_UNKNOWN,
-            detail="%s：%s" % (BLOCK_QUERY, detail),
+            detail="%s：%s（电表表地址 %s）" % (BLOCK_QUERY, detail, meter_addr),
             evidence_ids=job_ids,
         )
 
@@ -453,7 +601,7 @@ def block_query(params: Any, ctx: Any = None) -> BlockResult:
     # 一条判据都没给 → 什么都没断言 = 假 PASS，只能 unknown
     return BlockResult(
         state=BLOCK_UNKNOWN,
-        detail="%s：未指定 addr/expect_total/expect_empty，无法断言档案内容"
+        detail="%s：未指定 meter_addr/expect_total/expect_empty，无法断言档案内容"
         "（查询应答可解析：%s；帧通了不等于档案内容符合期望）" % (BLOCK_QUERY, summary),
         evidence_ids=job_ids,
     )
@@ -509,6 +657,9 @@ __all__ = [
     "block_query",
     "register_blocks",
     "register",
+    # 地址角色（REQS-0042 §3.1）：电表表地址 → 档案侧地址
+    "meter_addrs_of",
+    "archive_addrs_of",
     # 档案帧口径
     "AFN_ARCHIVE",
     "FN_ARCHIVE_ADD",

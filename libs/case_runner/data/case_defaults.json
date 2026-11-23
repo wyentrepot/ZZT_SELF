@@ -1,0 +1,9 @@
+{
+  "meter_addr": "123456789012",
+  "mapping_id": {
+    "simcon": "simcon",
+    "simeter": "simeter",
+    "sta": "sta-main"
+  },
+  "_note": "出厂默认值（0042 D2-2）。现场可改 config/case_defaults.json 覆盖；声明里的 meter_addr=null 表示取这里的值。"
+}

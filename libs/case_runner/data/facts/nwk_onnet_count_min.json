@@ -2,6 +2,7 @@
   "id": "nwk.onnet_count_min",
   "title": "【兼容别名】路由档案中的从节点数量 ≥ 期望下限（10H-F1 只读探测；档案数不等于在网数，真在网用 nwk.nodes_online_min）",
   "probe": "nwk.onnet_count_min",
+  "parameterized": true,
   "params_schema": {
     "min": {
       "type": "integer",

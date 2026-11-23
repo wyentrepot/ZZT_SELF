@@ -8,13 +8,13 @@
     "fn": 1,
     "params": {
       "action": "add",
-      "addr": "000000000001",
+      "meter_addr": null,
       "protocol": 2
     }
   },
   "assert": [
     {"type": "confirm", "frame": "00H-F1"},
-    {"type": "archive_contains", "addr": "000000000001"}
+    {"type": "archive_contains", "meter_addr": null}
   ],
   "tags": ["archive", "batch-1"]
 }

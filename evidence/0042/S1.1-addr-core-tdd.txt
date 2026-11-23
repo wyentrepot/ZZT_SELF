@@ -1,0 +1,32 @@
+# S1.1 addr-core TDD 红灯证据（先写测试 → 跑到失败 → 再实现）
+
+## 1) 改前基线（并行子代理 addr-decl 已改声明，4 failed / 440 passed / 2 skipped）
+
+libs/case_runner/test_cases_declaration.py:327: AssertionError
+=========================== short test summary info ============================
+FAILED libs/case_runner/blocks/test_archive_nwk.py::test_archive_add_does_not_poison_fact_cache_for_other_addresses
+FAILED libs/case_runner/blocks/test_meter.py::test_json_declarations_valid_and_consistent
+FAILED libs/case_runner/test_cases_declaration.py::test_parameterized_fact_set_is_not_empty
+FAILED libs/case_runner/test_cases_declaration.py::test_loader_rejects_parameterized_provides
+4 failed, 440 passed, 2 skipped in 3.40s
+
+## 2) 新增 test_defaults.py 首次运行（core/defaults.py 还不存在）
+
+==================================== ERRORS ====================================
+______________ ERROR collecting libs/case_runner/test_defaults.py ______________
+ImportError while importing test module '/01-workfile-ai/01-zzt/ZZT_SELF/libs/case_runner/test_defaults.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.10/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+libs/case_runner/test_defaults.py:29: in <module>
+    from case_runner.core import defaults
+E   ImportError: cannot import name 'defaults' from 'case_runner.core' (/01-workfile-ai/01-zzt/ZZT_SELF/libs/case_runner/core/__init__.py)
+=========================== short test summary info ============================
+ERROR libs/case_runner/test_defaults.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.18s
+
+## 3) 实现后
+.................................                                        [100%]
+33 passed in 0.12s

@@ -11,10 +11,20 @@ REQS-0041 §10.5 KE-1：非法声明（缺 ``action`` / ``needs`` 未注册 / ``
 第三条（防「跨参数假 PASS」的结构门禁）
 ------------------------------------
 :func:`check_provides_parameterized`：**块的 ``provides`` 不得引用参数化事实**
-（``params_schema`` 里有必需参数的，如 ``archive.contains`` 的 ``addr``）。
+（``params_schema`` 里有必需参数、或声明了 ``parameterized: true`` 的）。
 原因：块 ``provides`` 回写事实缓存只按 ``fact_id``（``FactsContext.set``），参数不同也会
-命中 —— 给 addr A 建档成功，会让 addr B 的探测直接 ``yes``。删掉 ``archive.add`` 的
-``provides`` 是治标，这条校验是防止别人再写回来的治本。
+命中 —— 给 meter_addr A 建档成功，会让 meter_addr B 的探测直接 ``yes``。删掉 ``archive.add``
+的 ``provides`` 是治标，这条校验是防止别人再写回来的治本。
+（REQS-0042 D2-2 起「参数化」的权威口径是显式 ``parameterized: true``，
+必需参数只是兼容旧写法：参数都有默认值之后 required 为空，门禁会空转。）
+
+第四条（``null`` 占位解析，REQS-0042 D2-2）
+----------------------------------------
+:func:`resolve_declaration_defaults`：声明里 ``"meter_addr": null``（以及事实
+``params_schema`` 里地址参数的 ``default: null``）表示「取两层配置的默认值」，在
+**加载期**解析成 :func:`case_runner.core.defaults.default_meter_addr` 的真实值 ——
+于是 ``case_run show`` 与 ``--params`` 看到/覆盖的都是真值。解析只在内存里做，
+**不改写 JSON 文件**；默认值读不到时保留 ``null``，由上层照常报「缺参数」。
 
 另提供 :func:`register_domain_modules`：自动发现 ``case_runner/blocks/`` 下的领域模块并
 import，触发其 ``register_block`` / ``register_fact``；领域模块若另外暴露 ``register()``
@@ -35,6 +45,7 @@ from typing import Any, Iterable, Mapping, Sequence, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from case_runner.core import defaults
 from case_runner.core.models import BlockSpec, CaseSpec, FactSpec, SuiteSpec
 from case_runner.core.registry import (
     Duplicate,
@@ -163,6 +174,110 @@ def iter_declarations(directory: str | Path) -> list[Path]:
     return sorted(p for p in path.glob("*.json") if p.is_file())
 
 
+# --------------------------------------------------------------------------- #
+# 声明里的 ``null`` 占位 → 两层默认配置（REQS-0042 D2-2）
+# --------------------------------------------------------------------------- #
+
+#: 声明里写 ``null`` 表示「取默认值」的两个键（D2-1 的唯一参数名口径）
+METER_ADDR_KEY = "meter_addr"
+METER_ADDR_LIST_KEY = "meter_addrs"
+#: 参数名命中这两个，其 ``params_schema`` 里的 ``default: null`` 才按默认地址解析
+DEFAULT_ADDR_PARAM_NAMES = frozenset({METER_ADDR_KEY, METER_ADDR_LIST_KEY})
+PARAMS_SCHEMA_KEY = "params_schema"
+
+
+def _placeholder_addr() -> str | None:
+    """``null`` 占位解析出的默认地址；读不到默认值 → ``None``（保留原样）。
+
+    刻意**不**把读不到的情况降级成 ``""``：空串地址会让块「看起来有参数」，
+    最后发一帧地址全空的报文；保留 ``None`` 则由上层照常报「缺必填参数」。
+    """
+
+    return defaults.default_meter_addr() or None
+
+
+def _resolve_param_entry(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
+    """解析一个参数定义（``params_schema`` 里的一项）。
+
+    只有**地址类参数名**（``meter_addr`` / ``meter_addrs``）的 ``default: null`` 会被
+    解析成默认地址 —— 其它参数（``mapping_id`` / ``request_hex`` …）的 ``null`` 是
+    「未配置」的语义，不能塞一个表地址进去。
+    """
+
+    resolved = {str(key): _resolve_defaults(value) for key, value in entry.items()}
+    if name in DEFAULT_ADDR_PARAM_NAMES and "default" in resolved and resolved["default"] is None:
+        placeholder = _placeholder_addr()
+        if placeholder is not None:
+            resolved["default"] = placeholder
+    return resolved
+
+
+def _resolve_params_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
+    """解析 ``params_schema``（扁平写法与 JSON-Schema 写法都认，与 ``required_params`` 同口径）。"""
+
+    resolved: dict[str, Any] = {}
+    for name, entry in schema.items():
+        key = str(name)
+        if key == "properties" and isinstance(entry, Mapping):
+            resolved[key] = {
+                str(item_name): (
+                    _resolve_param_entry(str(item_name), item)
+                    if isinstance(item, Mapping)
+                    else _resolve_defaults(item)
+                )
+                for item_name, item in entry.items()
+            }
+            continue
+        if key == "required" and isinstance(entry, (list, tuple)):
+            resolved[key] = list(entry)
+            continue
+        if key in _SCHEMA_KEYWORDS or not isinstance(entry, Mapping):
+            resolved[key] = _resolve_defaults(entry)
+            continue
+        resolved[key] = _resolve_param_entry(key, entry)
+    return resolved
+
+
+def _resolve_defaults(node: Any) -> Any:
+    """递归解析：键名命中地址占位 → 默认地址；``params_schema`` → 逐参数解析。"""
+
+    if isinstance(node, Mapping):
+        resolved: dict[str, Any] = {}
+        for name, value in node.items():
+            key = str(name)
+            if key == METER_ADDR_KEY and value is None:
+                resolved[key] = _placeholder_addr()
+            elif key == METER_ADDR_LIST_KEY and isinstance(value, (list, tuple)):
+                resolved[key] = [
+                    _placeholder_addr() if item is None else _resolve_defaults(item)
+                    for item in value
+                ]
+            elif key == PARAMS_SCHEMA_KEY and isinstance(value, Mapping):
+                resolved[key] = _resolve_params_schema(value)
+            else:
+                resolved[key] = _resolve_defaults(value)
+        return resolved
+    if isinstance(node, (list, tuple)):
+        return [_resolve_defaults(item) for item in node]
+    return node
+
+
+def resolve_declaration_defaults(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """把一份声明原文里的 ``null`` 占位解析成两层配置的默认值（**不写回文件**）。
+
+    覆盖三处（REQS-0042 D2-2，「声明不再各自写死地址」）：
+
+    - 块 ``action.params.meter_addr`` / ``action.params.meter_addrs[]``；
+    - 块 ``assert`` / ``cleanup`` 里同类键（递归走遍整份声明）；
+    - 事实 ``params_schema.<参数>.default``（仅地址类参数名）。
+
+    非地址的 ``null``（如 ``request_hex: null``）**原样保留**；默认值读不到时也保留
+    ``null``，让上层照常报「缺参数」，而不是把一个空地址发到台架。
+    """
+
+    return _resolve_defaults(raw)
+
+
 def _format_validation_error(path: Path, exc: ValidationError) -> list[str]:
     problems: list[str] = []
     for error in exc.errors():
@@ -185,6 +300,7 @@ def _load_one(path: Path, model: type[SpecT]) -> tuple[SpecT | None, list[str]]:
         return None, [
             f"{path.as_posix()}: 顶层必须是 JSON 对象，实际是 {type(raw).__name__}"
         ]
+    raw = resolve_declaration_defaults(raw)
     try:
         spec = model.model_validate(raw)
     except ValidationError as exc:
@@ -302,6 +418,9 @@ def required_params(spec: FactSpec) -> list[str]:
     注意：「参数化」的判据是**有必需参数**，不是「``params_schema`` 非空」——
     ``bench.simcon_online`` 这类事实的参数全都有默认值，不同取值不产生歧义，
     ``fix.simcon_session`` 的 ``provides`` 是合法的。
+
+    0042 起「参数化」的**权威口径**改成 :func:`is_parameterized`（显式
+    ``parameterized: true`` 标记 ∪ 必需参数）；本函数只负责后者（兼容旧写法）。
     """
     schema = spec.params_schema or {}
     if not isinstance(schema, Mapping):
@@ -321,6 +440,23 @@ def required_params(spec: FactSpec) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def is_parameterized(spec: FactSpec) -> bool:
+    """该事实是否**按入参求值**（结论随参数变化）——结构门禁的权威判据。
+
+    两条取或：
+
+    1. 声明里显式写 ``"parameterized": true``（REQS-0042 起的**权威口径**）；
+    2. 兼容旧写法：``required_params(spec)`` 非空（``required: true`` 的参数）。
+
+    为什么不能只靠 required：D2-2 之后参数都有默认值（``"default": null`` 取
+    ``case_defaults.json``），``archive.contains`` 这类「换地址结论就变」的事实
+    **没有**必需参数了 —— 只按 required 反推会让门禁空转（测试
+    ``test_parameterized_fact_set_is_not_empty`` 守的就是这件事）。
+    """
+
+    return bool(getattr(spec, "parameterized", False)) or bool(required_params(spec))
+
+
 def check_provides_parameterized(
     blocks: Iterable[BlockSpec],
     facts: Iterable[FactSpec],
@@ -332,6 +468,9 @@ def check_provides_parameterized(
     块 ``provides`` 回写事实缓存只按 ``fact_id``，参数不同也命中 ——
     给 ``addr=A`` 建档成功，会让 ``addr=B`` 的探测直接 ``yes``。
     参数化事实只能**现探**（``FactsContext`` 参数感知缓存 / 每次 probe），不能由块回写。
+
+    「参数化」判据 = :func:`is_parameterized`（显式 ``parameterized: true`` ∪ 必需参数）；
+    理由见该函数 docstring（0042 D2-2 之后必需参数可能为空，不能靠它反推）。
     """
     src = dict(sources or {})
     by_id: dict[str, FactSpec] = {}
@@ -346,12 +485,17 @@ def check_provides_parameterized(
             fact = by_id.get(fact_id)
             if fact is None:
                 continue  # 未声明的由 check_fact_refs 报，这里不重复
-            params = required_params(fact)
-            if not params:
+            if not is_parameterized(fact):
                 continue
+            params = required_params(fact)
+            why = (
+                "必需参数 " + "/".join(params)
+                if params
+                else "声明 parameterized: true（按入参求值）"
+            )
             problems.append(
                 f"{where}: block {spec.id!r} 的 provides 引用了参数化事实 {fact_id!r}"
-                f"（必需参数 {'/'.join(params)}）—— 块回写只按 fact_id 缓存，"
+                f"（{why}）—— 块回写只按 fact_id 缓存，"
                 "不同参数值会命中造成假 PASS；请从 provides 移除，由块内部判据直接断言"
             )
     return problems
@@ -364,7 +508,15 @@ def check_case_refs(
     sources: Mapping[str, str] | None = None,
     known_block_ids: Iterable[str] | None = None,
 ) -> list[str]:
-    """用例引用的块必须已声明（``CaseSpec.blocks`` 为空由 pydantic 直接拦掉）。"""
+    """用例引用的块必须已声明 —— 两种编排写法都查（REQS-0042 D3-1）。
+
+    - ``blocks[]``（老写法）：逐块查，文案与 0041 一致；
+    - ``plan[]``（步骤实例化）：逐**步骤**查，错误信息点名「哪个用例的哪一步引用哪个块」——
+      同一个块可以被实例化多次，只报块 id 会分不清是哪一步写错了。
+
+    「``blocks`` 与 ``plan`` 都给」不是错误（以 ``plan`` 为准），这里只校验引用完整性；
+    「给了一条提示」由入口层（``case_run check``）负责，属于提醒不是失败。
+    """
     src = dict(sources or {})
     known = {spec.id for spec in blocks} | set(known_block_ids or ())
     problems: list[str] = []
@@ -374,6 +526,12 @@ def check_case_refs(
             if block_id not in known:
                 problems.append(
                     f"{where}: case {spec.id!r} 引用了未声明的块：{block_id!r}"
+                )
+        for step in spec.plan:
+            if step.block not in known:
+                problems.append(
+                    f"{where}: case {spec.id!r} 的步骤 {step.id!r} "
+                    f"引用了未声明的块：{step.block!r}"
                 )
     return problems
 
@@ -580,11 +738,14 @@ __all__ = [
     "CASES_DIRNAME",
     "SUITES_DIRNAME",
     "BLOCKS_PACKAGE",
+    "METER_ADDR_KEY",
+    "METER_ADDR_LIST_KEY",
     "DeclarationError",
     "LoadReport",
     "RegisterReport",
     "resolve_dir",
     "iter_declarations",
+    "resolve_declaration_defaults",
     "load_blocks",
     "load_facts",
     "load_cases",
@@ -594,6 +755,7 @@ __all__ = [
     "check_provides_parameterized",
     "check_case_refs",
     "required_params",
+    "is_parameterized",
     "iter_domain_module_names",
     "register_domain_modules",
     "registered_declarations",

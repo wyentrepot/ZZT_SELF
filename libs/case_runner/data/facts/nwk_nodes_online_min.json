@@ -2,6 +2,7 @@
   "id": "nwk.nodes_online_min",
   "title": "真实在网/可达节点数 ≥ 期望下限（10H-F4「已抄从节点数量」+ 10H-F2「信号品质>0」两路只读交叉；绝不用 10H-F1 档案数推断）",
   "probe": "nwk.nodes_online_min",
+  "parameterized": true,
   "params_schema": {
     "min": {
       "type": "integer",

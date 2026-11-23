@@ -2,13 +2,13 @@
   "id": "meter.addr_probe",
   "title": "STA 获取表地址（02H-F1 透传 645 13H，判内层地址域）",
   "needs": ["bench.simcon_online"],
-  "provides": ["sta.meter_addr_known"],
+  "provides": [],
   "action": {
     "afn": "02",
     "fn": 1,
-    "params": {"protocol": 2, "addr": "000000000001"},
+    "params": {"protocol": 2, "meter_addr": null},
     "expect_timeout": 8
   },
-  "assert": [{"type": "inner_645_addr", "addr": "000000000001"}],
+  "assert": [{"type": "inner_645_addr", "meter_addr": null}],
   "tags": ["meter", "645", "smoke"]
 }

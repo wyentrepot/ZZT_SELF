@@ -3,7 +3,8 @@
 四个事实
 
 =========================  ==================================================
-``archive.contains``       探测 10H-F2 档案表是否含 ``addr``
+``archive.contains``       探测 10H-F2 档案表是否含 ``meter_addr``（电表 645 表地址，
+                           比较前先按 ``common.archive_addr_of`` 换算成档案侧地址）
 ``nwk.onnet_count_min``    **档案数**是否 ≥ ``min``（10H-F1；id 为兼容旧名保留，
                            语义一直是档案数：10H-F1 只回档案条数）
 ``nwk.nodes_online_min``   **真实在网/可达**节点数是否 ≥ ``min``（10H-F4 已抄数 +
@@ -43,6 +44,7 @@ from case_runner.blocks.common import (
     DEFAULT_NODES_ONLINE_COUNT,
     DEFAULT_QUERY_COUNT,
     DEFAULT_TIMEOUT,
+    archive_addr_of,
     archive_count_snapshot,
     archive_snapshot,
     capability_gate,
@@ -58,6 +60,7 @@ from case_runner.blocks.common import (
     resolve_simcon,
     route_snapshot,
 )
+from case_runner.core.defaults import default_meter_addr
 from case_runner.core.models import FACT_NO, FACT_UNKNOWN, FACT_YES
 from case_runner.core.planner import FactValue
 from case_runner.core.registry import (
@@ -99,11 +102,33 @@ def _unknown(detail: str, evidence: Any = ()) -> FactValue:
 
 
 def probe_archive_contains(params: Any) -> FactValue:
-    """10H-F2 档案表是否含 ``params["addr"]``。"""
+    """10H-F2 档案表是否含 ``params["meter_addr"]`` 这只表（REQS-0042 D2-1）。
+
+    入参是**电表 645 人读地址**；比较前先经 ``common.archive_addr_of`` 换算成**档案侧**
+    人读地址（唯一换算处）。入参缺失时退回 ``case_defaults.meter_addr``（D2-2）。
+    """
     action = _params_of(params)
-    addr = normalize_addr(action.get("addr"))
+    given = action.get("meter_addr")
+    if given not in (None, ""):
+        meter_addr = normalize_addr(given)
+        if not meter_addr:
+            # 给了但不合法 ≠ 没给：绝不静默换成默认那只表去判（会假 YES/假 NO）
+            return _unknown(
+                "archive.contains 参数 meter_addr 非法：%r（需 12 位 BCD 数字，"
+                "如 123456789012）" % (given,)
+            )
+    else:
+        meter_addr = normalize_addr(default_meter_addr())
+        if not meter_addr:
+            return _unknown(
+                "archive.contains 缺少参数 meter_addr（12 位 BCD 电表 645 表地址；"
+                "缺省取 case_defaults.meter_addr）"
+            )
+    addr = archive_addr_of(meter_addr)
     if not addr:
-        return _unknown("archive.contains 缺少/非法参数 addr（12 位 BCD 表地址）")
+        return _unknown(
+            "archive.contains 无法换算档案侧地址（电表表地址 %s）" % meter_addr
+        )
 
     cap, injected = simcon_handle()
     gate = capability_gate(cap, injected)

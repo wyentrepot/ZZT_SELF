@@ -250,6 +250,41 @@ def normalize_addr(value: Any) -> str:
     return text if len(text) == ADDR_LEN and text.isdigit() else ""
 
 
+def archive_addr_of(meter_addr: Any) -> str:
+    """电表 645 人读地址 → **CCO 档案侧人读地址**（REQS-0042 D2-1/D2-2 唯一换算处）。
+
+    口径（台架实测）：两边是同一串 6 字节 BCD 的**整体反序**——
+    电表脑地址 ``123456789012``（字节 ``12 34 56 78 90 12``）对应档案侧人读
+    ``129078563412``（字节 ``12 90 78 56 34 12``）。原因是 1376.2 多字节字段
+    「低字节在前」，而 645 地址域按人读顺序摆、档案表按传输序展示。
+
+    ``11H-F1/F2`` 建档/查询、``10H-F2`` 判据都用它；``02H-F1`` 内层 645 帧用
+    :func:`meter_addr_wire`（**不**反转）——两个函数一个反向一个不反向，别混用。
+
+    非法输入（非 12 位十进制 / ``None`` / 空）→ ``""``，**不抛异常**。
+    """
+    text = normalize_addr(meter_addr)
+    if not text:
+        return ""
+    return bytes.fromhex(text)[::-1].hex()
+
+
+def meter_addr_wire(meter_addr: Any) -> bytes:
+    """电表 645 人读地址 → 645 帧**地址域 6 字节线序**（按人读顺序，**不反转**）。
+
+    例：``"123456789012"`` → ``bytes.fromhex("123456789012")``
+    = ``b"\\x12\\x34\\x56\\x78\\x90\\x12"``。
+    注意 ``parser_lib`` 的 ``adapter_10376._bcd_bytes`` 会反序（那是 1376.2 档案
+    口径），**不要**把它和本函数当同一个东西：给 645 构帧就用本函数。
+
+    非法输入 → ``b""``，不抛异常。
+    """
+    text = normalize_addr(meter_addr)
+    if not text:
+        return b""
+    return bytes.fromhex(text)
+
+
 def items_of(parsed: Any) -> List[dict]:
     """取解析结果里的数据项列表（``decode`` 的 ``items``）。"""
     if not isinstance(parsed, Mapping):
@@ -1891,7 +1926,7 @@ def ensure_simeter_session(capability: SimeterCapability, *,
                            ensure_open: bool = DEFAULT_ENSURE_OPEN) -> Dict[str, Any]:
     """**开口门**：让模拟电表表口在链路上真的「张着嘴」（REQS-0041 台架联调修复）。
 
-    为什么需要它：simeter 只有 ``open_port()`` 之后才会自动应答 STA 从 485 发来的
+    为什么需要它：simeter 只有 ``open_port()`` 之后才会自动应答 STA 表口串行口发来的
     645 请求；只探测 ``status()`` 的旧口径会给出「服务可达就算在线」，而真实链路里
     表口没开 = 没人应答 = 抄表必挂。本函数只负责**开口**与**失败分层**，
     「开没开成 → 就绪与否」一律交给 :func:`judge_simeter`
@@ -2077,6 +2112,9 @@ def judge_sta_online(capability: ModuleCapability,
 
 
 __all__ = [
+    # 0. 地址角色化（0042 D2-1：换算只此一处，块内不得再写第二份反转）
+    "archive_addr_of",
+    "meter_addr_wire",
     # 帧口径
     "AFN_CONFIRM",
     "FN_CONFIRM",

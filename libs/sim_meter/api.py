@@ -30,9 +30,19 @@
 
 帧日志：每次 open 生成一个 MeterJournal 会话（session_id = sm-*），
 tx/rx/event 逐条记录并入 data/logs/simeter/sm-*.jsonl。
+
+设置持久化（REQS-0042 / S1.6）：表地址与 645 版本存
+``data/runtime/simeter_settings.json``（``shared.simeter_settings``）。
+- 服务自己装配电表脑时，启动先读该文件，没有才用 ``config/case_defaults.json``
+  的台架默认（``shared.bench_defaults``）——重启不再丢回 ``000000000001``；
+- ``POST /config`` 改完落盘（落盘失败只 warning，不影响接口返回）；
+- ``MeterBrain`` 的类默认值不动（引擎层兜底，既有测试夹具依赖它）；
+- 外部传入 ``brain`` 且未显式传 ``settings_store`` 时不落盘（测试/嵌入场景
+  不污染台架运行目录）。
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -45,6 +55,9 @@ from sim_meter.serial_channel import MeterSerialChannel, list_serial_ports
 
 if TYPE_CHECKING:  # 工作台挂载时注入；独立运行不依赖
     from shared.serial_resources import SerialResourceRegistry
+    from shared.simeter_settings import SimeterSettingsStore
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -151,24 +164,92 @@ class FramesQuery(BaseModel):
 # ---------------------------------------------------------------------------
 # 服务装配：电表脑 + 串口通道 + 会话日志（同进程单例）
 # ---------------------------------------------------------------------------
+def make_settings_store() -> Optional["SimeterSettingsStore"]:
+    """构造持久化设置存储；``shared`` 不可用（极端独立运行）时返回 None。
+
+    ``data/runtime/simeter_settings.json`` 由 ``shared.simeter_settings`` 决定，
+    测试可 monkeypatch ``shared.simeter_settings.default_runtime_dir`` 指到 tmp_path。
+    """
+
+    try:
+        from shared.simeter_settings import SimeterSettingsStore
+    except ImportError:  # pragma: no cover - 独立运行时 libs/ 未入 sys.path
+        logger.warning("shared.simeter_settings 不可用：模拟电表设置不持久化")
+        return None
+    try:
+        return SimeterSettingsStore()
+    except Exception as exc:  # pragma: no cover - 目录不可解析等极端情况
+        logger.warning("模拟电表设置存储初始化失败：%s", exc)
+        return None
+
+
+def _apply_settings(brain: MeterBrain, settings: Dict[str, Any]) -> None:
+    """把持久化设置套到电表脑上（非法值只 warning，不让服务起不来）。"""
+
+    addr = str(settings.get("addr") or "").strip()
+    version = str(settings.get("version") or "").strip()
+    if addr:
+        try:
+            brain.set_address(addr)
+        except ValueError as exc:
+            logger.warning("持久化的模拟电表地址非法，已忽略：%s", exc)
+    if version:
+        try:
+            brain.set_version(version)
+        except ValueError as exc:
+            logger.warning("持久化的模拟电表 645 版本非法，已忽略：%s", exc)
+
+
 class SimMeterService:
     def __init__(self, brain: Optional[MeterBrain] = None,
                  log_dir=None,
                  resource_registry: Optional["SerialResourceRegistry"] = None,
-                 port_resolver=None):
+                 port_resolver=None,
+                 settings_store: Optional["SimeterSettingsStore"] = None):
         """port_resolver：mapping_id/端口 → 实际打开参数（dict，含 port/baudrate…）。
 
         工作台挂载时注入（shared.serial_resources 注册表 + 串口目录解析），
         实现底座口经工作台统一接管、防双开；独立运行两者缺省为 None，行为不变。
+
+        settings_store：表配置持久化（``data/runtime/simeter_settings.json``）。
+        - 未传 ``brain``（服务自己装配电表脑，工作台/独立运行都走这条）：自动建默认
+          store，并**先读持久化设置**初始化，读不到才用 ``bench_defaults`` 的台架默认；
+        - 传了 ``brain`` 且未传 store：只改内存、不落盘（测试/嵌入场景不污染台架运行目录）；
+        - 显式传 store：按 store 初始化并落盘（测试注入 tmp 路径用这条）。
         """
-        self.brain = brain or MeterBrain()
+        store = settings_store
+        if brain is None:
+            if store is None:
+                store = make_settings_store()
+            brain = MeterBrain()
+        if store is not None:
+            _apply_settings(brain, store.load())
+        self.brain = brain
         self.channel: Optional[MeterSerialChannel] = None
         self.journal: Optional[MeterJournal] = None
         self.log_dir = log_dir if log_dir is not None else default_log_dir()
         self.resource_registry = resource_registry
         self.port_resolver = port_resolver
+        self.settings_store = store
         self._owner_id = "simeter"
         self._lock = threading.RLock()
+
+    def persist_settings(self) -> bool:
+        """把当前表配置（addr/version）落盘；失败只 warning，返回 False。
+
+        口径：落盘是增强，不阻塞接口——内存里的电表脑已经改好了，接口照常回现状。
+        """
+
+        store = self.settings_store
+        if store is None:
+            return False
+        payload = {"addr": self.brain.addr_hex, "version": self.brain.version}
+        try:
+            store.save(payload)
+        except (OSError, ValueError) as exc:
+            logger.warning("模拟电表设置落盘失败（本次改动仅当前进程有效）：%s", exc)
+            return False
+        return True
 
     def _resolve_open_params(self, spec: OpenSpec) -> dict:
         """收敛 mapping_id/端口为实际打开参数；返回 dict 至少含 port。"""
@@ -250,14 +331,18 @@ class SimMeterService:
 def create_simeter_app(prefix: str = "/api/simeter",
                        service: Optional[SimMeterService] = None,
                        resource_registry: Optional["SerialResourceRegistry"] = None,
-                       port_resolver=None) -> FastAPI:
+                       port_resolver=None,
+                       settings_store: Optional["SimeterSettingsStore"] = None) -> FastAPI:
     """创建模拟电表 API 子应用。挂载时传 prefix="" 避免双前缀。
 
     resource_registry / port_resolver：工作台挂载时注入（串口资源防双开 +
     串口目录 mapping_id 解析）；service 未提供时据此装配默认服务。
+    settings_store：表配置持久化存储（缺省按 ``data/runtime/simeter_settings.json``
+    自动装配，测试可注入 tmp 路径）。
     """
     svc = service or SimMeterService(
-        resource_registry=resource_registry, port_resolver=port_resolver)
+        resource_registry=resource_registry, port_resolver=port_resolver,
+        settings_store=settings_store)
     app = FastAPI(title="模拟电表（sim_meter）", version="0.1.0")
     app.state.simeter_service = svc      # 工作台 AI 桥经 state 取服务（不经 HTTP 回调）
     routes_prefix = prefix.rstrip("/")
@@ -282,7 +367,8 @@ def create_simeter_app(prefix: str = "/api/simeter",
                 "POST /open": "打开串口（mapping_id 或 port；工作台模式支持 mapping_id=listener）",
                 "POST /close": "关闭串口并释放资源注册",
                 "POST /baud": "波特率热切换 {baudrate}",
-                "GET/POST /config": "读/改 地址 addr、645 版本 version(07/97)、串口参数",
+                "GET/POST /config": "读/改 地址 addr、645 版本 version(07/97)、串口参数"
+                                    "（改完自动落盘，重启不丢）",
                 "GET/POST /data": "读/设 数据标识（di 显示序如 00010000，value，scale 小数位）",
                 "POST /clock": "设置表内时钟 {time:\"YYYY-MM-DD HH:MM:SS\"}",
                 "GET/POST /jzjc": "重庆即装即采配置",
@@ -305,7 +391,10 @@ def create_simeter_app(prefix: str = "/api/simeter",
                 "500": "打开串口失败（设备不存在/被系统占用）",
             },
             "notes": [
-                "出厂地址 000000000001；对档联调先 POST /config 设为档案地址（如 999999999999），否则读数据不响应",
+                "服务默认表地址取 config/case_defaults.json（现场 123456789012），"
+                "改完自动落盘 data/runtime/simeter_settings.json，重启不丢；"
+                "引擎 MeterBrain 类默认仍是 000000000001，对档联调不一致时先 POST /config "
+                "设为档案地址，否则读数据不响应",
                 "13H 读地址支持 FE×6 / 99×6 / AA×6 三种广播（对齐 STA 绑表扫掠）",
                 "WSL pts 不接受 PARENB：经虚拟串口/桥接环境开口一律 parity=N（线参由对端决定）",
                 "POST /event/config 的 target_addr 必须是 STA 模块地址（不是电表地址），698 事件上报帧 SA 指向该 STA",
@@ -364,6 +453,9 @@ def create_simeter_app(prefix: str = "/api/simeter",
         if (spec.baudrate is not None and svc.channel is not None
                 and svc.channel.is_open()):
             svc.channel.set_baudrate(spec.baudrate)
+        # 表配置落盘（REQS-0042 / S1.6）：重启后不再丢回 000000000001。
+        # 落盘失败只 warning（persist_settings 内部处理），接口返回结构不变。
+        svc.persist_settings()
         return svc.status()
 
     @app.get(routes_prefix + "/data")

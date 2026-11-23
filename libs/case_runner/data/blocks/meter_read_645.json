@@ -8,7 +8,7 @@
     "fn": 1,
     "params": {
       "protocol": 2,
-      "addr": "000000000001",
+      "meter_addr": null,
       "di": "00010000"
     },
     "expect_timeout": 8

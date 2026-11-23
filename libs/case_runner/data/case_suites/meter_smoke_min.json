@@ -1,0 +1,11 @@
+{
+  "id": "meter_smoke_min",
+  "name": "抄表最小冒烟（台架自检 → 档案 → 抄表，不复位不组网）",
+  "case_ids": [
+    "bench_ready",
+    "archive_ready",
+    "meter_read"
+  ],
+  "stop_on_fail": true,
+  "notes": "用途：本需求（REQS-0042）「零参与」验收主线 —— 零参与验收主线，≈40s 一轮，不复位不组网。依据 D3-4 的「必验（真机，每轮）」6 块（fix.simcon_session / fix.simeter_session / archive.add / meter.addr_probe / meter.read_645 / meter.brain_local）：bench_ready 覆盖两个 fix 会话块（模拟集中器在位 + 模拟电表开口），archive_ready 覆盖 archive.add 的「确认帧 + 回查」双判据，meter_read 覆盖 meter.addr_probe / meter.read_645 / meter.brain_local 三个表侧块。刻意不含 sta_reset（复位 10–20s 且会打断已建立的入网状态）与 nwk_join（重启路由要等组网 60s 以上）：日常回归要的是「档案在 + 抄得到」，这两件事不需要动网络。stop_on_fail=true：台架自检不过就不必再发档案/抄表帧，断点落点一眼可见。与既有 meter_only 的差别：本方案是名正言顺的「最小抄表冒烟」主线（≈40s），meter_only 保留为历史方案不改。"
+}

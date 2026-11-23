@@ -7,12 +7,12 @@
     "afn": "11",
     "fn": 2,
     "params": {
-      "meters": ["000000000001"]
+      "meter_addrs": null
     }
   },
   "assert": [
     {"type": "confirm", "frame": "00H-F1"},
-    {"type": "archive_not_contains", "addr": "000000000001"}
+    {"type": "archive_not_contains", "meter_addr": null}
   ],
   "tags": ["archive", "batch-1", "destructive"]
 }

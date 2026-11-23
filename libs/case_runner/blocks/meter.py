@@ -34,20 +34,25 @@ unknown 拿不到结论（job 轮询超时、无上行帧 hex、返回结构无�
 
 块参数（``action.params`` 给缺省，``ctx.block_params[block_id]`` 顶层键覆盖）：
 
-- ``addr``            期望表地址（12 位 BCD hex，如 ``000000000001``）
+- ``meter_addr``      表地址（12 位 BCD，**电表 645 地址域人读序**，如 ``123456789012``）；
+                      缺省取 ``case_defaults.meter_addr``（REQS-0042 **D2-2**）
 - ``protocol``        1376.2 数据单元「通信协议类型」：``2`` = DL/T 645-2007，``1`` = 645-1997
-- ``payload``         直接给内嵌 645 请求帧 hex（不给则按 ``addr``/``di`` 构帧）
+- ``payload``         直接给内嵌 645 请求帧 hex（不给则按 ``meter_addr``/``di`` 构帧）
 - ``di``              645 读数据 DI（显示序 8 位 hex，缺省 ``00010000`` 正向有功总电能）
 - ``expect_timeout``  等上行 02H-F1 应答的秒数（缺省 8）
 - ``expect_value``    （可选）``meter.read_645`` 的期望数值
 - ``request_hex``     （``brain_local``，**可选**）喂给表端脑的 645 帧 hex；
-                      缺省/为空时按 ``addr`` + ``di`` 用 :func:`build_645_read_frame`
+                      缺省/为空时按 ``meter_addr`` + ``di`` 用 :func:`build_645_read_frame`
                       动态构帧（显式给值仍以显式值为准）
 - ``expect_reply``    （``brain_local``）是否期望应答（缺省 True；地址不符反帧传 False）
 
-``meter.brain_local`` 的 ``addr`` 与 ``meter.read_645`` 同口径（645 地址域线序，
-人读 ``123456789012`` → 线序 ``12 34 56 78 90 12``）。**不再有硬编码请求帧**：
+``meter.brain_local`` 的 ``meter_addr`` 与 ``meter.read_645`` 同口径（645 地址域线序，
+人读 ``123456789012`` → 线序 ``12 34 56 78 90 12``，**不反转**；换算唯一实现处是
+``blocks/common.py`` 的 :func:`meter_addr_wire`）。**不再有硬编码请求帧**：
 旧常量 :data:`SELF_CHECK_REQUEST` 只对应 ``000000000001``，台架换地址即会误判 FAIL。
+
+地址角色（REQS-0042 §3.1）：调用方只给 ``meter_addr``（电表 645 人读地址）；
+**档案侧**的换算（``archive_addr_of``）由 ``archive.py`` 负责，本文件不碰档案地址。
 """
 
 from __future__ import annotations
@@ -55,10 +60,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from case_runner.blocks.common import meter_addr_wire, normalize_addr
 from case_runner.capabilities.frames import FramesCapability
 from case_runner.capabilities.simeter import SimeterCapability
 from case_runner.capabilities.simcon import SimconCapability
-from case_runner.core.executor import BlockResult
+from case_runner.core.defaults import default_meter_addr
+from case_runner.core.executor import PARAM_ASSERT, BlockResult
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -84,12 +91,15 @@ INNER_PROTOCOL_645 = "645"
 CONTROL_READ_ADDR = "13"
 CONTROL_READ_DATA = "11"
 
-#: 缺省期望表地址 / DI（REQS §10.7 事实 E、645-2007 附录 A.2）
+#: 表地址 / DI 的**离线兜底**（REQS §10.7 事实 E、645-2007 附录 A.2）
+#: 注意 ``DEFAULT_ADDR`` 只给**纯函数构帧器**（``build_645_read_frame()`` 无参调用）和
+#: 回归基准用；**块运行期不取它**——块一律走 :func:`meter_addr_of`
+#: （入参 > 声明默认 > ``case_defaults.meter_addr``，见 REQS-0042 D2-2）。
 DEFAULT_ADDR = "000000000001"
 DEFAULT_DI = "00010000"
 
 #: 表端脑自检参考帧（已实测：本表地址 000000000001 读 DI 00010000）
-#: 仅作「旧地址帧」回归基准，**块运行期不再用它**（按 ``addr`` 动态构造）
+#: 仅作「旧地址帧」回归基准，**块运行期不再用它**（按 ``meter_addr`` 动态构造）
 SELF_CHECK_REQUEST = "6800000000000168110433333433B316"
 #: 地址不符的有效帧（CS 合法）：表端脑按「不应答 + note.mine=False」处理
 SELF_CHECK_FOREIGN_REQUEST = "68111111111111681104333334331816"
@@ -143,6 +153,56 @@ def block_params(action: Mapping[str, Any]) -> Dict[str, Any]:
     return merged
 
 
+def meter_addr_of(
+    action: Mapping[str, Any], *, allow_config_default: bool = True
+) -> Tuple[str, str]:
+    """解析本块要作用的**电表 645 表地址**：返回 ``(表地址, 非法入参说明)``。
+
+    解析顺序（REQS-0042 **D2-1** / **D2-2**）：
+
+    1. **入参** ``meter_addr``（``action.params`` 或运行时扁平覆盖）；
+    2. **块声明 ``assert`` 里的 ``meter_addr``**——只在入参没给时兜底：``action`` 与
+       ``assert`` 是声明 JSON 里两份手写字段，任一侧单独改了地址就会「请求一只表、
+       判另一只表」。取 assert 侧的值，保证同一块内动作与判据作用于**同一只表**；
+    3. **配置默认** ``case_defaults.meter_addr``（``allow_config_default`` 时）。
+
+    **给了但不合法 ≠ 没给**：显式传 ``"12345"`` 之类垃圾地址绝不静默换成默认表地址
+    （那会让「传错地址」变成「拿默认那只表去判」）——此时第二个返回值非空，块报配置错误。
+
+    这里**不做**任何字节反转：645 帧地址域线序由 :func:`build_645_read_frame`
+    经 ``common.meter_addr_wire``（唯一实现处）得出。
+    """
+    options = block_params(action) if isinstance(action, Mapping) else {}
+    given = options.get("meter_addr")
+    if given not in (None, ""):
+        addr = normalize_addr(given)
+        if addr:
+            return addr, ""
+        return "", repr(given)
+
+    entries = action.get(PARAM_ASSERT) if isinstance(action, Mapping) else None
+    if isinstance(entries, (list, tuple)):
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            asserted = normalize_addr(entry.get("meter_addr"))
+            if asserted:
+                return asserted, ""
+    if allow_config_default:
+        return normalize_addr(default_meter_addr()), ""
+    return "", ""
+
+
+def _bad_addr_result(bad: str, expected: Any = None) -> BlockResult:
+    """表地址入参非法的统一块结果（配置错误 → ``unknown``，绝不当设备结论）。"""
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail="请求帧构帧失败（配置错误，非设备 FAIL）：645 地址非法：%s"
+        "（需 12 位 BCD 数字，如 123456789012）" % bad,
+        expected=expected,
+    )
+
+
 def _entries(frame: Any) -> list:
     if not isinstance(frame, Mapping):
         return []
@@ -181,11 +241,15 @@ def di_echo_hex(di: str) -> str:
     """645 读数据应答里 DI 回显的线上字节（DI 显示序 → 传输序，逐字节 +33H）。
 
     ``00010000`` → ``33333433``（与表端脑应答帧实测一致）。
+
+    说明：这里的字节反序是 **645 数据标识 DI 自己的显示序→传输序**（4 字节 + 33H），
+    与「表地址 / 档案地址」的 6 字节换算**不是同一件事**——地址换算的唯一实现处是
+    ``blocks/common.py`` 的 ``archive_addr_of`` / ``meter_addr_wire``，本函数不碰地址。
     """
     text = norm_hex(di)
-    if len(text) != 8:
+    if len(text) != 8 or any(char not in "0123456789ABCDEF" for char in text):
         return ""
-    wire = bytes.fromhex(text)[::-1]
+    wire = bytes(reversed(bytes.fromhex(text)))
     return "".join("%02X" % ((byte + 0x33) & 0xFF) for byte in wire)
 
 
@@ -367,7 +431,7 @@ def judge_meter_addr(
     if not frame_hex:
         return Verdict(BLOCK_UNKNOWN, "没有上行帧 hex，无法判定")
     if not expect:
-        return Verdict(BLOCK_UNKNOWN, "未给出期望表地址（addr），无法判定")
+        return Verdict(BLOCK_UNKNOWN, "未给出期望表地址（meter_addr），无法判定")
 
     decoded, protocol_used = decode_outer(frames, frame_hex)
     if decoded is None:
@@ -795,8 +859,9 @@ def build_645_read_frame(addr: Any = None, di: Any = None) -> Tuple[str, str]:
 
         68 | A0..A5 | 68 | 11 | 04 | DI 传输序 | CS | 16
 
-    - 地址域：``bytes.fromhex(addr)`` **原样**（645 线序，低字节在前，**不反序**）；
+    - 地址域：``common.meter_addr_wire(addr)`` —— 645 线序**原样**（低字节在前，**不反序**）；
       人读 ``123456789012`` → 线序 ``12 34 56 78 90 12``（真实台架已验）。
+      换算只有 ``common.py`` 一份实现，本文件不再手写反转。
     - DI：显示序 → 传输序复用 :func:`di_echo_hex`（``00010000`` → ``33333433``）。
     - CS：整帧除尾 2 字节求和取低 8 位。
 
@@ -807,16 +872,10 @@ def build_645_read_frame(addr: Any = None, di: Any = None) -> Tuple[str, str]:
     """
     addr_hex = norm_hex(addr) or DEFAULT_ADDR
     di_hex = norm_hex(di) or DEFAULT_DI
-    try:
-        addr_bytes = bytes.fromhex(addr_hex)
-    except ValueError:
-        addr_bytes = b""
+    addr_bytes = meter_addr_wire(addr_hex)
     if len(addr_bytes) != 6:
-        return "", "645 地址非法：%r（需 12 位 hex，如 123456789012）" % (addr,)
-    try:
-        di_wire = di_echo_hex(di_hex)
-    except ValueError:
-        di_wire = ""
+        return "", "645 地址非法：%r（需 12 位 BCD 数字，如 123456789012）" % (addr,)
+    di_wire = di_echo_hex(di_hex)
     if not di_wire:
         return "", "645 DI 非法：%r（需 8 位 hex，如 00010000）" % (di,)
     body = (
@@ -834,12 +893,23 @@ def build_645_read_frame(addr: Any = None, di: Any = None) -> Tuple[str, str]:
 
 
 def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
-    """``meter.addr_probe``：02H-F1 透传 645 读通信地址，判内层地址域 == 期望地址。"""
+    """``meter.addr_probe``：02H-F1 透传 645 读通信地址，判内层地址域 == 期望地址。
+
+    入参 ``meter_addr``（电表 645 人读地址，缺省取配置默认值，见 REQS-0042 D2-2）。
+    """
     action = dict(params or {})
     options = block_params(action)
     frames = _capability(ctx, "frames", FramesCapability, options)
 
-    expect_addr = norm_hex(options.get("addr")) or DEFAULT_ADDR
+    expect_addr, bad = meter_addr_of(action)
+    if bad:
+        return _bad_addr_result(bad)
+    if not expect_addr:
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail="未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
+            "缺省取 case_defaults.meter_addr）——配置问题，非设备结论",
+        )
     protocol_type = options.get("protocol", PROTOCOL_645_2007)
 
     payload = norm_hex(options.get("payload"))
@@ -893,12 +963,23 @@ def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
 
 
 def meter_read_645(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
-    """``meter.read_645``：02H-F1 透传 645 读数据，判 CS 合法 + DI 回显 + 数值可解。"""
+    """``meter.read_645``：02H-F1 透传 645 读数据，判 CS 合法 + DI 回显 + 数值可解。
+
+    入参 ``meter_addr``（电表 645 人读地址，缺省取配置默认值，见 REQS-0042 D2-2）。
+    """
     action = dict(params or {})
     options = block_params(action)
     frames = _capability(ctx, "frames", FramesCapability, options)
 
-    addr = norm_hex(options.get("addr")) or DEFAULT_ADDR
+    addr, bad = meter_addr_of(action)
+    if bad:
+        return _bad_addr_result(bad)
+    if not addr:
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail="未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
+            "缺省取 case_defaults.meter_addr）——配置问题，非设备结论",
+        )
     di = norm_hex(options.get("di")) or DEFAULT_DI
     protocol_type = options.get("protocol", PROTOCOL_645_2007)
 
@@ -949,21 +1030,34 @@ def meter_read_645(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
 def meter_brain_local(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
     """``meter.brain_local``：simeter ``handle_hex`` 纯函数入口自检表端脑 645 链路。
 
-    请求帧口径：显式 ``request_hex`` 优先；未显式给时按 ``addr`` + ``di``
+    请求帧口径：显式 ``request_hex`` 优先；未显式给时按 ``meter_addr`` + ``di``
     用 :func:`build_645_read_frame` **动态构造**（台架换表地址后不再误判 FAIL）。
 
     正帧判据：``reply_hex`` 非空 + DI 回显 + ``note.value`` 存在；
     反帧（``expect_reply=False``，如地址不符）判据：``reply_hex is None`` 且
     ``note.mine is False``（「不应答」正是期望，因此判 pass）。
+
+    注意：反帧场景的**地址不符是刻意的**（声明 ``negative_addr_mismatch`` 显式给一帧
+    别的地址），所以「统一地址」只约束「按地址动态构帧」这条路径，**不得**把显式
+    ``request_hex`` 换成本表地址帧——那就把负例变成了正例。
     """
     action = dict(params or {})
     options = block_params(action)
 
-    addr = norm_hex(options.get("addr")) or DEFAULT_ADDR
     di = norm_hex(options.get("di")) or DEFAULT_DI
     expect_reply = bool(options.get("expect_reply", True))
     request_hex = norm_hex(options.get("request_hex"))
     if not request_hex:
+        addr, bad = meter_addr_of(action)
+        if bad:
+            return _bad_addr_result(bad, expected=di)
+        if not addr:
+            return BlockResult(
+                state=BLOCK_UNKNOWN,
+                detail="未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
+                "缺省取 case_defaults.meter_addr）——配置问题，非设备结论",
+                expected=di,
+            )
         request_hex, reason = build_645_read_frame(addr, di)
         if not request_hex:
             return BlockResult(
@@ -1119,6 +1213,7 @@ __all__ = [
     "di_echo_hex",
     "judge_meter_addr",
     "judge_read_645",
+    "meter_addr_of",
     "meter_addr_probe",
     "meter_brain_local",
     "meter_read_645",

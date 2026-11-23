@@ -1,7 +1,9 @@
-"""事实：``sta.meter_addr_known(addr)`` —— 「STA 是否已知该表地址」（REQS §10.5 FT-1/FT-3）。
+"""事实：``sta.meter_addr_known(meter_addr)`` —— 「STA 是否已知该表地址」
+（REQS §10.5 FT-1/FT-3）。
 
 探测面（只读观测，不产生激励）：下发 02H-F1 数据转发（透传 645 ``13H`` 读通信地址），
-看上行 02H-F1 内嵌 645 的地址域是否就是 ``addr``。
+看上行 02H-F1 内嵌 645 的地址域是否就是 ``meter_addr``（**电表 645 人读地址**，
+REQS-0042 D2-1：调用方只认识这一个地址；档案侧的换算与本事实无关）。
 
 **判定逻辑不在这里另写**（FT-2）：下发+取帧用 ``blocks/meter.py`` 的
 :func:`probe_forward_reply`，判据用同一个 :func:`judge_meter_addr`。本文件只做
@@ -10,8 +12,8 @@
 ============================  ==================================================
 探测结果                      事实
 ============================  ==================================================
-内层 645 地址域 == addr        ``yes``
-内层 645 地址域 != addr        ``no``（明确探测到，只是不匹配）
+内层 645 地址域 == meter_addr  ``yes``
+内层 645 地址域 != meter_addr  ``no``（明确探测到，只是不匹配）
 服务不可达 / 404 / 409 / 超时
 / 无上行帧 / 无内层 645 嵌套   ``unknown``（**不判 no**：没探到 ≠ 不存在）
 ============================  ==================================================
@@ -19,7 +21,8 @@
 入参（``FactsContext.params["sta.meter_addr_known"]``，即执行器调用 ``fn(params)`` 的
 ``params``；事实探测体拿不到 ``ctx``，能力句柄必须从这里注入）：
 
-- ``addr``            期望表地址（12 位 BCD hex，缺省 ``000000000001``）
+- ``meter_addr``      期望表地址（12 位 BCD 电表 645 人读地址；缺省取
+                      ``case_defaults.meter_addr``，见 REQS-0042 D2-2）
 - ``simcon``          :class:`case_runner.capabilities.simcon.SimconCapability`
                       （**缺省=None → ``unknown``**：没有下发能力就不假装知道）
 - ``frames``          可选，:class:`case_runner.capabilities.frames.FramesCapability`
@@ -39,11 +42,11 @@ from case_runner.core.registry import has_fact, register_fact
 
 from .meter import (
     CONTROL_READ_ADDR,
-    DEFAULT_ADDR,
     DEFAULT_EXPECT_TIMEOUT,
     PROTOCOL_645_2007,
     build_645_request,
     judge_meter_addr,
+    meter_addr_of,
     norm_hex,
     probe_forward_reply,
 )
@@ -55,7 +58,19 @@ FACT_ID = "sta.meter_addr_known"
 def probe_sta_meter_addr_known(params: Mapping[str, Any] | None = None) -> FactValue:
     """探测 STA 是否已知该表地址：``yes`` / ``no`` / ``unknown``。"""
     options = dict(params or {})
-    addr = norm_hex(options.get("addr")) or DEFAULT_ADDR
+    addr, bad = meter_addr_of(options)
+    if bad:
+        return FactValue(
+            state=FACT_UNKNOWN,
+            detail="表地址 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012），无法探测"
+            % bad,
+        )
+    if not addr:
+        return FactValue(
+            state=FACT_UNKNOWN,
+            detail="未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
+            "缺省取 case_defaults.meter_addr），无法探测",
+        )
     frames = options.get("frames")
     if frames is None:
         frames = FramesCapability()

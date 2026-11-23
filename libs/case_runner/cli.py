@@ -40,11 +40,26 @@
 ``unknown`` / ``skipped`` 永不计入 PASS 计数，且在输出里单独成列；``probe --all``
 在台架未就绪时**全部 unknown**——块没有跑出确定结论就不许出现 pass。
 
-``base_url`` 注入
------------------
-优先 ``--base-url``，其次环境变量 ``WORKBENCH_BASE``；两者都没有时能力层会因
-``no_base_url`` 返回「不可用」，块随之 ``skipped``、事实跟随 ``unknown``（不是 fail）。
-本模块**不写死任何工作台端口**：地址一律由调用方/环境注入。
+``base_url`` 服务发现（REQS-0042 **D2-3** 单入口服务发现）
+--------------------------------------------------------
+四级，**先命中先用**，来源如实回报 ``base_source`` ∈ ``cli`` / ``env`` / ``runtime`` / ``default``：
+
+1. ``--base-url``（显式指定，最高优先）；
+2. 环境变量 ``WORKBENCH_BASE``（沿用 REQS-0041 的能力层注入通道）；
+3. 运行时文件 ``<仓库根>/data/runtime/workbench.json`` —— **工作台启动时自己写**
+   （``apps/workbench/run.py`` / ``apps/workbench/desktop.py``），本模块**只读**；
+4. 末档默认 :data:`DEFAULT_BASE_URL`（本机默认端口，零参可跑）—— 走到这一档
+   **必须打一行提示**，不静默（见 :func:`base_url_notice`；``--json`` 时提示走
+   stderr，stdout 仍是纯 JSON）。只有真正用地址的 ``run`` / ``probe`` 才提示，
+   ``list`` / ``show`` / ``check`` 是离线只读，不掺这一行。
+
+第 3/4 档解析出来的地址同样灌进 ``WORKBENCH_BASE``（能力层只认这个通道），退出时原样还原。
+「不写死」原则仍在：本模块**只有一处**常量为「零参兜底」定义端口，其余一切由调用方/环境/
+运行时文件注入；能力层不读运行时文件，也拿不到本模块的常量。
+``runtime`` / ``default`` 都只回答「去哪儿找服务」，不改变块与事实的判定。
+
+运行时文件的路径固定在**仓库根**（``data/runtime/workbench.json``），与 ``--data-dir``
+指定的声明根**无关**：换一套声明根不影响服务发现（声明归声明，服务归服务）。
 """
 
 from __future__ import annotations
@@ -63,6 +78,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO
 
 from case_runner.blocks import loader as decl_loader
+from case_runner.core import defaults
 from case_runner.core.executor import CaseRunResult, RunContext, execute_case
 from case_runner.core.models import (
     BLOCK_FAIL,
@@ -93,6 +109,43 @@ EXIT_DECLARATION = 4   # 声明加载失败
 
 #: 环境变量名（与 ``case_runner.capabilities.*`` 的口径一致；本模块只读这个名字，不写死地址）
 ENV_BASE_URL = "WORKBENCH_BASE"
+
+#: 本机默认端口（REQS-0042 D2-3 末档，**全文件唯一**一处写死端口的地方；改这里必须同步
+#: ``apps/workbench/run.py`` / ``desktop.py`` 的 ``PORT``）
+DEFAULT_PORT = 8790
+#: 末档默认地址：走到这一档必须打提示（:func:`base_url_notice`），绝不静默
+DEFAULT_BASE_URL = "http://127.0.0.1:%d" % DEFAULT_PORT
+
+#: 运行时文件（工作台启动时写、本模块只读）：``<仓库根>/data/runtime/workbench.json``。
+#: 固定在仓库根，**不跟随** ``--data-dir``（声明根换了不影响服务发现）。
+RUNTIME_FILE: Path = defaults.REPO_ROOT / "data" / "runtime" / "workbench.json"
+
+#: 运行时文件里认的字段：``base_url`` 优先，其次由 ``host`` + ``port`` 拼
+RUNTIME_BASE_URL_KEY = "base_url"
+RUNTIME_HOST_KEY = "host"
+RUNTIME_PORT_KEY = "port"
+
+#: 通配/空 host 不能当客户端目标（监听 ``0.0.0.0`` 与本机访问 ``127.0.0.1`` 是两回事）
+WILDCARD_HOSTS: frozenset[str] = frozenset({"", "0.0.0.0", "*", "::", "[::]", "::0"})
+#: 通配 host 归一成的本机回环地址
+LOOPBACK_HOST = "127.0.0.1"
+
+#: ``base_source`` → 人读来源（如实显示，用户要能看出「地址是哪儿来的」）
+BASE_URL_SOURCE_LABELS: dict[str, str] = {
+    "cli": "--base-url",
+    "env": "环境变量 WORKBENCH_BASE",
+    "runtime": "运行时文件 data/runtime/workbench.json",
+    "default": "本机默认端口（未发现 workbench.json）",
+    "none": "无来源",
+}
+
+#: D2-1 已改名的旧参数名 → 新参数名（**硬拒绝，不留兼容别名**）。
+#: 用户在 ``--params`` 里传旧名时直接报参数错误（退出码 3）+ 迁移提示，
+#: 而不是静默忽略或当成「多余参数」——静默兼容只会让地址角色错位重现。
+RENAMED_PARAMS: tuple[tuple[str, str], ...] = (
+    ("addr", "meter_addr"),
+    ("meters", "meter_addrs"),
+)
 
 EXIT_CODE_HELP = """退出码（固定契约）：
   0  全部 pass
@@ -211,40 +264,130 @@ def load_bundle(
 
 
 # --------------------------------------------------------------------------- #
-# base_url 注入（--base-url > WORKBENCH_BASE；本模块不写死任何端口）
+# base_url 服务发现（--base-url > WORKBENCH_BASE > 运行时文件 > 本机默认端口）
 # --------------------------------------------------------------------------- #
 
 
-def resolve_base_url(explicit: str | None = None) -> tuple[str, str]:
-    """返回 ``(base_url, 来源)``；来源 ∈ ``cli`` / ``env`` / ``none``。
+def normalize_base_host(host: Any) -> str:
+    """运行时文件里的 ``host`` → 客户端可用的主机名（通配地址归一成回环）。
 
-    优先级：``--base-url`` > 环境变量 ``WORKBENCH_BASE``。**没有缺省地址**——
-    都没有时返回 ``("", "none")``，由能力层报 ``no_base_url``（块 skipped / 事实 unknown），
-    绝不回退到任何写死的端口。
+    工作台监听 ``0.0.0.0``（局域网开放，ADR-28），但 ``http://0.0.0.0:<port>``
+    **不是一个可拨号的目标**（部分栈直接拒绝）。读取侧必须把它换成 ``127.0.0.1``。
     """
+
+    text = str(host or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if text in WILDCARD_HOSTS:
+        return LOOPBACK_HOST
+    return text or LOOPBACK_HOST
+
+
+def runtime_base_url(path: str | Path | None = None) -> str:
+    """从运行时文件读工作台地址；读不到 / 读坏 / 内容不可用 → ``""``（绝不抛）。
+
+    认两种写法（工作台自己写两个都写，这里对任一缺失都容错）：
+
+    - ``base_url``：完整的 ``http(s)://host:port``；
+    - ``host`` + ``port``：``0.0.0.0`` / ``::`` 这类监听地址由
+      :func:`normalize_base_host` 归一成回环。
+    """
+
+    target = Path(path) if path is not None else Path(RUNTIME_FILE)
+    try:
+        raw = target.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return ""
+    if not isinstance(payload, Mapping):
+        return ""
+
+    explicit = payload.get(RUNTIME_BASE_URL_KEY)
+    if isinstance(explicit, str) and explicit.strip().lower().startswith(("http://", "https://")):
+        return explicit.strip()
+
+    port = payload.get(RUNTIME_PORT_KEY)
+    try:
+        port_number = int(port)
+    except (TypeError, ValueError):
+        port_number = 0
+    if not 1 <= port_number <= 65535:
+        return ""
+    return "http://%s:%d" % (normalize_base_host(payload.get(RUNTIME_HOST_KEY)), port_number)
+
+
+def resolve_base_url(
+    explicit: str | None = None, runtime_file: str | Path | None = None
+) -> tuple[str, str]:
+    """返回 ``(base_url, 来源)``；来源 ∈ ``cli`` / ``env`` / ``runtime`` / ``default`` / ``none``。
+
+    优先级（REQS-0042 D2-3，**先命中先用**）：
+
+    1. ``--base-url`` → ``cli``；
+    2. 环境变量 ``WORKBENCH_BASE`` → ``env``；
+    3. 运行时文件 ``data/runtime/workbench.json`` → ``runtime``；
+    4. 末档默认 :data:`DEFAULT_BASE_URL` → ``default``（调用方负责打提示）。
+
+    ``DEFAULT_BASE_URL`` 为空串时第 4 档关闭，返回 ``("", "none")``，由能力层报
+    ``no_base_url``（块 skipped / 事实 unknown）—— 这是测试与「不想要兜底」场景的开关，
+    生产路径下它非空，于是零参可跑。
+    """
+
     if explicit:
         return str(explicit), "cli"
     from_env = os.environ.get(ENV_BASE_URL) or ""
     if from_env:
         return from_env, "env"
+    from_runtime = runtime_base_url(runtime_file)
+    if from_runtime:
+        return from_runtime, "runtime"
+    fallback = str(DEFAULT_BASE_URL or "").strip()
+    if fallback:
+        return fallback, "default"
     return "", "none"
 
 
+def base_url_source_label(source: str) -> str:
+    """``base_source`` → 人读来源（未知来源原样显示，不臆造）。"""
+
+    return BASE_URL_SOURCE_LABELS.get(str(source or ""), str(source or "无来源"))
+
+
+def base_url_notice(base_url: str, source: str) -> str:
+    """末档兜底时的一行提示（D2-3 硬要求：**必须说出来**）；其它来源 → ``""``。"""
+
+    if source != "default" or not base_url:
+        return ""
+    return (
+        "提示：未发现 workbench.json，按本机默认端口 %d（%s）；"
+        "工作台没起或换了端口时用 --base-url / 环境变量 %s 指定"
+        % (DEFAULT_PORT, base_url, ENV_BASE_URL)
+    )
+
+
 @contextlib.contextmanager
-def _base_url_env(explicit: str | None = None) -> Iterator[tuple[str, str]]:
-    """在执行期间把 ``--base-url`` 灌进 ``WORKBENCH_BASE``，退出时**原样还原**。
+def _base_url_env(
+    explicit: str | None = None, runtime_file: str | Path | None = None
+) -> Iterator[tuple[str, str]]:
+    """执行期间把解析出的地址灌进 ``WORKBENCH_BASE``，退出时**原样还原**。
 
     能力实例是在块执行体里按 ``base_url`` 参数 / 环境变量自建的，入口层不去构造能力，
     所以注入走环境变量这一条公认通道（见 capabilities/*.py ``env_var`` 默认值）。
+    三者都需要注入：``cli``（显式）、``runtime`` / ``default``（发现而来）——
+    否则「零参可跑」只是入口层自己知道地址，块执行体拿不到。
     """
-    resolved = resolve_base_url(explicit)
-    if not explicit:
-        yield resolved
+
+    resolved_url, resolved_source = resolve_base_url(explicit, runtime_file)
+    if not resolved_url:
+        yield resolved_url, resolved_source
         return
     previous = os.environ.get(ENV_BASE_URL)
-    os.environ[ENV_BASE_URL] = str(explicit)
+    os.environ[ENV_BASE_URL] = str(resolved_url)
     try:
-        yield resolved
+        yield resolved_url, resolved_source
     finally:
         if previous is None:
             os.environ.pop(ENV_BASE_URL, None)
@@ -278,6 +421,9 @@ RESERVED_PARAM_NAMES: frozenset[str] = frozenset(
 
 #: 对外暴露给用户的标量类型（对象/数组型条目一律视为内部句柄，不进 --params）
 SCALAR_TYPES: frozenset[str] = frozenset({"string", "integer", "number", "boolean"})
+
+#: 地址类参数名（REQS-0042 D2-1 的唯一口径）：声明没给出默认值时按两层配置兜底展示
+ADDR_PARAM_NAMES: frozenset[str] = frozenset({"meter_addr", "meter_addrs"})
 
 _PY_TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,),
@@ -383,6 +529,8 @@ class ParamDef:
     fact_ids: list[str] = field(default_factory=list)        # 会把值传给的事实
     block_ids: list[str] = field(default_factory=list)       # 会把值覆盖到的块
     declared: list[tuple[str, Any]] = field(default_factory=list)  # (block_id, 声明值)
+    fact_defaults: list[Any] = field(default_factory=list)   # 事实 params_schema 的 default
+    step_decls: list[dict[str, Any]] = field(default_factory=list)  # plan[].params 声明
 
     def add_fact_schema(self, fact_id: str, entry: Mapping[str, Any], *, required: bool) -> None:
         self._push_unique(self.fact_ids, fact_id)
@@ -398,6 +546,8 @@ class ParamDef:
         for key in ("minimum", "maximum", "minLength", "maxLength"):
             if key in entry:
                 self.bounds.append((key, entry[key]))
+        if "default" in entry and entry.get("default") is not None:
+            self.fact_defaults.append(entry["default"])
         if required:
             self._push_unique(self.required_by, fact_id)
 
@@ -408,21 +558,70 @@ class ParamDef:
         if inferred != "null":
             self._push_unique(self.block_types, inferred)
 
+    def add_step_param(self, step_id: str, block_id: str, name: str, value: Any) -> None:
+        """登记 ``plan[].params`` 里的参数（步骤实例化，REQS-0042 D3-1）。
+
+        与 ``add_block_param`` 的区别：步骤参数**不是**块默认值，不能进 ``declared``
+        （否则 ``unique_declared`` 会把「两步各带不同地址」误判成「声明歧义」）。
+        这里只做两件事：
+
+        - 把 ``block_id`` 记进 ``block_ids``：run 级 ``--params`` 仍要能广播到这个块
+          （D3-2：run 级 > step.params）；
+        - 登记原始声明，供 ``show`` 展示（**不登记就不会被接受**，``--params`` 会报「多余参数」）。
+
+        **不登记类型**：参数类型以块/事实声明为权威。若把步骤里这次给的值类型也并进
+        ``block_types``，同一参数的「块声明 integer、步骤写 string」会让两种取值互相
+        判非法（一个合法值被另一条约束拒掉），那是把类型校验搞成自锁。
+        """
+
+        self._push_unique(self.block_ids, block_id)
+        self.step_decls.append(
+            {"step_id": step_id, "block_id": block_id, "value": value}
+        )
+
     @staticmethod
     def _push_unique(target: list, item: Any) -> None:
         if item not in target:
             target.append(item)
 
     def unique_declared(self) -> Any:
-        """块声明值是否给出唯一取值；``_MISSING`` / ``_AMBIGUOUS`` 表示不能用。"""
+        """块声明值是否给出唯一取值；``_MISSING`` / ``_AMBIGUOUS`` 表示不能用。
+
+        ``null`` 声明（``"meter_addr": null``）是「取两层配置默认」的占位（REQS-0042
+        D2-2），由 ``blocks/loader.resolve_declaration_defaults`` 在加载期解析成真值；
+        解析不出来时这里**跳过**它 —— 把 ``None`` 当权威取值广播给块，等于发一帧
+        地址全空的报文，比「没有默认值」更坏。
+        """
+
         seen: dict[str, Any] = {}
         for _block_id, value in self.declared:
+            if value is None:
+                continue
             seen[json.dumps(value, sort_keys=True, default=str, ensure_ascii=False)] = value
         if not seen:
             return _MISSING
         if len(seen) > 1:
             return _AMBIGUOUS
         return next(iter(seen.values()))
+
+    def effective_default(self) -> Any:
+        """本参数的默认取值（``show`` 展示 + 「不传也能跑」的依据）；取不到 → ``_MISSING``。
+
+        顺序：块声明唯一取值（含 loader 解析过的 ``null``） > 事实 ``params_schema.default``
+        > 地址类参数的**两层配置默认**（:func:`case_runner.core.defaults.default_meter_addr`）。
+        """
+
+        declared = self.unique_declared()
+        if declared is not _MISSING and declared is not _AMBIGUOUS:
+            return declared
+        for value in self.fact_defaults:
+            if value is not None:
+                return value
+        if self.name in ADDR_PARAM_NAMES:
+            config_default = defaults.default_meter_addr()
+            if config_default:
+                return config_default
+        return _MISSING
 
     def describe_declared(self) -> str:
         return "、".join(
@@ -431,6 +630,7 @@ class ParamDef:
         )
 
     def to_dict(self) -> dict[str, Any]:
+        default = self.effective_default()
         return {
             "name": self.name,
             "fact_types": list(self.fact_types),
@@ -440,10 +640,27 @@ class ParamDef:
             "required_in": list(self.required_in),
             "fact_ids": list(self.fact_ids),
             "block_ids": list(self.block_ids),
+            "has_default": default is not _MISSING,
+            "default": None if default is _MISSING else default,
+            "default_source": self._default_source(),
             "declared": [
                 {"block_id": block_id, "value": value} for block_id, value in self.declared
             ],
+            # 步骤实例化声明（plan[].params）：同一块可多步各带不同取值
+            "step_declared": [dict(item) for item in self.step_decls],
         }
+
+    def _default_source(self) -> str:
+        """默认值是哪一层的（人读诊断用：``块声明`` / ``事实 schema`` / ``配置默认``）。"""
+
+        declared = self.unique_declared()
+        if declared is not _MISSING and declared is not _AMBIGUOUS:
+            return "块声明"
+        if any(value is not None for value in self.fact_defaults):
+            return "事实 params_schema"
+        if self.name in ADDR_PARAM_NAMES and defaults.default_meter_addr():
+            return "两层配置（case_defaults.json）"
+        return ""
 
 
 @dataclass
@@ -553,8 +770,8 @@ class CaseParamSpec:
     ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
         """解析结果 → ``(block_params, fact_params)``。
 
-        同一个值广播给**所有消费它的**块与事实（如 ``addr`` 同时进 ``archive.add`` 的
-        块参数和 ``archive.contains`` 的事实参数）；不消费它的对象完全不碰。
+        同一个值广播给**所有消费它的**块与事实（如 ``meter_addr`` 同时进 ``archive.add``
+        的块参数和 ``archive.contains`` 的事实参数）；不消费它的对象完全不碰。
         """
         block_params: dict[str, dict[str, Any]] = {}
         fact_params: dict[str, dict[str, Any]] = {}
@@ -609,27 +826,39 @@ def _check_param_value(name: str, value: Any, definition: ParamDef) -> list[str]
 
 
 def case_param_spec(case: CaseSpec, bundle: Bundle) -> CaseParamSpec:
-    """单用例参数规格：用例 needs ∪ 各块 needs 的事实 + 各块 action.params。"""
+    """单用例参数规格：用例 needs ∪ 各块 needs 的事实 + 各块 action.params + 各步 params。
+
+    步骤实例化（REQS-0042 D3-1）之后，参数来源多了一层 ``plan[].params``：
+    步骤里写的参数名必须被认（否则 ``--params`` 会报「多余参数」），
+    同时 run 级 ``--params`` 仍要能广播到该块的所有步骤（D3-2：run 级 > 步骤声明）。
+    展开入口统一走 :meth:`CaseSpec.effective_steps` —— 老用例（只有 ``blocks``）
+    得到的步骤序列与改动前逐个块完全一致。
+    """
     spec = CaseParamSpec(scope=case.id)
     facts_by_id = bundle.facts_by_id
     block_specs = bundle.block_specs
+    steps = case.effective_steps()
 
     for fact_id in dict.fromkeys(case.needs):
         fact = facts_by_id.get(fact_id)
         if fact is not None:
             spec.add_fact(fact)
-    for block_id in case.blocks:
-        block = block_specs.get(block_id)
+    for step in steps:
+        block = block_specs.get(step.block)
         if block is None:
             continue
         for fact_id in block.needs:
             fact = facts_by_id.get(fact_id)
             if fact is not None:
                 spec.add_fact(fact)
-    for block_id in case.blocks:
-        block = block_specs.get(block_id)
+    for step in steps:
+        block = block_specs.get(step.block)
         if block is not None:
             spec.add_block(block)
+        for name, value in step.params.items():
+            spec._def(str(name)).add_step_param(  # noqa: SLF001 - 同类内部构建
+                step.id, step.block, str(name), value
+            )
 
     for name, definition in spec.defs.items():
         if definition.required_by:
@@ -658,6 +887,8 @@ def suite_param_spec(suite: SuiteSpec, cases: Sequence[CaseSpec], bundle: Bundle
             target.fact_ids = list(dict.fromkeys(target.fact_ids + definition.fact_ids))
             target.block_ids = list(dict.fromkeys(target.block_ids + definition.block_ids))
             target.declared.extend(definition.declared)
+            target.fact_defaults.extend(definition.fact_defaults)
+            target.step_decls.extend(dict(item) for item in definition.step_decls)
     return merged
 
 
@@ -721,8 +952,14 @@ def build_run_context(
     extras: Mapping[str, Any] | None = None,
     fact_probe: Callable[[str, dict[str, Any]], Any] | None = None,
     stop_on_fail: bool = False,
+    step_params: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> RunContext:
-    """装配执行上下文（事实缓存 + 块声明 + 入参 + 注入的能力替身）。"""
+    """装配执行上下文（事实缓存 + 块声明 + 入参 + 注入的能力替身）。
+
+    ``block_params`` 是 run 级参数（按块广播，优先级最高）；``step_params`` 是按**步骤**
+    覆盖（REQS-0042 D3-1，同块多次实例化要只改某一步时用）。CLI 的 ``--params`` 走前者，
+    后者留给 API/后续快照层按需注入。
+    """
     facts_ctx = FactsContext(
         probe=fact_probe,  # None → 走注册表里的默认探测体
         params={key: dict(value) for key, value in (fact_params or {}).items()},
@@ -732,6 +969,7 @@ def build_run_context(
         facts_ctx=facts_ctx,
         block_specs=bundle.block_specs,
         block_params={key: dict(value) for key, value in (block_params or {}).items()},
+        step_params={key: dict(value) for key, value in (step_params or {}).items()},
         stop_on_fail=stop_on_fail,
         extras=dict(extras or {}),
     )
@@ -787,8 +1025,32 @@ def skipped_outcome(case: CaseSpec, *, run_id: str, reason: str) -> RunOutcome:
 # --------------------------------------------------------------------------- #
 
 
+def check_renamed_params(values: Mapping[str, Any]) -> list[str]:
+    """``--params`` 里出现已改名的旧参数名 → 迁移提示（REQS-0042 D2-1，**不留别名**）。
+
+    为什么硬拒绝而不是兼容：``addr`` 与 ``meter_addr`` 是**语义相反**的两个地址
+    （电表 645 地址 vs CCO 档案地址，互为 6 字节反转，见 REQS G-1）。留一个同名别名
+    就等于把「地址角色错位」原样保留下来——用户以为传了地址，实际把另一种地址发出去。
+    所以宁可报错、给出迁移写法，也不猜。
+    """
+
+    problems: list[str] = []
+    for old_name, new_name in RENAMED_PARAMS:
+        if old_name not in values:
+            continue
+        if old_name == "meters":
+            hint = '{"meter_addrs": ["12位表地址", ...]}'
+        else:
+            hint = '{"%s": "12位表地址"}' % new_name
+        problems.append(
+            "参数 %s 已改名为 %s（REQS 0042 D2-1，不再兼容旧名），请改用 %s"
+            % (old_name, new_name, hint)
+        )
+    return problems
+
+
 def parse_params_json(text: str | None, flag: str = "--params") -> dict[str, Any]:
-    """``--params`` → dict；非法 JSON / 非对象 → :class:`UsageError`（退出码 3）。"""
+    """``--params`` → dict；非法 JSON / 非对象 / 旧参数名 → :class:`UsageError`（退出码 3）。"""
     if text is None or not str(text).strip():
         return {}
     try:
@@ -799,7 +1061,27 @@ def parse_params_json(text: str | None, flag: str = "--params") -> dict[str, Any
         ) from None
     if not isinstance(value, dict):
         raise UsageError([f"{flag} 必须是 JSON 对象（键=参数名），实际是 {type(value).__name__}"])
+    renamed = check_renamed_params(value)
+    if renamed:
+        raise UsageError(renamed, headline="参数名已改名（REQS 0042 D2-1）")
     return value
+
+
+def missing_blocks_of(case: CaseSpec, bundle: Bundle) -> list[str]:
+    """用例引用但未声明/未注册的块（``blocks[]`` 与 ``plan[].block`` 都算）。
+
+    步骤实例化之后「用例用了哪些块」不再等于 ``case.blocks``——plan 形态下
+    ``blocks`` 可能是空的，必须走 :meth:`CaseSpec.block_ids` 才能查全。
+    同一块被实例化多次时只报一次（去重保序），便于人读。
+    """
+
+    missing: list[str] = []
+    for block_id in case.block_ids():
+        if block_id in bundle.block_specs or has_block(block_id):
+            continue
+        if block_id not in missing:
+            missing.append(block_id)
+    return missing
 
 
 def load_case_file(path: str | Path, bundle: Bundle) -> CaseSpec:
@@ -825,11 +1107,7 @@ def load_case_file(path: str | Path, bundle: Bundle) -> CaseSpec:
             for error in exc.errors()
         ]
         raise UsageError(problems, headline="用例文件校验未通过") from None
-    missing = [
-        block_id
-        for block_id in case.blocks
-        if block_id not in bundle.block_specs and not has_block(block_id)
-    ]
+    missing = missing_blocks_of(case, bundle)
     if missing:
         raise UsageError(
             [
@@ -925,19 +1203,42 @@ def render_case_result(
     _print(out)
 
     if result.blocks:
-        _print(out, "块执行明细：")
+        # 步骤实例化（D3-1）：同一块可能出现多次，只有 step_id 能区分；
+        # 老用例（step_id == 块 id）不多印一列，输出与改动前一致。
+        show_step = any(
+            (record.step_id or record.block_id) != record.block_id
+            for record in result.blocks
+        )
+        _print(out, "块执行明细%s：" % ("（按步骤顺序）" if show_step else ""))
         width = max((display_width(record.block_id) for record in result.blocks), default=0)
         width = max(width, len("块 id"))
-        _print(out, "  %s  %s  %s" % (pad("#", 3), pad("状态", 8), pad("块 id", width) + "  说明"))
+        step_width = 0
+        if show_step:
+            step_width = max(
+                [display_width(record.step_id or record.block_id) for record in result.blocks]
+                + [len("step id")]
+            )
+        head = "  %s  %s  " % (pad("#", 3), pad("状态", 8))
+        if show_step:
+            head += "%s  " % pad("step id", step_width)
+        head += "%s  说明" % pad("块 id", width)
+        _print(out, head)
         for index, record in enumerate(result.blocks, start=1):
+            line = "  %s  %s  " % (pad("%d" % index, 3), pad(record.state, 8))
+            if show_step:
+                line += "%s  " % pad(record.step_id or record.block_id, step_width)
+            line += "%s  %s" % (
+                pad(record.block_id, width),
+                truncate(record.detail or "-", 88),
+            )
+            _print(out, line)
+        if show_step:
             _print(
                 out,
-                "  %s  %s  %s  %s"
-                % (
-                    pad("%d" % index, 3),
-                    pad(record.state, 8),
-                    pad(record.block_id, width),
-                    truncate(record.detail or "-", 88),
+                "  步骤结论：%s"
+                % "、".join(
+                    "%s=%s" % (record.step_id or record.block_id, record.state)
+                    for record in result.blocks
                 ),
             )
     else:
@@ -965,13 +1266,39 @@ def render_case_result(
     _print(out, "断点定位：")
     _print(out, "  failed_block：%s" % (result.failed_block or "（无）"))
     if result.failed_block:
-        detail = _block_detail(result, result.failed_block)
-        _print(out, "     失败原因：%s" % (detail or "（该块未留下说明）"))
+        # 步骤实例化后同一块可能有多步：优先按 step_id 取那**一条**记录，
+        # 否则「第一步 pass、第二步 fail」会打印第一步的说明（误导）。
+        detail = _block_detail(result, result.failed_step or result.failed_block)
+        _print(
+            out,
+            "     失败原因%s：%s"
+            % (
+                "（步骤 %s）" % result.failed_step
+                if result.failed_step and result.failed_step != result.failed_block
+                else "",
+                detail or "（该块未留下说明）",
+            ),
+        )
     _print(out, "  blocked_block：%s" % (result.blocked_block or "（无）"))
     if result.blocked_block:
-        detail = _block_detail(result, result.blocked_block)
-        _print(out, "     阻断原因：%s" % (detail or "（该块未留下说明）"))
-    non_pass = [record.block_id for record in result.blocks if record.state != BLOCK_PASS]
+        detail = _block_detail(result, result.blocked_step or result.blocked_block)
+        _print(
+            out,
+            "     阻断原因%s：%s"
+            % (
+                "（步骤 %s）" % result.blocked_step
+                if result.blocked_step and result.blocked_step != result.blocked_block
+                else "",
+                detail or "（该块未留下说明）",
+            ),
+        )
+    non_pass = [
+        (record.step_id or record.block_id)
+        if (record.step_id or record.block_id) != record.block_id
+        else record.block_id
+        for record in result.blocks
+        if record.state != BLOCK_PASS
+    ]
     _print(
         out,
         "  非 pass 块：%s" % ("、".join(non_pass) if non_pass else "（无）"),
@@ -980,9 +1307,14 @@ def render_case_result(
         _print(out, "  未满足事实：%s" % "、".join(unmet))
 
 
-def _block_detail(result: CaseRunResult, block_id: str) -> str:
+def _block_detail(result: CaseRunResult, ref: str) -> str:
+    """按**步骤 id 优先、块 id 兜底**取那一条记录的说明（同块多步时块 id 会取错）。"""
+
     for record in result.blocks:
-        if record.block_id == block_id:
+        if (record.step_id or record.block_id) == ref:
+            return record.detail
+    for record in result.blocks:
+        if record.block_id == ref:
             return record.detail
     return ""
 
@@ -1001,9 +1333,7 @@ def render_probe(payload: Mapping[str, Any], *, out: TextIO) -> None:
         "工作台地址：%s（%s）"
         % (
             payload.get("base_url") or "未提供（块/事实将按 no_base_url 判为不可用）",
-            {"cli": "--base-url", "env": "环境变量 WORKBENCH_BASE", "none": "无来源"}.get(
-                source, source
-            ),
+            base_url_source_label(source),
         ),
     )
     _print(out)
@@ -1113,9 +1443,11 @@ def render_list(payload: Mapping[str, Any], *, out: TextIO) -> None:
                     if item.get("required") else "",
                 )
             elif kind == "cases":
-                extra = "  块 %d：%s" % (
-                    len(item.get("blocks") or []),
-                    "、".join(item.get("blocks") or []),
+                # REQS-0042 D3-1：显示「步骤数」而不是「块数」——同一块可实例化多次
+                extra = "  步骤 %d%s：%s" % (
+                    item.get("step_count", len(item.get("blocks") or [])),
+                    "（plan 显式声明）" if item.get("uses_plan") else "",
+                    "、".join(item.get("block_ids") or []) or "无",
                 )
             elif kind == "suites":
                 extra = "  用例 %d：%s" % (
@@ -1123,6 +1455,67 @@ def render_list(payload: Mapping[str, Any], *, out: TextIO) -> None:
                     "、".join(item.get("case_ids") or []),
                 )
             _print(out, "  %s  %s%s" % (pad(ident, width), title, extra))
+
+
+def _render_steps_table(
+    rows: Sequence[Mapping[str, Any]], *, out: TextIO, indent: str = ""
+) -> None:
+    """步骤表（REQS-0042 D3-1）：step id / 块 id / 关键参数 / on_fail。
+
+    「块清单」只说明**用了哪些块**，看不出「同一个块跑了几次、每次带什么参数」；
+    步骤表补的就是这件事（用户诉求：一次下发多块不同档案）。``on_fail`` 写「继承」
+    表示该步没显式声明，跟随 run/方案级 ``stop_on_fail``。
+    """
+
+    _print(out, "%s步骤表（执行顺序）：" % indent)
+    if not rows:
+        _print(out, "%s  （无步骤）" % indent)
+        _print(out)
+        return
+    id_width = max(
+        [display_width(str(row.get("step_id", ""))) for row in rows] + [len("step id")]
+    )
+    block_width = max(
+        [display_width(str(row.get("block_id", ""))) for row in rows] + [len("块 id")]
+    )
+    _print(
+        out,
+        "%s  %s  %s  %s  %s  %s"
+        % (
+            indent,
+            pad("#", 3),
+            pad("step id", id_width),
+            pad("块 id", block_width),
+            pad("关键参数", 36),
+            "on_fail",
+        ),
+    )
+    for row in rows:
+        params = row.get("params") or {}
+        params_text = (
+            "、".join(
+                "%s=%s" % (name, json.dumps(value, ensure_ascii=False, default=str))
+                for name, value in params.items()
+            )
+            or "—（用块声明参数）"
+        )
+        _print(
+            out,
+            "%s  %s  %s  %s  %s  %s"
+            % (
+                indent,
+                pad("%d" % row.get("no", 0), 3),
+                pad(str(row.get("step_id", "")), id_width),
+                pad(str(row.get("block_id", "")), block_width),
+                pad(truncate(params_text, 36), 36),
+                row.get("on_fail") or "继承",
+            ),
+        )
+        if row.get("note"):
+            _print(out, "%s     备注：%s" % (indent, row["note"]))
+        if row.get("error"):
+            _print(out, "%s      ⚠ %s" % (indent, row["error"]))
+    _print(out)
 
 
 def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
@@ -1136,6 +1529,16 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
         tags = "、".join(item.get("tags") or []) or "无"
         _print(out, "标签：%s" % tags)
         _print(out, "前置事实（needs）：%s" % ("、".join(item.get("needs") or []) or "无"))
+        _print(
+            out,
+            "步骤数：%d（%s）"
+            % (
+                len(item.get("steps_table") or []),
+                "plan 显式声明：同一块可多次实例化，各步参数独立"
+                if item.get("uses_plan")
+                else "由 blocks 自动展开：一块 = 一步",
+            ),
+        )
         _print(out, "块数量：%d" % len(item.get("blocks") or []))
         _print(out)
         _print(out, "步骤说明：")
@@ -1143,6 +1546,7 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
             _print(out, "  %d. %s" % (step.get("no", 0), step.get("do")))
             _print(out, "     预期：%s" % step.get("expect"))
         _print(out)
+        _render_steps_table(item.get("steps_table") or [], out=out)
         _print(out, "块清单（按执行顺序）：")
         width = max(
             [display_width(str(block.get("id", ""))) for block in item.get("blocks") or []]
@@ -1158,8 +1562,8 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
                 _print(out, "      ⚠ %s" % block["error"])
             if block.get("needs"):
                 _print(out, "      前置事实：%s" % "、".join(block["needs"]))
-            if block.get("params"):
-                _print(out, "      块声明参数：%s" % block["params"])
+            if block.get("params_text"):
+                _print(out, "      块声明参数：%s" % block["params_text"])
             if block.get("provides"):
                 _print(out, "      提供事实：%s" % "、".join(block["provides"]))
         _print(out)
@@ -1173,11 +1577,20 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
         _print(out, "前置事实（needs）：%s" % ("、".join(item.get("needs") or []) or "无"))
         _print(out, "提供事实（provides）：%s" % ("、".join(item.get("provides") or []) or "无"))
         _print(out, "标签：%s" % ("、".join(item.get("tags") or []) or "无"))
-        _print(out, "action：%s" % json.dumps(item.get("action") or {}, ensure_ascii=False))
+        # 显示真实的 action 键（``afn`` / ``fn`` / ``params`` / ``recipe`` / ``semantic``），
+        # 不是空对象 —— 之前取错键名，常驻输出一行 ``action：{}``，纯噪音。
+        _print(
+            out,
+            "action 键：%s" % ("、".join(item.get("action_keys") or []) or "（无）"),
+        )
+        if item.get("params"):
+            _print(out, "action.params：%s"
+                   % json.dumps(item.get("params"), ensure_ascii=False))
         _print(out, "断言声明（assert）：%s"
                % json.dumps(item.get("assert") or [], ensure_ascii=False))
-        _print(out, "清理声明（cleanup）：%s"
-               % json.dumps(item.get("cleanup") or [], ensure_ascii=False))
+        if item.get("cleanup"):
+            _print(out, "清理声明（cleanup）：%s"
+                   % json.dumps(item.get("cleanup"), ensure_ascii=False))
         _print(out, "可传入参数（--params）：%s" % (item.get("params_text") or "无"))
     elif kind == "fact":
         _print(out, "事实：%s —— %s" % (item.get("id"), item.get("title")))
@@ -1195,6 +1608,23 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
             _print(out, "备注：%s" % item["notes"])
         if item.get("missing"):
             _print(out, "⚠ 方案引用了不存在的用例：%s" % "、".join(item["missing"]))
+        if item.get("cases"):
+            _print(out)
+            _print(out, "方案内各用例的步骤表（执行顺序；同一块可多次实例化）：")
+            for index, case in enumerate(item["cases"], start=1):
+                _print(
+                    out,
+                    "  [%d/%d] %s —— %s（%d 步%s）"
+                    % (
+                        index,
+                        len(item["cases"]),
+                        case.get("id"),
+                        case.get("title"),
+                        case.get("step_count", 0),
+                        "，plan 显式声明" if case.get("uses_plan") else "，由 blocks 自动展开",
+                    ),
+                )
+                _render_steps_table(case.get("steps_table") or [], out=out, indent="    ")
 
     _print(out)
     _print(out, "可传入的用例参数（--params）：")
@@ -1204,12 +1634,16 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
         _print(out, "  （无）")
     else:
         width = max(display_width(name) for name in params)
+        default_width = max(
+            [display_width(_render_default(definition)) for definition in params.values()]
+            + [display_width("默认值")]
+        )
+        type_width = max(
+            [display_width(_render_param_types(definition)) for definition in params.values()]
+            + [display_width("类型")]
+        )
         for name, definition in params.items():
-            types = "、".join(
-                list(dict.fromkeys(definition.get("fact_types") or []))
-                + [t for t in dict.fromkeys(definition.get("block_types") or [])
-                   if t not in (definition.get("fact_types") or [])]
-            ) or "未声明类型"
+            types = _render_param_types(definition)
             required = "（必需）" if definition.get("required_by") else ""
             sources = "、".join(
                 list(dict.fromkeys(
@@ -1217,7 +1651,60 @@ def render_show(payload: Mapping[str, Any], *, out: TextIO) -> None:
                     + list(definition.get("fact_ids") or [])
                 ))
             )
-            _print(out, "  %s  %-8s %s  来源：%s" % (pad(name, width), types, required, sources))
+            step_ids = "、".join(
+                dict.fromkeys(
+                    str(item.get("step_id"))
+                    for item in definition.get("step_declared") or []
+                )
+            )
+            if step_ids:
+                # 步骤实例化：同一个块多步各带不同取值，来源里点名是哪几步写的
+                sources += "（步骤 %s 各自带值）" % step_ids
+            _print(out, "  %s  %s %s  %s  来源：%s"
+                   % (pad(name, width), pad(types, type_width), required,
+                      pad(_render_default(definition), default_width), sources))
+        _print(out)
+        _print(out, "  注：默认值 = 不传 --params 时实际生效的取值（REQS 0042 D2-2 两层配置）。")
+
+    config_note = _config_defaults_note(params)
+    if config_note:
+        _print(out, config_note)
+
+
+def _render_param_types(definition: Mapping[str, Any]) -> str:
+    """参数类型一列（事实声明优先，块声明推断补后，去重保序）。"""
+
+    return "、".join(
+        list(dict.fromkeys(definition.get("fact_types") or []))
+        + [t for t in dict.fromkeys(definition.get("block_types") or [])
+           if t not in (definition.get("fact_types") or [])]
+    ) or "未声明类型"
+
+
+def _render_default(definition: Mapping[str, Any]) -> str:
+    """参数默认值一列（没有默认值 → 「—」，与「默认值是 null」区分开）。"""
+
+    if not definition.get("has_default"):
+        return "—"
+    text = json.dumps(definition.get("default"), ensure_ascii=False, default=str)
+    return text if display_width(text) <= 32 else truncate(text, 32)
+
+
+def _config_defaults_note(params: Mapping[str, Mapping[str, Any]]) -> str:
+    """地址类参数的配置默认来自哪个文件（REQS-0042 D2-2 诊断用；没有 → ``""``）。"""
+
+    addr_params = [name for name in params if name in ADDR_PARAM_NAMES]
+    if not addr_params:
+        return ""
+    sources = defaults.defaults_sources()
+    meter_addr = defaults.default_meter_addr()
+    if not meter_addr:
+        return "  ⚠ 两层配置里没有可用的 meter_addr（已读：%s / %s）" % (
+            defaults.DATA_DEFAULTS_FILE,
+            defaults.CONFIG_OVERRIDE_FILE,
+        )
+    origin = sources.get("meter_addr") or str(defaults.DATA_DEFAULTS_FILE)
+    return "  meter_addr 的配置默认：%s（来源：%s）" % (meter_addr, origin)
 
 
 # --------------------------------------------------------------------------- #
@@ -1249,15 +1736,16 @@ def _fact_summary(fact: FactSpec) -> dict[str, Any]:
 
 
 def _block_summary(spec: BlockSpec) -> dict[str, Any]:
+    action = spec.action if isinstance(spec.action, Mapping) else {}
+    nested_params = action.get("params")
     return {
         "id": spec.id,
         "title": spec.title,
         "needs": list(spec.needs),
         "provides": list(spec.provides),
-        "params": dict((spec.action or {}).get("params") or {})
-        if isinstance((spec.action or {}).get("params"), Mapping)
-        else {},
-        "action_keys": sorted((spec.action or {}).keys()),
+        "params": dict(nested_params) if isinstance(nested_params, Mapping) else {},
+        "action_keys": sorted(str(key) for key in action),
+        "cleanup": [dict(item) for item in spec.cleanup],
         "tags": list(spec.tags),
         "assert": [dict(item) for item in spec.assert_],
     }
@@ -1269,22 +1757,46 @@ def _case_summary(case: CaseSpec) -> dict[str, Any]:
         "title": case.title,
         "needs": list(case.needs),
         "blocks": list(case.blocks),
+        "plan": [step.model_dump() for step in case.plan],
+        "uses_plan": case.uses_plan,
+        # 步骤实例化（D3-1）：列表页看「几步」而不是「几块」——同一块可以跑多次
+        "step_count": len(case.effective_steps()),
+        "block_ids": case.block_ids(),
         "steps": [step.model_dump() for step in case.steps],
         "asserts": [dict(item) for item in case.asserts],
         "tags": list(case.tags),
     }
 
 
+def _step_on_fail_text(step: Any) -> str:
+    """步骤的失败策略文案：显式声明 → 原值；没声明 → 「继承」（run/方案级 stop_on_fail）。"""
+
+    if getattr(step, "declares_on_fail", False):
+        return step.on_fail
+    return "继承"
+
+
 def _case_item(case: CaseSpec, bundle: Bundle) -> dict[str, Any]:
-    """用例详情：块清单展开成「块 id + 标题 + 前置事实 + 块声明参数」。"""
+    """用例详情：把**步骤序列**展开成「step id + 块 id + 标题 + 前置事实 + 参数」。
+
+    步骤实例化之后「块清单」不再等价于「执行序」——同一个块可能出现多次，
+    所以这里按 :meth:`CaseSpec.effective_steps` 展开，并另外给一份人读步骤表
+    （``steps_table``：step id / 块 id / 关键参数 / on_fail）。
+    """
     item = _case_summary(case)
     expanded: list[dict[str, Any]] = []
-    for block_id in case.blocks:
-        spec = bundle.block_specs.get(block_id)
+    table: list[dict[str, Any]] = []
+    for index, step in enumerate(case.effective_steps(), start=1):
+        spec = bundle.block_specs.get(step.block)
+        on_fail_text = _step_on_fail_text(step)
         if spec is None:
             expanded.append(
                 {
-                    "id": block_id,
+                    "id": step.block,
+                    "step_id": step.id,
+                    "on_fail": on_fail_text,
+                    "step_params": dict(step.params),
+                    "note": step.note,
                     "title": "",
                     "error": "块未声明（执行时该块会被记为 unknown）",
                     "needs": [],
@@ -1292,11 +1804,42 @@ def _case_item(case: CaseSpec, bundle: Bundle) -> dict[str, Any]:
                     "params": {},
                 }
             )
+            table.append(
+                {
+                    "no": index,
+                    "step_id": step.id,
+                    "block_id": step.block,
+                    "block_title": "",
+                    "params": dict(step.params),
+                    "on_fail": on_fail_text,
+                    "note": step.note,
+                    "error": "块未声明",
+                }
+            )
             continue
         summary = _block_summary(spec)
-        summary["params"] = "、".join(str(key) for key in summary["params"]) or "无"
+        # 人读这一层要的是「声明了哪些参数」，保留结构化 params 供脚本用，
+        # 文案另放 params_text（别把 dict 直接塞进字符串列）
+        summary["params_text"] = "、".join(str(key) for key in summary["params"]) or "无"
+        summary["step_id"] = step.id
+        summary["on_fail"] = on_fail_text
+        summary["step_params"] = dict(step.params)
+        summary["note"] = step.note
         expanded.append(summary)
+        table.append(
+            {
+                "no": index,
+                "step_id": step.id,
+                "block_id": step.block,
+                "block_title": spec.title,
+                "params": dict(step.params),
+                "on_fail": on_fail_text,
+                "note": step.note,
+                "error": "",
+            }
+        )
     item["blocks"] = expanded
+    item["steps_table"] = table
     return item
 
 
@@ -1398,7 +1941,30 @@ def cmd_show(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
             summary["missing"] = [
                 case_id for case_id in suite.case_ids if case_id not in bundle.cases_by_id
             ]
-            payload.update({"kind": "suite", "item": summary, "param_spec": {}})
+            suite_cases = [
+                bundle.cases_by_id[case_id]
+                for case_id in suite.case_ids
+                if case_id in bundle.cases_by_id
+            ]
+            # 方案也有参数规格（合并各用例）：show 一个方案就能知道 --params 能传什么
+            spec = (
+                suite_param_spec(suite, suite_cases, bundle)
+                if suite_cases
+                else CaseParamSpec(scope=suite.id)
+            )
+            summary["cases"] = [
+                {
+                    "id": case.id,
+                    "title": case.title,
+                    "uses_plan": case.uses_plan,
+                    "step_count": len(case.effective_steps()),
+                    "steps_table": _case_item(case, bundle)["steps_table"],
+                }
+                for case in suite_cases
+            ]
+            payload.update(
+                {"kind": "suite", "item": summary, "param_spec": spec.to_dict()}
+            )
         else:
             raise UsageError(
                 [
@@ -1463,11 +2029,7 @@ def _select_targets(args: argparse.Namespace, bundle: Bundle) -> tuple[list[Case
             ["找不到用例：%s（已声明：%s）"
              % ("、".join(unknown), "、".join(sorted(bundle.cases_by_id)) or "无")]
         )
-    missing_blocks = {
-        case.id: [block_id for block_id in case.blocks
-                  if block_id not in bundle.block_specs and not has_block(block_id)]
-        for case in cases
-    }
+    missing_blocks = {case.id: missing_blocks_of(case, bundle) for case in cases}
     broken = {case_id: ids for case_id, ids in missing_blocks.items() if ids}
     if broken:
         raise UsageError(
@@ -1529,6 +2091,9 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
     if env.json:
         if len(outcomes) == 1 and not outcomes[0].skipped_reason:
             payload = outcomes[0].to_dict()
+            payload["base_url"] = env.base_url
+            payload["base_url_source"] = env.base_source
+            payload["base_url_note"] = base_url_notice(env.base_url, env.base_source)
         else:
             payload = {
                 "ok": exit_code == EXIT_PASS,
@@ -1536,6 +2101,9 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
                 "exit_code": exit_code,
                 "suite_id": suite.id if suite else "",
                 "stop_on_fail": stop_on_fail,
+                "base_url": env.base_url,
+                "base_url_source": env.base_source,
+                "base_url_note": base_url_notice(env.base_url, env.base_source),
                 "params": dict(resolved),
                 "cases": [
                     {
@@ -1548,6 +2116,8 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
                         "unmet_facts": outcome.result.unmet_facts,
                         "counts": outcome.result.counts,
                         "blocks": [record.to_dict() for record in outcome.result.blocks],
+                        # 每个 step 的结论（同块多步时只有 step_id 能区分）
+                        "steps": outcome.result.step_summaries(),
                         "skipped_reason": outcome.skipped_reason,
                     }
                     for outcome in outcomes
@@ -1564,8 +2134,7 @@ def cmd_run(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
             "工作台地址：%s（%s）"
             % (
                 env.base_url or "未提供（缺台架时块 skipped / 事实 unknown，不是 fail）",
-                {"cli": "--base-url", "env": "环境变量 WORKBENCH_BASE",
-                 "none": "无来源"}.get(env.base_source, env.base_source),
+                base_url_source_label(env.base_source),
             ),
         )
         if suite is not None:
@@ -1626,8 +2195,9 @@ def _overall_verdict(outcomes: Sequence[RunOutcome]) -> str:
 def probe_fact_params(bundle: Bundle) -> dict[str, dict[str, Any]]:
     """自检用事实入参：块声明里能唯一确定的必填参数 + schema 默认值。
 
-    例：``archive.contains`` 需要 ``addr``，而 ``archive.add`` / ``meter.read_645``
-    都声明了 ``addr=000000000001``（唯一）→ 自检就用它；声明不一致则不猜（事实给 unknown）。
+    例：``archive.contains`` 需要 ``meter_addr``，而 ``archive.add`` / ``meter.read_645``
+    声明里都是同一个地址（声明写 ``null`` 时由 loader 解析成两层配置默认）→ 自检就用它；
+    声明不一致则不猜（事实给 unknown）。
     """
     declared: dict[str, list[tuple[str, Any]]] = {}
     for block in bundle.blocks:
@@ -1815,8 +2385,11 @@ def probe_all(
             "未提供工作台地址，全部不可达 → 用 --base-url 或环境变量 "
             "WORKBENCH_BASE 指定后重跑才能拿到真实结论"
         )
-    elif not blocks_payload:
-        hint = ""
+    elif env.base_source == "default" and blocks_payload and not passed:
+        hint = (
+            "按本机默认端口 %d 没拿到任何 pass —— 先确认工作台已启动"
+            "（或运行时文件 data/runtime/workbench.json 是否存在）" % DEFAULT_PORT
+        )
 
     payload: dict[str, Any] = {
         "ok": exit_code == EXIT_PASS,
@@ -1824,6 +2397,7 @@ def probe_all(
         "data_dir": str(bundle.data_dir),
         "base_url": env.base_url,
         "base_url_source": env.base_source,
+        "base_url_note": base_url_notice(env.base_url, env.base_source),
         "blocks": blocks_payload,
         "facts": facts_payload,
         "block_counts": block_counts,
@@ -1888,8 +2462,40 @@ def suite_reference_problems(bundle: Bundle) -> list[str]:
     return problems
 
 
+def case_orchestration_notices(bundle: Bundle) -> list[str]:
+    """编排提示（**不是**错误）：``blocks`` 与 ``plan`` 同时给了 → 说明以 ``plan`` 为准。
+
+    REQS-0042 D3-1 的口径是「至少给一个；两者都给以 plan 为准」，所以这里不拦，
+    只提醒一声——否则用例作者会以为 ``blocks`` 也在跑（它只进 UI 展示与参数规格）。
+    """
+    notices: list[str] = []
+    for case in bundle.cases:
+        if case.blocks and case.plan:
+            notices.append(
+                "提示：用例 %r 同时给了 blocks 与 plan，执行时以 plan 为准"
+                "（blocks=%s 不参与执行；确认无误可删掉 blocks 或 plan 之一）"
+                % (case.id, "、".join(case.blocks))
+            )
+    return notices
+
+
+def step_table_of(case: CaseSpec, bundle: Bundle) -> list[dict[str, Any]]:
+    """人读步骤表（check 摘要用）：step id / 块 id / on_fail。"""
+
+    return [
+        {
+            "no": index,
+            "step_id": step.id,
+            "block_id": step.block,
+            "on_fail": _step_on_fail_text(step),
+        }
+        for index, step in enumerate(case.effective_steps(), start=1)
+    ]
+
+
 def cmd_check(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
     suite_problems = suite_reference_problems(bundle)
+    notices = case_orchestration_notices(bundle)
     problems = list(bundle.problems) + suite_problems
     register = bundle.report.register
     payload: dict[str, Any] = {
@@ -1902,10 +2508,20 @@ def cmd_check(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
             "suites": len(bundle.suites),
         },
         "problems": problems,
+        "notices": notices,
         "loader_problems": list(bundle.problems),
         "suite_reference_problems": suite_problems,
         "register": register.to_dict() if register else None,
         "sources": bundle.sources,
+        "cases": [
+            {
+                "id": case.id,
+                "uses_plan": case.uses_plan,
+                "step_count": len(case.effective_steps()),
+                "steps_table": step_table_of(case, bundle),
+            }
+            for case in bundle.cases
+        ],
     }
     if env.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=env.out)
@@ -1926,6 +2542,14 @@ def cmd_check(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
             _print(env.out, "领域模块导入失败：")
             for name, reason in register.failed:
                 _print(env.out, "  - %s：%s" % (name, reason))
+        _print(
+            env.out,
+            "步骤实例化：%d 条用例用 plan，%d 条由 blocks 自动展开"
+            % (
+                sum(1 for case in bundle.cases if case.uses_plan),
+                sum(1 for case in bundle.cases if not case.uses_plan),
+            ),
+        )
         if problems:
             _print(env.out)
             _print(env.out, "问题清单：")
@@ -1933,6 +2557,11 @@ def cmd_check(args: argparse.Namespace, bundle: Bundle, env: Env) -> int:
                 _print(env.out, "  - %s" % problem)
         else:
             _print(env.out, "未发现问题。")
+        if notices:
+            _print(env.out)
+            _print(env.out, "提示（不影响校验通过）：")
+            for notice in notices:
+                _print(env.out, "  - %s" % notice)
     return EXIT_DECLARATION if problems else EXIT_PASS
 
 
@@ -1963,7 +2592,10 @@ def _add_base_url(parser: argparse.ArgumentParser) -> None:
         "--base-url",
         default=None,
         metavar="URL",
-        help="工作台地址；缺省取环境变量 WORKBENCH_BASE（本工具不内置任何端口）",
+        help=(
+            "工作台地址；缺省按「环境变量 WORKBENCH_BASE > 运行时文件 "
+            "data/runtime/workbench.json > 本机默认端口」发现（末档会打一行提示）"
+        ),
     )
 
 
@@ -1980,11 +2612,18 @@ def build_parser() -> argparse.ArgumentParser:
             "  case_run list --json                      列全部声明（块/事实/用例/方案）\n"
             "  case_run list --blocks                    只列块\n"
             "  case_run show nwk_join                    用例名 + 步骤 + 块清单 + needs\n"
-            "  case_run run --case nwk_join --params '{\"addr\":\"000000000012\"}'\n"
+            "  case_run show archive.add                 块的 action 键 + 参数默认值（含配置默认）\n"
+            "  case_run run --case nwk_join --params '{\"meter_addr\":\"123456789012\"}'\n"
+            "  case_run run --case meter_read --json      零参可跑（地址走两层配置默认）\n"
             "  case_run run --suite smoke --base-url http://<host>:<port> --json\n"
             "  case_run probe --all --json               逐块/逐事实自检（无台架 → 全 unknown）\n"
             "  case_run probe --block archive.add        单块自检\n"
-            "  case_run check                            声明校验\n\n" + EXIT_CODE_HELP
+            "  case_run check                            声明校验\n\n"
+            "参数名：REQS 0042 D2-1 起地址参数只叫 meter_addr（多值 meter_addrs）；\n"
+            "传旧名 addr / meters 会直接报参数错误（退出码 3），不给兼容别名。\n\n"
+            "工作台地址发现顺序（D2-3）：--base-url > 环境变量 WORKBENCH_BASE >\n"
+            "运行时文件 data/runtime/workbench.json（工作台启动时写）> 本机默认端口。\n\n"
+            + EXIT_CODE_HELP
         ),
     )
     sub = parser.add_subparsers(
@@ -2031,8 +2670,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--case-file", default=None, metavar="PATH",
                     help="临时用例 JSON 文件（与 --case/--suite 二选一）")
     rp.add_argument("--params", default=None, metavar="JSON",
-                    help='用例入参 JSON 对象，如 \'{"addr":"000000000012"}\'；'
-                         "执行前校验缺必填/多余/类型非法")
+                    help='用例入参 JSON 对象，如 \'{"meter_addr":"123456789012"}\'；'
+                         "执行前校验缺必填/多余/类型非法；传旧名 addr/meters 直接报错（D2-1）")
     rp.add_argument("--stop-on-fail", action="store_true",
                     help="首块非 pass 即跳过下游块（方案自身 stop_on_fail 也会生效）")
     _add_base_url(rp)
@@ -2146,6 +2785,13 @@ def main(
             extras=dict(extras or {}),
             fact_probe=fact_probe,
         )
+        # D2-3：走到末档（本机默认端口）必须**说出来**；--json 时走 stderr，
+        # 保证 stdout 仍是纯 JSON（可直接 json.loads）。
+        # 只对真正用到地址的命令（run / probe）提示：check / list / show 是离线只读，
+        # 每敲一条命令都掺一行地址提示等于噪音。
+        notice = base_url_notice(base_url, base_source)
+        if notice and args.cmd in ("run", "probe"):
+            _print(err if want_json else out, notice)
         try:
             bundle = load_bundle(
                 cli_data_dir,
@@ -2189,6 +2835,13 @@ __all__ = [
     "EXIT_USAGE",
     "EXIT_DECLARATION",
     "EXIT_CODE_HELP",
+    "ENV_BASE_URL",
+    "DEFAULT_PORT",
+    "DEFAULT_BASE_URL",
+    "RUNTIME_FILE",
+    "BASE_URL_SOURCE_LABELS",
+    "RENAMED_PARAMS",
+    "ADDR_PARAM_NAMES",
     "UsageError",
     "Bundle",
     "Env",
@@ -2200,6 +2853,7 @@ __all__ = [
     "load_bundle",
     "load_case_file",
     "parse_params_json",
+    "check_renamed_params",
     "case_param_spec",
     "suite_param_spec",
     "probe_fact_params",
@@ -2209,5 +2863,9 @@ __all__ = [
     "exit_code_for_verdict",
     "exit_code_for_states",
     "resolve_base_url",
+    "runtime_base_url",
+    "normalize_base_host",
+    "base_url_source_label",
+    "base_url_notice",
     "flatten_params_schema",
 ]

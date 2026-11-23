@@ -1,28 +1,28 @@
 {
   "id": "meter.brain_local",
-  "title": "表端脑本地自检（simeter handle_hex，不占串口；请求帧缺省按 addr+di 动态构造，判 reply_hex / note.value / DI 回显）",
+  "title": "表端脑本地自检（simeter handle_hex，不占串口；请求帧缺省按表地址（meter_addr）+di 动态构造，判 reply_hex / note.value / DI 回显）",
   "needs": ["bench.simeter_online"],
   "provides": [],
   "action": {
     "semantic": "simeter.handle_hex",
     "params": {
-      "addr": "000000000001",
+      "meter_addr": null,
       "di": "00010000",
       "request_hex": null,
       "expect_reply": true
     },
-    "_params_note": "request_hex 可选：缺省/为 null 时按 addr+di 动态构造 645 读数据帧（68|地址域|68|11|04|DI 传输序|CS|16）；显式给值仍以显式值为准。addr 为 645 地址域线序，人读 123456789012 → 线序 12 34 56 78 90 12。"
+    "_params_note": "request_hex 可选：缺省/为 null 时按表地址（meter_addr）+di 动态构造 645 读数据帧（68|地址域|68|11|04|DI 传输序|CS|16）；显式给值仍以显式值为准。meter_addr 是电表 645 人读地址（12 位 BCD），写进 645 帧地址域时**不反转**（bytes.fromhex 原样，低字节在前 = 人读序）；6 字节整体反转只发生在**档案侧**（common.archive_addr_of，见 REQS 0042 §3.1）。缺省取 case_defaults.meter_addr（D2-2）。"
   },
   "assert": [
     {
       "type": "simeter_handle_hex",
       "case": "positive_self_check",
-      "addr": "000000000001",
+      "meter_addr": null,
       "di": "00010000",
       "expect_reply": true,
       "di_echo": "33333433",
       "note_value": "non_empty",
-      "note": "请求帧按 addr+di 动态构造：addr=000000000001 → 6800000000000168110433333433B316；addr=123456789012 → 68123456789012681104333334336816（均为真实台架验证过的帧）"
+      "note": "请求帧按表地址（meter_addr）+di 动态构造：meter_addr 是电表 645 人读地址，写进 645 帧地址域时**不反转**（bytes.fromhex 原样；档案侧才做 6 字节整体反转），缺省取 case_defaults.meter_addr（见 REQS 0042 D2-2）；本块不再写死具体表地址"
     },
     {
       "type": "simeter_handle_hex",

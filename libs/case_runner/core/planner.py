@@ -264,7 +264,17 @@ def resolve(
 
 @dataclass
 class PlannedBlock:
-    """规划结果：某块在本次 run 里能否执行，以及不能执行的原因。"""
+    """规划结果：某个**步骤**在本次 run 里能否执行，以及不能执行的原因。
+
+    步骤实例化（REQS-0042 D3-1）之后，规划单元的粒度从「块」变成「步骤」：
+
+    - ``step_id``：步骤 id（用例内唯一）。老用例（只有 ``blocks[]``）自动展开时**等于**块 id，
+      因此 0041 的结果结构在这里逐字兼容；
+    - ``block_id``：块 id（**允许重复**——同一个块可以被实例化多次）；
+    - ``params``：该步声明的参数（``StepSpec.params``，执行期再叠加 run 级 ``--params``）；
+    - ``on_fail``：该步**显式**声明的失败策略；``None`` = 没声明、继承 run/方案级
+      ``stop_on_fail``（不能在这里补 ``"stop"``，否则老用例行为就变了）。
+    """
 
     block_id: str
     runnable: bool
@@ -272,15 +282,28 @@ class PlannedBlock:
     needs: list[str] = field(default_factory=list)
     facts: dict[str, FactValue] = field(default_factory=dict)
     deferred: list[str] = field(default_factory=list)
+    step_id: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
+    on_fail: str | None = None
+
+    def resolved_on_fail(self, run_default: bool = True) -> str:
+        """本步实际生效的失败策略：显式声明优先，否则取 run 级 ``stop_on_fail``。"""
+
+        if self.on_fail in ("stop", "continue"):
+            return self.on_fail
+        return "stop" if run_default else "continue"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "block_id": self.block_id,
+            "step_id": self.step_id or self.block_id,
             "runnable": self.runnable,
             "skip_reason": self.skip_reason,
             "needs": list(self.needs),
             "facts": {fid: fv.to_dict() for fid, fv in self.facts.items()},
             "deferred": list(self.deferred),
+            "params": dict(self.params),
+            "on_fail": self.on_fail,
         }
 
 
@@ -292,16 +315,30 @@ def describe_facts(state_map: Mapping[str, FactValue]) -> str:
     return ", ".join(parts)
 
 
+def step_label(step_id: str, block_id: str) -> str:
+    """人读标签：步骤 id 与块 id 相同时只写一个（老用例因此保持原文案）。
+
+    步骤实例化后同一个块可能出现多次，只报块 id 会分不清断在第几步；
+    老用例 ``step_id == block_id``，走 ``block_id`` 分支，文案逐字不变。
+    """
+
+    if not step_id or step_id == block_id:
+        return block_id
+    return f"{block_id}（步骤 {step_id}）"
+
+
 def plan(
     case: CaseSpec,
     facts_ctx: "FactsContext | None" = None,
     *,
     block_specs: Mapping[str, BlockSpec] | None = None,
 ) -> list[PlannedBlock]:
-    """把一个用例规划成有序的块清单。
+    """把一个用例规划成有序的**步骤**清单（REQS-0042 D3-1 起按 ``plan`` 展开）。
 
-    - 用例级 ``needs`` 未满足 → 全部块不可执行（原因点名事实）
-    - 块级 ``needs``（取自 ``block_specs``）未满足 → 该块及其下游不可执行
+    - 步骤来源统一走 :meth:`CaseSpec.effective_steps`：有 ``plan`` 用 ``plan``
+      （同一块可多次出现），只有 ``blocks`` 时自动展开成「块 = 一步」，行为与改动前一致
+    - 用例级 ``needs`` 未满足 → 全部步骤不可执行（原因点名事实）
+    - 块级 ``needs``（取自 ``block_specs``）未满足 → 该步骤及其下游不可执行
     - 前序块 ``provides`` 的事实记为 ``deferred``：不提前探测，交给执行器运行时复核
     """
     ctx = facts_ctx if isinstance(facts_ctx, FactsContext) else FactsContext()
@@ -314,7 +351,8 @@ def plan(
     blocked_at = ""
     planned: list[PlannedBlock] = []
 
-    for block_id in case.blocks:
+    for step in case.effective_steps():
+        block_id = step.block
         spec = specs.get(block_id)
         needs = list(dict.fromkeys(spec.needs)) if spec is not None else []
         deferred = [fid for fid in needs if fid in provided_so_far and not ctx.has_cached(fid)]
@@ -333,7 +371,7 @@ def plan(
         runnable = True
         skip_reason = ""
         if blocked_at:
-            # 链式断点：原因指向**首个断点块**，本块自身条件若也不满足再附带说明
+            # 链式断点：原因指向**首个断点步骤**，本步骤自身条件若也不满足再附带说明
             runnable = False
             skip_reason = f"前序块 {blocked_at} 不可执行（链条已断，本块随之跳过）"
             if root_reason:
@@ -343,7 +381,7 @@ def plan(
             skip_reason = root_reason
 
         if not runnable and not blocked_at:
-            blocked_at = block_id
+            blocked_at = step_label(step.id, block_id)
 
         planned.append(
             PlannedBlock(
@@ -353,6 +391,9 @@ def plan(
                 needs=needs,
                 facts=facts,
                 deferred=deferred,
+                step_id=step.id,
+                params=dict(step.params),
+                on_fail=step.on_fail if step.declares_on_fail else None,
             )
         )
 
@@ -375,4 +416,5 @@ __all__ = [
     "resolve",
     "PlannedBlock",
     "plan",
+    "step_label",
 ]
