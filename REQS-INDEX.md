@@ -45,7 +45,11 @@
 | 0035 | sim_meter 模拟电表（645-2007/1997 从站：应答地址/查询时间/抄表/波特率热切换/重庆即装即采 + 虚拟串口台架 vbench + 工作台 /api/simeter 专页与 AI 只读能力） | 小需求 | ✅ 已完成（libs/sim_meter + tools/vbench 17 用例 + /api/simeter 挂载 + AI v2 simeter_frames.read + 专页 UI；详见 docs/20 与 reqs/0035-sim-meter/） | master | 2026-09-28 |
 | 0036 | AI 控制台技能体检与实测收口（expect AFN/Fn 记法归一+超时原因透出、v2 job wait_seconds 阻塞读、summary 判定、技能 v2.8.0 补 simeter/并发抄表/auth scope、docs/16 与 KB 帧文档补正） | 小需求 | ✅ 已完成（matcher/runner/ai_capability_service 代码修复 + 7 用例新增；技能事实源 v2.8.0 落盘；审计实测口径见 REQS.md §1） | master | 2026-09-29 |
 | 0037 | 重庆 STA 分钟采集 698 11E3 修复 + 645 回归（真机台架；CCO 重庆固件重编译烧录、task 0/1/15 内层 698 全链路 PASS、645 配置/采集/缺项 0x32/06F230 PASS；源码 c43f682a，证据 /d/sta/01-sta/20261103-003456/ 与 /d/cco/001-cco/20261103-003456/） | 小需求 | ✅ 已完成（2026-11-03 真机补测收口：task 0/1/15 内层 698 冻结 01:00:00 断言 ALL PASS、645 快速回归/删除任务/软重启 PASS、未烧录未重编译；遗留转工程跟进见 reqs/0037 TODO） | master | 2026-11-02 |
+| 0038 | 工作台静态页未定义背景令牌（透明叠加）存量收口 + 令牌静态校验 + UI E2E 串口前置（simeter.html 2 处 `--color-bg-default` 未定义→透明、var() 全页静态校验缺失、ui_e2e 依赖 simcon 开串口与"用完即关"红线冲突；autotest 页 8 处排查中已顺带修复并双主题复验，其余按用户决策只记录不实施） | 小需求 | 🚧 已立项（REQS.md 三个问题 P1/P2/P3 全部挂起待排期，验收标准 4 条；证据 /tmp/req-ui-evidence/ 易失待归档） | master | 2026-11-05 |
+| 0039 | 48h 高频复现监控适配（simcon 帧游标/pending 背压修复、工作台原生长跑任务与心跳、固件 diag_caps 日志门禁、guard 命中 ring buffer + 证据快照、会话页可见/重启恢复、COM 映射校验） | 大需求 | 🚧 已立项（REQS v1 + TODO P0-P4；服务 REQS-0007 C 阶段 48h） | master | 2026-11-07 |
+| 0040 | 模拟集中器路由档案行编辑表（11H-F1 一行一个地址+协议、F2 按行删除、超 16 条自动拆帧、10H-F2 表格读取可勾选导入/删除；后端修 nodes 纯地址串构帧 + 10H-F2 记录补 protocol/phase） | 小需求 | ✅ 已完成（前端 9 断言 + 70 相关套件绿 + Playwright 真浏览器实测；后端需重启 8790 生效） | master | 2026-11-19 |
 | 0041 | 测试用例库与用例方案（**v3 四层模型**：原子块(Block)→事实(Fact)→用例(Case)→方案(Suite)；用例只做编排，块独立可判、失败可定位断点） | 大需求 | 🚧 已立项（REQS **v3** + PLAN v3 P0-P6；实测：30 个 (AFN,FN) 可构帧、10 块带参构帧出 hex、上行 02H-F1 内嵌 645 递归解析可作「STA 拿到表地址」判据；首批 12 块 + 6 事实（复位→档案→组网→抄表）；组网判据仅用 1376.2 帧不接侦听台） | master | 2026-11-23 |
+| 0042 | 黑盒用例自动运行与控制台（**零 AI/人工参与**：用例=块编排，入参即跑；地址角色化消除「电表645地址 vs CCO档案地址互为反转」的调用方负担；幂等/等待/自愈/失败三分类 fail·blocked·inconclusive；含 /api/cases/* 与用例库 UI） | 大需求 | 🚧 已立项（REQS v1；依据 0041 实测：真实台架 meter_read 3/3 PASS 读到 1234.56 kWh，但仍有 5 个参与点待消除） | master | 2026-11-23 |
 
 ## 使用说明
 
