@@ -23,5 +23,8 @@
     "nwk",
     "batch-1",
     "readonly"
-  ]
+  ],
+  "kind": "probe",
+  "side_effect": "none",
+  "version": 1
 }

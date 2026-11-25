@@ -81,6 +81,18 @@ __all__ = [
     "RunContext",
     "coerce_block_return",
     "execute_case",
+    # expect（REQS-0044：观测 / 期望求值器；块只报观测，判据归步骤）
+    "ENVIRONMENT_REASON_CODES",
+    "EXPECT_OPS",
+    "OBSERVATION_KEY",
+    "OBS_REASON_LABELS",
+    "Evaluation",
+    "Observation",
+    "coerce_observation",
+    "describe_expect",
+    "describe_expects",
+    "evaluate",
+    "normalize_expects",
 ]
 
 _LAZY = frozenset(__all__)

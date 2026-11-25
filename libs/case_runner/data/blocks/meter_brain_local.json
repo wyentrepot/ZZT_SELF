@@ -1,7 +1,9 @@
 {
   "id": "meter.brain_local",
   "title": "表端脑本地自检（simeter handle_hex，不占串口；请求帧缺省按表地址（meter_addr）+di 动态构造，判 reply_hex / note.value / DI 回显）",
-  "needs": ["bench.simeter_online"],
+  "needs": [
+    "bench.simeter_online"
+  ],
   "provides": [],
   "action": {
     "semantic": "simeter.handle_hex",
@@ -33,5 +35,13 @@
       "note": "显式给定的地址不符有效帧（CS 合法）：期望表端脑不应答（不应答就是期望，判 pass）"
     }
   ],
-  "tags": ["meter", "645", "simeter", "smoke"]
+  "tags": [
+    "meter",
+    "645",
+    "simeter",
+    "smoke"
+  ],
+  "kind": "probe",
+  "side_effect": "none",
+  "version": 1
 }

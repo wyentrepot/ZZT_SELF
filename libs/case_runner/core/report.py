@@ -7,7 +7,7 @@
 
 本模块是 CLI / API / UI 共用的**唯一一份**人读口径，纯函数、零 IO、零等待：
 
-- :func:`action_label`：块 id → 业务动作（16 块全覆盖，未知块返回 ``""``，
+- :func:`action_label`：块 id → 业务动作（全部声明块全覆盖，未知块返回 ``""``，
   **绝不回显块 id**）；
 - :func:`classify_failure`：单块记录 → 人话失败原因短语（四类，见下）；
 - :func:`summarize_case`：用例结果 → 一句话结论 + 原因 + 证据路径；
@@ -71,7 +71,7 @@ from .models import (
 )
 
 # --------------------------------------------------------------------------- #
-# 块 id → 业务动作（REQS D11-2；16 块全覆盖，缺一即测试红）
+# 块 id → 业务动作（REQS D11-2；全部声明块全覆盖，缺一即测试红）
 # --------------------------------------------------------------------------- #
 
 #: 块 id → 业务动作。顺序按「台架 → 复位 → 档案 → 组网 → 抄表」，与执行序一致。
@@ -100,6 +100,16 @@ BLOCK_ACTIONS: dict[str, str] = {
     "meter.addr_probe": "绑表（取表地址）",
     "meter.read_645": "抄表",
     "meter.brain_local": "表端自检",
+    "meter.read_698": "抄表（698）",
+    "meter.batch_read": "并发抄表",
+    # 并发闸门负向观测（0043 F0-4）
+    "gate.multi_frame_110": "并发多帧检查",
+    "gate.concurrent_109": "并发帧数检查",
+    # 参数初始化（0043 F0-6 协议切换前置）
+    "param.init_01h_f2": "参数初始化",
+    # 协议一致性（0043 H / §G-6 三方补步）
+    "bench.simeter_protocol": "台架协议切换（模拟电表）",
+    "sta.meter_protocol": "表口协议态判读",
 }
 
 #: 短语里用的**短动作**（长的业务动作带说明括注，放进「组网超时」这种短语里太啰嗦）
@@ -826,6 +836,102 @@ def summarize_run(
     }
 
 
+
+
+# --------------------------------------------------------------------------- #
+# 报表契约（REQS-0044 变更 3 L2：字段冻结，前端 Demo 代理按同一份开发）
+# --------------------------------------------------------------------------- #
+
+
+def steps_text_of(case: Any) -> str:
+    """Procedure → ``1.xxx；2.xxx``（业务动作文本，**零块名**，0042 D11-2）。
+
+    动作词来自 :func:`action_label`（块 id → 业务动作，未知块兜底「该步骤」，
+    绝不回显块 id）；重复动作（如两次抄表）按步骤号各占一项。
+    """
+
+    labels: list[str] = []
+    effective = getattr(case, "effective_steps", None)
+    steps = list(effective()) if callable(effective) else []
+    for index, step in enumerate(steps, 1):
+        block_id = str(getattr(step, "block", "") or "")
+        label = action_label(block_id) or FALLBACK_ACTION
+        labels.append("%d.%s" % (index, label))
+    return "；".join(labels)
+
+
+def build_run_report(entries: Sequence[Mapping[str, Any]], *,
+                     cases: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """运行结果 → L2 报表契约（``run.report.rows[]`` + ``run.report.summary``）。
+
+    ``entries``：每条用例结果（``summary_entry`` 形态：``case_id`` / ``title`` /
+    ``verdict`` / ``summary``）；``cases``：``{case_id: ProcedureSpec}``（取 kind /
+    category / 步骤表；缺省按 regression 处理）。字段语义**只加不改**：
+
+    - ``group`` = category.scene、``subgroup`` = category.domain；``kind=setup`` 时
+      两项为 ``null``（渲染「—」，L1）；
+    - ``reason``：一句话人话（pass 为 ``null``，L3）；``counts_as_product``：
+      setup=false，其余 true（产品通过率分母不含 setup 行）。
+    """
+
+    rows: list[dict[str, Any]] = []
+    counts = {"total": 0, "pass": 0, "fail": 0, "blocked": 0, "inconclusive": 0}
+    product_total = 0
+    product_pass = 0
+    case_map = dict(cases or {})
+
+    for entry in entries:
+        data = _as_mapping(entry)
+        case_id = str(data.get("case_id") or data.get("id") or "")
+        case = case_map.get(case_id)
+        kind = str(getattr(case, "kind", "") or "regression")
+        is_setup = kind == "setup"
+        category = getattr(case, "category", None)
+        summary = _as_mapping(data.get("summary"))
+        verdict = str(data.get("verdict") or "").strip().lower()
+        if verdict not in OUTCOMES:
+            verdict = OUTCOME_INCONCLUSIVE
+
+        reasons = [str(item) for item in (summary.get("reasons") or []) if str(item)]
+        counts["total"] += 1
+        if verdict in counts:
+            counts[verdict] += 1
+        if not is_setup:
+            product_total += 1
+            if verdict == OUTCOME_PASS:
+                product_pass += 1
+
+        evidence: list[str] = []
+        for item in (summary.get("evidence_paths") or []):
+            path = _text(_as_mapping(item).get("path") if isinstance(item, Mapping) else item)
+            if path and path not in evidence:
+                evidence.append(path)
+
+        rows.append({
+            "group": None if is_setup else _text(getattr(category, "scene", "")) or None,
+            "subgroup": None if is_setup else _text(getattr(category, "domain", "")) or None,
+            "name": _short_title(data.get("title")) or case_id,
+            "kind": kind,
+            "steps_text": steps_text_of(case) if case is not None else "",
+            "verdict": verdict,
+            "reason": None if verdict == OUTCOME_PASS else ("、".join(reasons) or None),
+            "evidence_paths": evidence,
+            "counts_as_product": not is_setup,
+        })
+
+    return {
+        "rows": rows,
+        "summary": {
+            "total": counts["total"],
+            "pass": counts["pass"],
+            "fail": counts["fail"],
+            "blocked": counts["blocked"],
+            "inconclusive": counts["inconclusive"],
+            "product_pass_rate": "%d/%d" % (product_pass, product_total),
+        },
+    }
+
+
 __all__ = [
     "BLOCK_ACTIONS",
     "FALLBACK_ACTION",
@@ -837,4 +943,7 @@ __all__ = [
     "scrub_block_ids",
     "summarize_case",
     "summarize_run",
+    # 报表契约（REQS-0044 变更 3 L2）
+    "build_run_report",
+    "steps_text_of",
 ]

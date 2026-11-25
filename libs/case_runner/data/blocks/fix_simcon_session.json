@@ -1,6 +1,6 @@
 {
   "id": "fix.simcon_session",
-  "title": "台架：模拟集中器会话在线检查",
+  "title": "台架：模拟集中器会话在线探测（只报观测不判定）",
   "needs": [],
   "provides": [
     "bench.simcon_online"
@@ -14,13 +14,20 @@
   },
   "assert": [
     {
-      "type": "capability_ready",
-      "capability": "simcon",
-      "detail": "/api/simcon/status 可达即视为台架在位；无会话只影响 frames 读取，不影响本块"
+      "type": "observation_fields",
+      "fields": [
+        "就绪",
+        "串口开"
+      ],
+      "note": "判据在步骤期望（就绪=true 由调用方要求）"
     }
   ],
   "tags": [
     "bench",
     "first-batch"
-  ]
+  ],
+  "kind": "setup",
+  "side_effect": "none",
+  "version": 2,
+  "observation_only": true
 }

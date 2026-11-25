@@ -132,23 +132,23 @@ def build_fake_bench(root: pathlib.Path) -> FakeBench:
     bench = FakeBench(root=root, recorder=recorder, truth=truth)
 
     _write(root / "blocks" / "fake_pass.json", {
-        "id": "fake.pass", "title": "假块·通过",
+        "id": "fake.pass", "kind": "case", "side_effect": "none", "version": 1, "title": "假块·通过",
         "action": {"kind": "fake", "params": {"meter_addr": ADDR, "mode": "ok"}},
     })
     _write(root / "blocks" / "fake_fail.json", {
-        "id": "fake.fail", "title": "假块·失败",
+        "id": "fake.fail", "kind": "case", "side_effect": "none", "version": 1, "title": "假块·失败",
         "action": {"kind": "fake", "params": {"meter_addr": ADDR}},
     })
     _write(root / "blocks" / "fake_unknown.json", {
-        "id": "fake.unknown", "title": "假块·不知道",
+        "id": "fake.unknown", "kind": "probe", "side_effect": "none", "version": 1, "title": "假块·不知道",
         "action": {"kind": "fake"},
     })
     _write(root / "blocks" / "fake_env.json", {
-        "id": "fake.env", "title": "假块·记录注入的工作台地址",
+        "id": "fake.env", "kind": "probe", "side_effect": "none", "version": 1, "title": "假块·记录注入的工作台地址",
         "action": {"kind": "fake"},
     })
     _write(root / "blocks" / "fake_gated.json", {
-        "id": "fake.gated", "title": "假块·需要前置事实",
+        "id": "fake.gated", "kind": "case", "side_effect": "none", "version": 1, "title": "假块·需要前置事实",
         "needs": ["fake.ready"], "action": {"kind": "fake"},
     })
 
@@ -782,10 +782,15 @@ def test_probe_all_in_fake_root_reports_each_block_conclusion(bench: FakeBench) 
     assert payload["block_counts"]["total"] == len(states)
 
 
-def test_probe_skipped_becomes_unknown_in_probe_view(
+def test_probe_bench_unreachable_becomes_unknown_in_probe_view(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """块执行体因台架不在返回 skipped 时，自检口径记为 unknown（不是 pass，也不是 skipped）。"""
+    """自检口径：台架不在 → 观测原因码 bench_unreachable → 记为 unknown。
+
+    覆盖行为说明（D7-1 / REQS-0044 观测化）：旧断言「块 raw_state=skipped」删除 ——
+    fix.simcon_session 已迁为只观测，自检视图里 raw_state 是观测路径的 unknown，
+    「台架不具备→blocked」的分流由**步骤期望 + 求值器**完成（test_fix_reset 覆盖）。
+    """
     cap = FakeCapability()
     code, payload = run_json(["probe", "--block", "fix.simcon_session", "--json"],
                              extras={"simcon": cap},
@@ -793,7 +798,7 @@ def test_probe_skipped_becomes_unknown_in_probe_view(
     if code == EXIT_DECLARATION:
         pytest.skip("声明根此刻有非法声明（并行开发期）")
     item = payload["blocks"][0]
-    assert item["raw_state"] == "skipped"
+    assert item["raw_state"] == "unknown"
     assert item["state"] == "unknown"
     assert code == EXIT_INCOMPLETE
 

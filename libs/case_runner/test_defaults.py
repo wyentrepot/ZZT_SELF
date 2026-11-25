@@ -273,6 +273,9 @@ def _make_decl_root(tmp_path: pathlib.Path) -> pathlib.Path:
         {
             "id": "archive.add",
             "title": "假建档块（只验 loader 解析 null）",
+            "kind": "case",
+            "side_effect": "reversible",
+            "version": 1,
             "needs": [],
             "provides": [],
             "action": {
@@ -293,6 +296,9 @@ def _make_decl_root(tmp_path: pathlib.Path) -> pathlib.Path:
         {
             "id": "meter.brain_local",
             "title": "假本机脑块（非地址的 null 不得被改写）",
+            "kind": "probe",
+            "side_effect": "none",
+            "version": 1,
             "needs": [],
             "provides": [],
             "action": {
@@ -389,10 +395,12 @@ def test_real_declarations_resolve_null_meter_addr() -> None:
 
     blocks = {spec.id: spec for spec in loader.load_blocks()}
     assert blocks["archive.add"].action["params"]["meter_addr"] == expected
-    assert_match = [
-        item for item in blocks["archive.add"].assert_ if item.get("type") == "archive_contains"
+    # REQS-0044 观测化：archive.add 的 assert 元数据已换为 observation_fields（R-2 同步），
+    # null 地址兜底不再存在于 assert 里 —— 这里改验观测元数据存在且不带地址占位
+    observation_meta = [
+        item for item in blocks["archive.add"].assert_ if item.get("type") == "observation_fields"
     ]
-    assert assert_match and assert_match[0]["meter_addr"] == expected
+    assert observation_meta, "archive.add 应带 observation_fields 元数据（R-2：声明与实现同步）"
     # 非地址的 null 原样保留（request_hex 缺省由块按地址动态构造）
     assert blocks["meter.brain_local"].action["params"]["request_hex"] is None
     assert blocks["meter.brain_local"].action["params"]["meter_addr"] == expected

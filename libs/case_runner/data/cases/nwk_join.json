@@ -1,29 +1,89 @@
 {
   "id": "nwk_join",
-  "title": "组网（建档 → 查网络拓扑信息判定入网）",
+  "title": "组网（建档 → 查档 → 查网络拓扑判定入网）",
+  "kind": "regression",
+  "category": {
+    "usage": "normal",
+    "domain": "CCO",
+    "scene": "组网",
+    "region": "国网通用"
+  },
+  "protocols": [
+    "1376.2"
+  ],
   "steps": [
     {
       "no": 1,
-      "do": "检查模拟集中器（simcon）是否在位",
-      "expect": "在位；不在位则整条用例停在断点并点名模拟集中器"
+      "do": "下发从节点档案（11H-F1 建档，幂等）",
+      "expect": "写入确认=确认（已存在跳过下发也算确认）"
     },
     {
       "no": 2,
-      "do": "添加从节点档案（11H-F1 建档；表地址与通信协议取块声明默认值）",
-      "expect": "确认帧收到且档案表能回查到该地址（入网前必须先有档案，故本步内联，便于单条用例独立运行）"
+      "do": "查询档案表确认档案落地（10H-F2）",
+      "expect": "档案表含该表档案地址（观测完整）"
     },
     {
       "no": 3,
-      "do": "周期性下发查询网络拓扑信息（10H-F21）直到入网达标或等满块声明等待上限（等待期只发只读查询，达标即停）",
-      "expect": "入网从节点数 ≥ ceil(档案数 × 0.98)（默认口径：节点总数量减去主节点 CCO）→ 入网成立；等满等待上限仍明确不足 → 失败（档案里有表但一个都没入网）；档案数为 0 或应答取不到 → 判「不知道」，不算通过"
+      "do": "周期性查询网络拓扑（10H-F21）直到入网达标或等满预算 300 秒（等待期只发只读查询）",
+      "expect": "在网从节点数 ≥ ceil(档案数×98%) 且观测翻页取全 → 入网成立；等满仍明确不足 → 判不成立；档案数=0 或取不到 → 说不清"
     }
   ],
   "needs": [
     "bench.simcon_online"
   ],
-  "blocks": [
-    "archive.add",
-    "nwk.topology"
+  "plan": [
+    {
+      "id": "s1",
+      "block": "archive.add",
+      "params": {},
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "写入确认",
+          "value": "确认"
+        }
+      ]
+    },
+    {
+      "id": "s1b",
+      "block": "archive.query",
+      "params": {
+        "meter_addr": null
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "在档",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "block": "nwk.topology",
+      "params": {
+        "wait_s": 300
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "ge_field",
+          "field": "在网从节点数",
+          "value": "门槛"
+        }
+      ]
+    }
   ],
   "asserts": [],
   "tags": [

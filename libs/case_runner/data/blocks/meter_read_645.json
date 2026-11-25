@@ -1,7 +1,10 @@
 {
   "id": "meter.read_645",
-  "title": "抄读表数据（02H-F1 透传 645 11H，判 CS 合法 + DI 回显 + 数值可解）。等待型重试默认关闭：wait_s=0 只读一次（wait_s>0 时每 poll_interval_s 重发同一只读透传帧，直到判据成立或等满预算；等满全程无应答→unknown 说不清，有应答但判据不成立→fail 真失败）——复位 STA 后链路恢复是分钟级，只有 meter_first_join 场景按需开启，meter_daily 保持默认",
-  "needs": ["bench.simcon_online"],
+  "title": "抄读表数据（02H-F1 透传 645 11H；只报观测：CS/DI 回显/数值，不比数值真值）",
+  "needs": [
+    "bench.simcon_online",
+    "sta.addr_obtained"
+  ],
   "provides": [],
   "action": {
     "afn": "02",
@@ -16,11 +19,27 @@
   },
   "assert": [
     {
-      "type": "inner_645_read",
-      "di": "00010000",
-      "require": ["cs_valid", "di_echo", "value_decodable"],
-      "expect_value": null
+      "type": "observation_fields",
+      "fields": [
+        "请求DI",
+        "CS合法",
+        "DI回显",
+        "异常应答",
+        "数值",
+        "单位",
+        "数据项"
+      ],
+      "note": "判据在步骤期望：默认只验 有值且可解（0044 §8.1-4），显式给期望值才比对"
     }
   ],
-  "tags": ["meter", "645", "smoke"]
+  "tags": [
+    "meter",
+    "645",
+    "smoke"
+  ],
+  "kind": "case",
+  "side_effect": "none",
+  "version": 2,
+  "observation_only": true,
+  "wait_param": "wait_s"
 }

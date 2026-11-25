@@ -34,5 +34,8 @@
     "bench",
     "reset",
     "first-batch"
-  ]
+  ],
+  "kind": "setup",
+  "side_effect": "irreversible",
+  "version": 1
 }

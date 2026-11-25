@@ -1,0 +1,51 @@
+{
+  "id": "archive_absent",
+  "title": "档案清空反证（查档确认目标地址不在档）——与档案就绪用同一查询块、相反期望",
+  "kind": "regression",
+  "category": {
+    "usage": "normal",
+    "domain": "CCO",
+    "scene": "档案",
+    "region": "国网通用"
+  },
+  "protocols": [
+    "1376.2"
+  ],
+  "steps": [
+    {
+      "no": 1,
+      "do": "查询档案表（10H-F2 翻页取全），比对给定表地址是否在档",
+      "expect": "档案表不含该表档案地址（观测完整）→ 反证成立；仍含 → 判不成立（档案还在）；查不全 → 不完整，不得折算成不含"
+    }
+  ],
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "plan": [
+    {
+      "id": "s1",
+      "block": "archive.query",
+      "params": {
+        "meter_addr": "999999999999"
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "在档",
+          "value": false
+        }
+      ],
+      "note": "AC-2（REQS-0044）：同一查询块，档案就绪流程期望含、本流程期望不含；地址可由 --params meter_addr 覆盖"
+    }
+  ],
+  "asserts": [],
+  "tags": [
+    "archive",
+    "negative",
+    "ac2"
+  ]
+}

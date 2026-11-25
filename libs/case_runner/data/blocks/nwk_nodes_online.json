@@ -26,5 +26,8 @@
     "batch-1",
     "readonly",
     "online"
-  ]
+  ],
+  "kind": "probe",
+  "side_effect": "none",
+  "version": 1
 }

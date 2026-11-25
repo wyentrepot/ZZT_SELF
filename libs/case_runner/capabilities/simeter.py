@@ -13,10 +13,12 @@ REQS-0041 §10.3 契约要点：
 端点契约（实测自 ``libs/sim_meter/api.py``）::
 
     GET  /api/simeter/status                     -> {brain:{addr,version,rx_count,...}, serial, session}
+    GET  /api/simeter/config                     -> {addr,version,...,jzjc:{protocol_type,...},registers}
+    POST /api/simeter/jzjc {protocol_type}       -> jzjc（本能力面只开 protocol_type 字段）
     POST /api/simeter/handle_hex {hex}           -> {reply_hex, reply_wire_hex, note, action}
     POST /api/simeter/open {mapping_id|port,...} -> status()（已开 409；打不开 500）
     POST /api/simeter/close                      -> status()
-    GET  /api/simeter/frames?dir=&after_seq=      -> {session, entries[]}
+    GET  /api/simeter/frames?dir=&after_seq=     -> {session, entries[]}
     POST /api/simeter/send_hex {hex}             -> {sent_bytes}（未开口 409）
 """
 
@@ -152,6 +154,42 @@ class SimeterCapability:
         return last
 
     # ------------------------------------------------------ 只读快照/健康 ----
+
+    def config(self) -> Dict[str, Any]:
+        """``GET /api/simeter/config``：电表配置快照（含即装即采 jzjc）。
+
+        表侧协议模式取 ``jzjc.protocol_type``（``sim_meter/api.py`` JzjcConfig：
+        00H 透明 / 02H 645-2007 / 03H 698.45，REQS-0043 §G-6 三方一致性的
+        simeter 侧判读值）。返回 ``{ok, addr, version, protocol_type, jzjc, raw}``。
+        """
+        result = self._request("GET", "/api/simeter/config")
+        if not result["ok"]:
+            return result
+        data = result["data"] if isinstance(result["data"], dict) else {}
+        jzjc = data.get("jzjc") if isinstance(data.get("jzjc"), dict) else {}
+        return {"ok": True,
+                "addr": data.get("addr"), "version": data.get("version"),
+                "protocol_type": jzjc.get("protocol_type"),
+                "jzjc": jzjc, "raw": data}
+
+    def set_jzjc(self, *, protocol_type: Optional[int] = None) -> Dict[str, Any]:
+        """``POST /api/simeter/jzjc``：更新即装即采配置（本能力面只开 protocol_type）。
+
+        服务端（``sim_meter/api.py`` JzjcSpec）对未给出的字段原值保留——只传
+        ``protocol_type`` 不动设备类型/描述符/下挂设备。返回
+        ``{ok, protocol_type, jzjc, request}``。
+        """
+        body: Dict[str, Any] = {}
+        if protocol_type is not None:
+            body["protocol_type"] = int(protocol_type)
+        if not body:
+            return _error("empty_params", "未给出要修改的即装即采字段（protocol_type）")
+        result = self._request("POST", "/api/simeter/jzjc", body)
+        if not result["ok"]:
+            return result
+        data = result["data"] if isinstance(result["data"], dict) else {}
+        return {"ok": True, "protocol_type": data.get("protocol_type"),
+                "jzjc": data, "request": body}
 
     def status(self) -> Dict[str, Any]:
         """``GET /api/simeter/status``：电表脑（地址/版本/收发计数）+ 串口 + 会话。"""

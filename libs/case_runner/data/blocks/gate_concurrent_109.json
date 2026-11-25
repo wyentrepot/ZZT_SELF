@@ -1,0 +1,42 @@
+{
+  "id": "gate.concurrent_109",
+  "title": "并发帧数闸门（连发 21 帧并发抄表背靠背压队列 → 观测 CCO 00H-F2 否认码 6D；入队前闸门，与表无关，单表可测）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "13762_gate_concurrent",
+    "params": {
+      "meter_addr": null,
+      "di": "03300501",
+      "frame_count": 21,
+      "expect_timeout": 5
+    },
+    "_params_note": "判据出处：CCO 并发队列上限 20（台体送检 10；CCO实现逻辑/02-并发抄表.md:69,86,143-156），超限否认 109/6D（expect_rules.json:18「109=超过最大并发数（6D，CCO aps_max_trans 上限）」）；frame_count=21=队列上限+1，可显式覆盖（台体模式口径可给 11）；参数名不用 frames（那是能力注入键）。每帧 1 条 645 报文、背靠背仅下发（无 expect 不等待，末帧否认不会被中间步 drain 冲掉），最后挂 recv_only 否认帧监听（00H-F2）。地址用同一只表即可（闸门与表无关，CASE-BACKLOG §F0-4）。否认等待缺省 5s=expect_rules default 档。"
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "下发帧数",
+        "每帧条数",
+        "报文DI",
+        "否认等待秒",
+        "否认码",
+        "否认码文本",
+        "否认帧"
+      ],
+      "note": "判据在步骤期望：如 {\"op\":\"eq\",\"field\":\"否认码\",\"value\":\"6D\"}；未收到否认帧 → 原因码 timeout（观测不完整），步骤落 inconclusive，绝不折成任何结论"
+    }
+  ],
+  "tags": [
+    "gate",
+    "batch",
+    "negative"
+  ],
+  "kind": "case",
+  "side_effect": "none",
+  "version": 1,
+  "observation_only": true
+}

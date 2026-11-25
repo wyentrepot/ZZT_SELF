@@ -1,8 +1,12 @@
 {
   "id": "archive.add",
-  "title": "添加从节点档案（11H-F1 建档 + 10H-F2 回查双判据）",
-  "needs": ["bench.simcon_online"],
-  "provides": [],
+  "title": "下发从节点档案（11H-F1 建档，幂等：已存在跳过下发；只报观测不判定）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [
+    "archive.written"
+  ],
   "action": {
     "afn": "11",
     "fn": 1,
@@ -13,8 +17,24 @@
     }
   },
   "assert": [
-    {"type": "confirm", "frame": "00H-F1"},
-    {"type": "archive_contains", "meter_addr": null}
+    {
+      "type": "observation_fields",
+      "fields": [
+        "下发动作",
+        "档案地址",
+        "确认帧",
+        "预查结论",
+        "已存在"
+      ],
+      "note": "判据在步骤期望（REQS-0044 §4.2）：确认是否收到、档案是否落地由调用方判"
+    }
   ],
-  "tags": ["archive", "batch-1"]
+  "tags": [
+    "archive",
+    "batch-1"
+  ],
+  "kind": "case",
+  "side_effect": "reversible",
+  "version": 2,
+  "observation_only": true
 }

@@ -47,6 +47,8 @@ verify 步骤结果字段契约（``verify`` / ``job`` / ``poll_job`` 共用）:
     POST /api/simcon/close                      -> {open: false, ...}（幂等；占用自愈用）
     POST /api/simcon/build                      -> {hex: "68 0F ...", length: 15}
     GET  /api/simcon/frames?after_seq=&run_id=  -> {session_id, entries[], next_after_seq, has_more, counts}
+    POST /api/simcon/batch_read                 -> BatchReadJob.snapshot()（job 异步，起job即回）
+    GET  /api/simcon/batch_read/{job_id}        -> BatchReadJob.snapshot()（finished / rows / deny_breakdown）
     GET  /api/ai/v2/simcon/lease                -> {held, holder}
     POST /api/ai/v2/verification-runs           -> 202 JobEnvelope{job_id, job_state, ...}
     GET  /api/ai/v2/jobs/{id}?wait_seconds=N    -> JobEnvelope{..., result:{result:{steps[],run_id}}}
@@ -437,6 +439,72 @@ class SimconCapability:
             return submitted
         return self.poll_job(submitted["job_id"], wait_seconds=wait_seconds,
                              max_poll_seconds=max_poll_seconds)
+
+    # ------------------------------------------------- 并发抄表（REQS-0027 G5）----
+
+    def batch_read_create(
+        self,
+        meters: List[str],
+        *,
+        max_concurrent: int = 5,
+        mode: str = "batch",
+        protocol_type: int = 2,
+        item: str = "02010100",
+        addr_mode: str = "wire",
+        timeout: Optional[float] = None,
+        profile: Optional[str] = None,
+        mapping_id: Optional[str] = None,
+        port: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """``POST /api/simcon/batch_read``：创建并发抄表任务（滑窗调度，REQS-0027 G5）。
+
+        后端**异步**起 job：返回值就是首份 ``BatchReadJob.snapshot()``（含
+        ``job_id`` / ``finished`` / ``success`` / ``failed`` / ``deny_breakdown`` /
+        ``rows``）。轮询进度走 :meth:`batch_read_job`。``timeout=None`` 表示按
+        后端 expect_rules 档位取（单抄 59s / 并抄 99s，REQS-0027/0030 口径），
+        本适配器不代选档位。调度逻辑在领域库，这里只透传端点（薄编排契约）。
+        """
+        body: Dict[str, Any] = {
+            "meters": [str(m).strip() for m in (meters or []) if str(m).strip()],
+            "max_concurrent": int(max_concurrent),
+            "mode": str(mode or "batch"),
+            "protocol_type": int(protocol_type),
+            "item": str(item or ""),
+            "addr_mode": str(addr_mode or "wire"),
+            "timeout": None if timeout is None else float(timeout),
+        }
+        if profile:
+            body["profile"] = str(profile)
+        if mapping_id:
+            body["mapping_id"] = str(mapping_id)
+        if port:
+            body["port"] = str(port)
+        result = self._request("POST", "/api/simcon/batch_read", body)
+        if not result["ok"]:
+            return result
+        data = result["data"] if isinstance(result["data"], dict) else {}
+        if not data.get("job_id"):
+            return _error("bad_response", "batch_read 响应缺少 job_id", raw=data)
+        out: Dict[str, Any] = dict(data)
+        out.update({"ok": True, "error": None, "detail": "", "status": result["status"]})
+        return out
+
+    def batch_read_job(self, job_id: str) -> Dict[str, Any]:
+        """``GET /api/simcon/batch_read/{job_id}``：读一次并发抄表任务快照。
+
+        成功返回 ``snapshot()`` 原样（``job_id`` / ``finished`` / ``rows`` …）并补
+        ``ok=True``；任务不存在（HTTP 404）→ ``{"ok": False, "error": "http_404"}``。
+        """
+        if not job_id:
+            return _error("missing_job_id", "job_id 为空")
+        path = "/api/simcon/batch_read/%s" % urllib.parse.quote(str(job_id), safe="")
+        result = self._request("GET", path)
+        if not result["ok"]:
+            return dict(result, job_id=job_id)
+        data = result["data"] if isinstance(result["data"], dict) else {}
+        out = dict(data)
+        out.update({"ok": True, "error": None, "detail": "", "job_id": data.get("job_id") or job_id})
+        return out
 
     # ---------------------------------------------------------------- 内部 ----
 

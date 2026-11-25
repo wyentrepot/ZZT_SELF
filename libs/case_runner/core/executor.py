@@ -75,6 +75,23 @@
 为某个步骤写死的值。注意 #4 是「按块」广播的——同一个块被实例化两次时，run 级
 ``--params`` 对两次都生效；要让两次不同，把差异写进 ``plan[].params``（#2）即可。
 
+双轨兼容：观测 / 期望求值器（REQS-0044 §4.2「判据归属」/ TODO P1）
+=================================================================
+块正在从「自己判 pass/fail」迁到「只返回观测」，两条道必须同时成立：
+
+- **新路径**：块返回了观测（返回映射的 ``observation`` 键，或直接
+  ``return Observation(...)``）**且** 步骤声明了 ``expect`` → 判据归调用方，
+  由 :func:`case_runner.core.expect.evaluate` 按「期望 vs 观测」产出步骤态；
+  此时**块自己给的 ``state`` 被忽略**（否则判据又跑回块里了，§4.2）。
+- **旧路径**：其余一切情形（块没给观测 / 步骤没声明期望）→ 原样沿用块的
+  ``state`` / ``detail`` / 断言，**逐字不变**——未迁移的 16 个旧块全走这条道，
+  所以旧用例的结论、文案、断点字段（``failed_step`` / ``blocked_step``）都不受影响。
+
+两条道产出的是**同一个** ``BLOCK_STATES`` 词表，因此聚合口径（
+:func:`aggregate_verdict` / :data:`BLOCK_TO_OUTCOME` / :data:`BLOCK_TO_ASSERTION_OUTCOME`）
+一个字不改：``skipped → blocked``、``unknown → inconclusive``。求值器的铁律
+（观测不完整 / 没拿到观测 → 绝不 pass）写在 :mod:`case_runner.core.expect` 模块头。
+
 块执行体调用约定：``fn(params, ctx)`` —— ``params`` = 块声明 ``action`` 字典（含
 ``afn``/``fn``/``params`` 或 ``recipe``/``semantic``）按上面的优先级叠加，再叠加两个
 **保留键**（优先级最高，任何一层都覆盖不掉）：
@@ -96,6 +113,13 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from test_automation.models import AssertionResult
 
+from .expect import (
+    OBSERVATION_KEY,
+    Observation,
+    coerce_observation,
+    evaluate,
+    normalize_expects,
+)
 from .models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -550,7 +574,12 @@ class RunContext:
 
 @dataclass
 class BlockResult:
-    """块执行体推荐返回值（也可返回 AssertionResult / dict / bool / str / None）。"""
+    """块执行体推荐返回值（也可返回 AssertionResult / Observation / dict / bool / str / None）。
+
+    ``observation`` 是新口径的**观测**（REQS-0044 §4.2）：块 = 传感器，只报"看到了什么 /
+    没看到什么 + 原因"，不报"通过还是失败"。给了观测且步骤声明了期望时，本字段里的
+    ``state`` 不再参与判定（判据归调用方，见 :mod:`case_runner.core.expect`）。
+    """
 
     state: str = BLOCK_UNKNOWN
     detail: str = ""
@@ -559,6 +588,9 @@ class BlockResult:
     expected: Any = None
     actual: Any = None
     assertion: AssertionResult | None = None
+    #: 结构化观测（新口径）：``values`` / ``complete`` / ``reason_code`` / ``detail``。
+    #: 也可用返回映射的 ``observation`` 键给出；两种写法等价。
+    observation: Observation | None = None
     #: 自愈留痕（§3.4 / SH-2）：每项 ``{action, target, result, detail}``。
     #: 块可以直接填，也可以把留痕写进 :func:`self_heal_sink` 让执行器自动收集；
     #: 两边都填时执行器合并（按 ``(action, target, result, detail)`` 去重）。
@@ -577,6 +609,8 @@ class BlockResult:
         self.decisions = [
             item for item in map(normalize_decision, self.decisions) if item
         ]
+        # 观测允许写成 dict（块里更顺手），统一归一；形状不规范按"不完整"收下
+        self.observation = coerce_observation(self.observation)
 
 
 @dataclass
@@ -592,6 +626,9 @@ class BlockRecord:
     step_id: str = ""
     on_fail: str = ""
     params: dict[str, Any] = field(default_factory=dict)
+    #: 本步的**观测**（REQS-0044 §4.2）：块给的就原样留在这里，供报告/证据引用；
+    #: ``None`` = 本步走的是旧路径（块没返回观测）。它**不是**结论，不带 pass/fail。
+    observation: Observation | None = None
     #: 本步的自愈留痕（SH-2）：执行器把块写的 + 收集器收到的合并成一份
     self_healed: list[dict[str, Any]] = field(default_factory=list)
     #: 本步的自动决策（D4-4）：块显式导出的 + 执行器从 ``self_healed`` / 轮询读数派生的
@@ -614,6 +651,8 @@ class BlockRecord:
             # D4-1 参数冻结的数据基础：该步实际下发的参数（不含 _assert/_cleanup 保留键）
             "params": dict(self.params),
             "facts": {fid: fv.to_dict() for fid, fv in self.facts.items()},
+            # 新口径（REQS-0044）：本步的观测（None = 旧路径，块没报观测）
+            OBSERVATION_KEY: self.observation.to_dict() if self.observation else None,
             # SH-2：自愈是自动决策，挂在本步（聚合口径见 CaseRunResult.to_dict）
             SELF_HEALED_KEY: [dict(item) for item in self.self_healed],
             # D4-4：本步的自动决策（全 run 聚合见 CaseRunResult.decisions）
@@ -766,9 +805,25 @@ def _state_from_outcome(outcome: str) -> str:
 
 
 def coerce_block_return(raw: Any) -> BlockResult:
-    """把块返回值**保守地**归一为 :class:`BlockResult`（无法识别 → unknown）。"""
+    """把块返回值**保守地**归一为 :class:`BlockResult`（无法识别 → unknown）。
+
+    新口径（REQS-0044）允许块只返回**观测**：
+
+    - ``return Observation(...)`` → 块态记 ``unknown`` + 观测原样带上（判据归调用方）；
+    - ``return {"observation": {...}}`` → 同上（``observation`` 键与 ``state`` 键可并存，
+      并存时以 ``state`` 为准，只有步骤声明了期望才由求值器接管）。
+
+    **只返回观测的块在旧路径（步骤没声明期望）上落 ``unknown``**：没有判据就没有结论，
+    绝不因为"看着拿到了数据"就折算成 pass（REQS RU-3）。
+    """
     if isinstance(raw, BlockResult):
         return raw
+    if isinstance(raw, Observation):
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail="块只返回观测（未给块态）：步骤态由步骤声明的期望求值，旧路径下记 unknown",
+            observation=raw,
+        )
     if isinstance(raw, AssertionResult):
         return BlockResult(
             state=_state_from_outcome(raw.outcome),
@@ -802,6 +857,8 @@ def coerce_block_return(raw: Any) -> BlockResult:
         evidence = raw.get("evidence_ids") or []
         if isinstance(evidence, str):
             evidence = [evidence]
+        # 新口径的观测（可单独出现，也可与 state / outcome 并存）
+        observation = coerce_observation(raw.get(OBSERVATION_KEY))
         state = raw.get("state")
         if state is not None:
             token = str(state).strip().lower()
@@ -813,6 +870,7 @@ def coerce_block_return(raw: Any) -> BlockResult:
                     evidence_ids=list(evidence),
                     expected=raw.get("expected"),
                     actual=raw.get("actual"),
+                    observation=observation,
                 )
             if token in OUTCOMES:
                 return BlockResult(
@@ -822,11 +880,13 @@ def coerce_block_return(raw: Any) -> BlockResult:
                     evidence_ids=list(evidence),
                     expected=raw.get("expected"),
                     actual=raw.get("actual"),
+                    observation=observation,
                 )
             return BlockResult(
                 state=BLOCK_UNKNOWN,
                 detail=detail or f"无法识别的块 state：{state!r}",
                 facts=dict(facts),
+                observation=observation,
             )
         if "outcome" in raw:
             token = str(raw["outcome"]).strip().lower()
@@ -837,6 +897,17 @@ def coerce_block_return(raw: Any) -> BlockResult:
                 detail=detail or f"无法识别的块 outcome：{raw.get('outcome')!r}",
                 facts=dict(facts),
                 evidence_ids=list(evidence),
+                observation=observation,
+            )
+        if observation is not None:
+            # 只给了观测、没给块态：块已按新口径"只观测不判定"，结论由步骤的期望决定
+            return BlockResult(
+                state=BLOCK_UNKNOWN,
+                detail=detail
+                or "块只返回观测（未给块态）：步骤态由步骤声明的期望求值，旧路径下记 unknown",
+                facts=dict(facts),
+                evidence_ids=list(evidence),
+                observation=observation,
             )
         # 只认显式 state / outcome。**不认** ok / passed：
         # 能力层所有动作都带 {"ok": true}（= 服务处理成功），块写
@@ -936,6 +1007,7 @@ def _record(
     params: Mapping[str, Any] | None = None,
     self_healed: Iterable[Mapping[str, Any]] | None = None,
     decisions: Iterable[Mapping[str, Any]] | None = None,
+    observation: Observation | None = None,
 ) -> BlockRecord:
     assertion = assertion or _make_assertion(
         run_id, assertion_id or block_id, state, detail
@@ -950,6 +1022,7 @@ def _record(
         step_id=step_id or block_id,
         on_fail=on_fail,
         params={key: _jsonable(value) for key, value in (params or {}).items()},
+        observation=observation,
         self_healed=_merge_self_heal(self_healed or ()),
         decisions=_merge_decisions(decisions or ()),
     )
@@ -1089,10 +1162,21 @@ def _run_block(
     for fact_id, value in coerced.facts.items():
         facts[fact_id] = coerce_fact_value(value, fact_id=fact_id)
 
+    # 双轨判定（REQS-0044 §4.2）：块给了观测 + 本步声明了期望 → 判据归调用方，
+    # 由求值器出步骤态；否则原样沿用块自己给的 state（旧路径逐字不变）。
+    state, detail, assertion, observation = _step_verdict(
+        coerced,
+        normalize_expects(_field_of(item, "expect")),
+        assertion_id=assertion_id,
+        run_id=ctx.run_id,
+    )
+
     # 只有 pass 的块才把 provides 的**显式**取值回写事实缓存（绝不凭空造事实）。
     # 带参事实（``archive.contains(addr)``）：块可在取值里带 ``params`` 声明该结论属于
     # 哪组参数；不带则按本 run 为该事实声明的那组参数写（指纹不符下游会重探，不会污染）。
-    if coerced.state == BLOCK_PASS and spec is not None:
+    # 双轨下这里用**本步的有效态**：新块只报观测，"这一步算不算过"由求值器说了算，
+    # 事实链跟着有效态走，否则已迁移的块永远回写不了 provides。
+    if state == BLOCK_PASS and spec is not None:
         for fact_id in spec.provides:
             if fact_id in coerced.facts:
                 raw_value = coerced.facts[fact_id]
@@ -1100,19 +1184,10 @@ def _run_block(
                     fact_id, raw_value, params=_provided_fact_params(raw_value)
                 )
 
-    assertion = coerced.assertion or _make_assertion(
-        ctx.run_id,
-        assertion_id,
-        coerced.state,
-        coerced.detail,
-        expected=coerced.expected,
-        actual=coerced.actual,
-        evidence_ids=coerced.evidence_ids,
-    )
     return BlockRecord(
         block_id=block_id,
-        state=coerced.state,
-        detail=coerced.detail,
+        state=state,
+        detail=detail,
         facts=facts,
         assertion=assertion,
         runnable=True,
@@ -1123,7 +1198,54 @@ def _run_block(
         # + 收集器收到的（with_self_heal 走的全局通道）
         self_healed=_merge_self_heal(declared_heal, heal_sink),
         decisions=_merge_decisions(declared_decisions),
+        observation=observation,
     )
+
+
+def _step_verdict(
+    coerced: BlockResult,
+    expects: Iterable[Mapping[str, Any]],
+    *,
+    assertion_id: str,
+    run_id: str,
+) -> tuple[str, str, AssertionResult, Observation | None]:
+    """一步的**有效块态**：双轨切换的唯一落点（REQS-0044 §4.2）。
+
+    - **新路径**：块返回了观测 **且** 步骤声明了期望 → :func:`case_runner.core.expect.evaluate`
+      按「期望 vs 观测」出态；块自己给的 ``state`` / ``assertion`` 一律**不采用**
+      （否则判据又跑回块里，同一份观测就没法服务相反期望了）。
+    - **旧路径**：其余情形 → 原样返回块的 ``state`` / ``detail`` / 断言，文案与断点字段
+      逐字不变（未迁移的块全靠它）。
+
+    返回 ``(state, detail, assertion, observation)``。
+    """
+
+    observation = coerced.observation
+    items = [dict(item) for item in expects]
+    if not items or observation is None:
+        assertion = coerced.assertion or _make_assertion(
+            run_id,
+            assertion_id,
+            coerced.state,
+            coerced.detail,
+            expected=coerced.expected,
+            actual=coerced.actual,
+            evidence_ids=coerced.evidence_ids,
+        )
+        return coerced.state, coerced.detail, assertion, observation
+
+    evaluation = evaluate(observation, items)
+    # 断言层仍严格三态：skipped/unknown 由 _make_assertion 统一折算成 inconclusive
+    assertion = _make_assertion(
+        run_id,
+        assertion_id,
+        evaluation.state,
+        evaluation.detail,
+        expected=items,
+        actual=observation.values,
+        evidence_ids=coerced.evidence_ids,
+    )
+    return evaluation.state, evaluation.detail, assertion, observation
 
 
 def _verdict(records: list[BlockRecord]) -> str:

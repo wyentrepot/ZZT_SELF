@@ -1,0 +1,53 @@
+{
+  "id": "meter.batch_read",
+  "title": "并发抄表（simcon batch_read 薄编排：起 job→轮询快照；观测成功回装/否认/超时/空载荷分行与否认码，不判定）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "simcon_batch_read",
+    "params": {
+      "meter_addr": null,
+      "mode": "batch",
+      "protocol_type": 2,
+      "di": "02010100",
+      "addr_mode": "wire",
+      "max_concurrent": 5,
+      "expect_timeout": null,
+      "wait_s": 0,
+      "poll_interval_s": 2
+    },
+    "_params_note": "单表变体判据（CASE-BACKLOG §F0-2，本台架可测）：成功=原样回装 F1H-F1 / 抄读不成功=回空载荷（报文长度域=0）/ 超时档位取 99s（代码口径 02-并发抄表.md:89 + expect_rules.json:31-34；业务文档 60s、台账 90s 与代码三处并存，本仓库统一 99s，F0-7-4 已登记）。expect_timeout=null 表示按 expect_rules 档位（单抄 59s/并抄 99s）下发给 job；wait_s=0 或不传 = 兜底预算（业务超时+30s 轮询余量），Procedure 应显式给 wait_s（0044 §8.1-3）。mode=batch=每表一帧 F1H-F1 / single=每表一帧 02H-F1。protocol_type=3（698.45）时 di 是 4 字节 OAD（如 20000201，与 645 DI 是两套编号，141 蒸馏卡）；构帧分流见 sim_concentrator/batch.py（0043-F1 修复：不再给 698 贴 645 标签）。max_concurrent 1~20（CCO 并发帧上限 20，超限否认 109）。"
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "任务号",
+        "模式",
+        "协议类型",
+        "抄读项",
+        "表数",
+        "成功数",
+        "否认数",
+        "超时数",
+        "空载荷数",
+        "否认明细",
+        "否认码列表",
+        "行明细"
+      ],
+      "note": "判据在步骤期望：如 成功数=表数、否认码列表=[\"6E\"]、空载荷数=1（失败回装空载荷判据，全帧类型.md §4.15：报文长度域=0）"
+    }
+  ],
+  "tags": [
+    "meter",
+    "batch",
+    "1376.2"
+  ],
+  "kind": "case",
+  "side_effect": "none",
+  "version": 1,
+  "observation_only": true,
+  "wait_param": "wait_s"
+}

@@ -109,6 +109,14 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
 )
 from case_runner.core.defaults import default_meter_addr
 from case_runner.core.executor import PARAM_ASSERT, BlockResult
+from case_runner.core.expect import (
+    OBS_BENCH_UNREACHABLE,
+    OBS_INCOMPLETE,
+    OBS_INVALID_PARAM,
+    OBS_SERIAL_BUSY,
+    OBS_TIMEOUT,
+    Observation,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -133,6 +141,7 @@ BLOCK_ADD = "archive.add"
 BLOCK_DEL = "archive.del"
 BLOCK_QUERY = "archive.query"
 FACT_CONTAINS = "archive.contains"
+FACT_ARCHIVE_WRITTEN = "archive.written"  # 事实链（REQS-0044 AC-5）：本块 provides
 
 AFN_ARCHIVE = 0x11          # 11H：路由设置（档案增删）
 FN_ARCHIVE_ADD = 1          # 11H-F1 添加从节点档案
@@ -264,109 +273,153 @@ def _fail(detail: str) -> BlockResult:
     return BlockResult(state=BLOCK_FAIL, detail=detail)
 
 
+def _archive_env_reason(detail: Any) -> str:
+    """档案类观测的环境原因码（只描述「为什么没拿到」）。"""
+    text = str(detail or "")
+    if any(token in text for token in ("409", "占用", "闸门", "会话忙", "busy")):
+        return OBS_SERIAL_BUSY
+    return OBS_BENCH_UNREACHABLE
+
+
+def _archive_observation(
+    values: Mapping[str, Any],
+    *,
+    complete: bool,
+    reason_code: str = "",
+    detail: str,
+) -> Observation:
+    return Observation(values=dict(values), complete=complete,
+                       reason_code=reason_code, detail=detail)
+
+
+def _archive_result(
+    observation: Observation,
+    *,
+    detail: str,
+    evidence: Sequence[str] = (),
+    facts: Mapping[str, Any] | None = None,
+) -> BlockResult:
+    """档案块的统一出口：只带观测（旧路径——步骤未声明期望——落 unknown）。"""
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail=detail,
+        observation=observation,
+        evidence_ids=list(evidence),
+        facts=dict(facts or {}),
+    )
+
+
+def _invalid_param_result(detail: str, *, evidence: Sequence[str] = ()) -> BlockResult:
+    """配置/参数类问题的统一观测结果（原因码 invalid_param，绝不折成设备结论）。"""
+    return _archive_result(
+        _archive_observation({}, complete=False, reason_code=OBS_INVALID_PARAM, detail=detail),
+        detail=detail, evidence=evidence,
+    )
+
+
 def block_add(params: Any, ctx: Any = None) -> BlockResult:
-    """``archive.add``：11H-F1 建档，**双判据**（00H-F1 确认 + 10H-F2 回查落地）。
+    """``archive.add``：11H-F1 建档，**只报观测不判定**（REQS-0044 §4.2）。
 
-    入参 ``meter_addr``（电表 645 表地址）→ ``archive_addr_of()`` 换算成档案地址后构帧与
-    回查；返回值里的 ``facts={"archive.contains": ...}`` **只作证据**（进块记录），不作为
-    ``provides`` 回写事实缓存 —— 该事实带 ``meter_addr`` 参数，回写会造成跨地址假 PASS。
+    观测字段：``下发动作``（建档 / 已存在，跳过下发）/ ``档案地址`` / ``写入确认``
+    （``确认`` / ``否认`` / ``未收到``）/ ``否认错误字``（否认时）。
 
-    **幂等（REQS-0042 §3.2 / ID-1）**：下发 11H-F1 之前先发一次 10H-F2 预查（与回查同一份
-    档案地址、同一套查询窗口），按 :func:`judge_contains` 的三态分流：
-
-    ============== ================================================================
-    ``FACT_YES``   ``pass`` + 「已存在，跳过下发」——**零 11H-F1 帧**，也不查会话帧日志
-    ``FACT_UNKNOWN`` ``unknown`` + 「预查未查全」——查不全 ≠ 不存在，绝不据此下发
-    ``FACT_NO``    明确不存在 → 走原「建档 + 确认 + 回查」双判据
-    ============== ================================================================
-
-    这样同一用例连跑两次都是 ``pass``；否则第二次会因为 CCO 对重复建档回 00H-F2
-    否认帧（错误状态字 7「表号不存在」）而判 FAIL —— 那个 FAIL 是块造成的假 FAIL。
+    - 「确认是否收到、档案是否落地」由步骤期望判：本步 expect ``eq 写入确认=确认``；
+      **档案落地**由下一步（``archive.query`` ①b）独立证明——块内的「确认 + 回查」
+      双判据已按 0044 §6.4 拆出（回查判据搬到查询步，防"回了确认却没落地"的假通过）；
+    - **幂等前置保留**（0042 ID-1，行为语义不变）：下发 11H-F1 之前先 10H-F2 预查，
+      已存在 → ``写入确认="确认"`` + ``下发动作="已存在，跳过下发"``（零 11H-F1 帧，
+      连跑两次结论一致）；预查未查全 → 原因码 ``incomplete``，绝不当作不存在去下发；
+    - 入参 ``meter_addr``（电表 645 表地址）→ ``archive_addr_of()`` 换算成档案地址构帧；
+      ``facts={"archive.written": ...}`` 供 provides 通道在步骤成立后回写事实链（AC-5）。
     """
     target, error = require_target(params, AFN_ARCHIVE, FN_ARCHIVE_ADD, BLOCK_ADD)
     if target is None:
-        return _fail(error)
+        return _invalid_param_result(error)
     action = block_action_params(params)
     meter_addrs, bad = meter_addrs_of(params)
     if bad:
-        return _fail(
-            "archive.add 参数 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）"
-            % "、".join(bad)
+        return _invalid_param_result(
+            "%s 参数 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）"
+            % (BLOCK_ADD, "、".join(bad))
         )
     archive_addrs = archive_addrs_of(meter_addrs)
     if not archive_addrs:
-        return _fail(
-            "archive.add 缺少必填参数 meter_addr（12 位 BCD 电表 645 表地址，如 123456789012；"
-            "缺省取 case_defaults.meter_addr）"
+        return _invalid_param_result(
+            "%s 缺少必填参数 meter_addr（12 位 BCD 电表 645 表地址，如 123456789012；"
+            "缺省取 case_defaults.meter_addr）" % BLOCK_ADD
         )
     if len(archive_addrs) > 1:
-        return _fail(
-            "archive.add 一次只能给一只表（meter_addr 单值 / meter_addrs 单个），收到 %d 个：%s"
-            % (len(archive_addrs), ",".join(meter_addrs))
+        return _invalid_param_result(
+            "%s 一次只能给一只表（meter_addr 单值 / meter_addrs 单个），收到 %d 个：%s"
+            % (BLOCK_ADD, len(archive_addrs), ",".join(meter_addrs))
         )
-    addr = archive_addrs[0]           # 档案侧人读地址（构帧 + 回查判据都用它）
+    addr = archive_addrs[0]           # 档案侧人读地址（构帧用它）
     meter_addr = meter_addrs[0]       # 电表侧人读地址（只用于 detail 留痕）
     protocol_raw = action.get("protocol", 2)
     protocol = int_of(protocol_raw)
     if protocol is None or protocol not in (2, 3):
-        return _fail(
-            "archive.add 参数 protocol 只能是 2（645）或 3（698），收到 %r" % (protocol_raw,)
+        return _invalid_param_result(
+            "%s 参数 protocol 只能是 2（645）或 3（698），收到 %r" % (BLOCK_ADD, protocol_raw)
         )
 
     cap, injected = resolve_simcon(ctx)
     gate = capability_gate(cap, injected)
     if gate is not None:
-        return gate
+        detail = "%s 能力不就绪，块未执行（不是设备结论）：%s" % (
+            BLOCK_ADD, getattr(gate, "detail", "") or "")
+        return _archive_result(
+            _archive_observation({}, complete=False,
+                                 reason_code=_archive_env_reason(detail), detail=detail),
+            detail=detail,
+        )
 
     # ------------------------------------------------------------------ #
-    # 幂等前置（REQS-0042 §3.2 / ID-1）：先 10H-F2 查档，已存在就不重复下发
+    # 幂等前置（0042 ID-1）：先 10H-F2 查档，已存在就不重复下发
     # ------------------------------------------------------------------ #
-    # 三态必须分开处理，**不能**把「没查到」一律当「不存在」：
-    #   YES     → 已存在：pass 收工（零 11H-F1 帧；CCO 对重复建档可能回 00H-F2
-    #             否认帧，那会被判 FAIL —— 幂等就是为了消除这个假 FAIL）
-    #   UNKNOWN → 没查全 / 查询没得到可判定应答：不能当不存在去下发，unknown
-    #   NO      → 明确不存在：走原「建档 + 确认 + 回查」双判据
     pre = archive_snapshot(cap=cap, **_query_options(action))
     job_ids = list(pre.get("job_ids") or [])
     exists_state, exists_detail = judge_contains(pre, addr)
+    if pre.get("block_state") == BLOCK_SKIPPED:
+        detail = "%s 预查不具备条件，未下发 11H-F1（%s）" % (BLOCK_ADD, exists_detail)
+        return _archive_result(
+            _archive_observation({}, complete=False,
+                                 reason_code=_archive_env_reason(detail), detail=detail),
+            detail=detail, evidence=job_ids,
+        )
     if exists_state == FACT_YES:
-        return BlockResult(
-            state=BLOCK_PASS,
-            detail="已存在，跳过下发：%s（电表表地址 %s；未发 11H-F1，"
-            "避免 CCO 对重复建档回 00H-F2 否认帧而误判 FAIL）" % (exists_detail, meter_addr),
+        values = {
+            "下发动作": "已存在，跳过下发",
+            "档案地址": addr,
+            "写入确认": "确认",
+        }
+        detail = (
+            "已存在，跳过下发：%s（电表表地址 %s；未发 11H-F1，"
+            "避免 CCO 对重复建档回 00H-F2 否认帧）" % (exists_detail, meter_addr)
+        )
+        return _archive_result(
+            _archive_observation(values, complete=True, detail=detail),
+            detail=detail, evidence=job_ids,
             facts={
-                FACT_CONTAINS: {
+                FACT_ARCHIVE_WRITTEN: {
                     "state": FACT_YES,
-                    "detail": "archive.add 幂等命中（已存在，未下发）：%s" % exists_detail,
+                    "detail": "档案写入交互完成（已存在，未下发）：%s" % exists_detail,
                     "evidence": list(job_ids),
                 }
             },
-            evidence_ids=list(job_ids),
-            expected="档案表含 %s" % addr,
-            actual="档案表已含 %s（未下发建档帧）" % addr,
         )
     if exists_state == FACT_UNKNOWN:
-        if pre.get("block_state") == BLOCK_SKIPPED:
-            # 环境/闸门问题（409 会话忙、台架不可达、看不到应答帧）：既不是设备结论，
-            # 也不等于「不存在」——按 skipped 上报，别把环境问题洗成 unknown/fail。
-            return BlockResult(
-                state=BLOCK_SKIPPED,
-                detail="%s 预查不具备条件，未下发 11H-F1（%s）" % (BLOCK_ADD, exists_detail),
-                evidence_ids=list(job_ids),
-            )
-        why = (
-            "档案表未查全" if pre.get("state") == "answered" else "未得到可判定应答"
+        why = "档案表未查全" if pre.get("state") == "answered" else "未得到可判定应答"
+        detail = (
+            "%s 预查%s，不能当作「不存在」去下发 11H-F1：%s"
+            "（查不全 ≠ 不存在；请缩小查询窗口 count/max_pages 或等台架稳定后重跑）"
+            % (BLOCK_ADD, why, exists_detail)
         )
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail=(
-                "%s 预查%s，不能当作「不存在」去下发 11H-F1：%s"
-                "（查不全 ≠ 不存在；请缩小查询窗口 count/max_pages 或等台架稳定后重跑）"
-                % (BLOCK_ADD, why, exists_detail)
+        return _archive_result(
+            _archive_observation(
+                {"下发动作": "预查未定，未下发", "档案地址": addr, "预查结论": why},
+                complete=False, reason_code=OBS_INCOMPLETE, detail=detail,
             ),
-            evidence_ids=list(job_ids),
-            expected="档案表不含 %s 且预查已覆盖全部档案" % addr,
-            actual="预查不可判定（%s）" % (pre.get("detail") or exists_detail),
+            detail=detail, evidence=job_ids,
         )
 
     confirm_timeout = action.get("confirm_timeout", DEFAULT_TIMEOUT)
@@ -389,61 +442,67 @@ def block_add(params: Any, ctx: Any = None) -> BlockResult:
     confirm_steps = steps_of(confirm)
     if not confirm_steps:
         state, why = verify_failure_state(confirm)
-        return BlockResult(
-            state=state,
-            detail="%s：建档帧未得到可判定结论，双判据未成立（%s）" % (BLOCK_ADD, why),
-            evidence_ids=list(job_ids),
+        if state == BLOCK_SKIPPED:
+            detail = "%s：建档帧未得到可判定结论（%s）" % (BLOCK_ADD, why)
+            return _archive_result(
+                _archive_observation({}, complete=False,
+                                     reason_code=_archive_env_reason(why), detail=detail),
+                detail=detail, evidence=job_ids,
+            )
+        code = OBS_TIMEOUT if state == BLOCK_UNKNOWN and "超时" in why else OBS_INCOMPLETE
+        detail = "%s：建档帧未得到可判定结论（%s）" % (BLOCK_ADD, why)
+        return _archive_result(
+            _archive_observation({"下发动作": "建档（11H-F1）", "档案地址": addr,
+                                  "写入确认": "未收到"},
+                                 complete=False, reason_code=code, detail=detail),
+            detail=detail, evidence=job_ids,
         )
     verdict = judge_confirm_step(
         confirm_steps[-1], label="11H-F1 建档确认", cap=cap, job=confirm
     )
-    if verdict["kind"] != "answered":
-        return BlockResult(
-            state=verdict["state"],
-            detail="%s 判据 1 未成立：%s" % (BLOCK_ADD, verdict["detail"]),
-            evidence_ids=job_ids,
-            expected="00H-F1 确认帧",
-            actual=verdict["kind"],
+    if verdict["kind"] == "answered":
+        values = {"下发动作": "建档（11H-F1）", "档案地址": addr, "写入确认": "确认"}
+        detail = "%s：11H-F1 建档确认帧已收到（%s）。档案是否落地由查询步（archive.query）证明" % (
+            BLOCK_ADD, verdict["detail"],
         )
-
-    snapshot = archive_snapshot(cap=cap, **_query_options(action))
-    job_ids.extend(snapshot.get("job_ids") or [])
-    contains_state, contains_detail = judge_contains(snapshot, addr)
-    if contains_state == FACT_YES:
-        return BlockResult(
-            state=BLOCK_PASS,
-            detail="双判据成立：00H-F1 确认已收到，且 %s（10H-F2）" % contains_detail,
+        return _archive_result(
+            _archive_observation(values, complete=True, detail=detail),
+            detail=detail, evidence=job_ids,
             facts={
-                FACT_CONTAINS: {
+                FACT_ARCHIVE_WRITTEN: {
                     "state": FACT_YES,
-                    "detail": "archive.add 双判据通过：%s" % contains_detail,
+                    "detail": "档案写入交互完成（11H-F1 确认帧已收到）",
                     "evidence": list(job_ids),
                 }
             },
-            evidence_ids=list(job_ids),
-            expected="确认 + 档案表含 %s" % addr,
-            actual="确认 + 档案表含 %s" % addr,
         )
-    if contains_state == FACT_NO:
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail=(
-                "确认已收到但档案未落地：00H-F1 确认帧已收到，但 %s。"
-                "（判据 2 未成立 —— 这是防假 PASS 的 FAIL，不是 unknown）" % contains_detail
-            ),
-            evidence_ids=list(job_ids),
-            expected="档案表含 %s" % addr,
-            actual="档案表不含 %s（%s）" % (addr, snapshot.get("detail") or ""),
+    if verdict["kind"] == "deny":
+        err = item_value(verdict.get("parsed"), ITEM_ERROR)
+        values = {
+            "下发动作": "建档（11H-F1）",
+            "档案地址": addr,
+            "写入确认": "否认",
+            "否认错误字": err if err is not None else "?",
+        }
+        detail = "%s：设备回否认帧 00H-F2（%s）" % (BLOCK_ADD, verdict["detail"])
+        return _archive_result(
+            _archive_observation(values, complete=True, detail=detail),
+            detail=detail, evidence=job_ids,
         )
-    return BlockResult(
-        state=BLOCK_UNKNOWN,
-        detail=(
-            "判据 1 成立（00H-F1 确认已收到），但判据 2 无法判定：%s（%s）"
-            % (contains_detail, snapshot.get("detail") or "")
-        ),
-        evidence_ids=list(job_ids),
-        expected="档案表含 %s" % addr,
-        actual="未知",
+    if verdict["kind"] == "unavailable":
+        detail = "%s：%s" % (BLOCK_ADD, verdict["detail"])
+        return _archive_result(
+            _archive_observation({}, complete=False,
+                                 reason_code=_archive_env_reason(verdict["detail"]),
+                                 detail=detail),
+            detail=detail, evidence=job_ids,
+        )
+    code = OBS_TIMEOUT if verdict["kind"] == "no_reply" else OBS_INCOMPLETE
+    values = {"下发动作": "建档（11H-F1）", "档案地址": addr, "写入确认": "未收到"}
+    detail = "%s：%s" % (BLOCK_ADD, verdict["detail"])
+    return _archive_result(
+        _archive_observation(values, complete=False, reason_code=code, detail=detail),
+        detail=detail, evidence=job_ids,
     )
 
 
@@ -624,134 +683,109 @@ def block_del(params: Any, ctx: Any = None) -> BlockResult:
 
 
 def block_query(params: Any, ctx: Any = None) -> BlockResult:
-    """``archive.query``：10H-F2 查档案表，按 meter_addr / expect_total / 空表 判。
+    """``archive.query``：10H-F2 查档案表，**只报观测不判定**（REQS-0044 §4.2 / AC-2）。
 
-    判定优先级：
+    观测字段：``总数`` / ``已查条数`` / ``查询地址`` / ``在档``（给了 meter_addr 时），
+    以及命中时的 ``在档协议类型``（10H-F2 节点信息 D13~D11 通信协议类型，
+    REQ S-0043 §G-6 三方一致性只读核验用；取不到 → 缺字段，不猜）。
+    「含 / 不含该地址」由步骤期望声明——同一份观测服务两种相反期望（AC-2）：
 
-    1. 给了 ``meter_addr``（电表表地址，内部换算成档案地址后比对）→ 档案表必须含该地址；
-    2. 否则给了 ``expect_total`` → 总数必须相等；
-    3. 否则 ``expect_empty=true`` 或 ``count=0`` → 期望空表（total==0 且无地址）；
-    4. 都没有 → **``unknown``**：一条判据都没有就什么都不该断言。
-       查询应答本身可解析只说明「帧通了」，不说明「档案内容符合期望」；
-       把这种情形判 pass 就是假 PASS（detail 写明原因与已看到的档案表摘要）。
+    - 期望含：``{"op":"eq","field":"在档","value":true}``（建档/查档步 ①b 用）；
+    - 期望不含：``{"op":"eq","field":"在档","value":false}``（清库反证用）。
 
-    **不取配置默认地址**（``allow_config_default=False``）：本块的地址就是判据，凭空塞一只
-    默认表进判据会把「没给判据」变成「给了一条可能不成立也没人要的判据」。
+    完整性：``archive_snapshot`` 已翻页取全（``complete``），查不全时目标地址"含/不含"
+    **不可判** → 原因码 ``incomplete``（不折算成含或不含，§8.1-2 同一原则）。
+    不取配置默认地址（``allow_config_default=False``）：本块的地址就是判据的比对对象，
+    凭空塞默认表会让"没给判据"变成"给了一条没人要的判据"。
     """
     target, error = require_target(params, AFN_ROUTE_QUERY, FN_ARCHIVE_QUERY, BLOCK_QUERY)
     if target is None:
-        return _fail(error)
+        return _invalid_param_result(error)
     action = block_action_params(params)
     meter_addrs, bad = meter_addrs_of(params, allow_config_default=False)
     if bad:
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail="%s：参数 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）"
-            "——配置问题，不是档案表结论" % (BLOCK_QUERY, "、".join(bad)),
+        return _invalid_param_result(
+            "%s：参数 meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）"
+            "——配置问题，不是档案表结论" % (BLOCK_QUERY, "、".join(bad))
         )
     archive_addrs = archive_addrs_of(meter_addrs)
     addr = archive_addrs[0] if archive_addrs else ""
     meter_addr = meter_addrs[0] if meter_addrs else ""
-    expect_total = int_of(action.get("expect_total"))
-    raw_count = action.get("count")
-    expect_empty = bool(action.get("expect_empty")) or int_of(raw_count) == 0
 
     cap, injected = resolve_simcon(ctx)
     gate = capability_gate(cap, injected)
     if gate is not None:
-        return gate
+        detail = "%s 能力不就绪，块未执行（不是设备结论）：%s" % (
+            BLOCK_QUERY, getattr(gate, "detail", "") or "")
+        return _archive_result(
+            _archive_observation({}, complete=False,
+                                 reason_code=_archive_env_reason(detail), detail=detail),
+            detail=detail,
+        )
 
     options = _query_options(action)
-    options["count"] = DEFAULT_QUERY_COUNT if expect_empty else options["count"]
     snapshot = archive_snapshot(cap=cap, **options)
     job_ids = list(snapshot.get("job_ids") or [])
+    values: Dict[str, Any] = {
+        "总数": snapshot.get("total"),
+        "已查条数": len(snapshot.get("addresses") or []),
+    }
     if snapshot.get("state") != "answered":
-        return BlockResult(
-            state=str(snapshot.get("block_state") or BLOCK_UNKNOWN),
-            detail="%s：%s" % (BLOCK_QUERY, snapshot.get("detail") or "查询未得到可判定应答"),
-            evidence_ids=job_ids,
+        detail = "%s：%s" % (BLOCK_QUERY, snapshot.get("detail") or "查询未得到可判定应答")
+        if snapshot.get("block_state") == BLOCK_SKIPPED:
+            code = _archive_env_reason(detail)
+        elif "超时" in detail or snapshot.get("state") == "timeout":
+            code = OBS_TIMEOUT
+        else:
+            code = OBS_INCOMPLETE
+        return _archive_result(
+            _archive_observation(values, complete=False, reason_code=code, detail=detail),
+            detail=detail, evidence=job_ids,
         )
-    summary = "档案表 total=%s，已查 %d 条 %s" % (
+
+    summary = "档案表 total=%s，已查 %d 条%s" % (
         snapshot.get("total") if snapshot.get("total") is not None else "未知",
         len(snapshot.get("addresses") or []),
         "（完整）" if snapshot.get("complete") else "（未覆盖全部，已翻页上限）",
     )
+    values["查询地址"] = addr or ""
 
     if addr:
-        state, detail = judge_contains(snapshot, addr)
+        state, contains_detail = judge_contains(snapshot, addr)
+        if state == FACT_UNKNOWN:
+            # 查不全 / 未得到可判定应答：目标地址"含/不含"不可判（不折算，§8.1-2）
+            detail = "%s：%s（%s；电表表地址 %s）" % (
+                BLOCK_QUERY, contains_detail, summary, meter_addr,
+            )
+            return _archive_result(
+                _archive_observation(values, complete=False,
+                                     reason_code=OBS_INCOMPLETE, detail=detail),
+                detail=detail, evidence=job_ids,
+            )
+        values["在档"] = state == FACT_YES
         if state == FACT_YES:
-            return BlockResult(
-                state=BLOCK_PASS,
-                detail="%s：%s（电表表地址 %s）" % (BLOCK_QUERY, detail, meter_addr),
-                evidence_ids=job_ids,
-                expected="档案表含 %s" % addr,
-                actual="含 %s" % addr,
-            )
-        if state == FACT_NO:
-            return BlockResult(
-                state=BLOCK_FAIL,
-                detail="%s：%s（%s；电表表地址 %s）"
-                % (BLOCK_QUERY, detail, summary, meter_addr),
-                evidence_ids=job_ids,
-                expected="档案表含 %s" % addr,
-                actual="不含 %s" % addr,
-            )
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail="%s：%s（电表表地址 %s）" % (BLOCK_QUERY, detail, meter_addr),
-            evidence_ids=job_ids,
+            # §G-6 三方一致性核验：10H-F2 逐节点信息 D13~D11 = 在档条目的通信协议类型
+            # （0 透明/1 645-1997/2 645-2007/3 698.45；解析器已写入 desc，快照层已解出，
+            # 这里只透出）。取不到（应答缺节点信息字段）→ None，不猜不折算。
+            nodes = [n for n in (snapshot.get("nodes") or [])
+                     if isinstance(n, Mapping) and n.get("addr") == addr]
+            if nodes:
+                values["在档协议类型"] = nodes[0].get("protocol")
+        detail = "%s：%s（%s；电表表地址 %s）" % (
+            BLOCK_QUERY, contains_detail, summary, meter_addr,
+        )
+        return _archive_result(
+            _archive_observation(values, complete=True, detail=detail),
+            detail=detail, evidence=job_ids,
         )
 
-    if expect_total is not None:
-        total = snapshot.get("total")
-        if total is None:
-            return BlockResult(
-                state=BLOCK_UNKNOWN,
-                detail="%s：应答里没有「%s」字段，无法比对期望总数 %d（%s）"
-                % (BLOCK_QUERY, ITEM_TOTAL, expect_total, summary),
-                evidence_ids=job_ids,
-            )
-        if total == expect_total:
-            return BlockResult(
-                state=BLOCK_PASS,
-                detail="%s：总数符合期望 %d（%s）" % (BLOCK_QUERY, expect_total, summary),
-                evidence_ids=job_ids,
-                expected=expect_total,
-                actual=total,
-            )
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail="%s：总数不符（期望 %d，实得 %d；%s）"
-            % (BLOCK_QUERY, expect_total, total, summary),
-            evidence_ids=job_ids,
-            expected=expect_total,
-            actual=total,
-        )
-
-    if expect_empty:
-        total = snapshot.get("total")
-        addresses = list(snapshot.get("addresses") or [])
-        if total is not None and total == 0 and not addresses:
-            return BlockResult(
-                state=BLOCK_PASS,
-                detail="%s：档案表为空（total=0）" % BLOCK_QUERY,
-                evidence_ids=job_ids,
-            )
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail="%s：期望空表，实得 total=%s / %d 条地址（%s）"
-            % (BLOCK_QUERY, total if total is not None else "未知", len(addresses), summary),
-            evidence_ids=job_ids,
-            expected="空档案表",
-            actual="total=%s / %d 条" % (total, len(addresses)),
-        )
-
-    # 一条判据都没给 → 什么都没断言 = 假 PASS，只能 unknown
-    return BlockResult(
-        state=BLOCK_UNKNOWN,
-        detail="%s：未指定 meter_addr/expect_total/expect_empty，无法断言档案内容"
-        "（查询应答可解析：%s；帧通了不等于档案内容符合期望）" % (BLOCK_QUERY, summary),
-        evidence_ids=job_ids,
+    detail = (
+        "%s：查询应答可解析（%s）。未给 meter_addr，只报表内容观测，"
+        "「含/不含」由步骤给 meter_addr 并声明期望" % (BLOCK_QUERY, summary)
+    )
+    return _archive_result(
+        _archive_observation(values, complete=bool(snapshot.get("complete")), detail=detail),
+        detail=detail, evidence=job_ids,
     )
 
 

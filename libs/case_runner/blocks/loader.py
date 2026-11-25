@@ -501,6 +501,92 @@ def check_provides_parameterized(
     return problems
 
 
+#: 块声明**必须显式写出**的三字段（REQS-0044 §4.3 / AC-4：16 块全量补齐，
+#: 靠模型缺省值「看起来有」不算——声明文件里没有就是没补）
+REQUIRED_BLOCK_METADATA: frozenset[str] = frozenset({"kind", "side_effect", "version"})
+
+
+def check_block_metadata(blocks: Iterable[BlockSpec], *,
+                         sources: Mapping[str, str] | None = None) -> list[str]:
+    """每个块声明必须**显式**带 ``kind`` / ``side_effect`` / ``version``（AC-4）。
+
+    模型层给三字段留了缺省值（老声明不至于加载失败），但 AC-4 的口径是
+    「**每个块有**三字段」：声明文件里没写就是没补，靠缺省值蒙混会让
+    「台架准备判 pass 混进产品通过率」「不可逆动作没有收场标记」这类问题
+    静默存在。``model_fields_set`` 记录了「原文里写了哪些键」，用它判。
+    """
+    src = dict(sources or {})
+    problems: list[str] = []
+    for spec in blocks:
+        where = src.get(spec.id, f"block {spec.id!r}")
+        missing = sorted(
+            key for key in REQUIRED_BLOCK_METADATA if key not in spec.model_fields_set
+        )
+        if missing:
+            problems.append(
+                f"{where}: block {spec.id!r} 缺少块元数据字段：{'/'.join(missing)}"
+                "（REQS-0044 §4.3 / AC-4：kind/side_effect/version 必须显式声明）"
+            )
+    return problems
+
+
+def check_procedure_judgement(
+    cases: Iterable[CaseSpec],
+    blocks: Iterable[BlockSpec],
+    *,
+    sources: Mapping[str, str] | None = None,
+    known_block_ids: Iterable[str] | None = None,
+) -> list[str]:
+    """Procedure 步骤判据门禁（REQS-0044 AC-6「无判据不入库」+ v2 拍板 #3 等待预算）。
+
+    两条硬规则，命中任一即 problem（``check`` / ``run`` / API 一并拒绝）：
+
+    1. 步骤引用 **已迁为只观测**（``observation_only=True``）的块却没声明 ``expect``
+       → 无判据不入库：块不判了、步骤又不判，这条步骤等于没判据，跑出来只能是 unknown；
+    2. 步骤引用**等待型**块（声明了 ``wait_param``，如组网/绑表/抄表）而 ``params``
+       缺该参数（或值 ≤ 0）→ 等待预算视为缺判据（v2 拍板 #3：预算写死在 Procedure 里，
+       块默认值只作兜底，缺了它历史结论不可比）。
+
+    未迁移的旧块（``observation_only=False`` 且无 ``wait_param``）不受影响——
+    迁移一块收紧一块（§6.2 迁移顺序，不允许跳）。
+    """
+    src = dict(sources or {})
+    by_id = {spec.id: spec for spec in blocks}
+    problems: list[str] = []
+    for case in cases:
+        where = src.get(case.id, f"case {case.id!r}")
+        for step in case.effective_steps():
+            spec = by_id.get(step.block)
+            if spec is None:
+                continue  # 引用完整性由 check_case_refs 报，这里不重复
+            has_expect = bool(step.expect)
+            if spec.observation_only and not has_expect:
+                problems.append(
+                    f"{where}: case {case.id!r} 的步骤 {step.id!r} 引用只观测块 "
+                    f"{step.block!r} 但未声明 expect —— 无判据不入库"
+                    "（REQS-0044 AC-6：判据在步骤，块只报观测）"
+                )
+            wait_param = str(getattr(spec, "wait_param", "") or "").strip()
+            if wait_param:
+                given = step.params.get(wait_param)
+                try:
+                    value = float(given) if given is not None else 0.0
+                except (TypeError, ValueError):
+                    value = 0.0
+                if value <= 0:
+                    problems.append(
+                        f"{where}: case {case.id!r} 的步骤 {step.id!r} 引用等待型块 "
+                        f"{step.block!r} 但 params 缺少等待预算 {wait_param!r}（或 ≤0）"
+                        "—— 等待预算写死在 Procedure 里（0044 §8.1-3），缺预算视为缺判据"
+                    )
+    return problems
+
+
+def _registered_block_spec(block_id: str) -> BlockSpec | None:
+    """兜底：声明没给但块库注册过的块没有声明形状，返回 ``None``（由引用检查报）。"""
+    return None
+
+
 def check_case_refs(
     cases: Iterable[CaseSpec],
     blocks: Iterable[BlockSpec],
@@ -650,6 +736,9 @@ def load_all(
     problems.extend(check_case_refs(report.cases, report.blocks,
                                     sources=all_sources,
                                     known_block_ids=list_blocks()))
+    problems.extend(check_block_metadata(report.blocks, sources=all_sources))
+    problems.extend(check_procedure_judgement(report.cases, report.blocks,
+                                              sources=all_sources))
     report.sources = sources
     report.problems = problems
     if strict and problems:
@@ -754,6 +843,9 @@ __all__ = [
     "check_fact_refs",
     "check_provides_parameterized",
     "check_case_refs",
+    "check_block_metadata",
+    "check_procedure_judgement",
+    "REQUIRED_BLOCK_METADATA",
     "required_params",
     "is_parameterized",
     "iter_domain_module_names",

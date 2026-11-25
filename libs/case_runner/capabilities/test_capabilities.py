@@ -810,3 +810,61 @@ def test_frames_digit_protocol_names_are_still_names():
     assert "protocol_code" not in by_name
     built = cap.build("698.45", {"addr": "05353781090030", "oad": "40000200"})
     assert cap.decode(built["frame_hex"], protocol="69845")["protocol"] == "698.45"
+
+
+# --------------------------------------------------------------------------
+# 并发抄表端点（REQS-0027 G5 / 0043-F1 薄编排）：batch_read_create / batch_read_job
+# --------------------------------------------------------------------------
+
+BATCH_CREATE = ("POST", "/api/simcon/batch_read")
+BATCH_JOB = ("GET", "/api/simcon/batch_read/batch-1")
+
+
+def test_batch_read_create_posts_body_and_returns_snapshot():
+    """创建任务：POST /batch_read，body 字段逐字透传；回快照 + ok=True。"""
+    snapshot = {"job_id": "batch-1", "finished": False, "meters_total": 2,
+                "success": 0, "failed": 0, "rows": []}
+    cap, transport = _simcon({BATCH_CREATE: (200, snapshot)})
+    out = cap.batch_read_create(
+        [" 990042708102 ", ""], max_concurrent=3, mode="batch", protocol_type=2,
+        item="02010100", addr_mode="wire", timeout=None, mapping_id="simcon")
+    assert out["ok"] is True and out["job_id"] == "batch-1"
+    assert out["meters_total"] == 2
+    call = transport.calls[0]
+    assert call["method"] == "POST" and call["path"] == BATCH_CREATE[1]
+    assert call["body"]["meters"] == ["990042708102"]        # 空白项剔除、地址去空白
+    assert call["body"]["max_concurrent"] == 3
+    assert call["body"]["timeout"] is None                    # None 透传 = 按档位取
+    assert call["body"]["mapping_id"] == "simcon"
+
+
+def test_batch_read_create_rejects_missing_job_id():
+    cap, _ = _simcon({BATCH_CREATE: (200, {"unexpected": 1})})
+    out = cap.batch_read_create(["990042708102"])
+    assert out["ok"] is False and out["error"] == "bad_response"
+
+
+def test_batch_read_create_maps_server_rejection():
+    """后端 422（如 max_concurrent 超限拒绝）原样成错误 dict，不抛异常。"""
+    cap, _ = _simcon({BATCH_CREATE: (422, {"detail": "最大并发数超限：25"})})
+    out = cap.batch_read_create(["990042708102"], max_concurrent=25)
+    assert out["ok"] is False and out["error"] == "http_422"
+    assert "最大并发数超限" in out["detail"]
+
+
+def test_batch_read_job_reads_snapshot_and_404():
+    """读快照：GET /batch_read/{job_id}；任务不存在 404 → error=http_404。"""
+    cap, transport = _simcon({BATCH_JOB: (200, {"job_id": "batch-1", "finished": True,
+                                                "success": 1, "rows": []})})
+    out = cap.batch_read_job("batch-1")
+    assert out["ok"] is True and out["finished"] is True
+    assert transport.calls[0]["path"] == BATCH_JOB[1]
+    missing = cap.batch_read_job("batch-missing")
+    assert missing["ok"] is False and missing["error"] == "http_404"
+
+
+def test_batch_read_job_requires_job_id():
+    cap, transport = _simcon({})
+    out = cap.batch_read_job("")
+    assert out["ok"] is False and out["error"] == "missing_job_id"
+    assert transport.calls == []                              # 没发请求

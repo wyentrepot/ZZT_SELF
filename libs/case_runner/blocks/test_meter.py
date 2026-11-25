@@ -44,6 +44,14 @@ from case_runner.core.executor import (
     coerce_block_return,
     execute_case,
 )
+from case_runner.core.expect import (
+    ENVIRONMENT_REASON_CODES,
+    OBS_INCOMPLETE,
+    OBS_INVALID_PARAM,
+    OBS_SERIAL_BUSY,
+    OBS_TIMEOUT,
+    evaluate,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -308,12 +316,34 @@ def test_register_is_idempotent():
     assert "meter.addr_probe" in BLOCK_REGISTRY
 
 
+#: 0044 观测化助手：两个抄表块的步骤期望（与 meter_daily 的声明同口径）
+PROBE_EXPECT = [{"op": "complete"}, {"op": "eq", "field": "地址一致", "value": True}]
+READ_EXPECT = [
+    {"op": "complete"},
+    {"op": "eq", "field": "CS合法", "value": True},
+    {"op": "eq", "field": "异常应答", "value": False},
+    {"op": "eq", "field": "DI回显", "value": True},
+    {"op": "has_value", "field": "数值"},
+]
+
+
+def meter_step_state(result, expects=None):
+    """块结果 → 步骤态（模拟调用方判据；D7-1 改写说明见各测试 docstring）。
+
+    ``expects=None`` 时按观测自动选：有「地址一致」字段 → 绑表期望；否则抄表期望。
+    """
+    if expects is None:
+        obs = result.observation
+        expects = PROBE_EXPECT if (obs is not None and "地址一致" in obs.values) else READ_EXPECT
+    return evaluate(result.observation, expects).state
+
+
 def test_json_declarations_valid_and_consistent():
     expected_blocks = {
-        # ``sta.meter_addr_known`` 是**参数化事实**（按 meter_addr 求值）：块回写只按
-        # fact_id 缓存 → 换地址会假 PASS，故 provides 必须为空（与 nwk.nodes_online 同款）
-        "meter.addr_probe": (["bench.simcon_online"], []),
-        "meter.read_645": (["bench.simcon_online"], []),
+        # 0044 AC-5 事实链：绑表 needs 组网成立、provides 表地址已知；
+        # ``sta.meter_addr_known``（参数化事实）仍然**不得**进 provides（跨地址假 PASS）
+        "meter.addr_probe": (["bench.simcon_online", "nwk.joined"], ["sta.addr_obtained"]),
+        "meter.read_645": (["bench.simcon_online", "sta.addr_obtained"], []),
         "meter.brain_local": (["bench.simeter_online"], []),
     }
     for block_id, (needs, provides) in expected_blocks.items():
@@ -397,10 +427,11 @@ def test_addr_probe_pass_on_measured_frame():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
-    assert "000000000001" in result.detail
-    # provides 只在 pass 时显式给事实取值（不凭空造）
-    assert result.facts == {"sta.meter_addr_known": "yes"}
+    # 0044 观测化：地址一致是观测字段，判据归步骤期望
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("内层645地址") == "000000000001"
+    assert result.observation.values.get("地址一致") is True
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     # 下发的确实是 02H-F1 透传 645 13H；缺省 addr_mode="meter" → 地址域 = 该表线序
     sent = forward_steps(calls)[0]["send"]
     assert sent["afn"] == "02" and sent["fn"] == 1
@@ -413,10 +444,13 @@ def test_addr_probe_mismatch_is_fail_with_expected_and_actual():
     action = action_of("meter.addr_probe")
     action["params"] = dict(action["params"], meter_addr="000000000002")
     result = get_block("meter.addr_probe")(action, ctx_with(simcon=simcon))
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "期望地址 000000000002" in result.detail
-    assert "实际 000000000001" in result.detail
-    assert not result.facts, "fail 的块不得回写 provides 事实"
+    # 地址不符是完整观测（地址一致=False）→ 期望判 fail；观测里带期望/实际地址
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("地址一致") is False
+    assert result.observation.values.get("请求表地址") == "000000000002"
+    assert result.observation.values.get("内层645地址") == "000000000001"
+    assert meter_step_state(result) == BLOCK_FAIL, result.observation.detail
+    assert "000000000002" in result.observation.detail and "000000000001" in result.observation.detail
 
 
 def test_addr_probe_no_nested_protocol0_is_fail_not_pass():
@@ -424,39 +458,47 @@ def test_addr_probe_no_nested_protocol0_is_fail_not_pass():
     no_nested = up_frame_with("681234567812345678", protocol=0)
     simcon, _ = make_simcon(reply_frame=no_nested)
     result = get_block("meter.addr_probe")(action_of("meter.addr_probe"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_FAIL, result.detail
-    assert result.state != BLOCK_PASS
-    assert "内层无 645 嵌套" in result.detail or "通信协议类型" in result.detail
-    assert "645" in result.detail
+    # 0044 改写（D7-1）：内层不可解 = 观测走不到地址层 → 原因码 incomplete → 说不清；
+    # 旧断言「fail」是块内判据时代的口径（docs/blocks 待确认 3：目标态只是观测）
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INCOMPLETE
+    assert meter_step_state(result) == BLOCK_UNKNOWN, result.observation.detail
+    assert "内层无 645 嵌套" in result.observation.detail or "通信协议类型" in result.observation.detail
 
 
 def test_addr_probe_poll_timeout_is_unknown_not_fail():
     simcon, _ = make_simcon(job_state="running")
     action = action_of("meter.addr_probe", max_poll_seconds=0.05)
     result = get_block("meter.addr_probe")(action, ctx_with(simcon=simcon))
-    assert result.state == BLOCK_UNKNOWN, result.detail
-    assert "超时" in result.detail or "poll_timeout" in result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
+    assert "超时" in result.observation.detail or "poll_timeout" in result.detail
     assert BLOCK_TO_OUTCOME[result.state] != "pass"
 
 
 def test_addr_probe_step_failed_is_fail_with_reason():
     simcon, _ = make_simcon(step_result="fail", reason="超时(8s)未收到期望帧")
     result = get_block("meter.addr_probe")(action_of("meter.addr_probe"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "超时(8s)未收到期望帧" in result.detail
+    # verify 步骤层超时 → 观测原因码 timeout（说不清链路，0042 §3.5）
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_TIMEOUT
+    assert "超时(8s)未收到期望帧" in result.observation.detail
 
 
 def test_addr_probe_no_session_404_is_skipped():
     simcon, _ = make_simcon(submit_status=404)
     result = get_block("meter.addr_probe")(action_of("meter.addr_probe"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_SKIPPED, result.detail
-    assert "404" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert meter_step_state(result) == BLOCK_SKIPPED, result.observation.detail
+    assert "404" in result.observation.detail
 
 
 def test_addr_probe_unreachable_is_skipped():
     simcon, _ = make_simcon(raise_oserror=True)
     result = get_block("meter.addr_probe")(action_of("meter.addr_probe"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_SKIPPED, result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert meter_step_state(result) == BLOCK_SKIPPED, result.observation.detail
 
 
 def test_addr_probe_reply_via_frames_log_when_step_has_no_matched():
@@ -469,7 +511,7 @@ def test_addr_probe_reply_via_frames_log_when_step_has_no_matched():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
 
 
 def test_addr_probe_accepts_capability_object_in_params():
@@ -478,7 +520,7 @@ def test_addr_probe_accepts_capability_object_in_params():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR, simcon=simcon), None
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
 
 
 def test_addr_probe_builds_capability_from_base_url_and_transport():
@@ -489,7 +531,7 @@ def test_addr_probe_builds_capability_from_base_url_and_transport():
         base_url="http://fake-simcon", transport=simcon.transport,
     )
     result = get_block("meter.addr_probe")(action, None)
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
 
 
 # --------------------------------------------------------------------------- #
@@ -502,42 +544,59 @@ def test_read_645_pass_with_real_reply():
     result = get_block("meter.read_645")(
         action_of("meter.read_645", meter_addr=MEASURED_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
-    assert "1234.56" in result.detail
+    # 0044 观测化：CS/DI回显/数值都是观测字段；「数值对不对」由步骤期望判
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("数值") == 1234.56
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
+    assert "1234.56" in result.observation.detail
     sent = forward_steps(calls)[0]["send"]
     # 11H 读数据 DI 00010000 的实测构帧
     assert sent["params"]["payload"] == "6800000000000168110433333433B316"
 
 
-def test_read_645_expect_value_match_and_mismatch():
+def test_read_645_expect_value_moves_to_step_expect():
+    """期望值比对归步骤（REQS-0044 §8.1 第4条改写，覆盖原 match/mismatch 两条）：
+
+    块不再消费 ``expect_value``（观测只报解出的数值与单位）；显式比对由步骤期望
+    ``eq 数值=...`` 完成 —— match 在 test_case_meter（真流程）与求值器单测覆盖。
+    """
     reply = up_frame_with(MEASURED_645_REPLY)
     ok_simcon, _ = make_simcon(reply_frame=reply)
     ok_result = get_block("meter.read_645")(
         action_of("meter.read_645", expect_value=1234.56), ctx_with(simcon=ok_simcon)
     )
-    assert ok_result.state == BLOCK_PASS, ok_result.detail
-    assert "与期望值" in ok_result.detail
+    # expect_value 被忽略：数值作为观测如实上报（1234.56）
+    assert ok_result.observation is not None and ok_result.observation.complete
+    assert ok_result.observation.values.get("数值") == 1234.56
+    assert ok_result.observation.values.get("单位") == "kWh"
 
     bad_simcon, _ = make_simcon(reply_frame=reply)
     bad_result = get_block("meter.read_645")(
         action_of("meter.read_645", expect_value=999.99), ctx_with(simcon=bad_simcon)
     )
-    assert bad_result.state == BLOCK_FAIL, bad_result.detail
-    assert "期望 999.99" in bad_result.detail and "1234.56" in bad_result.detail
+    # 同一观测：默认期望（有值且可解）→ pass；显式 eq 期望 999.99 → fail
+    assert meter_step_state(bad_result) == BLOCK_PASS, bad_result.observation.detail
+    assert meter_step_state(bad_result, expects=[
+        {"op": "complete"}, {"op": "eq", "field": "数值", "value": 999.99},
+    ]) == BLOCK_FAIL, bad_result.observation.detail
+    assert bad_result.observation.values.get("数值") == 1234.56
 
 
 def test_read_645_bad_cs_is_fail():
     bad_cs = MEASURED_645_REPLY[:-4] + "0000"
     simcon, _ = make_simcon(reply_frame=up_frame_with(bad_cs))
     result = get_block("meter.read_645")(action_of("meter.read_645"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "CS" in result.detail
+    # CS 不合法是完整观测（CS合法=False）→ 期望判 fail（数值不解读）
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("CS合法") is False
+    assert meter_step_state(result) == BLOCK_FAIL, result.observation.detail
+    assert "CS" in result.observation.detail
 
 
 def test_read_645_unparseable_reply_is_unknown_not_pass():
     simcon, _ = make_simcon(reply_frame="68FF")
     result = get_block("meter.read_645")(action_of("meter.read_645"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_UNKNOWN, result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
     assert BLOCK_TO_OUTCOME[result.state] == "inconclusive"
 
 
@@ -743,7 +802,7 @@ def test_read_645_uses_same_frame_builder():
     result = get_block("meter.read_645")(
         action_of("meter.read_645", meter_addr=BENCH_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     sent = forward_steps(calls)[0]["send"]
     assert sent["params"]["payload"] == BENCH_REQUEST
 
@@ -762,7 +821,7 @@ def test_read_645_frame_address_field_is_meter_addr_wire():
     result = get_block("meter.read_645")(
         action_of("meter.read_645", meter_addr=BENCH_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     sent = forward_steps(calls)[0]["send"]
     raw = bytes.fromhex(sent["params"]["payload"])
     assert (raw[0], raw[7], raw[-1]) == (0x68, 0x68, 0x16)
@@ -778,7 +837,7 @@ def test_meter_blocks_fall_back_to_config_default_addr():
     assert expected, "出厂 case_defaults.json 应给出台架表地址"
     simcon, calls = make_simcon(reply_frame=up_frame_with(MEASURED_645_REPLY))
     result = get_block("meter.read_645")(action_of("meter.read_645"), ctx_with(simcon=simcon))
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     sent = forward_steps(calls)[0]["send"]
     raw = bytes.fromhex(sent["params"]["payload"])
     assert raw[1:7] == bytes.fromhex(expected)
@@ -791,8 +850,8 @@ def test_meter_blocks_reject_invalid_given_addr():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr="12345"), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_UNKNOWN, result.detail
-    assert "非法" in result.detail and "12345" in result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
+    assert "非法" in result.observation.detail and "12345" in result.detail
     assert calls == []          # 参数错 → 不下发
 
 
@@ -917,8 +976,8 @@ def test_addr_probe_default_mode_sends_meter_addr_and_judges_reply():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=BENCH_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
-    assert "123456789012" in result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
+    assert "123456789012" in result.observation.detail
     assert forward_steps(calls)[0]["send"]["params"]["payload"] == ADDR_PROBE_REQUEST_BENCH
 
     # 判据与请求口径解耦：期望地址换成另一只表 → fail，期望/实际都对得上
@@ -926,9 +985,9 @@ def test_addr_probe_default_mode_sends_meter_addr_and_judges_reply():
     mismatched = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR), ctx_with(simcon=other)
     )
-    assert mismatched.state == BLOCK_FAIL, mismatched.detail
-    assert "期望地址 000000000001" in mismatched.detail
-    assert "实际 123456789012" in mismatched.detail
+    assert meter_step_state(mismatched) == BLOCK_FAIL, mismatched.observation.detail
+    assert "期望地址 000000000001" in mismatched.observation.detail
+    assert "实际 123456789012" in mismatched.observation.detail
 
 
 def test_addr_probe_broadcast_mode_sends_fe_and_judges_same_reply():
@@ -938,8 +997,8 @@ def test_addr_probe_broadcast_mode_sends_fe_and_judges_same_reply():
         action_of("meter.addr_probe", meter_addr=BENCH_ADDR, addr_mode="broadcast"),
         ctx_with(simcon=simcon),
     )
-    assert result.state == BLOCK_PASS, result.detail
-    assert "123456789012" in result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
+    assert "123456789012" in result.observation.detail
     assert forward_steps(calls)[0]["send"]["params"]["payload"] == ADDR_PROBE_REQUEST_BROADCAST
 
     other, other_calls = make_simcon(reply_frame=addr_reply_up_frame(BENCH_ADDR))
@@ -947,8 +1006,8 @@ def test_addr_probe_broadcast_mode_sends_fe_and_judges_same_reply():
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR, addr_mode="broadcast"),
         ctx_with(simcon=other),
     )
-    assert mismatched.state == BLOCK_FAIL, mismatched.detail
-    assert "实际 123456789012" in mismatched.detail
+    assert meter_step_state(mismatched) == BLOCK_FAIL, mismatched.observation.detail
+    assert "实际 123456789012" in mismatched.observation.detail
     assert forward_steps(other_calls)[0]["send"]["params"]["payload"] == ADDR_PROBE_REQUEST_BROADCAST
 
 
@@ -960,9 +1019,15 @@ def test_addr_probe_broadcast_mode_empty_reply_reproduces_bench_fail():
         action_of("meter.addr_probe", meter_addr=BENCH_ADDR, addr_mode="broadcast"),
         ctx_with(simcon=simcon),
     )
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "内层无 645 嵌套" in result.detail
-    assert "broadcast" in result.detail          # 排障时能看出用的哪套地址口径
+    # 0044 改写（D7-1）：有上行帧但内层无 645 = 观测走不到地址层 → incomplete → 说不清；
+    # 旧「fail」口径是块内判据时代的产物（docs/blocks 抄表文档待确认 3：目标态只是观测），
+    # 「绝不折成 pass」由原因码 + 求值器保持（unknown ≠ pass）
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INCOMPLETE
+    assert meter_step_state(result) == BLOCK_UNKNOWN, result.observation.detail
+    assert "内层无 645 嵌套" in result.observation.detail
+    # 排障口径（地址模式）写在 result.detail 里（extra 层），观测 detail 是解析器原话
+    assert "broadcast" in result.detail
     assert forward_steps(calls)[0]["send"]["params"]["payload"] == ADDR_PROBE_REQUEST_BROADCAST
 
 
@@ -972,8 +1037,11 @@ def test_addr_probe_default_mode_also_fails_on_empty_reply():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=BENCH_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "内层无 645 嵌套" in result.detail and "meter" in result.detail
+    # 0044 改写（D7-1）：同上 —— 缺省模式下口径不变，只是请求地址域不同
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INCOMPLETE
+    assert meter_step_state(result) == BLOCK_UNKNOWN, result.observation.detail
+    assert "内层无 645 嵌套" in result.observation.detail and "meter" in result.detail
     assert forward_steps(calls)[0]["send"]["params"]["payload"] == ADDR_PROBE_REQUEST_BENCH
 
 
@@ -984,8 +1052,8 @@ def test_addr_probe_rejects_unknown_addr_mode():
         action_of("meter.addr_probe", meter_addr=BENCH_ADDR, addr_mode="fe"),
         ctx_with(simcon=simcon),
     )
-    assert result.state == BLOCK_UNKNOWN, result.detail
-    assert "addr_mode" in result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
+    assert "addr_mode" in result.observation.detail
     assert calls == [], "参数非法就不该下发"
 
 
@@ -1053,6 +1121,20 @@ def _meter_case(block_ids):
     )
 
 
+def _plan_case(block_ids, expects_by_block):
+    """0044 观测化：给 blocks 形态的用例补上步骤期望（执行级测试共用）。"""
+    return CaseSpec(
+        id="case.meter.smoke",
+        title="抄表是否正常",
+        steps=[CaseStep(no=1, do="STA 获取表地址", expect="内层 645 地址域一致")],
+        plan=[
+            {"id": "s%d" % (i + 1), "block": block_id, "on_fail": "stop",
+             "expect": expects_by_block.get(block_id, [])}
+            for i, block_id in enumerate(block_ids)
+        ],
+    )
+
+
 def test_executor_runs_declared_blocks_and_does_not_cache_parameterized_fact():
     """真执行器 + 真声明跑两条块：结论 pass，且**参数化事实不得被块回写**。
 
@@ -1098,14 +1180,17 @@ def test_executor_runs_declared_blocks_and_does_not_cache_parameterized_fact():
             id=bid, title=declared.title, needs=[], provides=declared.provides, action=action
         )
     ctx = RunContext(run_id="run-e2e", block_specs=specs, extras={"simcon": cap})
-    result = execute_case(_meter_case(["meter.addr_probe", "meter.read_645"]), ctx)
+    result = execute_case(_plan_case(
+        ["meter.addr_probe", "meter.read_645"],
+        {"meter.addr_probe": PROBE_EXPECT, "meter.read_645": READ_EXPECT}), ctx)
 
     assert result.verdict == "pass", result.to_dict()
     assert [b.block_id for b in result.blocks] == ["meter.addr_probe", "meter.read_645"]
     assert all(b.state == BLOCK_PASS for b in result.blocks)
     # 参数化事实（按 meter_addr 求值）不得被块回写缓存：换地址即假 PASS
     assert ctx.facts_ctx.peek("sta.meter_addr_known") is None
-    assert specs["meter.addr_probe"].provides == []
+    # 0044 AC-5：provides 现在是非参数化事实 sta.addr_obtained；参数化事实仍不得进 provides
+    assert specs["meter.addr_probe"].provides == ["sta.addr_obtained"]
 
 
 def test_executor_keeps_unknown_out_of_pass_count():
@@ -1117,7 +1202,8 @@ def test_executor_keeps_unknown_out_of_pass_count():
                      extras={"simcon": simcon,
                              "capabilities": {"simcon": simcon}})
     ctx.block_params["meter.addr_probe"] = {"max_poll_seconds": 0.05}
-    result = execute_case(_meter_case(["meter.addr_probe"]), ctx)
+    result = execute_case(_plan_case(["meter.addr_probe"], {
+        "meter.addr_probe": PROBE_EXPECT}), ctx)
 
     assert result.verdict != "pass"
     assert result.counts["pass"] == 0
@@ -1137,7 +1223,8 @@ def test_executor_skips_block_via_capabilities_mapping():
     simcon, _ = make_simcon(submit_status=404)
     ctx = ctx_with(capabilities={"simcon": simcon})
     result = get_block("meter.addr_probe")(action_of("meter.addr_probe"), ctx)
-    assert result.state == BLOCK_SKIPPED, result.detail
+    assert result.observation is not None and result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert meter_step_state(result) == BLOCK_SKIPPED, result.observation.detail
 
 
 # --------------------------------------------------------------------------- #
@@ -1267,7 +1354,7 @@ def test_addr_probe_step_wait_is_t_plus_5s():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     assert forward_steps(calls)[0]["expect_timeout"] == 95.0
 
 
@@ -1277,7 +1364,7 @@ def test_addr_probe_step_wait_falls_back_to_60():
     result = get_block("meter.addr_probe")(
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     assert forward_steps(calls)[0]["expect_timeout"] == 60.0
 
 
@@ -1287,7 +1374,7 @@ def test_read_645_step_wait_is_t_plus_5s():
     result = get_block("meter.read_645")(
         action_of("meter.read_645", meter_addr=MEASURED_ADDR), ctx_with(simcon=simcon)
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     assert forward_steps(calls)[0]["expect_timeout"] == 95.0
 
 
@@ -1298,7 +1385,7 @@ def test_explicit_expect_timeout_still_wins_over_03f7():
         action_of("meter.addr_probe", meter_addr=MEASURED_ADDR, expect_timeout=9),
         ctx_with(simcon=simcon),
     )
-    assert result.state == BLOCK_PASS, result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     assert forward_steps(calls)[0]["expect_timeout"] == 9.0
     assert timeout_steps(calls) == [], "显式值优先 → 不必再查 03H-F7"
 
@@ -1313,7 +1400,8 @@ def test_run_level_params_can_lower_expect_timeout():
     ctx = RunContext(run_id="run-fast", block_specs=specs, extras={"simcon": simcon})
     ctx.block_params["meter.addr_probe"] = {"meter_addr": MEASURED_ADDR,
                                             "expect_timeout": 3}
-    result = execute_case(_meter_case(["meter.addr_probe"]), ctx)
+    result = execute_case(_plan_case(["meter.addr_probe"], {
+        "meter.addr_probe": PROBE_EXPECT}), ctx)
 
     assert result.counts["pass"] == 1, result.to_dict()
     assert forward_steps(calls)[0]["expect_timeout"] == 3.0
@@ -1328,7 +1416,7 @@ def test_timeout_query_cached_once_per_run():
     for _ in range(2):
         result = get_block("meter.addr_probe")(
             action_of("meter.addr_probe", meter_addr=MEASURED_ADDR), ctx)
-        assert result.state == BLOCK_PASS, result.detail
+        assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
     assert len(timeout_steps(calls)) == 1, timeout_steps(calls)
     assert [s["expect_timeout"] for s in forward_steps(calls)] == [95.0, 95.0]
     assert isinstance(ctx.extras.get(meter.TIMEOUT_CACHE_KEY), dict)
@@ -1449,9 +1537,11 @@ def test_wait_defaults_declared_zero_and_five():
         params = declared_block(block_id).action["params"]
         assert params["wait_s"] == 0, "等待型默认必须关闭（老用例行为不变）：%s" % block_id
         assert params["poll_interval_s"] == 5
-        title = declared_block(block_id).title
-        assert "wait_s=0" in title and "默认关闭" in title, title
-        assert "meter_first_join" in title, "title 要点明只有含复位场景才开等待"
+        spec = declared_block(block_id)
+        # 0044：title 改为观测化措辞；等待预算语义改由 wait_param + Procedure 显式预算表达
+        assert spec.wait_param == "wait_s", block_id
+        assert spec.observation_only is True, block_id
+        assert "只报观测" in spec.title, spec.title
 
 
 def test_addr_probe_wait_zero_keeps_legacy_single_attempt():
@@ -1470,12 +1560,16 @@ def test_addr_probe_wait_zero_keeps_legacy_single_attempt():
         ctx_with(simcon=simcon),
     )
 
-    assert waited.state == BLOCK_FAIL, waited.detail
-    assert waited.detail == legacy.detail, "默认 wait_s=0 的输出必须与改造前逐字一致"
+    # 0044 改写（D7-1）：「帧已发出但无应答」= timeout → 说不清（0042 §3.5）；
+    # 旧断言「fail」是块内判据时代的口径。逐字一致约束改为「同因同文」。
+    assert waited.observation is not None
+    assert waited.observation.reason_code == OBS_TIMEOUT
+    assert waited.observation.detail == legacy.observation.detail, "wait_s=0 与旧路径同因同文"
+    assert meter_step_state(waited) == BLOCK_UNKNOWN, waited.observation.detail
     assert len(forward_steps(calls)) == 1, "缺省只下发一次 02H-F1"
     assert attempts == [None]
     assert fake.sleeps == [], "缺省不得 sleep"
-    assert "等了" not in waited.detail
+    assert "等了" not in waited.observation.detail
 
 
 def test_read_645_wait_zero_keeps_legacy_single_attempt():
@@ -1494,8 +1588,11 @@ def test_read_645_wait_zero_keeps_legacy_single_attempt():
         ctx_with(simcon=simcon),
     )
 
-    assert waited.state == BLOCK_FAIL, waited.detail
-    assert waited.detail == legacy.detail
+    # 0044 改写（D7-1）：同上 —— read_645 的 wait_s=0 语义
+    assert waited.observation is not None
+    assert waited.observation.reason_code == OBS_TIMEOUT
+    assert waited.observation.detail == legacy.observation.detail, "wait_s=0 与旧路径同因同文"
+    assert meter_step_state(waited) == BLOCK_UNKNOWN, waited.observation.detail
     assert len(forward_steps(calls)) == 1
     assert fake.sleeps == []
 
@@ -1513,12 +1610,15 @@ def test_addr_probe_wait_recovers_on_third_attempt():
     )
     real_elapsed = time.monotonic() - started
 
-    assert result.state == BLOCK_PASS, result.detail
-    assert result.facts == {"sta.meter_addr_known": "yes"}
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
+    # 0044 AC-5：观测到手时带 sta.addr_obtained（非参数化事实，步骤成立后回写）
+    assert "sta.addr_obtained" in result.facts
+    assert "sta.meter_addr_known" not in result.facts, (
+        "参数化事实仍不得由块回写（跨地址假 PASS 门禁）")
     assert attempts == [None, None, MEASURED_UP_FRAME], "第 3 次才应答"
     assert len(forward_steps(calls)) == 3
     _waited_detail(result)
-    assert "等了 10 秒" in result.detail and "只读探测 3 次" in result.detail
+    assert "等了 10 秒" in result.observation.detail and "只读探测 3 次" in result.detail
     assert fake.sleeps == [5.0, 5.0], "只在两次重试之间等 5s（不额外空转）"
     assert real_elapsed < 1.0, "虚拟时钟必须零真实等待（实测 %.3fs）" % real_elapsed
     # 等待期只重发**同一个只读透传查询**（02H-F1 + 645 13H），没有任何写帧
@@ -1539,14 +1639,13 @@ def test_addr_probe_wait_silent_until_budget_is_unknown_not_fail():
         ctx_with(simcon=simcon),
     )
 
-    assert result.state == BLOCK_UNKNOWN, result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
     assert result.state != BLOCK_FAIL, "复位后表口静默**不是**产品失败"
     assert BLOCK_TO_OUTCOME[result.state] == "inconclusive"
-    assert "等了 20 秒" in result.detail and "共 5 次尝试" in result.detail
-    assert "只读探测 5 次" in result.detail
-    assert "不判 FAIL" in result.detail
+    assert "等了 20 秒" in result.observation.detail and "共 5 次尝试" in result.detail
+    assert "只读探测 5 次" in result.observation.detail
     assert len(forward_steps(calls)) == 5, "20s 预算 / 5s 间隔 = 5 次尝试"
-    assert result.actual["探测次数"] == 5 and result.actual["等待秒"] == 20.0
+    assert result.observation.values["探测次数"] == 5 and result.observation.values["等待秒"] == 20.0
 
 
 def test_addr_probe_wait_framed_but_mismatched_stays_fail():
@@ -1558,12 +1657,13 @@ def test_addr_probe_wait_framed_but_mismatched_stays_fail():
     action["params"] = dict(action["params"], meter_addr="000000000002")
     result = get_block("meter.addr_probe")(action, ctx_with(simcon=simcon))
 
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "期望地址 000000000002" in result.detail
-    assert "实际 000000000001" in result.detail
-    assert "只读探测 3 次" in result.detail, "重试过几次也要留痕"
-    assert len(forward_steps(calls)) == 3
-    assert not result.facts, "fail 的块不得回写 provides 事实"
+    # 0044 改写（D7-1）：拿到**可判观测**即停（不再为等一个不存在的 pass 反复重发）；
+    # 地址不符是完整观测 → 期望判 fail，「不被重试掩盖」由步骤求值保持
+    assert meter_step_state(result) == BLOCK_FAIL, result.observation.detail
+    assert "期望地址 000000000002" in result.observation.detail
+    assert "实际 000000000001" in result.observation.detail
+    assert len(forward_steps(calls)) == 1, "首个观测到手即停（观测化等待语义）"
+    assert not result.facts, "判据不成立的观测不得回写事实链（地址一致=False）"
 
 
 def test_addr_probe_wait_skipped_dependency_aborts_immediately():
@@ -1577,8 +1677,9 @@ def test_addr_probe_wait_skipped_dependency_aborts_immediately():
         ctx_with(simcon=simcon),
     )
 
-    assert result.state == BLOCK_SKIPPED, result.detail
-    assert "404" in result.detail
+    assert result.observation is not None and result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert meter_step_state(result) == BLOCK_SKIPPED, result.observation.detail
+    assert "404" in result.observation.detail
     assert fake.sleeps == [], "依赖不可用不该继续等"
     assert attempts == [], "根本没提交透传步骤"
 
@@ -1606,8 +1707,8 @@ def test_wait_gate_rejects_write_payload():
     )
 
     for result in (probe, read):
-        assert result.state == BLOCK_UNKNOWN, result.detail
-        assert "只读闸门" in result.detail and "14H" in result.detail
+        assert result.state == BLOCK_UNKNOWN, result.observation.detail
+        assert "只读闸门" in result.observation.detail and "14H" in result.detail
     assert calls == [], "闸门在下发之前拦下：一帧都不许发出去"
     assert fake.sleeps == []
 
@@ -1617,7 +1718,7 @@ def test_wait_gate_rejects_write_payload():
                   payload=WRITE_645_REQUEST),
         ctx_with(simcon=simcon),
     )
-    assert legacy.state == BLOCK_PASS, legacy.detail
+    assert meter_step_state(legacy) == BLOCK_PASS, legacy.observation.detail
 
 
 def test_read_645_wait_recovers_after_two_silent_attempts():
@@ -1634,15 +1735,15 @@ def test_read_645_wait_recovers_after_two_silent_attempts():
     )
     real_elapsed = time.monotonic() - started
 
-    assert result.state == BLOCK_PASS, result.detail
-    assert "1234.56" in result.detail
+    assert meter_step_state(result) == BLOCK_PASS, result.observation.detail
+    assert "1234.56" in result.observation.detail
     assert attempts == [None, None, reply_up]
     assert len(forward_steps(calls)) == 3
     _waited_detail(result)
-    assert "等了 10 秒" in result.detail and "只读探测 3 次" in result.detail
+    assert "等了 10 秒" in result.observation.detail and "只读探测 3 次" in result.detail
     # 结构化读数（执行器 poll_reading 优先读它）与原有 actual 并存，不覆盖数值
-    assert result.actual["探测次数"] == 3 and result.actual["等待秒"] == 10.0
-    assert result.actual["value"] == 1234.56
+    assert result.observation.values["探测次数"] == 3 and result.observation.values["等待秒"] == 10.0
+    assert result.observation.values.get("数值") == 1234.56
     assert fake.sleeps == [5.0, 5.0]
     assert real_elapsed < 1.0
     for step in forward_steps(calls):
@@ -1659,12 +1760,11 @@ def test_read_645_wait_silent_until_budget_is_unknown_not_fail():
         ctx_with(simcon=simcon),
     )
 
-    assert result.state == BLOCK_UNKNOWN, result.detail
-    assert "等了 20 秒" in result.detail and "共 5 次尝试" in result.detail
-    assert "只读探测 5 次" in result.detail
-    assert "不判 FAIL" in result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
+    assert "等了 20 秒" in result.observation.detail and "共 5 次尝试" in result.detail
+    assert "只读探测 5 次" in result.observation.detail
     assert len(forward_steps(calls)) == 5
-    assert result.actual["探测次数"] == 5
+    assert result.observation.values["探测次数"] == 5
 
 
 def test_read_645_wait_framed_judge_fail_not_masked():
@@ -1678,10 +1778,9 @@ def test_read_645_wait_framed_judge_fail_not_masked():
         ctx_with(simcon=simcon),
     )
 
-    assert result.state == BLOCK_FAIL, result.detail
-    assert "未回显 DI" in result.detail
-    assert "只读探测 3 次" in result.detail
-    assert len(forward_steps(calls)) == 3
+    assert meter_step_state(result) == BLOCK_FAIL, result.observation.detail
+    assert "未回显 DI" in result.observation.detail
+    assert len(forward_steps(calls)) == 1, "首个观测到手即停（观测化等待语义）"
 
 
 def test_read_645_wait_caps_attempt_timeout_by_remaining_budget():
@@ -1700,10 +1799,10 @@ def test_read_645_wait_caps_attempt_timeout_by_remaining_budget():
     )
 
     timeouts = [step["expect_timeout"] for step in forward_steps(calls)]
-    assert result.state == BLOCK_UNKNOWN, result.detail
+    assert result.state == BLOCK_UNKNOWN, result.observation.detail
     # 单次上限 = min(60, 剩余预算)：12 → 7 → 2 → 触底 1s（MIN_ATTEMPT_TIMEOUT_S）
     assert timeouts == [12.0, 7.0, 2.0, 1.0], timeouts
-    assert "单次最多等" in result.detail
+    assert "单次最多等" in result.observation.detail
     assert BLOCK_TO_OUTCOME[result.state] == "inconclusive"
 
 
@@ -1720,7 +1819,8 @@ def test_executor_derives_wait_decision_from_meter_wait_detail():
         "wait_s": 30, "poll_interval_s": 5,
         "clock": fake.clock, "sleep": fake.sleep,
     }
-    result = execute_case(_meter_case(["meter.addr_probe"]), ctx)
+    result = execute_case(_plan_case(["meter.addr_probe"], {
+        "meter.addr_probe": PROBE_EXPECT}), ctx)
 
     assert result.counts["pass"] == 1, result.to_dict()
     decisions = result.resolved_decisions()
@@ -1743,7 +1843,8 @@ def test_executor_marks_timeout_decision_when_wait_budget_exhausted():
         "wait_s": 10, "poll_interval_s": 5,
         "clock": fake.clock, "sleep": fake.sleep,
     }
-    result = execute_case(_meter_case(["meter.read_645"]), ctx)
+    result = execute_case(_plan_case(["meter.read_645"], {
+        "meter.read_645": READ_EXPECT}), ctx)
 
     assert result.counts["unknown"] == 1, result.to_dict()
     kinds = [item["kind"] for item in result.resolved_decisions()]

@@ -1,0 +1,9 @@
+{
+  "id": "nwk.joined",
+  "title": "本轮组网判定已成立（由 nwk.topology 步骤运行期回写；预检/独立探测不探测，恒 unknown，绝不假 yes）",
+  "probe": "nwk.joined",
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": true
+  }
+}

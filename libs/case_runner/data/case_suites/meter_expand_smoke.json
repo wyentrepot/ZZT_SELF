@@ -1,0 +1,12 @@
+{
+  "id": "meter_expand_smoke",
+  "name": "抄表扩展冒烟（多 DI 逐项 → 并发单表 → 闸门否定判据 6E、6D；不含 698 重用例）",
+  "case_ids": [
+    "meter_di_multi_item",
+    "meter_batch_single",
+    "gate_multi_frame_6e",
+    "gate_concurrent_6d"
+  ],
+  "stop_on_fail": false,
+  "notes": "用途：645 协议态台架上的抄表扩展冒烟（REQS-0043 CASE-BACKLOG §F0 五项场景里本台架可测的四条；每条用例自含『档案 → 查档 → 组网 → 绑表 → 抄读』事实链或单步独立，互不依赖）。stop_on_fail=false 的理由：闸门类失败不应挡后续观测类——gate 两步是否定式判据（否认码 6E、6D），就算闸门步不符，后续 meter_batch_single / meter_di_multi_item 的观测证据照采，四条都出结论才好对账；首败即停会把『一处不符』放大成『后面全没跑』。与 meter_698_smoke 的关系：698 用例是 kind=scenario 的重用例（复位 STA、600 秒级单列预算、整轮超时需放大到 1800 秒档），按 0044 §4.4 场景不进回归方案，也不进本方案；且按协议切换口径（CASE-BACKLOG §F0 第6节设计约束 3），同一 STA 的 645 用例与 698 用例不得在同一轮次内无复位连续执行——先跑本方案（645 态），要验 698 时单独一轮带复位。台架前置：本方案不内置 bench_ready（台架就绪属方案层前置，不是业务动作），缺 simcon/simeter 会话或表口未开时用例会 blocked 或说不清——真机跑前先单跑 bench_ready。预算口径：唯一长等待判据在各用例的 nwk.topology（300s 钉死）；闸门与并发任务步预算 5s、130s 写死，整轮仍在 600s 默认上限内。"
+}

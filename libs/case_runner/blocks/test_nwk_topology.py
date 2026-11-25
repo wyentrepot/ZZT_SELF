@@ -38,6 +38,8 @@ import pytest
 from case_runner.blocks import archive, facts_nwk, nwk
 from case_runner.core.executor import BLOCK_TO_OUTCOME, RunContext
 from case_runner.core.models import BlockSpec, Health
+from case_runner.core.expect import evaluate
+from case_runner.core.models import BLOCK_FAIL, BLOCK_PASS, BLOCK_SKIPPED, BLOCK_UNKNOWN
 from case_runner.core.registry import clear_registries, get_block, has_block
 
 # 真实构帧/解析（测试里允许 import 领域库；分层铁律只约束 libs 生产代码）
@@ -55,6 +57,15 @@ SENT_HEX = "681200430000000000001010020100208616"      # 10H-F21 下行（start=
 # --------------------------------------------------------------------------- #
 # 真实帧构造
 # --------------------------------------------------------------------------- #
+
+
+#: 0044 观测化助手：组网块步骤期望（在网从节点数 ≥ 门槛 + 观测完整）
+TOPO_EXPECT = [{"op": "complete"},
+               {"op": "ge_field", "field": "在网从节点数", "value": "门槛"}]
+
+
+def topo_step_state(result):
+    return evaluate(result.observation, result.expect if getattr(result, "expect", None) else TOPO_EXPECT).state
 
 
 def _le16(value: int) -> bytes:
@@ -227,9 +238,11 @@ def test_topology_declaration_matches_core_models():
     raw = json.loads(DECL.read_text(encoding="utf-8"))
     spec = BlockSpec.model_validate(raw)
     assert spec.id == "nwk.topology"
+    # 0044 AC-5：组网前置「档案已写入」由事实链表达（archive.add provides）
+    assert "archive.written" in spec.needs
     assert spec.action["afn"] == "10" and spec.action["fn"] == 21
-    assert spec.needs == ["bench.simcon_online"]
-    assert spec.provides == []
+    assert spec.needs == ["bench.simcon_online", "archive.written"]  # 0044 AC-5 事实链
+    assert spec.provides == ["nwk.joined"]
     for tag in ("nwk", "readonly", "online"):
         assert tag in spec.tags, spec.tags
     assert spec.title and "10H-F21" in spec.title
@@ -352,12 +365,14 @@ def test_topology_pass_when_total_reaches_threshold():
         job(job_id="job-f21", steps=[step_pass(raw_topology(12, ["%012d" % i for i in range(1, 13)]))]),
     )
     ok = nwk.block_topology(_topology_params(), ctx_with(fake))
-    assert ok.state == "pass", ok.detail
-    assert ok.actual["节点总数量"] == 12
-    assert ok.actual["档案数"] == 12
-    assert ok.actual["门槛"] == 12
-    assert "98" in ok.detail or "0.98" in ok.detail
-    assert ok.expected == "入网从节点 ≥ 12"     # 默认严格口径下期望的是从节点数
+    # 0044 观测化：达标与否由步骤期望（ge_field 在网从节点数 ≥ 门槛）判；块只报观测
+    assert ok.observation is not None and ok.observation.complete
+    assert ok.observation.values["节点总数量"] == 12
+    assert ok.observation.values["档案数"] == 12
+    assert ok.observation.values["门槛"] == 12
+    assert ok.observation.values["在网从节点数"] == 12
+    assert "98" in ok.observation.detail or "0.98" in ok.observation.detail
+    assert topo_step_state(ok) == BLOCK_PASS, ok.observation.detail
     assert ok.evidence_ids == ["job-f1", "job-f21"]
 
 
@@ -368,8 +383,9 @@ def test_topology_min_ratio_is_overridable():
         job(steps=[step_pass(raw_topology(6, ["%012d" % i for i in range(1, 7)]))]),
     )
     ok = nwk.block_topology(_topology_params(min_ratio=0.5), ctx_with(fake))
-    assert ok.state == "pass", ok.detail
-    assert ok.actual["门槛"] == 6
+    assert ok.observation is not None and ok.observation.complete
+    assert ok.observation.values["门槛"] == 6
+    assert topo_step_state(ok) == BLOCK_PASS, ok.observation.detail
 
 
 def test_topology_fail_when_short_after_waiting_full_wait_s():
@@ -386,7 +402,11 @@ def test_topology_fail_when_short_after_waiting_full_wait_s():
     result = nwk.block_topology(
         _topology_params(wait_s=4, clock=clock, sleep=clock.sleep), ctx_with(fake)
     )
-    assert result.state == "fail", result.detail
+    # 0044：观测完整（翻页取全）且 在网从节点数 < 门槛 → 期望判 fail（等了 4 秒写进观测）
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values["在网从节点数"] < result.observation.values["门槛"]
+    assert topo_step_state(result) == BLOCK_FAIL, result.observation.detail
+    assert "等了 4 秒" in result.observation.detail
     assert "等了 4 秒" in result.detail
     assert "5 < 门槛 12" in result.detail or "5 < 12" in result.detail
     assert clock.sleeps == [2.0, 2.0]
@@ -462,8 +482,8 @@ def test_topology_polls_until_satisfied_and_sends_only_readonly_frames():
     ok = nwk.block_topology(
         _topology_params(wait_s=60, clock=clock, sleep=clock.sleep), ctx_with(fake)
     )
-    assert ok.state == "pass", ok.detail
-    assert "等了 2 秒" in ok.detail
+    assert topo_step_state(ok) == BLOCK_PASS, ok.observation.detail
+    assert "等了 2 秒" in ok.observation.detail
     # 只读：每一跳都是 AFN=10H 且 Fn ∈ {21,1,4,2}；顺序是 档案数(F1) → 拓扑(F21) 两轮
     assert fake.sent_afns() == [0x10] * 4
     assert fake.sent_fns() == [1, 21, 1, 21]
@@ -485,15 +505,14 @@ def test_topology_default_is_strict_master_excluded():
         job(steps=[step_pass(raw_topology(12, addrs, masters=["000000000000"]))]),
     )
     result = nwk.block_topology(_topology_params(), ctx_with(fake))      # 不传 master_included
-    assert result.state == "fail", result.detail
-    assert result.actual["节点总数量"] == 12
-    assert result.actual["主节点数"] == 1
-    assert result.actual["在网从节点数"] == 11
-    assert result.actual["口径"] == "仅从节点"
-    assert "入网从节点=11 < 门槛 12" in result.detail
-    # detail 里两种读数都在（含主节点的 12、仅从节点的 11）
-    assert "节点总数量 12" in result.detail and "主节点 1" in result.detail
-    assert result.expected == "入网从节点 ≥ 12"
+    # 0044：观测完整 + 在网从节点数 11 < 门槛 12 → 期望判 fail
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values["节点总数量"] == 12
+    assert result.observation.values["主节点数"] == 1
+    assert result.observation.values["在网从节点数"] == 11
+    assert result.observation.values["口径"] == "仅从节点"
+    assert "入网从节点=11 < 门槛 12" in result.observation.detail
+    assert topo_step_state(result) == BLOCK_FAIL, result.observation.detail
 
 
 def test_topology_master_included_true_is_the_loose_optional_reading():
@@ -509,12 +528,11 @@ def test_topology_master_included_true_is_the_loose_optional_reading():
     ok = nwk.block_topology(
         _topology_params(master_included=True), ctx_with(fake)
     )
-    assert ok.state == "pass", ok.detail
-    assert ok.actual["口径"] == "含主节点"
-    assert ok.actual["在网从节点数"] == 11          # 严格读数仍是 11（detail 里也写明）
-    assert "节点总数量=12 ≥ 门槛 12" in ok.detail
-    assert "按仅从节点则为 11" in ok.detail
-    assert ok.expected == "节点总数量 ≥ 12"
+    # master_included=true 时观测字段「在网从节点数」= 节点总数量（照 KB 原句口径）→ pass
+    assert ok.observation.values["口径"] == "含主节点"
+    assert ok.observation.values["在网从节点数"] == 12
+    assert "按仅从节点则为 11" in ok.observation.detail
+    assert topo_step_state(ok) == BLOCK_PASS, ok.observation.detail
 
 
 def test_judge_topology_default_argument_is_strict():
@@ -539,8 +557,10 @@ def test_topology_bad_params_fail_before_any_frame():
         {"count": 999},
     ):
         result = nwk.block_topology(_topology_params(**params), ctx_with(fake))
-        assert result.state == "fail", (params, result.detail)
-        assert list(params)[0] in result.detail
+        # 0044：坏参数 = 原因码 invalid_param（配置错误不是设备结论），一帧不发
+        assert result.observation is not None
+        assert result.observation.reason_code == "invalid_param", (params, result.detail)
+        assert list(params)[0] in result.observation.detail
     assert fake.calls == []
 
 
@@ -653,7 +673,9 @@ def test_topology_archive_count_comes_from_10h_f1_not_10h_f4():
         job(steps=[step_pass(raw_topology(12, ["%012d" % i for i in range(1, 13)]))]),
     )
     ok = nwk.block_topology(_topology_params(), ctx_with(fake))
-    assert ok.state == "pass", ok.detail
+    assert ok.observation is not None and ok.observation.complete
+    assert ok.observation.values["档案数"] == 12
+    assert topo_step_state(ok) == BLOCK_PASS, ok.observation.detail
     assert fake.sent_fns() == [1, 21], "每轮只发 10H-F1（档案数）+ 10H-F21（拓扑）"
     assert 4 not in fake.sent_fns(), "不得改用 10H-F4 取档案数"
 

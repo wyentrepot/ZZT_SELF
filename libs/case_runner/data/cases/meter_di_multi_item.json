@@ -1,0 +1,322 @@
+{
+  "id": "meter_di_multi_item",
+  "title": "抄表多数据项逐项采集（单表 5 项连续点抄）：档案 → 查档 → 组网 → 绑表 → 逐项抄读",
+  "kind": "regression",
+  "category": {
+    "usage": "common",
+    "domain": "CCO",
+    "scene": "抄表",
+    "region": "国网通用"
+  },
+  "protocols": [
+    "1376.2",
+    "645"
+  ],
+  "steps": [
+    {
+      "no": 1,
+      "do": "下发从节点档案（11H-F1 建档，幂等：已存在跳过下发）。事实链必备步：档案是组网判定的分子来源",
+      "expect": "写入确认=确认（已存在跳过下发也算确认）；否认或没等到 → 断点在本步"
+    },
+    {
+      "no": 2,
+      "do": "查询档案表确认档案落地（10H-F2，翻页取全）——查档必备步（0044 §8.1 第1条）",
+      "expect": "档案表含本表档案地址（观测完整）；明确不含 → 判不成立（防假通过）；查不全 → 不完整，不得折算成含或不含"
+    },
+    {
+      "no": 3,
+      "do": "查询网络拓扑判定入网（10H-F21，等待预算 300 秒、每 2 秒只读查询，达标即停）。本流程唯一的长等待判据",
+      "expect": "在网从节点数 ≥ 门槛（ceil(档案数×98%)，单表 ≥1）且观测翻页取全；等满预算仍不足 → 判不成立；档案数=0 或取不到应答 → 说不清"
+    },
+    {
+      "no": 4,
+      "do": "绑表：透传 645 读通信地址（13H）取本表地址，单次上限 15s、等待预算 60s（写死在本流程）。本步回写 STA 已取表地址，是后续逐项抄读的事实前置",
+      "expect": "内层 645 地址域与本表地址一致；不符 → 断点（地址口径/档案）；等满一帧没有 → 链路未恢复（台架侧，说不清）"
+    },
+    {
+      "no": 5,
+      "do": "逐项第 1 项：抄读正向有功总电能（11H，DI 00010000，单次上限 15s、等待预算 30s 写死）",
+      "expect": "收到帧 + CS 合法 + 非异常应答 + DI 回显 + 数值有值且可解（不比对数值真值，0044 §8.1 第4条）"
+    },
+    {
+      "no": 6,
+      "do": "逐项第 2 项：抄读 A 相电压（11H，DI 02010100，单次上限 15s、等待预算 30s 写死）",
+      "expect": "同第 5 步：CS 合法 + 非异常应答 + DI 回显 + 数值有值且可解；各步 DI 回显必须等于本步下发 DI，不得串项"
+    },
+    {
+      "no": 7,
+      "do": "逐项第 3 项：抄读 B 相电压（11H，DI 02010200，单次上限 15s、等待预算 30s 写死）",
+      "expect": "同第 5 步：CS 合法 + 非异常应答 + DI 回显 + 数值有值且可解"
+    },
+    {
+      "no": 8,
+      "do": "逐项第 4 项：抄读 A 相电流（11H，DI 02020100，单次上限 15s、等待预算 30s 写死）",
+      "expect": "同第 5 步：CS 合法 + 非异常应答 + DI 回显 + 数值有值且可解"
+    },
+    {
+      "no": 9,
+      "do": "逐项第 5 项：抄读三相数据项代表（11H，DI 0203FF00，瞬时总有功功率；三相 0201FF00~0204FF00 系列按 CASE-BACKLOG 落档清单取代表项，单次上限 15s、等待预算 30s 写死）",
+      "expect": "同第 5 步：CS 合法 + 非异常应答 + DI 回显 + 数值有值且可解。5 项全部成立才算逐项采集成立；任何一项不符 → 断点记在哪一项"
+    }
+  ],
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "plan": [
+    {
+      "id": "s1",
+      "block": "archive.add",
+      "params": {},
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "写入确认",
+          "value": "确认"
+        }
+      ]
+    },
+    {
+      "id": "s1b",
+      "block": "archive.query",
+      "params": {
+        "meter_addr": null
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "在档",
+          "value": true
+        }
+      ],
+      "note": "查档必备步（0044 §8.1 第1条）：档案落地由查询独立证明"
+    },
+    {
+      "id": "s2",
+      "block": "nwk.topology",
+      "params": {
+        "wait_s": 300
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "ge_field",
+          "field": "在网从节点数",
+          "value": "门槛"
+        }
+      ],
+      "note": "本流程唯一长等待判据；预算 300s 写死在本流程（0044 §8.1 第3条）"
+    },
+    {
+      "id": "s3",
+      "block": "meter.addr_probe",
+      "params": {
+        "expect_timeout": 15,
+        "wait_s": 60
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "地址一致",
+          "value": true
+        }
+      ],
+      "note": "绑表步回写 sta.addr_obtained，是逐项抄读的事实前置"
+    },
+    {
+      "id": "s4",
+      "block": "meter.read_645",
+      "params": {
+        "di": "00010000",
+        "expect_timeout": 15,
+        "wait_s": 30
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "CS合法",
+          "value": true
+        },
+        {
+          "op": "eq",
+          "field": "异常应答",
+          "value": false
+        },
+        {
+          "op": "eq",
+          "field": "DI回显",
+          "value": true
+        },
+        {
+          "op": "has_value",
+          "field": "数值"
+        }
+      ],
+      "note": "总电能：只验有值且可解，不比真值（0044 §8.1 第4条）；预算口径沿用 0042 D8 第3条实测余量（单次 15s）"
+    },
+    {
+      "id": "s5",
+      "block": "meter.read_645",
+      "params": {
+        "di": "02010100",
+        "expect_timeout": 15,
+        "wait_s": 30
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "CS合法",
+          "value": true
+        },
+        {
+          "op": "eq",
+          "field": "异常应答",
+          "value": false
+        },
+        {
+          "op": "eq",
+          "field": "DI回显",
+          "value": true
+        },
+        {
+          "op": "has_value",
+          "field": "数值"
+        }
+      ],
+      "note": "A 相电压"
+    },
+    {
+      "id": "s6",
+      "block": "meter.read_645",
+      "params": {
+        "di": "02010200",
+        "expect_timeout": 15,
+        "wait_s": 30
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "CS合法",
+          "value": true
+        },
+        {
+          "op": "eq",
+          "field": "异常应答",
+          "value": false
+        },
+        {
+          "op": "eq",
+          "field": "DI回显",
+          "value": true
+        },
+        {
+          "op": "has_value",
+          "field": "数值"
+        }
+      ],
+      "note": "B 相电压"
+    },
+    {
+      "id": "s7",
+      "block": "meter.read_645",
+      "params": {
+        "di": "02020100",
+        "expect_timeout": 15,
+        "wait_s": 30
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "CS合法",
+          "value": true
+        },
+        {
+          "op": "eq",
+          "field": "异常应答",
+          "value": false
+        },
+        {
+          "op": "eq",
+          "field": "DI回显",
+          "value": true
+        },
+        {
+          "op": "has_value",
+          "field": "数值"
+        }
+      ],
+      "note": "A 相电流"
+    },
+    {
+      "id": "s8",
+      "block": "meter.read_645",
+      "params": {
+        "di": "0203FF00",
+        "expect_timeout": 15,
+        "wait_s": 30
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "CS合法",
+          "value": true
+        },
+        {
+          "op": "eq",
+          "field": "异常应答",
+          "value": false
+        },
+        {
+          "op": "eq",
+          "field": "DI回显",
+          "value": true
+        },
+        {
+          "op": "has_value",
+          "field": "数值"
+        }
+      ],
+      "note": "三相 0201FF00~0204FF00 系列代表项（瞬时总有功功率）；DI 清单出处：CASE-BACKLOG 批次 A 落档清单、123 台账 行 25 步骤 5、台架数据集 libs/sim_meter/meter.py 默认寄存器表"
+    }
+  ],
+  "asserts": [],
+  "tags": [
+    "meter",
+    "645",
+    "multi-di"
+  ]
+}

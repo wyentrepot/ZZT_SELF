@@ -207,6 +207,15 @@ NODE_ITEM_PREFIX = "从节点"
 NODE_ITEM_SUFFIX = "信息"
 #: 侦听信号品质的 ``desc`` 键名（D7~D4，0=无信号；见 metadata afn_fn.json 10H-F2 resp.list.record[1].d）
 ITEM_SIGNAL_QUALITY = "信号品质"
+#: 通信协议类型的 ``desc`` 键名（D13~D11；解析器 ``adapter_10376/__init__.py:690``
+#: 已写入 desc，位语义同 ``sim_concentrator/deep_app.py:_node_from_record``：
+#: 0 透明 / 1 645-1997 / 2 645-2007 / 3 698.45；E3 真帧校正：0x180F→3、0x50F1→2）
+ITEM_PROTOCOL_TYPE = "协议类型"
+
+#: 协议类型字节值 → 人读名（deep_app.py 同口径；REQS-0043 §G-6 三方一致性只读核验用）
+PROTOCOL_TYPE_NAMES: Dict[int, str] = {
+    0: "透明", 1: "645-1997", 2: "645-2007", 3: "698.45",
+}
 
 #: 10H-F4 上行应答里的字段名
 ITEM_WORK_STATE = "工作状态"
@@ -832,16 +841,39 @@ def node_signal_quality(item: Any) -> Optional[int]:
     return int_of(_desc_state(item.get("desc"), ITEM_SIGNAL_QUALITY))
 
 
+def node_protocol_type(item: Any) -> Optional[int]:
+    """从 ``从节点N信息`` 的 ``desc`` 里取「协议类型」（D13~D11，取不到 → ``None``）。
+
+    解析器（``adapter_10376/__init__.py:690``）把节点信息 16 位字的
+    D13~D11（通信协议类型）写进 ``desc`` 的 ``协议类型=N``；语义
+    0 透明 / 1 645-1997 / 2 645-2007 / 3 698.45（deep_app.py 同口径）。
+    REQ S-0043 §G-6：三方一致性只读核验用（CCO 档案侧 10H-F2 实际落地值）。
+    """
+    if not isinstance(item, Mapping):
+        return None
+    return int_of(_desc_state(item.get("desc"), ITEM_PROTOCOL_TYPE))
+
+
+def protocol_type_name(value: Any) -> str:
+    """协议类型字节值 → 人读名（取不到 → 空串，绝不猜）。"""
+    number = int_of(value)
+    if number is None:
+        return ""
+    return PROTOCOL_TYPE_NAMES.get(number, "未知(0x%X)" % number)
+
+
 def page_table(parsed: Any) -> Dict[str, Any]:
     """把一页 10H-F2 上行应答归一成 ``{total, answered, addresses, nodes}``。
 
     字段口径与 ``sim_concentrator.recipes._query_all_archives`` 一致：
     ``从节点总数量`` + ``从节点N地址``。
 
-    ``nodes`` 是逐节点 ``{"addr": <12 位地址>, "signal": int|None}``：``signal`` 取自解析器
-    写在 ``从节点N信息`` 的 ``desc`` 里的 ``信号品质=N``（D7~D4 侦听信号品质，0=无信号）。
-    **它只描述这一条档案记录里的信号值，不代表节点在线**，在线判定见
-    :func:`judge_nodes_online`。
+    ``nodes`` 是逐节点 ``{"addr": <12 位地址>, "signal": int|None, "protocol": int|None}``：
+    ``signal`` 取自解析器写在 ``从节点N信息`` 的 ``desc`` 里的 ``信号品质=N``
+    （D7~D4 侦听信号品质，0=无信号）；``protocol`` 取自同一 ``desc`` 的
+    ``协议类型=N``（D13~D11，0 透明/1 645-1997/2 645-2007/3 698.45，§G-6
+    三方一致性核验用）。**它们只描述这一条档案记录的快照，不代表节点在线**，
+    在线判定见 :func:`judge_nodes_online`。
     """
     total = int_of(item_value(parsed, ITEM_TOTAL))
     answered = int_of(item_value(parsed, ITEM_ANSWERED))
@@ -853,7 +885,7 @@ def page_table(parsed: Any) -> Dict[str, Any]:
         if index is None:
             continue
         if index not in slots:
-            slots[index] = {"addr": "", "signal": None}
+            slots[index] = {"addr": "", "signal": None, "protocol": None}
             order.append(index)
         if str(item.get("name") or "").endswith(ADDR_ITEM_SUFFIX):
             addr = normalize_addr(item.get("value"))
@@ -861,6 +893,7 @@ def page_table(parsed: Any) -> Dict[str, Any]:
                 slots[index]["addr"] = addr
         else:
             slots[index]["signal"] = node_signal_quality(item)
+            slots[index]["protocol"] = node_protocol_type(item)
     for index in order:
         addr = slots[index]["addr"]
         if addr and addr not in addresses:

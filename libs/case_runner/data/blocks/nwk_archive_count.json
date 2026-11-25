@@ -23,5 +23,8 @@
     "batch-1",
     "readonly",
     "archive-count"
-  ]
+  ],
+  "kind": "probe",
+  "side_effect": "none",
+  "version": 1
 }

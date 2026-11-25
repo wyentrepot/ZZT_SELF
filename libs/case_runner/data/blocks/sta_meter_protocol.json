@@ -1,0 +1,39 @@
+{
+  "id": "sta.meter_protocol",
+  "title": "STA 表口协议日志指纹判读（addrmap success…check_procotol:N；只读观测，不判结论不回写事实）",
+  "needs": [
+    "bench.sta_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "sta_meter_protocol",
+    "mapping_id": "sta-main",
+    "module": "sta",
+    "params": {
+      "lines": 400
+    }
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "指纹原文",
+        "判读协议类型",
+        "判读协议名称",
+        "698探帧尝试",
+        "日志行数"
+      ],
+      "note": "候选口径未经真机校准：N=2 对应 645 的证据为 run 20261124-192633 STA 日志行 532（simeter 帧 seq 59 佐证 698 探帧被不应答）；N=3 对应 698 待 §G-4 E2 对照实验校准——故不设 provides，判读值仅供人工判读（CASE-BACKLOG §G-1.1）"
+    }
+  ],
+  "tags": [
+    "sta",
+    "protocol",
+    "698",
+    "readonly"
+  ],
+  "kind": "probe",
+  "side_effect": "none",
+  "version": 1,
+  "observation_only": true
+}

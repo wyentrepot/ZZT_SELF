@@ -79,6 +79,12 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
     simeter_capability,
 )
 from case_runner.core.executor import BlockResult, RunContext
+from case_runner.core.expect import (
+    OBS_BENCH_UNREACHABLE,
+    OBS_INCOMPLETE,
+    OBS_SERIAL_BUSY,
+    Observation,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -108,22 +114,63 @@ _SIMETER_GATE_BLOCK_STATE = {
 # --------------------------------------------------------------------------- #
 
 
-def _bench_result(fact_id: str, value: FactValue, *, label: str) -> BlockResult:
-    """事实三态 → 块结论：``yes`` → pass；``no`` / ``unknown`` → skipped + 原因。"""
+def _bench_env_reason(detail: Any) -> str:
+    """台架类观测的原因码（只描述「为什么没拿到」）：占用/忙 → serial_busy，其余 → bench_unreachable。"""
+    text = str(detail or "")
+    if any(token in text for token in ("409", "占用", "闸门", "会话忙", "busy")):
+        return OBS_SERIAL_BUSY
+    return OBS_BENCH_UNREACHABLE
+
+
+def _bench_observation_result(
+    observation: Observation,
+    *,
+    detail: str,
+    facts: Mapping[str, FactValue] | None = None,
+) -> BlockResult:
+    """台架块的统一出口：只带观测（旧路径——步骤未声明期望——落 unknown）。"""
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail=detail,
+        observation=observation,
+        facts=dict(facts or {}),
+    )
+
+
+def _bench_result(fact_id: str, value: FactValue, *, label: str, field: str) -> BlockResult:
+    """事实三态 → 只观测的块结果（REQS-0044 §4.2：块只报观测）。
+
+    - ``yes``：观测 ``<field>就绪=True``，观测完整 → 步骤期望（``eq 就绪=true``）成立；
+    - ``no`` / ``unknown``：台架不具备条件（服务明确没挂载 / 连不上）→ 原因码
+      ``bench_unreachable``，步骤态 skipped（聚合落 blocked），绝不折成产品失败。
+    """
     if value.satisfied:
-        return BlockResult(state=BLOCK_PASS, detail=value.detail,
-                           facts={fact_id: value}, actual=value.state)
-    return BlockResult(state=BLOCK_SKIPPED,
-                       detail=f"{label} 台架前置未满足：{fact_id}={value.state}（{value.detail}）",
-                       facts={fact_id: value}, actual=value.state)
+        observation = Observation(
+            values={f"{field}就绪": True},
+            complete=True,
+            reason_code="",
+            detail=value.detail,
+        )
+    else:
+        observation = Observation(
+            values={},
+            complete=False,
+            reason_code=_bench_env_reason(value.detail),
+            detail=f"{label} 台架前置未满足：{fact_id}={value.state}（{value.detail}）",
+        )
+    return _bench_observation_result(
+        observation, detail=observation.detail, facts={fact_id: value}
+    )
 
 
 def fix_simeter_session(params: Optional[Dict[str, Any]] = None,
                         ctx: Optional[RunContext] = None) -> BlockResult:
-    """``fix.simeter_session``：确保模拟电表**表口打开并能应答**（没开就开，开完不关）。
+    """``fix.simeter_session``：把模拟电表**表口张到能应答**（没开就开，开完不关）——只报观测。
 
-    ``ensure_open=false`` 只探测不开口（严格口径：口没开 → ``fail``）。
-    开口失败按 §10.13 分层给 ``skipped`` / ``unknown``，绝不假 pass。
+    观测字段：``表口就绪`` / ``串口开`` / ``开口动作``。判据（表口必须就绪）由步骤
+    ``expect`` 声明（``eq 表口就绪=true``）。开口失败的错误分层走原因码：
+    409 占用 → ``serial_busy``；404 未挂载 / 服务不可达 → ``bench_unreachable``；
+    其余 4xx/5xx、bad_response → ``incomplete``（说不清）。
     """
     raw = dict(params or {})
     action = block_action_params(raw)
@@ -136,35 +183,62 @@ def fix_simeter_session(params: Optional[Dict[str, Any]] = None,
     value = judge_simeter(capability, require_serial_open=True, status=gate.get("status"))
     facts = {FACT_SIMETER_ONLINE: value}
     marker = f"{FACT_SIMETER_ONLINE}={value.state}（{value.detail}）"
+    open_action = str(gate.get("detail") or "")
 
     if gate["outcome"] in SIMETER_SESSION_OPEN_OK:
         if value.satisfied:
-            return BlockResult(state=BLOCK_PASS,
-                               detail=f"{value.detail}；{gate['detail']}",
-                               facts=facts, actual=value.state)
-        # 理论不可达（开口门已确认 serial_open）：仍然不倒向 pass。
-        return BlockResult(state=BLOCK_FAIL,
-                           detail=f"表口已打开但严格判定未就绪：{marker}",
-                           facts=facts, actual=value.state)
+            observation = Observation(
+                values={"表口就绪": True, "串口开": True, "开口动作": open_action},
+                complete=True,
+                reason_code="",
+                detail=f"{value.detail}；{open_action}",
+            )
+            return _bench_observation_result(
+                observation, detail=observation.detail, facts=facts
+            )
+        # 理论不可达（开口门已确认 serial_open）：仍然不倒向就绪。
+        observation = Observation(
+            values={"表口就绪": False, "串口开": True, "开口动作": open_action},
+            complete=True,
+            reason_code="",
+            detail=f"表口已打开但严格判定未就绪：{marker}",
+        )
+        return _bench_observation_result(
+            observation, detail=observation.detail, facts=facts
+        )
 
-    state = _SIMETER_GATE_BLOCK_STATE.get(gate["outcome"], BLOCK_UNKNOWN)
-    if state == BLOCK_SKIPPED:
-        detail = f"模拟电表台架前置未满足：{marker}；{gate['detail']}"
-    elif state == BLOCK_FAIL:
-        detail = f"模拟电表未就绪（严格口径：表口必须打开并能应答）：{marker}；{gate['detail']}"
+    outcome = str(gate["outcome"] or "")
+    detail = f"{marker}；{gate['detail']}"
+    if outcome in (SIMETER_SESSION_CONFLICT, SIMETER_SESSION_ABSENT):
+        # 409 占用 / 404 未挂载 / 服务不可达 = 台架不具备条件（原因码 → 步骤 skipped）
+        code = _bench_env_reason(gate.get("detail") or detail)
+    elif outcome == SIMETER_SESSION_NOT_OPEN:
+        # 表口确实没开（ensure_open=false 或开了仍关）：如实观测，判据归步骤期望
+        observation = Observation(
+            values={"表口就绪": False, "串口开": False, "开口动作": open_action},
+            complete=True,
+            reason_code="",
+            detail="模拟电表表口未打开（严格口径：表口必须打开并能应答）：" + detail,
+        )
+        return _bench_observation_result(
+            observation, detail=observation.detail, facts=facts
+        )
     else:
-        detail = f"模拟电表开口结论不确定：{marker}；{gate['detail']}"
-    return BlockResult(state=state, detail=detail, facts=facts, actual=value.state)
+        code = OBS_INCOMPLETE
+    observation = Observation(values={}, complete=False, reason_code=code, detail=detail)
+    return _bench_observation_result(observation, detail=detail, facts=facts)
 
 
 def fix_simcon_session(params: Optional[Dict[str, Any]] = None,
                        ctx: Optional[RunContext] = None) -> BlockResult:
-    """``fix.simcon_session``：模拟集中器是否在线（不在线 → skipped）。"""
+    """``fix.simcon_session``：模拟集中器是否在线——只报观测（``simcon就绪``）。"""
     raw = dict(params or {})
     capability = simcon_capability(raw, ctx)
     value = judge_simcon(capability,
                          require_port_open=bool(raw.get("require_port_open", False)))
-    return _bench_result(FACT_SIMCON_ONLINE, value, label="模拟集中器")
+    return _bench_result(
+        FACT_SIMCON_ONLINE, value, label="模拟集中器", field="simcon"
+    )
 
 
 # --------------------------------------------------------------------------- #

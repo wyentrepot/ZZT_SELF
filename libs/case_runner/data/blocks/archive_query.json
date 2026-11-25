@@ -1,7 +1,9 @@
 {
   "id": "archive.query",
-  "title": "查询从节点档案表（10H-F2；表地址（meter_addr）/ expect_total / expect_empty 由用例覆盖）",
-  "needs": ["bench.simcon_online"],
+  "title": "查询从节点档案表（10H-F2 翻页取全；只报观测：总数/已查/目标地址在档与否/在档协议类型）",
+  "needs": [
+    "bench.simcon_online"
+  ],
   "provides": [],
   "action": {
     "afn": "10",
@@ -12,7 +14,26 @@
     }
   },
   "assert": [
-    {"type": "query_answered", "frame": "10H-F2"}
+    {
+      "type": "observation_fields",
+      "fields": [
+        "总数",
+        "已查条数",
+        "完整",
+        "查询地址",
+        "在档",
+        "在档协议类型"
+      ],
+      "note": "判据在步骤期望：含/不含由调用方声明（REQS-0044 AC-2 双向）；在档协议类型=10H-F2 节点信息 D13~D11（REQS-0043 §G-6 三方一致性核验，命中时给出；E3 位段校正）"
+    }
   ],
-  "tags": ["archive", "batch-1", "readonly"]
+  "tags": [
+    "archive",
+    "batch-1",
+    "readonly"
+  ],
+  "kind": "probe",
+  "side_effect": "none",
+  "version": 3,
+  "observation_only": true
 }

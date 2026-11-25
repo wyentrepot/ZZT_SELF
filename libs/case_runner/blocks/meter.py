@@ -128,7 +128,7 @@ import inspect
 import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from case_runner.blocks.common import meter_addr_wire, normalize_addr
@@ -137,6 +137,14 @@ from case_runner.capabilities.simeter import SimeterCapability
 from case_runner.capabilities.simcon import SimconCapability
 from case_runner.core.defaults import default_meter_addr
 from case_runner.core.executor import PARAM_ASSERT, BlockResult
+from case_runner.core.expect import (
+    OBS_BENCH_UNREACHABLE,
+    OBS_INCOMPLETE,
+    OBS_INVALID_PARAM,
+    OBS_SERIAL_BUSY,
+    OBS_TIMEOUT,
+    Observation,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -450,6 +458,15 @@ class Verdict:
       「上行帧已收到、帧是合法的 02H-F1，但内层没有 645 地址/数据证据」—— 对事实是
       ``unknown``（没探到 ≠ 不存在），对块是 ``fail``（设备回了一帧转发报文却不是我们要的
       内容，本身就是缺陷，绝不放过）。
+
+    观测侧（REQS-0044 §4.2，块只报观测不判定）
+    -----------------------------------------
+    - ``values``：走到哪一层就报到的**观测值**（请求 DI / CS 合法与否 / DI 回显与否 /
+      数值 / 单位 / 数据项 / 内层 645 地址 / 地址一致与否……）。**字段名即观测项**，
+      与 ``docs/blocks/case-抄表-meter.read_645.md`` §3 的观测清单同源；
+    - ``observed``：是否拿到了**可判观测**（内层解析到位，期望项可被步骤期望求值）。
+      ``False`` = 只走到浅层（解不开 / 无内层），步骤只能落 unknown，绝不 pass。
+      事实层（``facts_meter``）不用这两个字段，行为不变。
     """
 
     state: str
@@ -458,6 +475,8 @@ class Verdict:
     actual: Any = None
     evidence: tuple = ()
     block_state: str = ""
+    values: Mapping[str, Any] = field(default_factory=dict)
+    observed: bool = False
 
     def block_state_of(self) -> str:
         return self.block_state or self.state
@@ -474,6 +493,17 @@ class Verdict:
             expected=self.expected,
             actual=self.actual,
             evidence_ids=list(self.evidence),
+        )
+
+    def to_observation(self) -> "Observation":
+        """判据结论 → 结构化观测（REQS-0044：块返回观测，判定归步骤期望）。"""
+        from case_runner.core.expect import OBS_INCOMPLETE
+
+        return Observation(
+            values=dict(self.values),
+            complete=bool(self.observed),
+            reason_code="" if self.observed else OBS_INCOMPLETE,
+            detail=self.detail,
         )
 
 
@@ -561,6 +591,7 @@ def judge_meter_addr(
             "上行帧无法解析（既非 1376.2 也未通过自动嗅探）：%s"
             % _decode_error(frames, frame_hex),
             expected=expect,
+            values={"请求表地址": expect},
         )
     outer_frame = decoded.get("frame")
 
@@ -577,6 +608,7 @@ def judge_meter_addr(
                 expected=expect,
                 actual="0x%s" % got_protocol,
                 block_state=BLOCK_FAIL,  # 请求 645-2007 转发，回来的是别的协议类型 = 缺陷
+                values={"请求表地址": expect, "外层协议类型": "0x%s" % got_protocol},
             )
         protocol_note = "（%s=0x%s）" % (FIELD_PROTOCOL_TYPE, got_protocol)
 
@@ -593,6 +625,9 @@ def judge_meter_addr(
             ),
             expected=expect,
             block_state=BLOCK_FAIL,  # 帧收到了却没内嵌 645：块判据不成立
+            values={"请求表地址": expect, "外层协议类型": "0x%s" % got_protocol}
+            if got_protocol
+            else {"请求表地址": expect},
         )
 
     addr_result = frames.meter_addr(frame_hex, protocol=protocol_used)
@@ -608,6 +643,9 @@ def judge_meter_addr(
             ),
             expected=expect,
             block_state=BLOCK_FAIL,
+            values={"请求表地址": expect, "外层协议类型": "0x%s" % got_protocol}
+            if got_protocol
+            else {"请求表地址": expect},
         )
 
     actual = norm_hex(addr_result.get("addr"))
@@ -622,6 +660,12 @@ def judge_meter_addr(
             expected=expect,
             actual=actual,
             evidence=(frame_hex,),
+            values={
+                "请求表地址": expect,
+                "内层645地址": actual,
+                "地址一致": True,
+            },
+            observed=True,
         )
     return Verdict(
         BLOCK_FAIL,
@@ -630,6 +674,8 @@ def judge_meter_addr(
         expected=expect,
         actual=actual,
         evidence=(frame_hex,),
+        values={"请求表地址": expect, "内层645地址": actual, "地址一致": False},
+        observed=True,
     )
 
 
@@ -655,7 +701,7 @@ def judge_read_645(
     frame_hex = norm_hex(reply_frame)
     di = norm_hex(expect_di) or DEFAULT_DI
     if not frame_hex:
-        return Verdict(BLOCK_UNKNOWN, "没有上行帧 hex，无法判定")
+        return Verdict(BLOCK_UNKNOWN, "没有上行帧 hex，无法判定", values={"请求DI": di})
 
     decoded, _protocol_used = decode_outer(frames, frame_hex)
     if decoded is None:
@@ -663,6 +709,7 @@ def judge_read_645(
             BLOCK_UNKNOWN,
             "上行帧无法解析（既非 1376.2 也未通过自动嗅探）：%s"
             % _decode_error(frames, frame_hex),
+            values={"请求DI": di},
         )
     outer_frame = decoded.get("frame")
 
@@ -677,6 +724,7 @@ def judge_read_645(
             expected="DI %s" % di,
             actual="0x%s" % got_protocol,
             block_state=BLOCK_FAIL,
+            values={"请求DI": di, "外层协议类型": "0x%s" % got_protocol},
         )
 
     payload = _forwarded_payload(decoded)
@@ -686,6 +734,9 @@ def judge_read_645(
             "上行 02H-F1 没有「%s」字段（字段：%s）"
             % (FIELD_FORWARDED, "、".join(_field_names(outer_frame)) or "无"),
             block_state=BLOCK_FAIL,  # 回的 02H-F1 里没有转发报文 = 不是数据转发应答
+            values={"请求DI": di, "外层协议类型": "0x%s" % got_protocol}
+            if got_protocol
+            else {"请求DI": di},
         )
 
     inner = frames.decode(payload, protocol=INNER_PROTOCOL_645)
@@ -695,6 +746,7 @@ def judge_read_645(
             BLOCK_FAIL,
             "内层转发报文无法按 645 解析（%s）：%s" % (code, payload),
             evidence=(frame_hex, payload),
+            values={"请求DI": di},
         )
     inner_frame = inner.get("frame") or {}
 
@@ -706,6 +758,8 @@ def judge_read_645(
             BLOCK_FAIL,
             "内层 645 CS 校验不合法：%s（转发报文 %s）" % (cs_desc, payload),
             evidence=(frame_hex, payload),
+            values={"请求DI": di, "CS合法": False, "CS说明": cs_desc},
+            observed=True,
         )
 
     # (b) 异常应答（控制码 D6=1）直接判失败
@@ -717,6 +771,13 @@ def judge_read_645(
             BLOCK_FAIL,
             "内层 645 是从站异常应答（控制码 %s），无数据" % (ctrl_txt or "0x%02X" % ctrl_raw),
             evidence=(frame_hex, payload),
+            values={
+                "请求DI": di,
+                "CS合法": True,
+                "异常应答": True,
+                "控制码": ctrl_txt or "0x%02X" % ctrl_raw,
+            },
+            observed=True,
         )
 
     # (c) DI 回显（DI 显示序 → 传输序 +33H，如 00010000 → 33333433）
@@ -729,6 +790,8 @@ def judge_read_645(
             % (di, echo, payload),
             expected=di,
             evidence=(frame_hex, payload),
+            values={"请求DI": di, "CS合法": True, "异常应答": False, "DI回显": False},
+            observed=True,
         )
 
     # (d) 数值可解（门面 items 里至少一项带数值）
@@ -744,6 +807,8 @@ def judge_read_645(
             % (di, "、".join(_field_names(inner_frame)) or "无"),
             expected=di,
             evidence=(frame_hex, payload),
+            values={"请求DI": di, "CS合法": True, "异常应答": False, "DI回显": True},
+            observed=True,
         )
 
     value = item.get("value")
@@ -763,6 +828,16 @@ def judge_read_645(
                 expected=expect_value,
                 actual=value,
                 evidence=(frame_hex, payload),
+                values={
+                    "请求DI": di,
+                    "CS合法": True,
+                    "异常应答": False,
+                    "DI回显": True,
+                    "数值": value,
+                    "单位": unit,
+                    "数据项": item_name,
+                },
+                observed=True,
             )
         detail += "（与期望值 %s 一致）" % (expect_value,)
 
@@ -772,6 +847,16 @@ def judge_read_645(
         expected=expect_value,
         actual=actual,
         evidence=(frame_hex, payload),
+        values={
+            "请求DI": di,
+            "CS合法": True,
+            "异常应答": False,
+            "DI回显": True,
+            "数值": value,
+            "单位": unit,
+            "数据项": item_name,
+        },
+        observed=True,
     )
 
 
@@ -1448,8 +1533,14 @@ def wait_attempts(
     expect_timeout: Any = DEFAULT_EXPECT_TIMEOUT,
     clock: Any = None,
     sleep: Any = None,
+    stop_when: Optional[Callable[[BlockResult], bool]] = None,
 ) -> WaitLoop:
     """反复调 ``attempt(单次等待秒数)``，直到 pass / 依赖不可用 / 等满 ``wait_s``。
+
+    ``stop_when``（REQS-0044 观测化迁移）：**附加**终止条件（收到可判观测即停）。
+    只观测的块不产 pass/fail，等待循环不能等一个不存在的 ``pass`` —— 已迁移的块
+    传 ``stop_when=lambda r: bool(r.observation and r.observation.got)``（拿到了观测
+    就停，不再重发）；``None`` = 维持旧口径（等 ``state==pass``）。
 
     **单次尝试最大耗时 / 总预算**（``expect_timeout`` 与 ``wait_s`` 不叠乘）::
 
@@ -1515,6 +1606,14 @@ def wait_attempts(
         if state == BLOCK_PASS:
             return WaitLoop(last.result, attempts, waited, per_attempt_max, False,
                             "satisfied", last.result.detail)
+        if stop_when is not None:
+            try:
+                stop_hit = bool(stop_when(last.result))
+            except Exception:  # noqa: BLE001 - 终止条件算错不能让循环挂死
+                stop_hit = False
+            if stop_hit:
+                return WaitLoop(last.result, attempts, waited, per_attempt_max, False,
+                                "satisfied", last.result.detail)
         if norm_hex(last.frame):
             framed = last
         if elapsed >= limit or attempts >= max_attempts:
@@ -1588,26 +1687,138 @@ def annotate_wait(result: BlockResult, *, wait_s: Any, loop: WaitLoop) -> BlockR
 # --------------------------------------------------------------------------- #
 
 
+def _invalid_param_observation(detail: str, *, evidence: Any = ()) -> BlockResult:
+    """配置/参数类问题的统一观测结果（原因码 ``invalid_param``，绝不折成设备结论）。"""
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail=detail,
+        observation=Observation(
+            values={}, complete=False, reason_code=OBS_INVALID_PARAM, detail=detail
+        ),
+        evidence_ids=[str(item) for item in (evidence or ()) if item],
+    )
+
+
+def _got_observation(result: Any) -> bool:
+    """wait_attempts 的附加终止条件：本次尝试已拿到**可判观测**（原因码为空）即停。
+
+    只观测的块没有 pass 可等（REQS-0044 §4.2）；观测拿到了就不重发同一帧，
+    没拿到才继续等预算。
+    """
+    obs = getattr(result, "observation", None)
+    return bool(obs is not None and obs.got)
+
+
+def _env_reason_of(detail: Any) -> str:
+    """环境类原因码的映射（只描述「为什么没拿到」，不带结论色彩）。
+
+    串口闸门/会话忙（409/占用/忙）→ ``serial_busy``；其余（服务没起/不可达/404）
+    → ``bench_unreachable``。两条都是 evaluator 的「台架不具备条件」集合
+    （``core.expect.ENVIRONMENT_REASON_CODES``），步骤态落 skipped。
+    """
+    text = str(detail or "")
+    if any(token in text for token in ("409", "占用", "闸门", "会话忙", "busy")):
+        return OBS_SERIAL_BUSY
+    return OBS_BENCH_UNREACHABLE
+
+
+def _config_or_timeout_code(detail: Any) -> str:
+    """unknown 类 SendOutcome 的原因码：配置/参数错 → invalid_param；等满 → timeout。"""
+    text = str(detail or "")
+    if any(token in text for token in ("配置错误", "参数", "构帧", "非法", "http_4")):
+        return OBS_INVALID_PARAM
+    if "超时" in text or "poll_timeout" in text:
+        return OBS_TIMEOUT
+    return OBS_INCOMPLETE
+
+
+def _outcome_to_observation(outcome: Any, *, extra: str = "") -> BlockResult:
+    """SendOutcome（非 reply 态）→ 只含原因码的观测结果（旧路径落 unknown）。
+
+    - ``skipped``：串口被占 / 台架不可达 → ``serial_busy`` / ``bench_unreachable``；
+    - ``unknown``：配置/参数 → ``invalid_param``；轮询超时 → ``timeout``；其余 → ``incomplete``；
+    - ``fail``：verify 步骤层明确拒绝（构帧失败等）→ ``invalid_param``。
+    """
+    state = str(getattr(outcome, "state", "") or BLOCK_UNKNOWN)
+    detail = str(getattr(outcome, "detail", "") or "")
+    if extra:
+        detail = "%s（%s）" % (detail, extra) if detail else extra
+    if state == BLOCK_SKIPPED:
+        code = _env_reason_of(detail)
+    elif state == BLOCK_FAIL:
+        # verify 步骤层明确拒绝：超时字样 → timeout（说不清），其余按配置问题
+        code = OBS_TIMEOUT if "超时" in detail else OBS_INVALID_PARAM
+    else:
+        code = _config_or_timeout_code(detail)
+    observation = Observation(values={}, complete=False, reason_code=code, detail=detail)
+    # state 保留 outcome 原态：wait_attempts 靠 skipped 立即收工（不空转重试）；
+    # 观测路径下结论由原因码决定，state 只服务旧路径兜底
+    return BlockResult(
+        state=state,
+        detail=detail,
+        observation=observation,
+        evidence_ids=[hex_text for hex_text in [getattr(outcome, "reply_frame", "")] if hex_text],
+    )
+
+
+def _finalize_observation(loop: Any, *, wait_s: Any = 0, what: str = "") -> BlockResult:
+    """等待循环的结论 → 只观测的块结果（等待读数并入观测值/detail）。"""
+    result = loop.result
+    obs = getattr(result, "observation", None)
+    if obs is None:
+        obs = Observation(values={}, complete=False,
+                          reason_code=OBS_INCOMPLETE, detail=result.detail)
+    detail = obs.detail
+    evidence = list(getattr(result, "evidence_ids", None) or [])
+    if loop.reason == "silent":
+        text = "等了 %s 秒共 %d 次尝试，始终没有收到%s 应答" % (
+            format_seconds(loop.waited), loop.attempts, what)
+        if loop.last_detail:
+            text += "；最后一次：%s" % loop.last_detail
+        # 措辞必须含「等了 N 秒 / 只读探测 K 次」（core.executor 按正则派生 timeout 决策）
+        text += waited_text(loop.waited, loop.attempts, per_attempt=loop.per_attempt_max)
+        values = dict(obs.values)
+        values["等待秒"] = round(float(loop.waited), 3)
+        values["探测次数"] = int(loop.attempts)
+        return BlockResult(
+            state=BLOCK_UNKNOWN,
+            detail=text,
+            observation=Observation(values=values, complete=False,
+                                    reason_code=OBS_TIMEOUT, detail=text),
+            evidence_ids=evidence,
+        )
+    values = dict(obs.values)
+    if loop.reason != "single" and (loop.attempts > 1 or loop.waited > 0):
+        values["等待秒"] = round(float(loop.waited), 3)
+        values["探测次数"] = int(loop.attempts)
+        suffix = waited_text(loop.waited, loop.attempts, per_attempt=loop.per_attempt_max)
+        detail = "%s%s" % (detail, suffix) if detail else suffix.strip()
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail=detail,
+        observation=Observation(
+            values=values,
+            complete=bool(obs.complete),
+            reason_code=obs.reason_code,
+            detail=detail,
+        ),
+        evidence_ids=evidence,
+    )
+
+
 def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
-    """``meter.addr_probe``：02H-F1 透传 645 读通信地址，判内层地址域 == 期望地址。
+    """``meter.addr_probe``：02H-F1 透传 645 读通信地址，**只报观测不判定**。
 
-    入参 ``meter_addr``（电表 645 人读地址，缺省取配置默认值，见 REQS-0042 D2-2）：
-    它既是 13H 请求帧地址域的来源（``addr_mode="meter"`` 时），也是**判据**的期望值
-    （13H 应答回装的地址域要与它相等）——两种 ``addr_mode`` 判据完全一样。
+    REQS-0044 §4.2 判据归位：块返回观测（``请求表地址`` / ``内层645地址`` /
+    ``地址一致`` / 可选 ``外层协议类型``），「内层地址是否等于期望表地址」由步骤的
+    ``expect`` 声明（``{"op":"eq","field":"地址一致","value":true}``）；块不再输出
+    通过/失败。等待预算 ``wait_s`` 由 Procedure 步骤显式给（0044 §8.1-3，
+    块默认 0 = 只探一次仅兜底）。
 
-    ``addr_mode``（REQS-0042 裁决，见 :func:`build_645_request`）：缺省 ``"meter"``
-    （本台 CCO 可用）；``"broadcast"`` 是 645-2007 §6.3 的规范写法，本台实测 CCO
-    对 ``02H-F1``+全 FE 不转发、回空帧（``evidence/0042/s2-meter_read-13h-FE.log``）。
-
-    等待口径见 :func:`resolve_expect_timeout`：显式 ``expect_timeout`` > ``t+5s`` > ``60s``。
-
-    等待型重试（REQS-0042 S2-F，见 :func:`wait_attempts`）：``wait_s`` 缺省 **0** = 只探一次
-    （行为与改造前逐字一致）；``meter_first_join``（含复位）场景按需给值，例如
-    ``wait_s=900`` + ``poll_interval_s=15`` 等链路恢复。三态在重试下的口径：
-
-    - 期间某次判据成立 → ``pass``（立即停）；
-    - 等满且**全程一帧应答都没有** → ``unknown``（说不清链路是否恢复，**不是 fail**）；
-    - 等满但**有应答且判据不成立**（地址不符/内层无 645） → ``fail``（真失败，不被重试掩盖）。
+    单次透传口径（REQS-0042 D5-1/S2-F，行为不变）：``expect_timeout`` 显式 > 按
+    03H-F7 取 t+5s > 回落 60s；``wait_s>0`` 时每 ``poll_interval_s`` 重发同一只读
+    13H 帧，拿到观测即停；等满全程无帧 → 观测原因码 ``timeout``（步骤落
+    inconclusive）；环境不可用 → ``serial_busy`` / ``bench_unreachable``（落 blocked）。
     """
     action = dict(params or {})
     options = block_params(action)
@@ -1615,23 +1826,21 @@ def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
 
     expect_addr, bad = meter_addr_of(action)
     if bad:
-        return _bad_addr_result(bad)
+        return _invalid_param_observation(
+            "meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）——配置问题" % bad,
+            evidence=[],
+        )
     if not expect_addr:
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail="未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
-            "缺省取 case_defaults.meter_addr）——配置问题，非设备结论",
+        return _invalid_param_observation(
+            "未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
+            "缺省取 case_defaults.meter_addr）——配置问题",
         )
     protocol_type = options.get("protocol", PROTOCOL_645_2007)
     addr_mode = str(options.get("addr_mode") or DEFAULT_ADDR_MODE).strip().lower()
 
     wait_s, interval_s, wait_error = wait_params(options)
     if wait_error:
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail="等待参数非法（配置错误，非设备结论）：%s" % wait_error,
-            expected=expect_addr,
-        )
+        return _invalid_param_observation("等待参数非法：%s" % wait_error)
 
     payload = norm_hex(options.get("payload"))
     if not payload:
@@ -1639,22 +1848,17 @@ def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
             frames, addr=expect_addr, control=CONTROL_READ_ADDR, addr_mode=addr_mode
         )
         if not payload:
-            return BlockResult(
-                state=BLOCK_UNKNOWN,
-                detail="内嵌 645 13H 请求帧构帧失败（配置错误，非设备 FAIL）：%s" % reason,
-                expected=expect_addr,
+            return _invalid_param_observation(
+                "内嵌 645 13H 请求帧构帧不成功：%s" % reason, evidence=[expect_addr]
             )
 
     if wait_s > 0:
         violation = readonly_violation(payload)
         if violation:
-            return BlockResult(
-                state=BLOCK_UNKNOWN,
-                detail="等待型重试被只读闸门拦下（配置错误，非设备结论）：%s"
-                "——等待期只允许重发只读透传帧（645 11H/13H）；要发写帧请把 wait_s 置 0"
-                % violation,
-                expected=expect_addr,
-                evidence_ids=[payload],
+            return _invalid_param_observation(
+                "等待型重试被只读闸门拦下：%s——等待期只允许重发只读透传帧"
+                "（645 11H/13H）；要发写帧请把 wait_s 置 0" % violation,
+                evidence=[payload],
             )
 
     simcon = _capability(ctx, "simcon", SimconCapability, options)
@@ -1662,7 +1866,7 @@ def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
         options, ctx, simcon=simcon, frames=frames)
 
     def attempt(attempt_timeout: float) -> Attempt:
-        """一次完整透传（02H-F1 下发 + 等上行）+ 原判据。"""
+        """一次完整透传（02H-F1 下发 + 等上行）→ 观测。"""
         outcome = probe_forward_reply(
             simcon,
             payload,
@@ -1673,153 +1877,28 @@ def meter_addr_probe(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
         )
         if outcome.state != "reply":
             return Attempt(
-                BlockResult(
-                    state=outcome.state,
-                    detail="%s（地址口径：%s；等待口径：%s）"
-                    % (outcome.detail, addr_mode, timeout_note),
-                    expected=expect_addr,
-                    evidence_ids=[payload],
+                _outcome_to_observation(
+                    outcome, extra="地址口径：%s；等待口径：%s" % (addr_mode, timeout_note)
                 ),
                 frame=outcome.reply_frame,
             )
-
         verdict = judge_meter_addr(
             outcome.reply_frame,
             expect_addr,
             frames=frames,
             protocol_type=protocol_type,
         )
-        result = verdict.to_block(
-            unknown_prefix="上行 02H-F1 已收到但判据不成立：",
-        )
-        if result.state != BLOCK_PASS:
-            # 失败/拿不到结论时把「用的哪套 13H 地址口径」写进 detail：本台 CCO 对
-            # broadcast 回空帧，排障必须先能看出请求的是哪种地址域。
-            result.detail = "%s（地址口径：%s）" % (result.detail, addr_mode)
-        # 块 provides 生效只在 state==pass，这里显式给事实取值（绝不凭空造）
-        if result.state == BLOCK_PASS:
-            result.facts = {"sta.meter_addr_known": FACT_YES}
-        return Attempt(result, frame=outcome.reply_frame)
-
-    clock, sleeper = poll_hooks(options, simcon)
-    loop = wait_attempts(
-        attempt,
-        wait_s=wait_s,
-        interval_s=interval_s,
-        expect_timeout=timeout,
-        clock=clock,
-        sleep=sleeper,
-    )
-    if loop.reason == "silent":
-        return annotate_wait(
-            silent_unknown(
-                "上行 02H-F1（STA 获取表地址）",
-                loop,
-                expected=expect_addr,
-                evidence=[payload],
-            ),
-            wait_s=wait_s,
-            loop=loop,
-        )
-    return annotate_wait(loop.result, wait_s=wait_s, loop=loop)
-
-
-# --------------------------------------------------------------------------- #
-# 块 2：meter.read_645
-# --------------------------------------------------------------------------- #
-
-
-def meter_read_645(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
-    """``meter.read_645``：02H-F1 透传 645 读数据，判 CS 合法 + DI 回显 + 数值可解。
-
-    入参 ``meter_addr``（电表 645 人读地址，缺省取配置默认值，见 REQS-0042 D2-2）。
-    等待口径见 :func:`resolve_expect_timeout`：显式 ``expect_timeout`` > ``t+5s`` > ``60s``。
-
-    等待型重试（REQS-0042 S2-F，见 :func:`wait_attempts`）：``wait_s`` 缺省 **0** = 只读一次
-    （``meter_daily`` 不复位，用默认即可）；复位后的 ``meter_first_join`` 才需要等待型，
-    三态口径与 ``meter.addr_probe`` 完全一致：等到判据成立 → ``pass``；等满全程无帧
-    → ``unknown``（不是 fail）；等满但有帧且判据不成立 → ``fail``。
-    """
-    action = dict(params or {})
-    options = block_params(action)
-    frames = _capability(ctx, "frames", FramesCapability, options)
-
-    addr, bad = meter_addr_of(action)
-    if bad:
-        return _bad_addr_result(bad)
-    if not addr:
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail="未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
-            "缺省取 case_defaults.meter_addr）——配置问题，非设备结论",
-        )
-    di = norm_hex(options.get("di")) or DEFAULT_DI
-    protocol_type = options.get("protocol", PROTOCOL_645_2007)
-
-    wait_s, interval_s, wait_error = wait_params(options)
-    if wait_error:
-        return BlockResult(
-            state=BLOCK_UNKNOWN,
-            detail="等待参数非法（配置错误，非设备结论）：%s" % wait_error,
-            expected=di,
-        )
-
-    payload = norm_hex(options.get("payload"))
-    if not payload:
-        payload, reason = build_645_read_frame(addr, di)
-        if not payload:
-            return BlockResult(
-                state=BLOCK_UNKNOWN,
-                detail="内嵌 645 11H 读数据帧构帧失败（配置错误，非设备 FAIL）：%s" % reason,
-                expected=di,
-            )
-
-    if wait_s > 0:
-        violation = readonly_violation(payload)
-        if violation:
-            return BlockResult(
-                state=BLOCK_UNKNOWN,
-                detail="等待型重试被只读闸门拦下（配置错误，非设备结论）：%s"
-                "——等待期只允许重发只读透传帧（645 11H/13H）；要发写帧请把 wait_s 置 0"
-                % violation,
-                expected=di,
-                evidence_ids=[payload],
-            )
-
-    simcon = _capability(ctx, "simcon", SimconCapability, options)
-    timeout, timeout_note = resolve_expect_timeout(
-        options, ctx, simcon=simcon, frames=frames)
-
-    def attempt(attempt_timeout: float) -> Attempt:
-        """一次完整透传（02H-F1 下发 + 等上行）+ 原判据。"""
-        outcome = probe_forward_reply(
-            simcon,
-            payload,
-            protocol_type=protocol_type,
-            expect_timeout=attempt_timeout,
-            max_poll_seconds=options.get("max_poll_seconds"),
-            name="抄读表数据（02H-F1 透传 645 11H DI %s）" % di,
-        )
-        if outcome.state != "reply":
-            return Attempt(
-                BlockResult(
-                    state=outcome.state,
-                    detail="%s（等待口径：%s）" % (outcome.detail, timeout_note),
-                    expected=di,
-                    evidence_ids=[payload],
-                ),
-                frame=outcome.reply_frame,
-            )
-
-        verdict = judge_read_645(
-            outcome.reply_frame,
-            expect_di=di,
-            expect_value=options.get("expect_value"),
-            frames=frames,
-            protocol_type=protocol_type,
-        )
+        obs = verdict.to_observation()
+        # 排障口径（地址口径）跟旧 detail 行为对齐：观测不完整或地址不符时附上
+        if obs.reason_code or obs.values.get("地址一致") is not True:
+            obs.detail = "%s（地址口径：%s）" % (obs.detail, addr_mode)
         return Attempt(
-            verdict.to_block(unknown_prefix="上行 02H-F1 已收到但判据不成立："),
+            BlockResult(
+                state=BLOCK_UNKNOWN,
+                detail=obs.detail,
+                observation=obs,
+                evidence_ids=list(verdict.evidence),
+            ),
             frame=outcome.reply_frame,
         )
 
@@ -1831,19 +1910,128 @@ def meter_read_645(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
         expect_timeout=timeout,
         clock=clock,
         sleep=sleeper,
+        stop_when=_got_observation,
     )
-    if loop.reason == "silent":
-        return annotate_wait(
-            silent_unknown(
-                "上行 02H-F1（抄读表数据 DI %s）" % di,
-                loop,
-                expected=di,
-                evidence=[payload],
-            ),
-            wait_s=wait_s,
-            loop=loop,
+    result = _finalize_observation(loop, wait_s=wait_s, what="上行 02H-F1（STA 获取表地址）")
+    # 事实链（REQS-0044 AC-5）：观测到手时带上 sta.addr_obtained 的显式取值，
+    # executor 在**步骤**成立后经 provides 通道回写（参数化事实 sta.meter_addr_known
+    # 仍由探测体现探，块绝不回写 —— 跨地址假 PASS 门禁不变）
+    if (result.observation is not None and result.observation.got
+            and result.observation.values.get("地址一致") is True):
+        result.facts = {
+            "sta.addr_obtained": {
+                "state": "yes",
+                "detail": "绑表交互完成（内层 645 地址观测到手；是否记入成功由步骤判据决定）",
+                "evidence": list(result.evidence_ids),
+            }
+        }
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# 块 2：meter.read_645
+# --------------------------------------------------------------------------- #
+
+
+def meter_read_645(params: Mapping[str, Any], ctx: Any = None) -> BlockResult:
+    """``meter.read_645``：02H-F1 透传 645 读数据，**只报观测不判定**。
+
+    REQS-0044 §4.2 + §8.1-4：块返回观测（``请求DI`` / ``CS合法`` / ``DI回显`` /
+    ``异常应答`` / ``数值`` / ``单位`` / ``数据项``），“数值对不对”由步骤的
+    ``expect`` 声明——**默认只验「有值且可解」（``has_value``），不比对数值真值**；
+    Procedure 显式给了期望值才比对（``{"op":"eq","field":"数值","value":...}``）。
+    块不再消费 ``expect_value`` 参数（判据已归步骤；给了也不会被采用）。
+
+    等待预算 ``wait_s`` 由 Procedure 步骤显式给（§8.1-3）；单次透传口径与
+    ``meter.addr_probe`` 完全一致（显式 ``expect_timeout`` > t+5s > 60s）。
+    等满全程无帧 → 观测原因码 ``timeout``（步骤落 inconclusive）；收到帧但内层
+    645 解不开 → ``incomplete``（落 inconclusive）；解开了 → 完整观测（哪怕
+    CS 不合法 / DI 不回显 / 异常应答，都是如实观测，由步骤期望判 fail）。
+    """
+    action = dict(params or {})
+    options = block_params(action)
+    frames = _capability(ctx, "frames", FramesCapability, options)
+
+    addr, bad = meter_addr_of(action)
+    if bad:
+        return _invalid_param_observation(
+            "meter_addr 非法：%s（需 12 位 BCD 数字，如 123456789012）——配置问题" % bad,
         )
-    return annotate_wait(loop.result, wait_s=wait_s, loop=loop)
+    if not addr:
+        return _invalid_param_observation(
+            "未解析到表地址 meter_addr（12 位 BCD 电表 645 表地址；"
+            "缺省取 case_defaults.meter_addr）——配置问题",
+        )
+    di = norm_hex(options.get("di")) or DEFAULT_DI
+    protocol_type = options.get("protocol", PROTOCOL_645_2007)
+
+    wait_s, interval_s, wait_error = wait_params(options)
+    if wait_error:
+        return _invalid_param_observation("等待参数非法：%s" % wait_error)
+
+    payload = norm_hex(options.get("payload"))
+    if not payload:
+        payload, reason = build_645_read_frame(addr, di)
+        if not payload:
+            return _invalid_param_observation(
+                "内嵌 645 11H 读数据帧构帧不成功：%s" % reason, evidence=[di]
+            )
+
+    if wait_s > 0:
+        violation = readonly_violation(payload)
+        if violation:
+            return _invalid_param_observation(
+                "等待型重试被只读闸门拦下：%s——等待期只允许重发只读透传帧"
+                "（645 11H/13H）；要发写帧请把 wait_s 置 0" % violation,
+                evidence=[payload],
+            )
+
+    simcon = _capability(ctx, "simcon", SimconCapability, options)
+    timeout, timeout_note = resolve_expect_timeout(
+        options, ctx, simcon=simcon, frames=frames)
+
+    def attempt(attempt_timeout: float) -> Attempt:
+        """一次完整透传（02H-F1 下发 + 等上行）→ 观测。"""
+        outcome = probe_forward_reply(
+            simcon,
+            payload,
+            protocol_type=protocol_type,
+            expect_timeout=attempt_timeout,
+            max_poll_seconds=options.get("max_poll_seconds"),
+            name="抄读表数据（02H-F1 透传 645 11H DI %s）" % di,
+        )
+        if outcome.state != "reply":
+            return Attempt(
+                _outcome_to_observation(outcome, extra="等待口径：%s" % timeout_note),
+                frame=outcome.reply_frame,
+            )
+        verdict = judge_read_645(
+            outcome.reply_frame,
+            expect_di=di,
+            frames=frames,
+            protocol_type=protocol_type,
+        )
+        return Attempt(
+            BlockResult(
+                state=BLOCK_UNKNOWN,
+                detail=verdict.detail,
+                observation=verdict.to_observation(),
+                evidence_ids=list(verdict.evidence),
+            ),
+            frame=outcome.reply_frame,
+        )
+
+    clock, sleeper = poll_hooks(options, simcon)
+    loop = wait_attempts(
+        attempt,
+        wait_s=wait_s,
+        interval_s=interval_s,
+        expect_timeout=timeout,
+        clock=clock,
+        sleep=sleeper,
+        stop_when=_got_observation,
+    )
+    return _finalize_observation(loop, wait_s=wait_s, what="上行 02H-F1（抄读表数据 DI %s）" % di)
 
 
 # --------------------------------------------------------------------------- #

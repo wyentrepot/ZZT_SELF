@@ -1,7 +1,9 @@
 {
   "id": "archive.del",
   "title": "删除从节点档案（11H-F2 删档确认 + 10H-F2 反证查不到）",
-  "needs": ["bench.simcon_online"],
+  "needs": [
+    "bench.simcon_online"
+  ],
   "provides": [],
   "action": {
     "afn": "11",
@@ -11,8 +13,21 @@
     }
   },
   "assert": [
-    {"type": "confirm", "frame": "00H-F1"},
-    {"type": "archive_not_contains", "meter_addr": null}
+    {
+      "type": "confirm",
+      "frame": "00H-F1"
+    },
+    {
+      "type": "archive_not_contains",
+      "meter_addr": null
+    }
   ],
-  "tags": ["archive", "batch-1", "destructive"]
+  "tags": [
+    "archive",
+    "batch-1",
+    "destructive"
+  ],
+  "kind": "case",
+  "side_effect": "reversible",
+  "version": 1
 }

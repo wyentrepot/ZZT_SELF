@@ -1,0 +1,43 @@
+{
+  "id": "gate.multi_frame_110",
+  "title": "并发多帧条数闸门（一帧打包 14 条 645 报文 → 观测 CCO 00H-F2 否认码 6E；入队前闸门，与表无关，单表可测）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "13762_gate_multi_frame",
+    "params": {
+      "meter_addr": null,
+      "di": "03300501",
+      "count": 14,
+      "expect_timeout": 5
+    },
+    "_params_note": "判据出处：645 类单帧≤13 条（READMETER_MAX=13，CCO实现逻辑/02-并发抄表.md:84，CheckMeter645Item 逐条验帧计数≥13 → 否认 110/6E）；打包格式=规约类型(1B)+保留(1B)+报文长度(2B LE)+N 条 645 帧拼接（03_QGDW10376.2_全帧类型.md §4.15 示例帧：报文长度 0x1E=30=2 条 645 帧）；count=14（上限 13，14 触发）；di=03300501 为长报文口径（123_国网用例_台账.md:74 行 36 步骤 25「每帧 7 条 07 报文（DI=03300501）…超过最大字节数 1024 的数据不会返回」——长报文「不返回」是业务行为不产否认，否认 6E 只看条数闸门）；整体帧长≤2000B（02-并发抄表.md:17/:80），超限属配置问题（原因码 invalid_param，未下发）。否认等待缺省 5s=expect_rules default 档（闸门在入队前、否认即时回）。"
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "下发条数",
+        "报文DI",
+        "单帧报文长度B",
+        "数据单元长度B",
+        "否认等待秒",
+        "否认码",
+        "否认码文本",
+        "否认帧"
+      ],
+      "note": "判据在步骤期望（否定式期望也在这里）：如 {\"op\":\"eq\",\"field\":\"否认码\",\"value\":\"6E\"}；未收到否认帧 → 原因码 timeout（观测不完整），步骤落 inconclusive，绝不折成任何结论"
+    }
+  ],
+  "tags": [
+    "gate",
+    "batch",
+    "negative"
+  ],
+  "kind": "case",
+  "side_effect": "none",
+  "version": 1,
+  "observation_only": true
+}

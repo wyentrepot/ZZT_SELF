@@ -1,21 +1,31 @@
 {
   "id": "archive_multi",
-  "title": "多档下发（同一 archive.add 块实例化两次，各下发一块不同表地址的档案）",
+  "title": "多档下发（同一建档块实例化两次，各下发一块不同表地址的档案；仅用于单测）",
+  "kind": "regression",
+  "category": {
+    "usage": "rare",
+    "domain": "CCO",
+    "scene": "档案",
+    "region": "国网通用"
+  },
+  "protocols": [
+    "1376.2"
+  ],
   "steps": [
     {
       "no": 1,
-      "do": "下发第一块表的从节点档案（块 archive.add 的第 1 次实例化，参数取 plan 里 add_a 的 meter_addr）",
-      "expect": "收到 CCO 确认帧，且回查档案表能查到该表地址"
+      "do": "下发第一块表的从节点档案（同一建档块第 1 次实例化）",
+      "expect": "拿到观测（写入确认字段在观测里）"
     },
     {
       "no": 2,
-      "do": "下发第二块表的从节点档案（同一个块 archive.add 的第 2 次实例化，参数取 plan 里 add_b 的 meter_addr）",
-      "expect": "两次下发的表地址不同；第二块表同样要「确认帧 + 回查」双判据成立"
+      "do": "下发第二块表的从节点档案（同一建档块第 2 次实例化，参数不同）",
+      "expect": "拿到观测；两块表的档案地址不同"
     },
     {
       "no": 3,
-      "do": "本用例只用于单测：证明「同一个块在一条用例里能按不同参数实例化多次」（REQS-0042 变更 3 的步骤实例化与多表能力口径）",
-      "expect": "台架只有 1 块真表，第二块表不存在，所以真机不跑本用例；真机验收走 meter_smoke_min（meter_daily，不复位）/ smoke_meter（meter_first_join，含复位）。第二块表要真验，需先把另一块表接到 STA 表口上"
+      "do": "本流程只用于单测：证明同一块在一条流程里能按不同参数实例化多次（0042 变更 3）",
+      "expect": "台架只有 1 块真表、本流程真机不跑；真机验收走 meter_smoke_min（meter_daily）/ smoke_meter（meter_first_join）"
     }
   ],
   "needs": [
@@ -28,8 +38,13 @@
       "params": {
         "meter_addr": "000000000011"
       },
-      "on_fail": "continue",
-      "note": "第一块表：即使失败也让第二步照跑，便于一次看清两块表各自的结论"
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "got"
+        }
+      ],
+      "note": "第一块表：失败也让第二步照跑（on_fail=continue）"
     },
     {
       "id": "add_b",
@@ -38,7 +53,12 @@
         "meter_addr": "000000000022"
       },
       "on_fail": "stop",
-      "note": "第二块表：台架上不存在这块表，真机跑会失败 —— 所以本条用例只用于单测"
+      "expect": [
+        {
+          "op": "got"
+        }
+      ],
+      "note": "第二块表：仅单测（台架无第二块表）"
     }
   ],
   "asserts": [],

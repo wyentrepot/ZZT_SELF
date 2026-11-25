@@ -1,35 +1,67 @@
 {
   "id": "bench_ready",
-  "title": "台架就绪自检（STA 控制台口 + 模拟集中器 + 模拟电表）",
+  "title": "台架就绪自检（模拟集中器 + 模拟电表表口）",
+  "kind": "setup",
+  "category": {
+    "usage": "common",
+    "domain": "bench",
+    "scene": "",
+    "region": "国网通用"
+  },
+  "protocols": [
+    "1376.2"
+  ],
   "steps": [
     {
       "no": 1,
-      "do": "只读探测 STA 控制台口（sta-main）的串口桥可用状态",
-      "expect": "口可用（前置事实 bench.sta_online 成立）；不可用则本用例直接停在断点，并点名是 STA 控制台口，不进入后续台架块"
+      "do": "探测模拟集中器（simcon）服务是否在位",
+      "expect": "simcon 在位（就绪）；不可达/未挂载时本步判「台架不具备」，整条流程停在断点，不进入任何业务动作"
     },
     {
       "no": 2,
-      "do": "探测模拟集中器服务（simcon）是否在位",
-      "expect": "服务可达即该步通过；不可达时该步判跳过并写明原因（台架缺失不等于设备失败）"
-    },
-    {
-      "no": 3,
-      "do": "探测模拟电表服务（simeter）是否在位",
-      "expect": "服务可达即该步通过；不可达时该步判跳过并写明原因（台架缺失不等于设备失败）"
+      "do": "探测模拟电表服务（simeter）并把表口打开（没开就开，开完不关）",
+      "expect": "表口打开并能应答（表口就绪）；开口失败按原因分流：端口被占/服务不可达判「台架不具备」，口确实没开判本步不成立"
     }
   ],
-  "needs": [
-    "bench.sta_online"
-  ],
-  "blocks": [
-    "fix.simcon_session",
-    "fix.simeter_session"
+  "needs": [],
+  "plan": [
+    {
+      "id": "s1",
+      "block": "fix.simcon_session",
+      "params": {},
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "simcon就绪",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "block": "fix.simeter_session",
+      "params": {},
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "表口就绪",
+          "value": true
+        }
+      ]
+    }
   ],
   "asserts": [],
   "tags": [
     "bench",
-    "first-batch",
-    "smoke",
-    "readonly"
+    "setup",
+    "smoke"
   ]
 }

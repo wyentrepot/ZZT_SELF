@@ -21,6 +21,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
+from .expect import normalize_expects
 from .models import (
     FACT_NO,
     FACT_STATES,
@@ -273,7 +274,10 @@ class PlannedBlock:
     - ``block_id``：块 id（**允许重复**——同一个块可以被实例化多次）；
     - ``params``：该步声明的参数（``StepSpec.params``，执行期再叠加 run 级 ``--params``）；
     - ``on_fail``：该步**显式**声明的失败策略；``None`` = 没声明、继承 run/方案级
-      ``stop_on_fail``（不能在这里补 ``"stop"``，否则老用例行为就变了）。
+      ``stop_on_fail``（不能在这里补 ``"stop"``，否则老用例行为就变了）；
+    - ``expect``：该步声明的**期望**（REQS-0044 §4.2，声明式断言清单）。规划器只做
+      "原样带上"，判不判由执行器按"有没有观测 + 有没有期望"决定（双轨兼容）——
+      规划器**不许**提前判 pass/fail：它离线运行、没有观测可比。
     """
 
     block_id: str
@@ -285,6 +289,7 @@ class PlannedBlock:
     step_id: str = ""
     params: dict[str, Any] = field(default_factory=dict)
     on_fail: str | None = None
+    expect: list[dict[str, Any]] = field(default_factory=list)
 
     def resolved_on_fail(self, run_default: bool = True) -> str:
         """本步实际生效的失败策略：显式声明优先，否则取 run 级 ``stop_on_fail``。"""
@@ -293,8 +298,14 @@ class PlannedBlock:
             return self.on_fail
         return "stop" if run_default else "continue"
 
+    @property
+    def declares_expect(self) -> bool:
+        """本步是否声明了期望（空清单 = 没判据，走旧路径）。"""
+
+        return bool(self.expect)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        dumped = {
             "block_id": self.block_id,
             "step_id": self.step_id or self.block_id,
             "runnable": self.runnable,
@@ -305,6 +316,12 @@ class PlannedBlock:
             "params": dict(self.params),
             "on_fail": self.on_fail,
         }
+        if self.expect:
+            # 只在声明了期望时才多这个键：老用例（``blocks[]`` 展开、没有 expect）的
+            # plan 快照保持**逐字不变**（test_planner 有一条字节兼容守门），
+            # 新用例则能把判据带进 CLI / API 的 plan 预览里。
+            dumped["expect"] = [dict(item) for item in self.expect]
+        return dumped
 
 
 def describe_facts(state_map: Mapping[str, FactValue]) -> str:
@@ -394,6 +411,9 @@ def plan(
                 step_id=step.id,
                 params=dict(step.params),
                 on_fail=step.on_fail if step.declares_on_fail else None,
+                # 期望原样带上（声明式清单）：规划层没有观测，**不**在这里判，
+                # 由执行器按"块给了观测 + 本步声明了期望"决定走不走求值器
+                expect=normalize_expects(step.expect),
             )
         )
 

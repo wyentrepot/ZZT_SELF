@@ -6,7 +6,7 @@
 >  **尤其是列出 archive.add 这种名字，压根无法被用户理解**。」
 
 所以本文件守四件事：
-1. **16 块全覆盖**映射成业务动作，且**任何输出里都不许出现块 id**（D11-2 是硬约束）；
+1. **全部声明块全覆盖**映射成业务动作，且**任何输出里都不许出现块 id**（D11-2 是硬约束）；
 2. 四类失败原因（超时 / 判据不成立 / 台架不具备 / 说不清）各给人话短语；
 3. 四种 verdict 的一句话 headline 与 REQS 例子逐字一致；
 4. 空输入 / 未知块 id 不崩、不假 pass、不编证据路径。
@@ -31,7 +31,7 @@ from case_runner.core.report import (
     summarize_run,
 )
 
-#: 16 块的业务动作映射（REQS D11-2 逐条点名的那几个必须在这里躺着）
+#: 全部声明块的业务动作映射（REQS D11-2 逐条点名的那几个必须在这里躺着）
 EXPECTED_ACTIONS = {
     "fix.simcon_session": "台架自检（模拟集中器）",
     "fix.simeter_session": "台架自检（模拟电表开口）",
@@ -49,6 +49,13 @@ EXPECTED_ACTIONS = {
     "meter.read_645": "抄表",
     "meter.brain_local": "表端自检",
     "nwk.active_registration": "主动注册（搜表）",
+    "meter.read_698": "抄表（698）",
+    "meter.batch_read": "并发抄表",
+    "gate.multi_frame_110": "并发多帧检查",
+    "gate.concurrent_109": "并发帧数检查",
+    "param.init_01h_f2": "参数初始化",
+    "bench.simeter_protocol": "台架协议切换（模拟电表）",
+    "sta.meter_protocol": "表口协议态判读",
 }
 
 #: 块声明目录（只读：用来守「映射不许和声明漂移」）
@@ -90,12 +97,12 @@ def _assert_no_leak(*texts: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 1. 块 → 业务动作（16 块全覆盖 + 未知块不泄漏）
+# 1. 块 → 业务动作（全部声明块全覆盖 + 未知块不泄漏）
 # --------------------------------------------------------------------------- #
 
 
-def test_action_label_covers_all_16_blocks():
-    assert len(EXPECTED_ACTIONS) == 16
+def test_action_label_covers_all_declared_blocks():
+    assert len(EXPECTED_ACTIONS) == 23
     assert dict(report.BLOCK_ACTIONS) == EXPECTED_ACTIONS
 
     for block_id, expected in EXPECTED_ACTIONS.items():
@@ -692,4 +699,4 @@ def test_public_api_is_exported_from_core_package():
         assert callable(getattr(core, name)), name
 
     assert isinstance(report.BLOCK_ACTIONS, dict)
-    assert len(report.BLOCK_ACTIONS) == 16
+    assert len(report.BLOCK_ACTIONS) == 23

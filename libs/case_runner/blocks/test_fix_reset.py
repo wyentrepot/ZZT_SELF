@@ -34,6 +34,12 @@ from case_runner.core.models import (
     CaseStep,
     FactSpec,
 )
+from case_runner.core.expect import (
+    ENVIRONMENT_REASON_CODES,
+    OBS_INCOMPLETE,
+    Observation,
+    evaluate,
+)
 from case_runner.core.planner import FACT_NO, FACT_UNKNOWN, FACT_YES, FactsContext, FactValue
 from case_runner.core.registry import (
     clear_registries,
@@ -44,6 +50,21 @@ from case_runner.core.registry import (
 )
 
 FAKE_BASE = "http://127.0.0.1:19302"
+
+
+#: ``fix.simeter_session`` 步骤期望的单一口径（表口必须就绪）
+READY_EXPECT = [{"op": "eq", "field": "表口就绪", "value": True}]
+
+
+def step_state_of(result: BlockResult, expects) -> str:
+    """REQS-0044 观测化：块结果 → 步骤态（evaluate 的便捷封装，供测试模拟调用方判据）。
+
+    覆盖行为说明（D7-1）：旧断言「块 state==pass/fail」删除 —— 已迁移块只报观测，
+    结论由「期望 vs 观测」产出（core.expect.evaluate）。本助手把每个测试里原来的
+    块判据改写成对应的步骤期望，语义逐条对齐。
+    """
+    return evaluate(result.observation, expects).state
+
 NO_ENV = "__CASE_RUNNER_TEST_NO_BASE_URL__"
 
 
@@ -142,8 +163,10 @@ def test_fix_simeter_session_passes_when_bench_online():
     ctx[fix.EXTRAS_SIMETER] = _simeter(_simeter_online())
     result = get_block(fix.BLOCK_SIMETER_SESSION)({"mapping_id": "listener"}, ctx)
     assert isinstance(result, BlockResult)
-    assert result.state == BLOCK_PASS
-    assert result.detail.startswith("simeter 在线")
+    # 0044 观测化：表口就绪 → 完整观测 + 期望「表口就绪=true」成立；事实值仍 yes
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("表口就绪") is True
+    assert step_state_of(result, [{"op": "eq", "field": "表口就绪", "value": True}]) == BLOCK_PASS
     assert result.facts[fix.FACT_SIMETER_ONLINE].state == FACT_YES
 
 
@@ -152,9 +175,11 @@ def test_fix_simeter_session_skipped_when_subapp_missing():
     ctx = RunContext()
     ctx[fix.EXTRAS_SIMETER] = _simeter({})        # 默认 404 = 子应用未挂载
     result = get_block(fix.BLOCK_SIMETER_SESSION)({}, ctx)
-    assert result.state == BLOCK_SKIPPED
-    assert "bench.simeter_online=no" in result.detail
-    assert "未挂载" in result.detail
+    # 0044 观测化：子应用未挂载 = 台架不具备 → 原因码 bench_unreachable → 步骤 skipped
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert "未挂载" in result.observation.detail
+    assert step_state_of(result, [{"op": "eq", "field": "表口就绪", "value": True}]) == BLOCK_SKIPPED
 
 
 def test_fix_simeter_session_skipped_but_unknown_when_unreachable():
@@ -164,9 +189,10 @@ def test_fix_simeter_session_skipped_but_unknown_when_unreachable():
     ctx[fix.EXTRAS_SIMETER].transport = FakeTransport(
         errors={SIMETER_STATUS: ConnectionRefusedError("refused")})
     result = get_block(fix.BLOCK_SIMETER_SESSION)({}, ctx)
-    assert result.state == BLOCK_SKIPPED
-    assert "bench.simeter_online=unknown" in result.detail, (
-        "连不上 = 不知道，不能记成 no，更不能记成 pass")
+    assert result.observation is not None
+    # 连不上 = 台架不具备（bench_unreachable）：步骤 skipped，绝不折 pass
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert step_state_of(result, [{"op": "eq", "field": "表口就绪", "value": True}]) == BLOCK_SKIPPED
 
 
 def test_fix_simeter_require_serial_open_is_strict():
@@ -184,9 +210,11 @@ def test_fix_simcon_session_skipped_when_service_unavailable():
     ctx = RunContext()
     ctx[fix.EXTRAS_SIMCON] = _simcon({SIMCON_STATUS: (503, {"detail": "模块串口服务未启用"})})
     result = get_block(fix.BLOCK_SIMCON_SESSION)({}, ctx)
-    assert result.state == BLOCK_SKIPPED
+    assert result.observation is not None
+    # 503 = 台架不具备 → bench_unreachable（步骤 skipped）；事实值仍 unknown
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
     assert result.facts[fix.FACT_SIMCON_ONLINE].state == FACT_UNKNOWN
-    assert "503" in result.detail
+    assert "503" in result.observation.detail
 
 
 def test_fix_simcon_session_passes_when_online():
@@ -194,7 +222,9 @@ def test_fix_simcon_session_passes_when_online():
     ctx = RunContext()
     ctx[fix.EXTRAS_SIMCON] = _simcon(_simcon_online())
     result = get_block(fix.BLOCK_SIMCON_SESSION)({}, ctx)
-    assert result.state == BLOCK_PASS
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("simcon就绪") is True
+    assert step_state_of(result, [{"op": "eq", "field": "simcon就绪", "value": True}]) == BLOCK_PASS
     assert result.facts[fix.FACT_SIMCON_ONLINE].state == FACT_YES
 
 
@@ -258,8 +288,18 @@ def test_execute_case_bench_unknown_is_skipped_not_pass():
         "id": fix.BLOCK_SIMETER_SESSION, "title": "台架", "action": {"kind": "probe_bench"},
     })
     ctx = RunContext(block_specs={spec.id: spec})
-    ctx[fix.EXTRAS_SIMETER] = _simeter({})   # 404 → no → skipped
-    result = execute_case(_case([fix.BLOCK_SIMETER_SESSION]), ctx)
+    ctx[fix.EXTRAS_SIMETER] = _simeter({})   # 404 → 台架不具备
+    # 0044 观测化：blocked 语义走「步骤期望 + 观测原因码」——已迁移块不再自己出 skipped，
+    # 步骤声明了期望而观测只给 bench_unreachable 原因码 → skipped → blocked
+    case = CaseSpec(
+        id="case.bench", title="t",
+        steps=[CaseStep(no=1, do="台架自检", expect="表口就绪")],
+        plan=[{
+            "id": "s1", "block": fix.BLOCK_SIMETER_SESSION, "on_fail": "stop",
+            "expect": [{"op": "eq", "field": "表口就绪", "value": True}],
+        }],
+    )
+    result = execute_case(case, ctx)
     assert result.blocks[0].state == BLOCK_SKIPPED
     assert result.verdict == "blocked"
     assert result.counts["pass"] == 0, "绝不假 PASS"
@@ -706,7 +746,7 @@ def test_facts_count_and_full_declarations_stay_consistent():
     10H-F4 已抄数 + 10H-F2 信号品质两路交叉，与只判档案数的 ``nwk.onnet_count_min`` 分开。
     """
     report = loader.load_all(loader.DATA_DIR, strict=False)
-    assert len(report.facts) == 8, [spec.id for spec in report.facts]
+    assert len(report.facts) == 11, [spec.id for spec in report.facts]  # 0044：+3 事实链事实
     assert "nwk.nodes_online_min" in {spec.id for spec in report.facts}
     assert report.problems == [], report.problems
 
@@ -726,6 +766,7 @@ def _write(directory: Path, name: str, payload) -> Path:
 
 GOOD_BLOCK = {
     "id": "t.block", "title": "测试块", "needs": [], "provides": [],
+    "kind": "case", "side_effect": "none", "version": 1,
     "action": {"kind": "noop"},
 }
 
@@ -1033,9 +1074,9 @@ def test_simeter_session_reuses_open_port_without_any_open_call():
     """口已开 → pass，且**一次 open 都不发**（沿用已开口，不改动别人的会话）。"""
     bench = FakeSimeterBench(serial_open=True)
     result = _simeter_block(bench)
-    assert result.state == BLOCK_PASS
+    assert result.observation is not None and result.observation.complete
     assert bench.count("POST", SIMETER_OPEN_PATH) == 0, "口已开就不得再发 open"
-    assert "沿用已开口" in result.detail
+    assert "沿用已开口" in result.observation.detail
     assert result.facts[fix.FACT_SIMETER_ONLINE].state == FACT_YES
 
 
@@ -1043,7 +1084,7 @@ def test_simeter_session_opens_port_when_closed():
     """口未开 + ``ensure_open=true``（默认）→ 调一次 open_port → pass。"""
     bench = FakeSimeterBench(serial_open=False)
     result = _simeter_block(bench)
-    assert result.state == BLOCK_PASS
+    assert result.observation is not None and result.observation.complete
     assert bench.count("POST", SIMETER_OPEN_PATH) == 1
     assert bench.serial_open is True, "开口后工作台侧状态应变成「已打开」"
     assert result.facts[fix.FACT_SIMETER_ONLINE].state == FACT_YES
@@ -1053,19 +1094,21 @@ def test_simeter_session_keeps_port_open_for_following_meter_blocks():
     """块**不自动关端口**：detail 明说端口保持打开，且一次 close 都不发。"""
     bench = FakeSimeterBench(serial_open=False)
     result = _simeter_block(bench)
-    assert result.state == BLOCK_PASS
+    assert result.observation is not None and result.observation.complete
     assert bench.count("POST", SIMETER_CLOSE_PATH) == 0, "块不得自动关端口"
-    assert "端口保持打开" in result.detail
-    assert "供后续抄表块使用" in result.detail
+    assert "端口保持打开" in result.observation.detail
+    assert "供后续抄表块使用" in result.observation.detail
 
 
 def test_simeter_session_ensure_open_false_fails_when_closed():
     """``ensure_open=false``：只探测不开口；严格口径下口没开就是没就绪 → fail。"""
     bench = FakeSimeterBench(serial_open=False)
     result = _simeter_block(bench, {"ensure_open": False})
-    assert result.state == BLOCK_FAIL
+    # 0044 观测化：口没开 = 完整观测「表口就绪=False」→ 期望判 fail（不再由块直接判）
+    assert result.observation is not None and result.observation.complete
+    assert result.observation.values.get("表口就绪") is False
+    assert step_state_of(result, READY_EXPECT) == BLOCK_FAIL
     assert bench.count("POST", SIMETER_OPEN_PATH) == 0
-    assert "bench.simeter_online=no" in result.detail
     assert result.facts[fix.FACT_SIMETER_ONLINE].state == FACT_NO
 
 
@@ -1073,26 +1116,29 @@ def test_simeter_session_open_conflict_409_is_skipped():
     """409（串口被占/资源冲突）→ skipped，detail 点名「端口被占用」。"""
     bench = FakeSimeterBench(open_response=(409, {"detail": "串口被其他会话持有"}))
     result = _simeter_block(bench)
-    assert result.state == BLOCK_SKIPPED
-    assert "占用" in result.detail
-    assert result.facts[fix.FACT_SIMETER_ONLINE].state == FACT_NO
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert "占用" in result.observation.detail
+    assert step_state_of(result, READY_EXPECT) == BLOCK_SKIPPED
 
 
 def test_simeter_session_open_server_error_500_is_unknown():
     """其他 5xx → unknown（拿不到结论，绝不折算 pass）。"""
     bench = FakeSimeterBench(open_response=(500, {"detail": "串口写超时"}))
     result = _simeter_block(bench)
-    assert result.state == BLOCK_UNKNOWN
-    assert "http_500" in result.detail
-    assert result.state != BLOCK_PASS
+    # 5xx = 说不清 → 原因码 incomplete（绝不折 pass）
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INCOMPLETE
+    assert "http_500" in result.observation.detail
 
 
 def test_simeter_session_open_subapp_missing_404_is_skipped():
     """404（子应用未挂载）→ skipped：台架缺失不是设备失败。"""
     bench = FakeSimeterBench(open_response=(404, {"detail": "simeter 子应用未挂载"}))
     result = _simeter_block(bench)
-    assert result.state == BLOCK_SKIPPED
-    assert "404" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert "404" in result.observation.detail
 
 
 def test_simeter_session_open_unreachable_is_skipped():
@@ -1108,16 +1154,19 @@ def test_simeter_session_open_unreachable_is_skipped():
         FAKE_BASE, transport=boom, timeout=0.01, probe_timeout=0.01,
         retry_backoff=0.0, env_var=NO_ENV)
     result = get_block(fix.BLOCK_SIMETER_SESSION)({}, ctx)
-    assert result.state == BLOCK_SKIPPED
-    assert "bench.simeter_online=unknown" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert step_state_of(result, READY_EXPECT) == BLOCK_SKIPPED
 
 
 def test_simeter_session_open_ok_but_recheck_closed_fails():
     """open 返回 200 但复核 ``serial_open=false`` → fail（不能凭 open 的 ok 判 pass）。"""
     bench = FakeSimeterBench(serial_open=False, open_effect=False)
     result = _simeter_block(bench)
-    assert result.state == BLOCK_FAIL
-    assert "复核" in result.detail
+    # open 返回 200 但复核 serial_open=false → 完整观测「表口就绪=False」→ 期望判 fail
+    assert result.observation is not None and result.observation.complete
+    assert "复核" in result.observation.detail
+    assert step_state_of(result, READY_EXPECT) == BLOCK_FAIL
     assert result.facts[fix.FACT_SIMETER_ONLINE].state == FACT_NO
 
 
@@ -1125,7 +1174,7 @@ def test_simeter_session_passes_port_param_as_open_mapping_id():
     """``port`` 参数（mapping_id）必须原样传给 open_port —— 绝不写死物理串口。"""
     bench = FakeSimeterBench(serial_open=False)
     result = _simeter_block(bench, {"port": "meter-485"})
-    assert result.state == BLOCK_PASS
+    assert result.observation is not None and result.observation.complete
     assert bench.open_bodies() == [{"mapping_id": "meter-485"}]
 
 
@@ -1173,7 +1222,16 @@ def test_execute_case_simeter_session_opens_port_per_declaration():
     ctx[fix.EXTRAS_SIMETER] = SimeterCapability(
         FAKE_BASE, transport=bench, timeout=1.0, probe_timeout=1.0,
         retry_backoff=0.0, env_var=NO_ENV)
-    result = execute_case(_case([fix.BLOCK_SIMETER_SESSION]), ctx)
+    # 0044 观测化：步骤声明期望（表口就绪=true），块只报观测
+    case = CaseSpec(
+        id="case.simeter", title="t",
+        steps=[CaseStep(no=1, do="台架自检（开口）", expect="表口就绪")],
+        plan=[{
+            "id": "s1", "block": fix.BLOCK_SIMETER_SESSION, "on_fail": "stop",
+            "expect": [{"op": "eq", "field": "表口就绪", "value": True}],
+        }],
+    )
+    result = execute_case(case, ctx)
     assert result.blocks[0].state == BLOCK_PASS
     assert bench.open_bodies() == [{"mapping_id": "simeter"}]
     assert result.verdict == "pass"

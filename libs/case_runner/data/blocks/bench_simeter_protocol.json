@@ -1,0 +1,37 @@
+{
+  "id": "bench.simeter_protocol",
+  "title": "台架：设/读模拟电表协议模式（jzjc.protocol_type，02H=645-2007/03H=698.45；写后回读确认；只报观测不判定）",
+  "needs": [
+    "bench.simeter_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "bench_protocol",
+    "capability": "simeter",
+    "params": {
+      "protocol": 3
+    }
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "目标协议",
+        "切换前模式",
+        "切换动作",
+        "协议模式",
+        "协议名称"
+      ],
+      "note": "判据在步骤期望（协议模式==期望值，如 eq 协议模式=3；切换确认=true 仅写路径给出）；出处 CASE-BACKLOG §G-6 + sim_meter/api.py:102/109"
+    }
+  ],
+  "tags": [
+    "bench",
+    "protocol",
+    "698"
+  ],
+  "kind": "setup",
+  "side_effect": "reversible",
+  "version": 1,
+  "observation_only": true
+}

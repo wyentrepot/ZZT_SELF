@@ -1,0 +1,15 @@
+{
+  "id": "archive.written",
+  "title": "本轮已成功完成从节点档案写入（由 archive.add 步骤运行期回写；预检/独立探测不探测，恒 unknown，绝不假 yes）",
+  "probe": "archive.written",
+  "params_schema": {
+    "type": "object",
+    "properties": {
+      "meter_addr": {
+        "type": "string",
+        "description": "触发写入的表地址（留痕用；事实结论不按参数求值——由块 provides 回写）"
+      }
+    },
+    "additionalProperties": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "sta.addr_obtained",
+  "title": "本轮 STA 已取得表地址（由 meter.addr_probe 步骤运行期回写；预检/独立探测不探测，恒 unknown，绝不假 yes）",
+  "probe": "sta.addr_obtained",
+  "params_schema": {
+    "type": "object",
+    "additionalProperties": true
+  }
+}

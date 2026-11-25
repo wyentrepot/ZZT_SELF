@@ -33,7 +33,14 @@ import pytest
 from case_runner.blocks import archive, common, facts_nwk, nwk
 from case_runner.core import defaults
 from case_runner.core.executor import BLOCK_TO_OUTCOME, RunContext, execute_case
-from case_runner.core.models import BlockSpec, CaseSpec, CaseStep, Health
+from case_runner.core.expect import (
+    ENVIRONMENT_REASON_CODES,
+    OBS_INCOMPLETE,
+    OBS_INVALID_PARAM,
+    OBS_TIMEOUT,
+    evaluate,
+)
+from case_runner.core.models import BLOCK_FAIL, BLOCK_PASS, BLOCK_SKIPPED, BLOCK_UNKNOWN, BlockSpec, CaseSpec, CaseStep, Health
 from case_runner.core.planner import FactValue, FactsContext
 from case_runner.core.registry import (
     Duplicate,
@@ -53,6 +60,13 @@ from sim_concentrator.frame_codec import decode_frame
 
 #: **档案侧**人读地址（10H-F2 档案表里展示的那一串；被 1376.2 编码器整体反转）
 ADDR = "000000000001"
+
+#: 0044 观测化助手：块结果 → 步骤态（模拟调用方判据；D7-1 改写说明见各测试 docstring）
+ADD_CONFIRM_EXPECT = [{"op": "eq", "field": "写入确认", "value": "确认"}]
+
+
+def step_state_of(result, expects=None):
+    return evaluate(result.observation, expects or ADD_CONFIRM_EXPECT).state
 ADDR2 = "000000000002"
 #: **电表侧** 645 人读地址（调用方只传这个；块内部用 ``common.archive_addr_of``
 #: 换算成上面那串档案地址 = 6 字节整体反转，台架实测 123456789012 ↔ 129078563412）
@@ -348,11 +362,16 @@ def test_archive_add_confirm_received_but_not_landed_is_fail():
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
 
-    assert result.state == "fail", result.detail
-    assert "确认已收到但档案未落地" in result.detail
-    assert ADDR in result.detail
-    assert result.facts == {}          # 失败块绝不回写 provides 事实
-    assert len(fake.calls) == 3        # 三次独立提交：幂等预查 / 建档 / 回查
+    # 0044 改写：建档块报「写入确认=确认」（落地判据搬到查询步 §8.1 第1条）；
+    # 「回了确认却没落地」的假通过由查询步抓住（期望 在档=true vs 观测 在档=False → fail）
+    assert step_state_of(result) == BLOCK_PASS, result.detail
+    assert result.observation.values.get("写入确认") == "确认"
+
+    fake2 = FakeSimcon(job_ok(step_pass(raw_archive_table(1, [ADDR2]))))
+    query = archive.block_query(
+        action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR), ctx_with(fake2))
+    assert step_state_of(query, [{"op": "eq", "field": "在档", "value": True}]) == BLOCK_FAIL
+    assert query.observation.values.get("在档") is False
 
 
 def test_archive_add_double_criterion_passes_and_reports_both():
@@ -364,10 +383,10 @@ def test_archive_add_double_criterion_passes_and_reports_both():
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=3),
                                ctx_with(fake))
 
-    assert result.state == "pass", result.detail
-    assert "双判据成立" in result.detail
-    assert result.facts["archive.contains"]["state"] == "yes"
-    assert result.evidence_ids == ["job-pre", "job-add", "job-query"]
+    assert step_state_of(result) == BLOCK_PASS, result.detail
+    assert result.observation.values.get("写入确认") == "确认"
+    assert result.facts["archive.written"]["state"] == "yes"
+    assert result.evidence_ids == ["job-pre", "job-add"]
     # 第 0 次是幂等预查（只读 10H-F2），第 1 次才是建档
     assert fake.calls[0][0]["send"]["afn"] == 0x10 and fake.calls[0][0]["send"]["fn"] == 2
     # 下发的建档帧参数就是块参数（语义化构帧，不写死 hex）
@@ -383,7 +402,9 @@ def test_archive_add_declaration_does_not_provide_parameterized_fact():
     块内部已做「确认 + 10H-F2 回查」双判据，provides 本属冗余。"""
     raw = json.loads(
         (DATA_DIR / "blocks" / "archive_add.json").read_text(encoding="utf-8"))
-    assert raw["provides"] == [], raw["provides"]
+    # 0044 AC-5：provides 带非参数化事实 archive.written；仍不得提供参数化 archive.contains
+    assert "archive.contains" not in raw["provides"], raw["provides"]
+    assert "archive.written" in raw["provides"], raw["provides"]
     assert raw["needs"] == ["bench.simcon_online"]     # needs 是台架事实，参数无区分性
 
 
@@ -406,8 +427,10 @@ def test_archive_add_does_not_poison_fact_cache_for_other_addresses():
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),
     )
     case = CaseSpec(
-        id="case.add", title="加档案", blocks=["archive.add"],
-        steps=[CaseStep(no=1, do="下发 11H-F1 建档", expect="档案落地可回查")],
+        id="case.add", title="加档案",
+        steps=[CaseStep(no=1, do="下发 11H-F1 建档", expect="写入确认=确认")],
+        plan=[{"id": "s1", "block": "archive.add", "on_fail": "stop",
+               "expect": [{"op": "eq", "field": "写入确认", "value": "确认"}]}],
     )
     facts = FactsContext(probe=lambda fact_id, params: FactValue(state="yes", detail="fake"))
     ctx = RunContext(facts_ctx=facts, block_specs={"archive.add": spec},
@@ -417,6 +440,8 @@ def test_archive_add_does_not_poison_fact_cache_for_other_addresses():
     assert outcome.verdict == "pass", [b.to_dict() for b in outcome.blocks]
     assert ctx.facts_ctx.peek(archive.FACT_CONTAINS) is None, (
         "archive.contains 是参数化事实（addr），块 pass 也不得回写缓存")
+    # 0044 AC-5：非参数化事实 archive.written 由 provides 通道回写（步骤成立后）
+    assert ctx.facts_ctx.peek("archive.written") is not None
     # 声明本身也必须是无害的：loader 结构校验不许报 provides 参数化事实
     report = loader.load_all(loader.DATA_DIR, strict=False)
     assert not [p for p in report.problems if "参数化事实" in p], report.problems
@@ -429,8 +454,11 @@ def test_archive_add_confirm_timeout_is_fail_when_frame_was_actually_sent():
     )
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
-    assert result.state == "fail"
-    assert "已发出" in result.detail and SENT_HEX in result.detail
+    # 0044 改写（D7-1 说明）：「帧已发出但无应答」按 0042 §3.5 归「说不清」（超时无应答
+    # → unknown → inconclusive）；旧「fail」口径是块内判据时代的产物，否认帧才判 fail
+    assert step_state_of(result) == BLOCK_UNKNOWN, result.observation.detail
+    assert result.observation.reason_code == OBS_TIMEOUT
+    assert result.observation.values.get("写入确认") == "未收到"
 
 
 def test_archive_add_deny_frame_is_fail_with_error_word():
@@ -440,9 +468,13 @@ def test_archive_add_deny_frame_is_fail_with_error_word():
     )
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
-    assert result.state == "fail"
-    assert "否认帧 00H-F2" in result.detail
-    assert "表号不存在" in result.detail          # 错误状态字已解出人话
+    # 否认帧是完整观测（写入确认=否认）→ 期望「确认」判 fail
+    assert step_state_of(result) == BLOCK_FAIL, result.observation.detail
+    assert result.observation.values.get("写入确认") == "否认"
+    assert result.observation.values.get("否认错误字") not in (None, "?"), (
+        result.observation.values)  # 错误状态字已解出（7 / "7" 视解析器而定）
+    assert "否认帧 00H-F2" in result.observation.detail
+    assert "表号不存在" in result.observation.detail
 
 
 def test_archive_add_missing_addr_is_fail_before_any_frame(monkeypatch):
@@ -454,8 +486,9 @@ def test_archive_add_missing_addr_is_fail_before_any_frame(monkeypatch):
     monkeypatch.setattr(archive, "default_meter_addr", lambda: "")
     fake = FakeSimcon()
     result = archive.block_add(action_of("11", 1, action="add", protocol=2), ctx_with(fake))
-    assert result.state == "fail"
-    assert "缺少必填参数 meter_addr" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INVALID_PARAM
+    assert "缺少必填参数 meter_addr" in result.observation.detail
     assert fake.calls == []                        # 参数不全 → 一帧都不发
 
 
@@ -463,7 +496,9 @@ def test_archive_add_bad_protocol_is_fail():
     fake = FakeSimcon()
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=5),
                                ctx_with(fake))
-    assert result.state == "fail" and "protocol" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INVALID_PARAM
+    assert "protocol" in result.observation.detail
     assert fake.calls == []
 
 
@@ -471,39 +506,45 @@ def test_archive_add_declared_afn_mismatch_is_fail():
     """声明写成 12H-F1 却要跑 archive.add → 明确报错（AFN 记法坑）。"""
     fake = FakeSimcon()
     result = archive.block_add(action_of("12", 1, meter_addr=METER_ADDR), ctx_with(fake))
-    assert result.state == "fail"
-    assert "只支持 AFN=0x11" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INVALID_PARAM
+    assert "只支持 AFN=0x11" in result.observation.detail
     assert fake.calls == []
 
 
 def test_archive_add_truncated_window_is_unknown_not_fail():
-    """只查到一页且 total 更大 → 不能断定「不存在」，必须 unknown。"""
+    """幂等预查被窗口截断（只查到一页且 total 更大）→ 不能当作「不存在」去下发，
+    观测原因码 incomplete（不完整），建档帧一帧不发。
+
+    覆盖行为说明（D7-1）：原「下发后回查被截断」场景随「确认+回查双判据拆出」消失，
+    截断语义保留在幂等预查（下发决策）与查询步（在档判据）两处。
+    """
     fake = FakeSimcon(
-        # 幂等预查必须**查全**（total=1 且已查到 1 条）才敢说「不存在」；
-        # 真正要验的是**下发后**那次回查被窗口截断 → unknown
-        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),
-        job_ok(step_pass(raw_confirm())),
-        job_ok(step_pass(raw_archive_table(40, [ADDR2]))),
+        job_ok(step_pass(raw_archive_table(40, [ADDR2]))),   # 预查：total=40 只查到 1 条
     )
     result = archive.block_add(
         action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2, count=1, max_pages=1),
         ctx_with(fake),
     )
-    assert result.state == "unknown", result.detail
-    assert "未覆盖全部档案" in result.detail
+    assert step_state_of(result) == BLOCK_UNKNOWN, result.observation.detail
+    assert result.observation.reason_code == OBS_INCOMPLETE
+    assert "未查全" in result.observation.detail
+    assert len(fake.calls) == 1, "预查未查全不得下发 11H-F1"
 
 
 def test_archive_add_query_answer_without_total_is_unknown_not_fail():
     """10H-F2 应答解析不出「从节点总数量」→ 不能当空表判 FAIL。"""
     fake = FakeSimcon(
-        job_ok(step_pass(raw_archive_table(1, [ADDR2]))),        # 幂等预查：已查全、不含 ADDR
-        job_ok(step_pass(raw_confirm())),
+        # 0044：应答解析不出「从节点总数量」发生在幂等预查（下发决策）——
+        # 查不全 ≠ 不存在 → 观测不完整，绝不据此下发 11H-F1
         job_ok(step_pass(build_frame(direction="up", afn=0x10, fn=2, appdata=b""))),
     )
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
-    assert result.state == "unknown", result.detail
-    assert "从节点总数量" in result.detail
+    assert step_state_of(result) == BLOCK_UNKNOWN, result.observation.detail
+    assert result.observation.reason_code == OBS_INCOMPLETE
+    assert "从节点总数量" in result.observation.detail
+    assert len(fake.calls) == 1, "预查不可判定不得下发建档帧"
 
 
 # --------------------------------------------------------------------------- #
@@ -583,29 +624,42 @@ def test_archive_query_contains_addr_pass_and_absent_fail():
     fake = FakeSimcon(job_ok(step_pass(raw_archive_table(2, [ADDR, ADDR2]))))
     ok = archive.block_query(
         action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR), ctx_with(fake))
-    assert ok.state == "pass", ok.detail
+    # 0044 AC-2：含/不含由步骤期望判 —— 同一观测，期望 在档=true → pass
+    assert ok.observation is not None and ok.observation.complete
+    assert ok.observation.values.get("在档") is True
+    assert step_state_of(ok, [{"op": "eq", "field": "在档", "value": True}]) == BLOCK_PASS
 
     fake2 = FakeSimcon(job_ok(step_pass(raw_archive_table(1, [ADDR2]))))
     bad = archive.block_query(
         action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR), ctx_with(fake2))
-    assert bad.state == "fail" and "不含" in bad.detail
+    # 同一块、相反期望：在档=false 是另一条流程（archive_absent）的判据 → 那条判 pass
+    assert bad.observation.values.get("在档") is False
+    assert step_state_of(bad, [{"op": "eq", "field": "在档", "value": True}]) == BLOCK_FAIL
+    assert step_state_of(bad, [{"op": "eq", "field": "在档", "value": False}]) == BLOCK_PASS
+    assert "不含" in bad.observation.detail
 
 
 def test_archive_query_expect_total_and_expect_empty():
+    # 0044 改写（D7-1）：expect_total/expect_empty 判据搬进步骤期望（观测字段「总数」），
+    # 块只报 总数/已查条数；四种情形的覆盖保持不变
     fake = FakeSimcon(job_ok(step_pass(raw_archive_table(3, [ADDR, ADDR2]))))
-    assert archive.block_query(action_of("10", 2, expect_total=3), ctx_with(fake)).state == "pass"
+    ok = archive.block_query(action_of("10", 2, start=0, count=16), ctx_with(fake))
+    assert ok.observation.values.get("总数") == 3
+    assert step_state_of(ok, [{"op": "eq", "field": "总数", "value": 3}]) == BLOCK_PASS
 
     fake_bad = FakeSimcon(job_ok(step_pass(raw_archive_table(3, [ADDR]))))
-    bad = archive.block_query(action_of("10", 2, expect_total=0), ctx_with(fake_bad))
-    assert bad.state == "fail" and "总数不符" in bad.detail
+    bad = archive.block_query(action_of("10", 2, start=0, count=16), ctx_with(fake_bad))
+    assert step_state_of(bad, [{"op": "eq", "field": "总数", "value": 0}]) == BLOCK_FAIL
+    assert step_state_of(bad, [{"op": "ne", "field": "总数", "value": 0}]) == BLOCK_PASS
 
     fake_empty = FakeSimcon(job_ok(step_pass(raw_archive_table(0, []))))
-    empty = archive.block_query(action_of("10", 2, expect_empty=True), ctx_with(fake_empty))
-    assert empty.state == "pass" and "档案表为空" in empty.detail
+    empty = archive.block_query(action_of("10", 2, start=0, count=16), ctx_with(fake_empty))
+    assert empty.observation.values.get("总数") == 0
+    assert step_state_of(empty, [{"op": "eq", "field": "总数", "value": 0}]) == BLOCK_PASS
 
     fake_not_empty = FakeSimcon(job_ok(step_pass(raw_archive_table(1, [ADDR]))))
-    not_empty = archive.block_query(action_of("10", 2, expect_empty=True), ctx_with(fake_not_empty))
-    assert not_empty.state == "fail" and "期望空表" in not_empty.detail
+    not_empty = archive.block_query(action_of("10", 2, start=0, count=16), ctx_with(fake_not_empty))
+    assert step_state_of(not_empty, [{"op": "eq", "field": "总数", "value": 0}]) == BLOCK_FAIL
 
 
 def test_archive_query_without_any_criterion_is_unknown_not_pass():
@@ -613,28 +667,30 @@ def test_archive_query_without_any_criterion_is_unknown_not_pass():
     只能 unknown；判 pass 就是「什么都没验证的假 PASS」。"""
     fake = FakeSimcon(job_ok(step_pass(raw_archive_table(2, [ADDR]))))
     result = archive.block_query(action_of("10", 2, start=0, count=16), ctx_with(fake))
-    assert result.state == "unknown", result.detail
-    assert result.state != "pass"
-    assert "未指定 meter_addr/expect_total/expect_empty" in result.detail
-    assert "无法断言档案内容" in result.detail
-    # 查询应答仍然可解析（detail 里要给出看到的事实，便于人工复核）
-    assert "total=2" in result.detail
+    # 0044 改写：块只报表内容观测（没给 addr 就不出「在档」字段）；
+    # 「无判据不判决」落在两层——求值器（未声明期望 → unknown）+ loader 门禁（AC-6）
+    assert result.observation is not None
+    assert "在档" not in result.observation.values
+    assert "total=2" in result.observation.detail
     assert fake.calls, "查询帧照常下发，不下发就无从说「看到了档案表」"
+    no_criterion = evaluate(result.observation, [])
+    assert no_criterion.state == BLOCK_UNKNOWN, (
+        "没声明期望 → 求值器 unknown，绝不 pass")
 
 
 def test_archive_query_any_single_criterion_switches_back_to_judging():
     """三选一任一给出 → 按原判据（unknown 只是「没有判据」的兜底，不是新常态）。"""
-    for params, expected in (
-        ({"meter_addr": METER_ADDR}, "pass"),
-        ({"expect_total": 2}, "pass"),
-        ({"expect_empty": True}, "fail"),      # 给了空表判据 → 判 fail，不再兜底 unknown
-        ({"count": 0}, "fail"),                # count=0 等价 expect_empty
+    # 0044 改写：判据全在步骤期望（观测字段 在档/总数）；count=0 不再是判据入口
+    for params, expects, wanted in (
+        ({"meter_addr": METER_ADDR}, [{"op": "eq", "field": "在档", "value": True}], BLOCK_PASS),
+        ({"expect_total": 2}, [{"op": "eq", "field": "总数", "value": 2}], BLOCK_PASS),
+        ({"expect_empty": True}, [{"op": "eq", "field": "总数", "value": 0}], BLOCK_FAIL),
     ):
         fake = FakeSimcon(job_ok(step_pass(raw_archive_table(2, [ADDR]))))
         options = {"start": 0, "count": 16}
-        options.update(params)          # 给了 count=0 就用 0（覆盖默认 16）
+        options.update(params)
         result = archive.block_query(action_of("10", 2, **options), ctx_with(fake))
-        assert result.state == expected, (params, result.detail)
+        assert step_state_of(result, expects) == wanted, (params, result.detail)
 
 
 def test_archive_query_paginates_until_total_covered():
@@ -645,9 +701,82 @@ def test_archive_query_paginates_until_total_covered():
     )
     result = archive.block_query(
         action_of("10", 2, start=0, count=1, meter_addr=METER_ADDR), ctx_with(fake))
-    assert result.state == "pass", result.detail
+    assert step_state_of(result, [{"op": "eq", "field": "在档", "value": True}]) == BLOCK_PASS
+    assert result.observation.complete
+    assert result.observation.values.get("在档") is True
     assert len(fake.calls) == 2
     assert fake.calls[1][0]["send"]["params"] == {"start": 1, "count": 1}
+
+
+def _raw_archive_table_with_protocols(total: int, addrs, protocols) -> bytes:
+    """10H-F2 上行，节点信息字带协议类型（D13~D11）：REQS-0043 §G-6 观测增强样本（E3 位段校正后口径）。
+
+    ``protocols`` 逐节点协议类型字节值（0 透明/1 645-1997/2 645-2007/3 698.45）；
+    信号品质固定 1、中继级别 2（同 raw_archive_table 的 0x12 低字节口径）。
+    """
+    payload = bytearray(_le16(total)) + bytes([len(addrs)])
+    for addr, proto in zip(addrs, protocols):
+        info = ((int(proto) & 0x07) << 11) | 0x12
+        payload += _bcd_bytes(addr) + _le16(info)
+    return build_frame(direction="up", afn=0x10, fn=2, appdata=bytes(payload))
+
+
+def test_archive_query_surfaces_protocol_type_of_hit_addr():
+    """§G-6 档案协议核验：命中地址的节点信息 D13~D11 透出为「在档协议类型」。
+
+    样本：698.45 档案（protocol=3，meter_698_smoke s3c 判据口径）+ 一条 645 档案
+    （protocol=2）；步骤期望 在档协议类型=3 → pass，=2 → fail（同份观测双向）。
+    """
+    table = _raw_archive_table_with_protocols(
+        2, [ADDR, ADDR2], [3, 2])
+    fake = FakeSimcon(job_ok(step_pass(table)))
+    result = archive.block_query(
+        action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR), ctx_with(fake))
+    values = result.observation.values
+    assert values.get("在档") is True
+    assert values.get("在档协议类型") == 3          # 电表 123456789012 → 档案地址 ADDR
+    assert step_state_of(result, [
+        {"op": "eq", "field": "在档协议类型", "value": 3}]) == BLOCK_PASS
+    assert step_state_of(result, [
+        {"op": "eq", "field": "在档协议类型", "value": 2}]) == BLOCK_FAIL
+
+    fake2 = FakeSimcon(job_ok(step_pass(table)))
+    other = archive.block_query(
+        action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR2), ctx_with(fake2))
+    assert other.observation.values.get("在档协议类型") == 2
+    assert step_state_of(other, [
+        {"op": "eq", "field": "在档协议类型", "value": 2}]) == BLOCK_PASS
+
+
+def test_archive_query_protocol_absent_when_addr_missing_or_info_unparsed():
+    """不猜：地址不在档（或在档但应答缺节点信息字段）→ 不出「在档协议类型」。"""
+    # 地址不在档：不出协议字段（判据 在档协议类型=3 → fail，不是 unknown 误导）
+    fake = FakeSimcon(job_ok(step_pass(raw_archive_table(1, [ADDR2]))))
+    result = archive.block_query(
+        action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR), ctx_with(fake))
+    assert result.observation.values.get("在档") is False
+    assert "在档协议类型" not in result.observation.values
+
+    # 在档但解析不出协议（节点信息字 = 0x12，协议位 D13~D11 = 0 透明）：如实透出 0
+    fake2 = FakeSimcon(job_ok(step_pass(raw_archive_table(1, [ADDR]))))
+    plain = archive.block_query(
+        action_of("10", 2, start=0, count=16, meter_addr=METER_ADDR), ctx_with(fake2))
+    assert plain.observation.values.get("在档协议类型") == 0
+
+    # 通用辅助单测：desc 缺「协议类型=」键 → None（绝不猜）
+    assert common.node_protocol_type({"desc": "信号品质=1 中继级别=2"}) is None
+    assert common.node_protocol_type({"desc": "信号品质=1 协议类型=3"}) == 3
+    assert common.node_protocol_type(None) is None
+
+
+def test_page_table_keeps_protocol_alongside_signal():
+    """快照层：nodes 逐节点带 addr/signal/protocol 三元（page_table 口径）。"""
+    table = _raw_archive_table_with_protocols(2, [ADDR, ADDR2], [3, 2])
+    parsed = decode_frame(table)
+    snap = common.page_table(parsed)
+    assert [node["protocol"] for node in snap["nodes"]] == [3, 2]
+    assert snap["nodes"][0]["addr"] == ADDR
+    assert snap["nodes"][0]["signal"] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -680,7 +809,7 @@ def test_archive_add_frame_carries_archive_addr_of_meter_addr():
         action_of("11", 1, action="add", meter_addr="123456789012", protocol=2),
         ctx_with(fake),
     )
-    assert result.state == "pass", result.detail
+    assert step_state_of(result) == BLOCK_PASS, result.detail
 
     sent = fake.calls[1][0]["send"]
     assert sent["params"]["addr"] == "129078563412"
@@ -726,7 +855,7 @@ def test_archive_add_prefers_assert_addr_over_config_default():
     params["_assert"] = [{"type": "archive_contains", "meter_addr": METER_ADDR}]
     result = archive.block_add(params, ctx_with(fake))
 
-    assert result.state == "pass", result.detail
+    assert step_state_of(result) == BLOCK_PASS, result.detail
     assert fake.calls[1][0]["send"]["params"]["addr"] == ADDR
 
 
@@ -741,7 +870,7 @@ def test_archive_add_falls_back_to_config_default_addr():
         job_ok(step_pass(raw_archive_table(1, [archive_addr]))),
     )
     result = archive.block_add(action_of("11", 1, action="add", protocol=2), ctx_with(fake))
-    assert result.state == "pass", result.detail
+    assert step_state_of(result) == BLOCK_PASS, result.detail
     assert fake.calls[1][0]["send"]["params"]["addr"] == archive_addr
 
 
@@ -751,8 +880,9 @@ def test_archive_add_rejects_invalid_given_addr_instead_of_using_default():
     result = archive.block_add(
         action_of("11", 1, action="add", meter_addr="12345", protocol=2), ctx_with(fake)
     )
-    assert result.state == "fail", result.detail
-    assert "非法" in result.detail and "12345" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code == OBS_INVALID_PARAM
+    assert "非法" in result.observation.detail and "12345" in result.observation.detail
     assert fake.calls == []          # 参数错 → 一帧都不发
 
 
@@ -1085,8 +1215,11 @@ def test_verify_409_is_skipped_and_post_is_not_retried():
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(cap))
 
-    assert result.state == "skipped", result.detail
-    assert "409" in result.detail
+    # 0044：环境类原因码（serial_busy）→ 步骤 skipped（聚合 blocked）
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert step_state_of(result) == BLOCK_SKIPPED, result.observation.detail
+    assert "409" in result.observation.detail
     posts = [call for call in calls if call[0] == "POST"]
     verify_posts = [c for c in posts if c[1].endswith("/verification-runs")]
     close_posts = [c for c in posts if c[1].endswith("/api/simcon/close")]
@@ -1117,8 +1250,11 @@ def test_frames_404_gives_skipped_not_pass():
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
 
-    assert result.state == "skipped", result.detail
-    assert "http_404" in result.detail
+    # 看不到应答帧 = 台架不具备条件（bench_unreachable）→ 步骤 skipped
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert step_state_of(result) == BLOCK_SKIPPED, result.observation.detail
+    assert "http_404" in result.observation.detail
     assert fake.frames_calls and fake.frames_calls[0]["afn"] == 0x00
 
 
@@ -1136,8 +1272,8 @@ def test_frames_log_supplies_missing_parsed_instead_of_trusting_pass():
     )
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
-    assert result.state == "pass", result.detail
-    assert "双判据成立" in result.detail
+    assert step_state_of(result) == BLOCK_PASS, result.detail
+    assert result.observation.values.get("写入确认") == "确认"
 
 
 def test_server_side_frame_build_failure_is_unknown_not_device_fail():
@@ -1181,8 +1317,11 @@ def test_bench_not_ready_is_skipped_not_fail(monkeypatch):
 
     block_result = archive.block_add(
         action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2))
-    assert block_result.state == "skipped", block_result.detail
-    assert "不就绪" in block_result.detail
+    # 能力门挡下 = 台架不具备（bench_unreachable）→ 步骤 skipped
+    assert block_result.observation is not None
+    assert block_result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert step_state_of(block_result) == BLOCK_SKIPPED, block_result.observation.detail
+    assert "不就绪" in block_result.observation.detail
 
     nwk_result = nwk.block_onnet_count(action_of("10", 1, min=1))
     assert nwk_result.state == "skipped", nwk_result.detail
@@ -1361,8 +1500,7 @@ def test_case_orchestration_archive_then_nwk():
     """用例编排：档案 → 组网重启 → **真实可达节点数**（顺序由 CaseSpec.blocks 决定）。"""
     fake = FakeSimcon(
         job_ok(step_pass(raw_archive_table(0, []))),             # archive.add 幂等预查
-        job_ok(step_pass(raw_confirm())),                       # archive.add 判据 1
-        job_ok(step_pass(raw_archive_table(1, [ADDR]))),         # archive.add 判据 2
+        job_ok(step_pass(raw_confirm())),                       # archive.add 写入确认
         job_ok(step_pass(raw_confirm())),                       # nwk.route_restart 确认
         job_ok(step_pass(raw_route(0x00, route_word=0x03, total=1, answered=1))),  # A 路
         job_ok(step_pass(raw_archive_nodes(1, [9]))),            # B 路
@@ -1370,7 +1508,7 @@ def test_case_orchestration_archive_then_nwk():
     specs = {
         "archive.add": BlockSpec(
             id="archive.add", title="加档案", needs=["bench.simcon_online"],
-            provides=["archive.contains"],
+            provides=["archive.written"],
             action={"afn": "11", "fn": 1,
                     "params": {"action": "add", "meter_addr": METER_ADDR, "protocol": 2}}),
         "nwk.route_restart": BlockSpec(
@@ -1381,11 +1519,18 @@ def test_case_orchestration_archive_then_nwk():
             action={"afn": "10", "fn": 4, "params": {"min": 1, "count": 32}}),
     }
     case = CaseSpec(
-        id="case.nwk_join", title="建档后组网", blocks=list(specs),
+        id="case.nwk_join", title="建档后组网",
         steps=[
-            CaseStep(no=1, do="下发 11H-F1 建档", expect="00H-F1 确认且档案可回查"),
+            CaseStep(no=1, do="下发 11H-F1 建档", expect="写入确认=确认"),
             CaseStep(no=2, do="下发 12H-F1 启动路由", expect="00H-F1 确认"),
             CaseStep(no=3, do="查真实可达节点数", expect="已抄数与信号品质至少一路 > 0"),
+        ],
+        plan=[
+            # 0044：建档步声明期望（写入确认=确认）；路由/可达节点块未迁移，不带期望
+            {"id": "s1", "block": "archive.add", "on_fail": "stop",
+             "expect": [{"op": "eq", "field": "写入确认", "value": "确认"}]},
+            {"id": "s2", "block": "nwk.route_restart", "on_fail": "stop"},
+            {"id": "s3", "block": "nwk.nodes_online", "on_fail": "stop"},
         ],
     )
     facts = FactsContext(probe=lambda fact_id, params: FactValue(state="yes", detail="台架在线"))
@@ -1394,8 +1539,8 @@ def test_case_orchestration_archive_then_nwk():
 
     assert outcome.verdict == "pass", [b.to_dict() for b in outcome.blocks]
     assert outcome.passed_blocks() == ["archive.add", "nwk.route_restart", "nwk.nodes_online"]
-    # 6 次下发：幂等预查 / 建档 / 回查 / 路由重启 / 10H-F4 / 10H-F2
-    assert len(fake.calls) == 6
+    # 5 次下发：幂等预查 / 建档 / 路由重启 / 10H-F4 / 10H-F2（回查已拆给查询步）
+    assert len(fake.calls) == 5
 
 
 # --------------------------------------------------------------------------- #
@@ -1444,8 +1589,10 @@ def test_verify_unreachable_bench_is_skipped_not_fail():
     fake = FakeSimcon(job_error("unreachable", "连接被拒绝"))
     result = archive.block_add(action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2),
                                ctx_with(fake))
-    assert result.state == "skipped", result.detail
-    assert "台架不可用" in result.detail and "unreachable" in result.detail
+    assert result.observation is not None
+    assert result.observation.reason_code in ENVIRONMENT_REASON_CODES
+    assert step_state_of(result) == BLOCK_SKIPPED, result.observation.detail
+    assert "台架不可用" in result.observation.detail and "unreachable" in result.observation.detail
 
 
 # --------------------------------------------------------------------------- #
@@ -1632,15 +1779,17 @@ def test_archive_add_already_exists_is_pass_with_zero_send():
         action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2), ctx_with(fake)
     )
 
-    assert result.state == "pass", result.detail
-    assert "已存在，跳过下发" in result.detail
+    # 0044：幂等命中是完整观测（写入确认=确认）→ 步骤期望判 pass（ID-1 语义不变）
+    assert step_state_of(result) == BLOCK_PASS, result.observation.detail
+    assert result.observation.values.get("下发动作") == "已存在，跳过下发"
+    assert "已存在，跳过下发" in result.observation.detail
     assert len(fake.calls) == 1, fake.calls          # 只有那一次只读预查
     sends = [step["send"] for call in fake.calls for step in call]
     assert [(step["afn"], step["fn"]) for step in sends] == [(0x10, 2)]   # 零 11H-F1
     assert fake.frames_calls == []                   # 不翻帧日志
-    assert result.evidence_ids == ["job-pre"]        # pass 必须挂在那次真实查询上
-    assert ADDR in (result.actual or "") and ADDR in result.detail
-    assert result.facts["archive.contains"]["state"] == "yes"
+    assert result.evidence_ids == ["job-pre"]        # 观测必须挂在那次真实查询上
+    assert result.observation.values.get("档案地址") == ADDR
+    assert result.facts["archive.written"]["state"] == "yes"
 
 
 def test_archive_add_incomplete_precheck_is_unknown_and_sends_nothing():
@@ -1687,12 +1836,15 @@ def test_archive_add_twice_on_same_bench_is_pass_both_times():
     first = archive.block_add(call, ctx_with(bench))
     second = archive.block_add(call, ctx_with(bench))
 
-    assert first.state == "pass", first.detail
-    assert "双判据成立" in first.detail
-    assert second.state == "pass", second.detail
-    assert "已存在，跳过下发" in second.detail
+    # 0044：两次都由步骤期望判 pass；第二次走「已存在，跳过下发」（ID-1 闭环不变）
+    assert step_state_of(first) == BLOCK_PASS, first.observation.detail
+    assert first.observation.values.get("下发动作") == "建档（11H-F1）"
+    assert step_state_of(second) == BLOCK_PASS, second.observation.detail
+    assert second.observation.values.get("下发动作") == "已存在，跳过下发"
+    assert "已存在，跳过下发" in second.observation.detail
     assert bench.add_frames == 1, bench.sent        # 建档帧全程只发了一次
-    assert bench.sent == [(0x10, 2), (0x11, 1), (0x10, 2), (0x10, 2)]
+    # 0044：建档块不再自带回查（落地由查询步证明）→ 第二次跑只剩幂等预查
+    assert bench.sent == [(0x10, 2), (0x11, 1), (0x10, 2)]
     assert bench.addrs == [ADDR]                    # 档案表仍是唯一一条
 
 
@@ -1710,9 +1862,10 @@ def test_archive_add_precheck_compares_archive_addr_not_meter_addr():
     result = archive.block_add(
         action_of("11", 1, action="add", meter_addr=METER_ADDR, protocol=2), ctx_with(fake))
 
-    assert result.state == "pass", result.detail
-    assert "双判据成立" in result.detail            # 没有被误判成「已存在，跳过下发」
-    assert len(fake.calls) == 3
+    # 0044：预查按档案地址比对（没被误判成「已存在」）→ 照常下发 → 写入确认=确认
+    assert step_state_of(result) == BLOCK_PASS, result.detail
+    assert result.observation.values.get("下发动作") == "建档（11H-F1）"
+    assert len(fake.calls) == 2                     # 预查 + 建档（回查已拆给查询步）
     assert fake.calls[1][0]["send"]["params"]["addr"] == ADDR
 
 
@@ -1794,7 +1947,7 @@ def test_default_addr_guard_add_takes_it_del_refuses_it(monkeypatch):
         job_ok(step_pass(raw_archive_table(1, [ADDR]))),
     )
     added = archive.block_add(action_of("11", 1, action="add", protocol=2), ctx_with(add_fake))
-    assert added.state == "pass", added.detail
+    assert step_state_of(added) == BLOCK_PASS, added.observation.detail
     assert add_fake.calls[1][0]["send"]["params"]["addr"] == ADDR   # 确实用了默认表
 
     del_fake = FakeSimcon()

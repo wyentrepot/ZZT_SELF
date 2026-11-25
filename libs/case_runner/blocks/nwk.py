@@ -124,6 +124,15 @@ from case_runner.blocks.common import (  # noqa: F401 - 下面一并对旧调用
     verify_failure_state,
 )
 from case_runner.core.executor import BlockResult
+from case_runner.core.planner import FactValue
+from case_runner.core.expect import (
+    OBS_BENCH_UNREACHABLE,
+    OBS_INCOMPLETE,
+    OBS_INVALID_PARAM,
+    OBS_SERIAL_BUSY,
+    OBS_TIMEOUT,
+    Observation,
+)
 from case_runner.core.models import (
     BLOCK_FAIL,
     BLOCK_PASS,
@@ -656,6 +665,105 @@ def topology_snapshot(
     }
 
 
+#: 翻页拉全的页数上限（§8.1-2：按总数翻页取全；上限防无限翻页）
+DEFAULT_TOPO_MAX_PAGES = 8
+
+
+def topology_snapshot_paged(
+    *,
+    cap: Any = None,
+    ctx: Any = None,
+    start: Any = DEFAULT_TOPO_START,
+    count: Any = DEFAULT_TOPO_COUNT,
+    expect_timeout: Any = DEFAULT_TIMEOUT,
+    max_pages: Any = DEFAULT_TOPO_MAX_PAGES,
+) -> Dict[str, Any]:
+    """10H-F21 **翻页拉全**节点记录（修 R-1：主节点数只在首页统计会把「差一个」读成达标）。
+
+    v2 拍板 #2（0044 §8.1）：一次查询条数不足时按「节点总数量」翻页，**主节点数取全
+    才叫观测完整**；取不全必须如实标注（``complete=False``），绝不静默按本页数下结论。
+
+    返回在 :func:`topology_snapshot` 字段之上补：
+
+    - ``complete``：bool —— 已取的**唯一**节点记录数 ≥ 节点总数量（且总数已知）；
+    - ``collected``：取到的唯一节点序号数；``pages``：实际翻页数；
+    - ``masters``：**取全后**的主节点数（不再只是首页的主节点数）。
+    """
+    limit = int_of(max_pages)
+    limit = DEFAULT_TOPO_MAX_PAGES if limit is None or limit < 1 else limit
+
+    first = topology_snapshot(
+        cap=cap, ctx=ctx, start=start, count=count, expect_timeout=expect_timeout
+    )
+    job_ids = list(first.get("job_ids") or [])
+    if str(first.get("state") or "") != "answered":
+        return dict(first, complete=False, collected=0, pages=1)
+
+    total = first.get("total") if isinstance(first.get("total"), int) else None
+    collected = _collected_index_count(first)
+
+    snapshots = [first]
+    next_start = int(start) + max(collected, int_of(first.get("answered") or 0) or 0)
+    pages = 1
+    complete = total is not None and collected >= max(total, 0)
+    while not complete and pages < limit:
+        page = topology_snapshot(
+            cap=cap, start=next_start, count=count, expect_timeout=expect_timeout
+        )
+        job_ids.extend(page.get("job_ids") or [])
+        snapshots.append(page)
+        pages += 1
+        if str(page.get("state") or "") != "answered":
+            break
+        answered = int_of(page.get("answered")) or 0
+        collected += answered
+        next_start += max(answered, 1)
+        if total is not None and collected >= max(total, 0):
+            complete = True
+        if answered <= 0:
+            break
+
+    nodes: List[Dict[str, Any]] = []
+    masters = 0
+    for snap in snapshots:
+        for node in snap.get("nodes") or []:
+            if not isinstance(node, Mapping):
+                continue
+            nodes.append(node)
+            if node.get("master"):
+                masters += 1
+    detail = first.get("detail") or ""
+    if not complete:
+        known = "总数=%s" % (total if total is not None else "未知")
+        detail = "%s；观测不完整：%s，翻页 %d 页只取到 %d 条节点记录" % (
+            detail or "10H-F21 查询", known, pages, collected,
+        )
+    else:
+        detail = "%s；翻页 %d 页取全 %d 条节点记录（其中主节点 %d 个）" % (
+            detail, pages, collected, masters,
+        )
+    return {
+        **first,
+        "state": "answered",
+        "total": total,
+        "masters": masters,
+        "nodes": nodes,
+        "complete": complete,
+        "collected": collected,
+        "pages": pages,
+        "job_ids": job_ids,
+        "detail": detail,
+    }
+
+
+def _collected_index_count(snapshot: Mapping[str, Any]) -> int:
+    """首页已取的节点记录数（按本次应答数优先，逐节点记录兜底）。"""
+    answered = int_of(snapshot.get("answered"))
+    if answered is not None and answered >= 0:
+        return answered
+    return len([n for n in (snapshot.get("nodes") or []) if isinstance(n, Mapping)])
+
+
 def judge_topology(
     probe: Any,
     *,
@@ -966,70 +1074,84 @@ def block_onnet_count(params: Any, ctx: Any = None) -> BlockResult:
     )
 
 
+def _topo_observation_result(
+    observation: Observation,
+    *,
+    detail: str,
+    evidence: Sequence[str] = (),
+    facts: Mapping[str, FactValue] | None = None,
+) -> BlockResult:
+    """组网块的统一出口：只带观测，旧路径（步骤未声明期望）落 unknown。"""
+    return BlockResult(
+        state=BLOCK_UNKNOWN,
+        detail=detail,
+        observation=observation,
+        evidence_ids=list(evidence),
+        facts=dict(facts or {}),
+    )
+
+
 def block_topology(params: Any, ctx: Any = None) -> BlockResult:
-    """``nwk.topology``：10H-F21 查网络拓扑，判**STA 是否都入网（档案数的 98%）**。
+    """``nwk.topology``：10H-F21 查网络拓扑，**只报观测不判定**（REQS-0044 §4.2）。
 
-    判据（KB ``业务层/37_双模测试用例_业务.md:42-48``「节点总数量 = 档案个数的
-    98%–100%」）：**判定读数 ≥ ``ceil(档案数 × min_ratio)``**（默认 0.98）。档案数取
-    10H-F1「从节点总数量」（理由见 :func:`judge_topology` 文档）。
+    观测字段：``节点总数量`` / ``主节点数`` / ``在网从节点数`` / ``档案数`` /
+    ``门槛`` / ``口径``。「在网从节点数是否达到门槛」由步骤的 ``expect`` 声明：
+    ``{"op":"complete"},{"op":"ge_field","field":"在网从节点数","value":"门槛"}``；
+    块不再输出通过/失败。门槛 = ceil(档案数 × min_ratio)（默认 0.98，严格口径
+    主节点不计入分子，``master_included`` 可选照 KB 原句口径），由块按观测算出、
+    作为观测字段随观测返回——阈值不是块内的“判定”，步骤用它比对。
 
-    判定读数按 ``master_included`` 二选一，**默认严格（仅从节点）**：
+    **翻页拉全**（修 R-1，v2 拍板 #2）：按「节点总数量」翻页取全节点记录，
+    主节点数取全才算观测完整（``complete=True``）；取不全 → 原因码 ``incomplete``，
+    步骤只能落 inconclusive，绝不按本页数下结论。
 
-    - ``master_included=false``（**默认**）→ 读数 = ``节点总数量 − 主节点数``。
-      要判的是「STA 是否都入网」，主节点 CCO 本来就一定在，算进分子会让判据虚高
-      （12 档案时 11 个从节点在网 = 91.7% 也 pass，属漏判）；
-    - ``master_included=true`` → 读数 = ``节点总数量`` 原值（逐字照 KB 原句，可选口径）。
-      依据：KB 用例 87 证明「节点总数量」含主节点（无档案时 节点总数量=1「只包含主节点」）。
-      detail/actual 两种口径的读数**都**输出，人工复核不用再算。
-
-    三态（**不得假 PASS**）：
-
-    ==========================  ==================================================
-    达标                        ``pass``
-    明确不足且已等满 ``wait_s``  ``fail``（detail 写「等了 N 秒」+ 实测/门槛）
-    档案数本身为 0              ``unknown``（「没有可入网目标」不是产品失败）
-    应答取不到/超时/解析失败     ``unknown``
-    台架不可用                  ``skipped``（块未执行，不是设备结论）
-    ==========================  ==================================================
-
-    参数：``start``（节点起始序号，默认 1 = 本模块档案 1 起编号）、``count``（本次查询
-    条数，默认 32）、``wait_s``（默认 **300**：台架实测一轮入网约 4 分钟，60s 会把
-    「还在入网」判成「明确不足」→ 假 FAIL）、``poll_interval_s``（默认 2）、
-    ``min_ratio``（默认 0.98）、``master_included``（默认 **false** = 严格仅从节点；
-    true = 照 KB 原句把主节点计入）、``clock`` / ``sleep``（注入用 callable，测试零真实睡眠）。
-    逐轮探测 + 达标即停：成功路径最多等 1 个 ``poll_interval_s``，不付 ``wait_s`` 的代价。
-
-    等待期**只发只读查询**：每轮 = 10H-F1（档案数）+ 10H-F21（拓扑），两跳都过
-    :func:`readonly_violations` 白名单闸门。
+    等待预算 ``wait_s`` 由 Procedure 步骤显式给（§8.1-3，声明默认 300 仅兜底）；
+    等待期只发只读查询（10H-F1 档案数 + 10H-F21 拓扑），达标即停。
     """
     target, error = require_target(params, AFN_ROUTE_QUERY, FN_TOPO_QUERY, BLOCK_TOPOLOGY)
     if target is None:
-        return BlockResult(state=BLOCK_FAIL, detail=error)
+        return _topo_observation_result(
+            Observation(values={}, complete=False, reason_code=OBS_INVALID_PARAM,
+                        detail=error),
+            detail=error,
+        )
     action = block_action_params(params)
 
     raw_start = action.get("start", DEFAULT_TOPO_START)
     start_index = DEFAULT_TOPO_START if raw_start in (None, "") else int_of(raw_start)
     if start_index is None or not 0 <= start_index <= 0xFFFF:
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail="%s 参数 start 必须是 0~65535 的整数（节点起始序号，默认 1；%s）：%r"
-            % (BLOCK_TOPOLOGY, TOPO_START_NOTE, raw_start),
+        detail = (
+            "%s 参数 start 必须是 0~65535 的整数（节点起始序号，默认 1）：%r"
+            % (BLOCK_TOPOLOGY, raw_start)
+        )
+        return _topo_observation_result(
+            Observation(values={}, complete=False, reason_code=OBS_INVALID_PARAM,
+                        detail=detail),
+            detail=detail,
         )
     raw_count = action.get("count", DEFAULT_TOPO_COUNT)
     count = DEFAULT_TOPO_COUNT if raw_count in (None, "") else int_of(raw_count)
     if count is None or not 1 <= count <= 0xFF:
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail="%s 参数 count 必须是 1~255 的整数（本次查询的节点条数，默认 %d）：%r"
-            % (BLOCK_TOPOLOGY, DEFAULT_TOPO_COUNT, raw_count),
+        detail = (
+            "%s 参数 count 必须是 1~255 的整数（本次查询的节点条数，默认 %d）：%r"
+            % (BLOCK_TOPOLOGY, DEFAULT_TOPO_COUNT, raw_count)
+        )
+        return _topo_observation_result(
+            Observation(values={}, complete=False, reason_code=OBS_INVALID_PARAM,
+                        detail=detail),
+            detail=detail,
         )
     raw_ratio = action.get("min_ratio", DEFAULT_MIN_RATIO)
     ratio = coerce_float(raw_ratio, -1.0)
     if ratio <= 0 or ratio > 1:
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail="%s 参数 min_ratio 必须落在 (0,1]（默认 %g，即节点总数量 ≥ 档案数的 %g%%）：%r"
-            % (BLOCK_TOPOLOGY, DEFAULT_MIN_RATIO, DEFAULT_MIN_RATIO * 100, raw_ratio),
+        detail = (
+            "%s 参数 min_ratio 必须落在 (0,1]（默认 %g）：%r"
+            % (BLOCK_TOPOLOGY, DEFAULT_MIN_RATIO, raw_ratio)
+        )
+        return _topo_observation_result(
+            Observation(values={}, complete=False, reason_code=OBS_INVALID_PARAM,
+                        detail=detail),
+            detail=detail,
         )
     master_included = flag_of(action.get("master_included"), False)
     wait_s = coerce_float(action.get("wait_s"), DEFAULT_WAIT_TOPOLOGY)
@@ -1039,13 +1161,18 @@ def block_topology(params: Any, ctx: Any = None) -> BlockResult:
     cap, injected = resolve_simcon(ctx)
     gate = capability_gate(cap, injected)
     if gate is not None:
-        return gate
+        # 台架不具备条件：能力未就绪 → bench_unreachable（步骤态 skipped → blocked）
+        return _topo_observation_result(
+            Observation(values={}, complete=False,
+                        reason_code=OBS_BENCH_UNREACHABLE, detail=gate.detail),
+            detail=gate.detail,
+        )
     clock, sleeper = poll_hooks(action, cap)
 
     def probe() -> Dict[str, Any]:
         return {
             "archive": archive_count_snapshot(cap=cap, expect_timeout=expect_timeout),
-            "topology": topology_snapshot(
+            "topology": topology_snapshot_paged(
                 cap=cap, start=start_index, count=count, expect_timeout=expect_timeout
             ),
         }
@@ -1076,50 +1203,92 @@ def block_topology(params: Any, ctx: Any = None) -> BlockResult:
         *[snap.get("archive", {}).get("job_ids") for snap in loop["snapshots"]],
         *[snap.get("topology", {}).get("job_ids") for snap in loop["snapshots"]],
     )
-    fact, detail, actual = judge_topology(
+    fact, judge_detail, judge_actual = judge_topology(
         latest, min_ratio=ratio, master_included=master_included
     )
-    actual.update({"探测次数": loop["attempts"], "等待秒": round(float(loop["waited"]), 3)})
-    suffix = waited_text(loop)
-    # 期望值与判定口径同源：严格口径期望「入网从节点」，可选口径期望「节点总数量」
-    expected_label = "节点总数量" if master_included else "入网从节点"
-    expected = (
-        "%s ≥ %d" % (expected_label, actual["门槛"])
-        if isinstance(actual.get("门槛"), int)
-        else ""
+
+    # ---- 环境类：台架/能力不可用 ---------------------------------------- #
+    if loop["reason"] == "bench":
+        detail = "%s：台架/能力不就绪，查询未执行：%s" % (
+            BLOCK_TOPOLOGY, archive.get("detail") or topology.get("detail") or "",
+        )
+        code = OBS_SERIAL_BUSY if "忙" in detail or "409" in detail or "占用" in detail \
+            else OBS_BENCH_UNREACHABLE
+        return _topo_observation_result(
+            Observation(values={}, complete=False, reason_code=code, detail=detail),
+            detail=detail, evidence=job_ids,
+        )
+
+    # ---- 观测值（走到哪层报到哪层） -------------------------------------- #
+    values: Dict[str, Any] = {
+        "节点总数量": topology.get("total") if isinstance(topology.get("total"), int) else None,
+        "主节点数": topology.get("masters") if isinstance(topology.get("masters"), int) else None,
+        "档案数": archive.get("total") if isinstance(archive.get("total"), int) else None,
+        "门槛": judge_actual.get("门槛") if isinstance(judge_actual, Mapping) else None,
+        "口径": "含主节点" if master_included else "仅从节点",
+    }
+    total = values["节点总数量"]
+    masters = values["主节点数"]
+    if isinstance(total, int) and isinstance(masters, int):
+        values["在网从节点数"] = max(total - masters, 0) if not master_included else total
+    else:
+        values["在网从节点数"] = None
+    values["探测次数"] = loop["attempts"]
+    values["等待秒"] = round(float(loop["waited"]), 3)
+
+    wait_suffix = waited_text(loop) if loop["attempts"] > 1 else ""
+
+    # 原因分流：档案数/拓扑查询的「为什么没拿到」
+    topo_state = str(topology.get("state") or "")
+    if topo_state == "config":
+        detail = "%s：%s" % (BLOCK_TOPOLOGY, topology.get("detail") or "只读闸门拒绝下发")
+        return _topo_observation_result(
+            Observation(values=values, complete=False,
+                        reason_code=OBS_INVALID_PARAM, detail=detail),
+            detail=detail, evidence=job_ids,
+        )
+    if topo_state in ("busy", "unavailable") or str(archive.get("state") or "") in ("busy", "unavailable"):
+        detail = "%s：%s" % (
+            BLOCK_TOPOLOGY,
+            topology.get("detail") or archive.get("detail") or "查询未执行",
+        )
+        code = OBS_SERIAL_BUSY if "忙" in detail or "409" in detail or "占用" in detail \
+            else OBS_BENCH_UNREACHABLE
+        return _topo_observation_result(
+            Observation(values=values, complete=False, reason_code=code, detail=detail),
+            detail=detail, evidence=job_ids,
+        )
+    if topo_state in ("no_reply", "timeout") and not topology.get("total"):
+        detail = "%s：%s%s" % (BLOCK_TOPOLOGY, topology.get("detail") or "拓扑查询超时", wait_suffix)
+        return _topo_observation_result(
+            Observation(values=values, complete=False, reason_code=OBS_TIMEOUT, detail=detail),
+            detail=detail, evidence=job_ids,
+        )
+    complete = bool(topology.get("complete")) and isinstance(values["节点总数量"], int) \
+        and values["节点总数量"] > 0
+    if not complete:
+        detail = "%s：%s%s" % (BLOCK_TOPOLOGY, topology.get("detail") or "观测不完整", wait_suffix)
+        return _topo_observation_result(
+            Observation(values=values, complete=False,
+                        reason_code=OBS_INCOMPLETE, detail=detail),
+            detail=detail, evidence=job_ids,
+        )
+
+    # 观测完整：在网从节点数 / 门槛 都在观测里，达标与否由步骤期望判（ge_field）
+    detail = "%s：%s%s" % (BLOCK_TOPOLOGY, judge_detail, wait_suffix)
+    facts: Dict[str, FactValue] = {}
+    if fact == FACT_YES:
+        facts["nwk.joined"] = FactValue(
+            state="yes",
+            detail="组网观测达标（%s）" % judge_detail,
+            evidence=list(job_ids),
+        )
+    return _topo_observation_result(
+        Observation(values=values, complete=True, reason_code="", detail=detail),
+        detail=detail, evidence=job_ids, facts=facts,
     )
 
-    if loop["reason"] == "bench":
-        return BlockResult(
-            state=BLOCK_SKIPPED,
-            detail="%s：台架/能力不就绪，块未执行（不是 FAIL）：%s"
-            % (BLOCK_TOPOLOGY, archive.get("detail") or topology.get("detail") or ""),
-            evidence_ids=job_ids,
-        )
-    if fact == FACT_YES:
-        return BlockResult(
-            state=BLOCK_PASS,
-            detail="%s：%s%s" % (BLOCK_TOPOLOGY, detail, suffix),
-            evidence_ids=job_ids,
-            expected=expected,
-            actual=actual,
-        )
-    if fact == FACT_NO:
-        return BlockResult(
-            state=BLOCK_FAIL,
-            detail="%s：明确不足 —— %s%s（等待期只发只读查询，未下发任何写帧）"
-            % (BLOCK_TOPOLOGY, detail, suffix),
-            evidence_ids=job_ids,
-            expected=expected,
-            actual=actual,
-        )
-    return BlockResult(
-        state=BLOCK_UNKNOWN,
-        detail="%s：%s%s" % (BLOCK_TOPOLOGY, detail, suffix),
-        evidence_ids=job_ids,
-        expected=expected,
-        actual=actual,
-    )
+
 def block_nodes_online(params: Any, ctx: Any = None) -> BlockResult:
     """``nwk.nodes_online``：判**真实在网/可达**节点数（两路只读证据交叉）。
 

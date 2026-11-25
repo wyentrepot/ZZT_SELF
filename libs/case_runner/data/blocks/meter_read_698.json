@@ -1,0 +1,51 @@
+{
+  "id": "meter.read_698",
+  "title": "抄读表数据（02H-F1 透传 698 GET-Request，协议类型=03H；只报观测：帧格式合法/GET-Response/OAD 回显/数值可解，不比数值真值）",
+  "needs": [
+    "bench.simcon_online",
+    "sta.addr_obtained"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "simcon_forward_698",
+    "params": {
+      "protocol": 3,
+      "meter_addr": null,
+      "oad": "20000201",
+      "piid": 1,
+      "security": true,
+      "fe_preamble": true,
+      "wait_s": 0,
+      "poll_interval_s": 5
+    },
+    "_params_note": "判据出处（CASE-BACKLOG §F0-5 路径 1 冒烟档）：123_国网用例_台账.md:73 行 35 步骤 11-14「13H-F1 抄表，内容为 698 读取请求类 05」判「CCO 端正确返回 698 数据」（156 蒸馏卡:88 同口径）；KB 只到「正确返回」，块按 0044 §8.1-4 补齐到有值且可解：帧格式合法（HCS/FCS）+ 应答是 GET-Response(85) + OAD 回显 + 数值可解，不比数值真值。协议类型=03H=698.45（03_QGDW10376.2_全帧类型.md:1633）。请求帧=完整 698 链路帧（68|L|C|SA|CA|HCS|APDU|FCS|16），SA=05+表通信地址 6B（meter_addr 即 simeter 698 地址，缺省取 case_defaults.meter_addr），链路层走 facade build('698.45')。security=true 缺省=SECURITY-Request 明文包 GET-RequestNormal（STA 模板，sim_meter/protocol_698.py 模块头/即装即采同款）。oad 缺省 20000201=A 相计量电压（141 蒸馏卡:33-40 645 02010100↔698 20000201 对照；模拟表 OAD 数据集样例同款；表侧数据集未配置该 OAD 时 simeter 不应答 → 观测原因码 timeout）。表侧 698 GET 应答在 sim_meter/protocol_698.py:242-274（REQS-0037 已交付）。"
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "请求OAD",
+        "应答APDU",
+        "应答控制域C",
+        "帧格式合法",
+        "FCS说明",
+        "OAD回显",
+        "数值",
+        "单位",
+        "数据项",
+        "内层698帧"
+      ],
+      "note": "判据在步骤期望：如 {\"op\":\"complete\"} + {\"op\":\"eq\",\"field\":\"OAD回显\",\"value\":true} + {\"op\":\"has_value\",\"field\":\"数值\"}；显式给期望值才比对数值真值"
+    }
+  ],
+  "tags": [
+    "meter",
+    "698",
+    "smoke"
+  ],
+  "kind": "case",
+  "side_effect": "none",
+  "version": 1,
+  "observation_only": true,
+  "wait_param": "wait_s"
+}

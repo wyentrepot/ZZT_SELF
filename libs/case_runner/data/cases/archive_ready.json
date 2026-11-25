@@ -1,33 +1,70 @@
 {
   "id": "archive_ready",
-  "title": "档案就绪（添加从节点档案 + 回查确认已落地）",
+  "title": "档案就绪（下发档案 + 查档确认已落地）",
+  "kind": "regression",
+  "category": {
+    "usage": "common",
+    "domain": "CCO",
+    "scene": "档案",
+    "region": "国网通用"
+  },
+  "protocols": [
+    "1376.2"
+  ],
   "steps": [
     {
       "no": 1,
-      "do": "检查模拟集中器（simcon）是否在位",
-      "expect": "在位；不在位则整条用例停在断点并点名模拟集中器，不发档案件"
+      "do": "下发从节点档案（11H-F1 建档，幂等：已存在跳过下发）",
+      "expect": "写入确认=确认（已存在跳过下发也算确认）"
     },
     {
       "no": 2,
-      "do": "下发添加从节点档案（表地址（meter_addr，缺省取配置默认值）与通信协议取块声明默认值）",
-      "expect": "收到 CCO 的确认帧；只收到确认帧不算完，必须再接第 3 步"
-    },
-    {
-      "no": 3,
-      "do": "回查档案表，确认刚添加的表地址已经在表里",
-      "expect": "档案表含该地址 → 通过；确认帧收到了但表里查不到 → 判失败（这是防假通过的失败，不是「不知道」）"
+      "do": "查询档案表确认档案落地（10H-F2 翻页取全）",
+      "expect": "档案表含该表档案地址（观测完整）；明确不含 → 判不成立（回了确认却没落地=防假通过）；查不全 → 不完整"
     }
   ],
   "needs": [
     "bench.simcon_online"
   ],
-  "blocks": [
-    "archive.add"
+  "plan": [
+    {
+      "id": "s1",
+      "block": "archive.add",
+      "params": {},
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "写入确认",
+          "value": "确认"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "block": "archive.query",
+      "params": {
+        "meter_addr": null
+      },
+      "on_fail": "stop",
+      "expect": [
+        {
+          "op": "complete"
+        },
+        {
+          "op": "eq",
+          "field": "在档",
+          "value": true
+        }
+      ]
+    }
   ],
   "asserts": [],
   "tags": [
     "archive",
-    "first-batch",
     "smoke"
   ]
 }

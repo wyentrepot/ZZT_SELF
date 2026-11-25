@@ -1,0 +1,46 @@
+{
+  "id": "param.init_01h_f2",
+  "title": "参数区初始化（01H-F2：清除 CCO 全部从节点档案；只报观测确认/否认帧，不判定；清档可逆——恢复=重新建档+组网复核）",
+  "needs": [
+    "bench.simcon_online"
+  ],
+  "provides": [],
+  "action": {
+    "kind": "simcon_send",
+    "afn": "01",
+    "fn": 2,
+    "params": {
+      "expect_timeout": 5
+    },
+    "_params_note": "帧格式出处：03_QGDW10376.2_全帧类型.md §4.2（AFN=01H 初始化帧：F1 硬件/F2 参数/F3 数据，**均无数据单元**；上行为 AFN=00H 确认/否认帧）——所以本块协议层零参数，不给任何「清一部分」的开关（不设隐式默认，11H-F5 教训：危险动作不得藏默认行为）。KB 定性 kind=case：145_国网用例_AFN功能_初始化与查询_台账.md:42（行 47：下发 → 判「CCO 端应答确认帧」→ 查从节点数量=0）+ 156 蒸馏卡:135「初始化三件套都要求先加再清」；同时是协议切换三件套第一步（150_山西用例_台账.md:49 行 11 步骤 5：01H-F2 → 11H-F1 重建档（新协议类型）→ STA 复位 → 10H-F21 入网 → 采集验证）。expect_timeout=5s 取 expect_rules default 档（01H 不在 per-Fn 规则表）。"
+  },
+  "assert": [
+    {
+      "type": "observation_fields",
+      "fields": [
+        "命令",
+        "应答AFNFn",
+        "否认码",
+        "否认码文本",
+        "应答帧",
+        "否认等待秒"
+      ],
+      "note": "判据在步骤期望：初始化被确认 = {\"op\":\"eq\",\"field\":\"应答AFNFn\",\"value\":\"00H-F1\"}；否认（00H-F2+否认码）与无回音（原因码 timeout）都是观测。「档案清空」判据不入本块——用 archive.query/nwk.archive_count 按「先加再清」口径编排（KB 145 行 47 步骤 4）"
+    }
+  ],
+  "cleanup": [
+    {
+      "type": "note",
+      "note": "收场动作（side_effect=reversible 的义务，0044 §4.3）：初始化清掉全部从节点档案、STA 随之离网（157_黑白名单蒸馏卡:35；黑名单不随之清除:43）。恢复 = 按原协议重新建档（archive.add，需要时带 protocol 参数）+ 组网复核（nwk.topology）；协议切换场景按用户拍板 2026-11-24 必须走 01H-F2 → 重建档 → reset.sta 全套，不得只做其一（CASE-BACKLOG §F0-6 设计约束 1）。"
+    }
+  ],
+  "tags": [
+    "param",
+    "init",
+    "protocol-switch"
+  ],
+  "kind": "case",
+  "side_effect": "reversible",
+  "version": 1,
+  "observation_only": true
+}
