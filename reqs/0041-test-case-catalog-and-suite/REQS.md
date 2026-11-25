@@ -659,3 +659,247 @@ FAILED test_10376_full_coverage.py::test_10f104_up_unsupported
 
 → 本批块数 **12**（含新增 `reset.sta`），事实 **6**；DoD 相应收窄，但 §10.8 的
 「断点可定位」「绝不假 PASS」两条**不变**。
+
+### 10.12 台架就绪状态（2026-11-23 13:30，§10.10 事实 L/M 已解决）
+
+**事实 L 已解决**：确认 COM4 = 集中器。`config/serial_ports.json` + `config/serial_bridge.json` 已改：
+新增 `simcon → COM4`（`usage: simcon`，115200/8E1，tcp 8814/ctrl 9814）；
+`ecu-biz`(COM28)、`ecu-mgmt`(COM29) **仅置 `enabled:false` 并注明「ECU 环境已废弃」**，未删除；
+`listener`/`cco-main`/`sta-main`/`simeter` 四口逐字段比对**零改动**。
+备份：`config/*.bak-simcon-com4-20261123`。
+
+**事实 M 已解决**：按 `_restart_bridge_chain` 同序（Windows 桥停 → WSL supervisor 停/起 → 桥起）
+完成两侧重启；`zzt-workbench.service` 重启（`systemctl restart`，新 pid）。
+依据：桥只在启动时读配置（`serial_bridge.py:764-767`）；simcon 子应用在创建时缓存端口目录
+（`libs/sim_concentrator/api.py:217` `catalog = SerialPortCatalog.load()`）。
+
+**实测就绪结果**（`GET /api/serial-bridge/status`，`config_stale=false`）：
+
+| mapping | COM | usable | 角色 |
+|---|---|---|---|
+| simcon | **COM4** | ✅ | 集中器（发帧，`POST /api/simcon/build` / v2 verification-runs） |
+| simeter | **COM20** | ✅ | 模拟电表（自动应答，`handle_frame`） |
+| sta-main | **COM18** | ✅ | STA 日志 + 控制台（`reset.sta` 走此口发 `reboot`） |
+| cco-main | **COM12** | ✅ | CCO 日志 + 控制台 |
+| listener | COM27 | ✅ | 侦听台（本需求不接入） |
+| ecu-biz / ecu-mgmt | COM28/29 | ❌ 已禁用 | ECU 环境已废弃 |
+
+`GET /api/simcon/ports` 已认到 `simcon → COM4 → /run/hplc/serial/simcon`。
+
+→ **第一批 12 块 + 6 事实的台架前置全部满足**，可进入联调。
+
+### 10.13 加固发现（2026-11-23，第一批实施中挖出的真缺陷）
+
+#### 缺陷 1：`10H-F4` 上行解析 off-by-one（已修）
+
+`libs/parser_lib/adapters/adapter_10376/__init__.py:708` 原为 `len(data) >= 17`，但该分支只消费
+`data[0]`~`data[15]` = **16B**。
+
+**硬证据（CCO 固件源码）**：`/01-workfile-ai/04-obsidian/obsidian/CCO实现逻辑/template/protocol/aps/src/gw13762.c:4612-4687`
+逐字节写 `buff[0]`~`buff[15]` 后直接 `p_tx->bufflen = 16`。
+**自洽证据**：`metadata/afn_fn.json` 中该 Fn 的 `resp.fields` 逐字段 `b` 求和 = 16。
+
+**危害**：真机 16B 应答被静默判为「无应用数据」→ `nwk.route_status` 永远得不出结论。
+**实测**：16B → 只解出 `AFN`（1 项）；17B → 13 项全出。
+
+**为何一直未被发现（根因）**：`blocks/test_archive_nwk.py` 的 `raw_route()` 构造的是 **17B**
+样本（末尾多 `b"\x00"`），恰好绕过 `>= 17` 门限 —— **测试样本比协议多 1 字节，掩盖了真实缺陷**。
+→ 教训：**测试样本必须与协议逐字节对齐**，否则测试会变成缺陷的保护伞。
+
+**修复**：门限改为 `>= 16`；新增 `tests/test_10f4_uplink_length.py`（13 例，含 15B 不得解析、
+17B 仍全解、三个数量小端、工作开关位域、元数据求和自洽互证）。
+
+#### 缺陷 2：`coerce_block_return` 把 `{"ok": true}` 折算成 `pass`（假 PASS 通道）
+
+`core/executor.py` 原对 `ok`/`passed` 键做布尔折算。能力层返回值一律带 `{"ok": true}`
+（仅代表「服务处理成功」），任何块若偷懒 `return cap.verify(...)` 即自动 PASS。
+→ 改为**只认显式 `state` / `outcome`**，其余一律 `unknown`。
+
+#### 缺陷 3：`archive.add` 的 `provides` 造成跨地址假 PASS（本需求自身设计缺陷）
+
+`archive.contains` 是**带 addr 参数**的事实，而 `FactsContext` 缓存按 `fact_id` 单键。
+`archive.add` 回写 `archive.contains=yes` 后，**另一地址的探测会命中缓存**。
+→ 双修：① `FactsContext` 缓存键改为**参数感知**（fact_id + 参数指纹）；
+② 删除 `archive.add` 的 `provides`（块内已有双判据，provides 本属冗余）；
+③ 加载器拒绝「`provides` 参数化事实」，从结构上封死。
+
+#### 缺陷 4：块模块兄弟耦合（已修）
+
+`nwk.py` / `facts_nwk.py` 均 `from case_runner.blocks.archive import ...` → 档案块与组网块被绑死。
+→ 通用件抽到 `blocks/common.py`，兄弟模块间零 import。
+
+#### 裁决口径（统一执行）
+
+| 情形 | 判定 |
+|---|---|
+| 帧已发出但超时无应答 | `fail`（有 `sent_hex` 证据，确属测试失败） |
+| 构帧失败（422）/ 帧未发出 | `unknown`（配置错误，不冤枉设备） |
+| 409 闸门忙 / 台架不可达 / frames 404 无会话 | `skipped` |
+| 块「什么都没断言」 | `unknown`（推翻原 pass，防假 PASS） |
+| `reset.sta` 前置 | `bench.sta_online`（**第 7 个事实**，复位走 `sta-main` 不依赖 simcon） |
+
+→ 第一批事实数由 6 调整为 **7**（新增 `bench.sta_online`）。
+
+### 10.14 加固后状态与遗留裁定（2026-11-23 14:00）
+
+**验收实测**（领导独立复跑）：
+
+```
+pytest libs/case_runner -q                        → 338 passed, 1 skipped
+pytest libs/case_runner/test_layering.py -q       → 10 passed
+loader.load_all(register_modules=True, require_registered=True)
+                                                  → blocks: 13 | facts: 7 | problems: []
+```
+
+**兄弟耦合已清零**：`archive/nwk/facts_nwk/fix/reset/facts_bench/facts_meter` 六个域模块
+**只** import `case_runner.blocks.common`，域模块之间零 import；判定函数仍只有一份
+（`facts_nwk.judge_contains is common.judge_contains` identity 断言 + AST 守卫测试）。
+共用件集中到 `blocks/common.py`（1472 行，47 个 def）。
+
+**参数化事实门禁（对抗性实测）**：构造一个 `provides: ["archive.contains"]` 的块声明，
+`loader.load_all` 抛 `DeclarationError` 并给出可读原因：
+
+```
+block 'zz.bad' 的 provides 引用了参数化事实 'archive.contains'（必需参数 addr）
+—— 块回写只按 fact_id 缓存，不同参数值会命中造成假 PASS；请从 provides 移除
+```
+
+判据取「有**必需**参数」而非「params_schema 非空」，避免误杀参数全有默认值的合法声明
+（`fix.simcon_session → bench.simcon_online`、`meter.addr_probe → sta.meter_addr_known`）。
+
+**16B 样本回归**：`raw_route()` 样本由 17B 改回 16B 并加 `assert len(payload) == 16`；
+`route_status`/`route_restart` 3 条回归全绿。
+
+#### 裁定 1：块级 `assert` 数组 = 文档/UI 元数据，不是可执行判据
+
+现状：`executor._run_block` 把 `spec.assert_` 送进 `params["_assert"]`（已打通），
+但**内核不代为求值**；实际判定在各块执行体内部，`ctx.assert_evaluator` 仅服务用例级 `case.asserts`。
+
+裁定：**`assert` 数组定位为「给人看 + 给 UI 展示声明了什么判据」的元数据**，
+不承担执行。理由：块判据涉及内层 645 递归、双判据、指纹匹配等，通用求值器无法表达，
+强行通用化会引入第二套判据来源、反而制造漂移。
+→ 必须做到：① 块执行体**应**读 `params["_assert"]` 至少校验声明与实现一致（可断言声明里的类型在已知集合内）；
+② 文档中明确「assert 不驱动判定」，避免误解。
+
+#### 裁定 2：`meter.py` 错误表待统一（遗留）
+
+`meter.py` 自带 `_SEND_ERROR_TABLE` / `_send_outcome_from_error`，与 `common.verify_failure_state` 有分歧：
+`transport_error` 在 meter = `unknown`、在 common = `skipped`；`job_not_passed` 一律 `fail` 而不区分
+「帧没发出去（按 §10.13 应为 unknown）」。
+→ 遗留项：统一到 `common.verify_failure_state`，纳入下一批。
+
+#### 已记录未处理（低优先，留档）
+
+- 事实 id 字符串在块模块与事实模块各写一份（值一致，drift 会被 `check_fact_refs` 抓到）
+- `nwk.WORK_STATES` / `CURRENT_STATES` / `DEFAULT_MIN_ONNET` 为死常量（保留作协议文档）
+- 块级 `assert` 里 `archive_contains` / `inner_645_addr` / `query_answered` 等类型目前无消费方（见裁定 1）
+
+### 10.15 第一批用例方案落地 + 两处模型缺陷（2026-11-23 14:10）
+
+**验收实测**：`loader.load_all(...)` → `13 块 / 7 事实 / 5 用例 / 3 方案 / problems []`；
+声明校验测试 20 项全绿（零执行逻辑，不连台架）。
+
+| 用例 | 覆盖问题 | 块 | needs |
+|---|---|---|---|
+| `bench_ready` | 台架三项是否齐 | `fix.simcon_session` `fix.simeter_session` | `bench.sta_online` |
+| `sta_reset` | 复位（第一次组网前必做） | `reset.sta` | `bench.sta_online` |
+| `archive_ready` | **档案加没加上** | `archive.add`（含双判据） | `bench.simcon_online` |
+| `nwk_join` | **组网通没通** | `archive.add` `nwk.route_restart` `nwk.onnet_count` `nwk.route_status` | `bench.simcon_online` |
+| `meter_read` | **抄表抄到没有** | `meter.addr_probe` `meter.read_645` `meter.brain_local` | `bench.simcon_online` |
+
+| 方案 | 用途 | 顺序 | stop_on_fail |
+|---|---|---|---|
+| `smoke_meter` | 首次组网（含复位） | bench_ready → sta_reset → archive_ready → nwk_join → meter_read | true |
+| `smoke_meter_noreset` | 复位后日常回归（用户「之后按需复位」） | 去掉 sta_reset | true |
+| `meter_only` | 网络已就绪时最短路径 | archive_ready → meter_read | true |
+
+#### 缺陷 5：`CaseSpec.blocks[]` 只有块 id，**没有块参数通道**（模型缺陷）
+
+现状：`blocks: list[str]`，块参数只能在运行期经 `ctx.block_params[block_id]` 注入，**用例 JSON 无法声明**。
+后果：
+- `archive.query` 必须给 `addr`/`expect_total`/`expect_empty` 才不判 `unknown`，用例侧给不了 → 该块在用例里只能 inconclusive
+- `meter.read_645.expect_value`（判「抄到的数值等于期望」）同样用不上
+- `archive.query.start=1`（现场档案 1 起编号时）无法纠偏
+
+→ 修法：`blocks` 允许 `str | {"id": str, "params": dict}`，或在 `CaseSpec` 增加 `block_params: dict[str, dict]`。
+判据：用例仍**不得**出现帧 hex 与参数计算（CS-1 不变），但允许**声明式常量参数**。
+
+#### 缺陷 6：用例级 `needs[]` 对本用例内块 `provides` 的事实会**自锁**（模型缺陷）
+
+现状：`planner.plan` 先 `resolve(case.needs)`，任一 `unknown` 即全部块 `skipped`。
+后果：`meter_read` 不能声明 `needs: sta.meter_addr_known`——该事实本应由本用例的 `meter.addr_probe` 建立，
+声明后反而把建立它的块一起跳掉（自锁）。
+
+→ 修法：planner 对 `case.needs` 也做 **deferred 处理**：若该事实由本用例前序块 `provides`，则不算阻断，
+由执行期按块序建立后再复核（与块级 `needs` 现有 deferred 逻辑一致）。
+
+#### 其他块能力缺口（留档，未处理）
+
+- 缺 `fix.sta_session` 块：STA 口只能用事实当整条用例的门，副作用是 STA 口缺失时 simcon/simeter 两步被一并 skipped，看不到各自结论
+- `nwk.active_registration` 的 `time6` 是块内写死时间串（`000012231126`），用例无法传「当前时刻」→ 第一批组网链改用 `route_restart` + `onnet_count`，暂不纳入该块
+- `archive.del` 有破坏性（改档案/在网状态），冒烟链不带，日后单独一条可手动勾选的「清档案」用例
+- `smoke_meter` 中 `archive_ready` 与 `nwk_join` 各有一次 `archive.add`（后者为保证单例可独立运行）→ 同一地址会建档两次，未上台架验证；若 CCO 回否认帧，去掉 `nwk_join` 首块即可（已写进 `smoke_meter.notes`）
+
+### 10.16 真实台架联调结论：地址字节序是根因（2026-11-23 14:30）
+
+**用户假设被实测证实**：「STA 通信地址可能是大端，但 CCO 收到档案是小端」。
+
+#### 对照实验（用户设计的方案）
+
+1. 模拟电表地址改为 `123456789012`（非回文，能区分反转方向）
+2. 清空 CCO 全部 12 条历史档案（`11H-F2`，确认 + 复核 `从节点总数量=0`）
+3. 复位 CCO（`01H-F1`，回来验证 厂商 `CF` / 芯片 `8F` / 版本 2026-06-16）
+4. 复位 STA（`reboot`）
+5. STA 用广播地址问表：`rx 68AAAAAAAAAAAA681300DF16`
+6. 电表应答：`tx 68123456789012689306123456789012D516` → **线序 `12 34 56 78 90 12`**
+7. 同时下发两条档案：
+   - 人读 `123456789012` → 编码器反序 → 线序 `12 90 78 56 34 12`
+   - 人读 `129078563412` → 编码器反序 → 线序 `12 34 56 78 90 12`
+
+#### 结果（CCO 10H-F2 回读）
+
+| 档案 | 存储线序 | CCO 显示 | 信号品质 | 结论 |
+|---|---|---|---|---|
+| 从节点1 | `12 90 78 56 34 12` | `123456789012` | **0**，中继 15 | ❌ 不在网 |
+| **从节点2** | `12 34 56 78 90 12` | **`129078563412`** | **1**，中继 1 | ✅ **在网** |
+
+STA 日志同期出现 `nwk assoc ok`、`save nwk info succ, nid=0x0039f2ae, cco mac[444444444444]`。
+CCO `10H-F4` 的 `已抄从节点数量` 由 0 → **1**。
+
+#### 结论（必须写进台架手册）
+
+**电表的 645 地址与 CCO 档案地址互为整字节反转。**
+
+```
+电表 645 地址（645 地址域，低字节在前）: 12 34 56 78 90 12   人读 "123456789012"
+CCO  档案地址（1376.2，编码器会再反序）: 12 34 56 78 90 12   人读 "129078563412"
+```
+
+- 适配器 `_bcd_bytes(人读) → 线序` 做整字节反序（**正确**，与既有真机实证一致）
+- 电表 `sim_meter._parse_addr(人读) → 线序` **不反序**（在 645 语境下正确）
+- → 因此「要让 CCO 档案与 STA 上报匹配」，档案的人读地址 = 电表 645 人读地址的**字节反转**
+
+**台架操作口径**：设模拟电表地址为 A（如 `123456789012`），则 CCO 档案应下发 **reverse6(A)**（即 `129078563412`）。
+`reverse6` 指按 6 个字节整体反转。
+
+#### 同轮验证到的真实链路
+
+```
+simcon(COM4) → CCO(COM12) → HPLC → STA(COM18) → 表口 → 模拟电表(COM20)
+```
+
+`meter_read` 用 `addr=123456789012` 跑出 **3/3 PASS**：
+
+| 块 | 结果 | 证据 |
+|---|---|---|
+| `meter.addr_probe` | ✅ | 上行 02H-F1 内嵌 645 地址域 = `123456789012`，与期望一致 |
+| `meter.read_645` | ✅ | 内层 645 应答 CS 合法、DI `00010000` 回显、**(当前)正向有功总电能 = 1234.56 kWh** |
+| `meter.brain_local` | ✅ | 表端脑 DI 回显 `33333433`、`note.value` 非空 |
+
+#### 本轮暴露的待修项
+
+| # | 问题 | 影响 |
+|---|---|---|
+| 1 | `meter.brain_local` 的默认 `request_hex` 写死旧地址 `6800000000000168110433333433B316`（addr `000000000001`） | 台架地址一变就误判 FAIL（非真实失败） |
+| 2 | `clear_archive` 配方无 `mapping_id` 字段 → 回落 COM3 打不开 | 清档必须绕过配方用手工 `11H-F2` |
+| 3 | 台架地址口径（电表 645 地址 vs CCO 档案地址互为反转）未沉淀为「用例参数/台架配置」 | 每次换表址都要人工换算，易错 |
