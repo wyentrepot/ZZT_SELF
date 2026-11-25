@@ -1040,3 +1040,62 @@ run_id：20261125-152457-7c1aad（bench_ready pass）/ **20261125-152524-6e0b55�
 2. s6 块「应答APDU」观测只报外层 90（SECURITY-Response），未标明 `85 01` GET-ResponseNormal 在 `90 00 0B` 包装内层（detail 有如实提示但字段语义偏外层；判据三项全真判 pass 正确，纯展示层小瑕疵，块/parser 展示面另行派工）；
 3. N 遗留顺延：facade 对 array 值不套标度（20000200/20010200）；数据集路径（REQS-0037）在 645/透明态免闸裁决。**N 遗留②（20000201 标量编码 P13 疑点）已获真机对照素材**：本轮 seq 20 实发帧=黄金帧且经 CCO→STA→facade 全链解出 220.1 V——标量编码被产品链路正常消费，P13 疑点按「真机样本可解」收窄（黄金帧暂无需换版）；
 4. L 遗留①/「三方一致」另一半（simeter 13H 在 698 态照常应答）未动——本轮 s5 复证 698 态 13H 645 绑表可用（35.1s），影响面继续收窄；E3 第三轮 M 未修问题 1/2（simeter 数据 OAD 未实现、s6 note 不实）已由 N+O 两批闭环，不再列。
+
+## P 技能同步批次（工位 P，2026-11-25，只追加）
+
+**单一交付物**：ai-control-plane 技能包（入口 + wb-* 子技能）黑盒测试相关内容与 2026-11-25 真实状态对齐，
+`tools/scripts/verify_skills.py` 校验通过。技能库在仓库外（`/root/.agents/skills/` 为规范源
+`/home/02-skill-fc/skills/shared/hardware-in-the-loop/` 的符号链接，**单一副本无同步问题**），不经 git 提交；
+工作区代码零改动，事实源 = REQS-0044 v3/v4 + 本文件 F1/F2/H/L/M/N/O 段 + CASE-BACKLOG §F0/§G/§K。
+
+### 1. 四件更新
+
+1. **`wb-casetest/SKILL.md` 1.1.0 → 2.0.0（主体重写）**：
+   - 模型正名：Run→Suite→**Procedure**→Step→Block（旧「Case」正名 Procedure）；**判据归位**（块只观测、期望在 Step、
+     Procedure 聚合四态、无判据不入库）；kind=setup/regression/scenario、场景=Procedure 第二生命周期；
+     期望值口径=「有值且可解」不比真值。
+   - 现状清单**指索引不抄死数字**：一切以 `case_run list --json` 输出为准（当前参考 块23/事实11/用例13/方案3 随批次漂移）。
+   - 用例地图：13 条 id + 一句话用途（bench_ready setup 前置 / meter_daily 6 步 / meter_first_join 7 步 /
+     meter_di_multi_item / meter_batch_single / gate_multi_frame_6e / gate_concurrent_6d /
+     **meter_698_smoke（scenario 重用例，--timeout 2400）** / archive_ready / archive_absent（同一块两种期望的判据归位样板）/
+     archive_multi / nwk_join / sta_reset）。
+   - 报表契约：run.report.rows[] 九字段（group/subgroup/name/kind/steps_text/verdict/reason/evidence_paths/
+     counts_as_product）+ summary（分母不含 setup 行）；用户层零块名。
+   - API 增量：GET/PUT `/api/cases/defaults`（键白名单改默认表地址）、`GET /api/cases/runs?limit=`（历史索引）、
+     CaseView.kind。
+   - **协议切换业务规则（用户拍板口径，重点节）**：645↔698 必须复位 STA（运行期禁直改协议，唯一例外=专用协议切换用例）；
+     三方一致=CCO 档案 protocol / 电表 jzjc / STA 表口探帧三者同态；698 组网预算 900s（恢复抖动带实测 62s~11 分钟）
+     + 整轮 timeout 2400；复位后 30 分钟不入网停手；同一 STA 的 645/698 用例不得同轮无复位连续执行。
+   - **经验教训节（新增四条，真机踩过勿回退）**：①探帧应答 SA 必须真实表地址（AA×6 回显→STA MAC=AA×6→白名单
+     OUTOFLIST(0x1)，已修+黄金帧钉死）；②档案地址口径=reverse6(电表 645 人读)、645 链与 698 链同口径；
+     ③meter_daily 300s 组网预算 vs 复位恢复期实测 594s 的衔接缺口（预算型假 FAIL 样本已留档）；
+     ④109 闸门单表台架不可复刻（KB 需 100 个不同地址堆队列，同表去重堆不起来 → 说不清不判结论）。
+   - `scripts/` 兜底框架（原 §8）保留为 §11；front-matter description 触发纪律一字未动。
+2. **`wb-simeter/SKILL.md` 1.2.0 → 1.3.0（增量）**：新增 §4.3「698 探帧与数据 OAD 应答（工位 L/N）」——
+   jzjc 协议一致闸（645 态不答 698 探帧与数据 OAD）、探帧应答 SA=`05`+6B 真实地址（AA×6 教训与黄金帧）、
+   数据 OAD 注册表 4 项（20000201↔02010100 220.1 V 等，值实时取 645 寄存器数据集）、set_register/config 跟变；
+   `/jzjc` 行补 protocol_type 三态语义（00H 透明/02H 645-2007/03H 698.45）；§4.2 补「改 libs 必须重启工作台」。
+3. **`ai-control-plane/references/api-contract.md` §7.1 + `features.md` §6.1（新增 `/api/cases/*` 段）**：
+   全端点面 + 新端点契约——GET/PUT `/api/cases/defaults`（白名单=config 覆盖文件已存在键，未知键 422，
+   表地址 12 位校验）、`GET /api/cases/runs?limit=N`（缺省 10 上限 50 超界夹取、坏 result.json 轮次跳过）、
+   CaseView.kind 字段、run.report 九字段契约（语义只加不改）、POST /run 202/200 双态（accepted/blocked 不建 job）。
+   两文件头部按既有格式追加更新行（日期+出处）。
+4. **`ai-control-plane/使用经验/698态STA入网被拒排查.md`（新增）**：《698 态 STA 入网被拒（AA×6 SA 回显）排查全过程》——
+   现象（result=0x1 反复 not allow）/ 取证路径（STA 日志 addrmap/set mac addr → simeter journal seq 应答帧 SA=
+   45+AA×6 → KB 码表 ASSOC_RSLT_OUTOFLIST）/ 三方比对与根因实锤 / 修复（L 工位两处+黄金帧）/ 预防六条
+   （含「先看 set mac addr 是不是 AA×6」口诀与「改 libs 必须重启工作台」）。
+
+### 2. 入口与校验
+
+- `ai-control-plane/SKILL.md` version 4.0.0 → **4.1.0**；§1 表微调两行一句话能力：
+  wb-casetest「…四态结论 · 用例库盘点」→「…四态结论 · Procedure 判据归位」；
+  wb-simeter「模拟电表 645/698 从站调测」→「模拟电表 645/698 从站调测（含 698 探帧/数据 OAD 应答）」。
+- `python3 tools/scripts/verify_skills.py`（工作区内）结果原文（默认与 --strict 同）：
+  `成员 9 个（ai-control-plane、wb-appframe、wb-base、wb-casetest、wb-flash、wb-listener、wb-serial、wb-simcon、wb-simeter）；错误 0，警告 0。结果：PASS`（退出码 0）。
+  该脚本未定义多副本同步规则；实查技能索引为符号链接单副本，无同步动作。
+
+### 3. 红线自查
+
+- wb-casetest front-matter description 触发纪律一字未动；入口 §1 表「何时加载」列未动。
+- 计数类数字全部「指索引」或标注「以 list 输出为准」；版本历史行按两文件既有头部格式追加。
+- 未改工作区任何代码/声明；本批次唯一落档 = 本节（只追加）+ 仓库外技能包四件 + 入口微调。
