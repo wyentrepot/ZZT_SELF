@@ -241,3 +241,94 @@ class TestExpectNotation:
         step = out["steps"][0]
         assert step["result"] == "fail"
         assert "fn 记法非法" in step["reason"]
+
+
+class TestAutoReplyNoPingPong:
+    """自动应答不能回自己的应答帧（2026-11-19 实测的乒乓风暴回归）。
+
+    现场：simcon 以集中器身份发 03H-F1，CCO 回 03H-F1 应答；该应答命中
+    builtin.03xx_query（示意规则）被再次「回」成 03H 查询帧，CCO 又应答，
+    tx/rx 无限增长，且队列里的旧应答会被后续步骤误判成「匹配成功」。
+    """
+
+    def test_matched_response_is_not_auto_answered(self):
+        from sim_concentrator.responder import Responder
+        from sim_concentrator.runner import run_step
+
+        response = build_13762_frame(afn=0x03, fn=1, direction="up", info={"seq": 1})
+        io = FakeIO(responses=[response])
+        step = {
+            "name": "查询", "send": {"afn": 0x03, "fn": 1},
+            "expect": {"afn": 0x03, "fn": 1}, "expect_timeout": 1.0,
+        }
+
+        out = run_step(io, Responder(), step, 0, profile=_PROFILE, seq=1)
+
+        assert out["result"] == "pass"
+        assert len(io.sent) == 1, "只应有请求本身，应答帧不得再被回一帧"
+
+    def test_matched_report_is_still_acknowledged(self):
+        """06H 主动上报命中 expect 时仍需回确认（防 CCO 重复上报，用户拍板口径）。"""
+        from sim_concentrator.responder import Responder
+        from sim_concentrator.runner import run_step
+
+        report = build_13762_frame(afn=0x06, fn=230, direction="up", info={"seq": 1})
+        io = FakeIO(responses=[])
+        io.pending.append(report)   # recv_only 不发帧：直接预置待收帧
+        step = {
+            "name": "等上报", "recv_only": True,
+            "expect": {"afn": 0x06, "fn": 230}, "expect_timeout": 1.0,
+        }
+
+        out = run_step(io, Responder(), step, 0, profile=_PROFILE, seq=1)
+
+        assert out["result"] == "pass"
+        assert len(io.sent) == 1, "上报帧必须被自动确认一帧"
+
+
+class TestSeqGuard:
+    """2026-11-19：单步匹配必须校验 R 域 seq，防止队列里上一轮的迟到应答被误判 pass。"""
+
+    def _query_step(self, seq=7):
+        return {"name": "查询", "send": {"afn": 0x03, "fn": 1},
+                "expect": {"afn": 0x03, "fn": 1}, "expect_timeout": 0.4}
+
+    def test_stale_reply_with_other_seq_is_not_pass(self):
+        from sim_concentrator.responder import Responder
+        from sim_concentrator.runner import run_step
+
+        stale = build_13762_frame(afn=0x03, fn=1, direction="up", info={"seq": 2})
+        io = FakeIO(responses=[])
+        io.pending.append(stale)          # 上一轮请求的迟到应答
+        out = run_step(io, Responder(), self._query_step(), 0, profile=_PROFILE, seq=7)
+
+        assert out["result"] == "fail"
+        assert out["seq_mismatch"] == {"expected": 7, "actual": 2}
+        assert "seq 不匹配" in out["reason"]
+
+    def test_reply_with_matching_seq_passes(self):
+        from sim_concentrator.responder import Responder
+        from sim_concentrator.runner import run_step
+
+        good = build_13762_frame(afn=0x03, fn=1, direction="up", info={"seq": 7})
+        io = FakeIO(responses=[good])
+        out = run_step(io, Responder(), self._query_step(), 0, profile=_PROFILE, seq=7)
+
+        assert out["result"] == "pass"
+        assert "seq_mismatch" not in out
+
+    def test_exempt_afn_skips_seq_check(self):
+        """02H-F1 实测不镜像 seq（38/259）→ 按 expect_rules.seq_match.exempt 放行。"""
+        from sim_concentrator.responder import Responder
+        from sim_concentrator.runner import run_step
+
+        reply = build_13762_frame(afn=0x02, fn=1, direction="up", info={"seq": 86})
+        io = FakeIO(responses=[reply])
+        step = {"name": "单抄",
+                "send": {"afn": 0x02, "fn": 1,
+                         "params": {"protocol": 2, "payload": "68123456789016"}},
+                "expect": {"afn": 0x02, "fn": 1}, "expect_timeout": 0.4}
+        out = run_step(io, Responder(), step, 0, profile=_PROFILE, seq=87)
+
+        assert out["result"] == "pass", out.get("reason")
+        assert "seq_mismatch" not in out

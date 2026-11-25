@@ -10,6 +10,10 @@
 - mode="single"：每表一帧 02H-F1（转发通信协议数据帧，嵌套 645 读数据）；
 - mode="batch"：每表一帧 F1H-F1（集中器主动并发抄表，单表单帧滑动）。
 
+协议分流（REQS-0043 F0-5 修复）：protocol_type=3（698.45）时按协议构 698 读帧
+（``meter_read_698``，OAD 为抄读项），其余构 645 读帧（``meter_read_645``，
+DI 为抄读项）——不再给 698 入参贴 645 标签。
+
 应答匹配：轮询 io.rx_history_since(单调帧序号游标，只读语义；无游标 io
 回退 len(rx_history()) 截断基线)，按
 AFN/Fn + 帧内嵌表地址判定归属；表地址同时接受 CCO 档案线上字节（默认，
@@ -76,6 +80,49 @@ def meter_read_645(addr: str, item: str = _DEFAULT_ITEM,
         raise ValueError(f"addr_mode 仅支持 wire/bcd: {addr_mode!r}")
     from parser_lib.adapters.adapter_645 import build_frame
     return build_frame(addr_bytes, 0x11, _masked_di(item))
+
+
+#: 698 缺省 OAD：20000201（A 相计量电压；KB 141 蒸馏卡 645 02010100 ↔ 698 20000201 对照）
+_DEFAULT_OAD = "20000201"
+
+
+def meter_read_698(addr: str, item: str = _DEFAULT_OAD,
+                   addr_mode: str = "wire") -> bytes:
+    """构造 698.45 读请求帧（完整 698 链路层帧，REQS-0043 F0-5 路径 2）。
+
+    修复点（CASE-BACKLOG §F0-5）：此前 ``_read_one`` 不分协议一律构 645 帧，
+    ``protocol_type=3`` 入参只是给 645 报文贴 698 标签（F0「贴错标签」问题）；
+    现按协议分流：698 构 GET-Request 读帧，645 走 :func:`meter_read_645` 原样。
+
+    item: 4 字节 OAD（8 位 hex），默认 20000201（645/698 是两套编号，
+    141 蒸馏卡:33-40）。addr_mode 与 645 同词表（wire=档案线上地址 / bcd=BCD）。
+    帧口径与 STA 真实下发模板一致（sim_meter/protocol_698.py 模块头）：
+    SECURITY-Request(明文) 包 GET-RequestNormal（05 01 PIID OAD TimeTag），
+    SA = 0x05 + 6 字节表通信地址，C=0x43（客户机/启动站/用户数据），CA=0x00。
+    """
+    a = str(addr).strip()
+    if len(a) != 12 or not a.isdigit():
+        raise ValueError(f"表地址须为 12 位数字: {addr!r}")
+    mode = str(addr_mode or "wire").strip().lower()
+    if mode == "wire":
+        addr_bytes = _wire_addr_bytes(a)
+    elif mode == "bcd":
+        addr_bytes = bytes.fromhex(a)[::-1]
+    else:
+        raise ValueError(f"addr_mode 仅支持 wire/bcd: {addr_mode!r}")
+    oad = str(item or _DEFAULT_OAD).strip()
+    if len(oad) != 8:
+        raise ValueError(f"OAD 须为 8 位 hex（4 字节）: {item!r}")
+    try:
+        oad_bytes = bytes.fromhex(oad)
+    except ValueError as exc:
+        raise ValueError(f"OAD 须为 8 位 hex（4 字节）: {item!r}") from exc
+    from parser_lib.adapters.adapter_698 import build_frame as build_698_link
+
+    inner = bytes([0x05, 0x01, 0x01]) + oad_bytes + b"\x00"       # GET-RequestNormal
+    apdu = (bytes([0x10, 0x00, len(inner)]) + inner                # SECURITY-Request 明文
+            + b"\x01\x10" + b"\x00" * 16)                          # RN=01 10 + 16×00（STA 模板）
+    return build_698_link(apdu, b"\x05" + addr_bytes, ca=0x00, control=0x43)
 
 
 def _addr_hexes(addr: str) -> tuple[str, ...]:
@@ -249,7 +296,12 @@ class BatchReadJob:
         started = time.time()
         timeout = self.timeout_meta["seconds"]
         try:
-            app_payload = meter_read_645(meter, self.item, self.addr_mode)
+            # 协议分流（REQS-0043 F0-5 修复）：protocol_type=3（698.45）构 698 读帧，
+            # 其余照旧构 645 读帧——不再给 698 入参贴 645 标签。
+            if self.protocol_type == 3:
+                app_payload = meter_read_698(meter, self.item, self.addr_mode)
+            else:
+                app_payload = meter_read_645(meter, self.item, self.addr_mode)
         except Exception as e:
             self._row(meter, "error", started=started, note=f"构帧失败: {e}")
             return

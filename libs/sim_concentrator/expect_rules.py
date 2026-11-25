@@ -107,6 +107,79 @@ def deny_text(code: Any) -> str:
     return codes.get(str(c), f"未知错误状态字 {c}")
 
 
+def seq_checked(afn: Any, fn: Any = None) -> bool:
+    """该 AFN/Fn 的应答是否必须镜像请求 seq（用于单步/验证的 seq 校验）。
+
+    规则来自 expect_rules.json 的 seq_match：enabled=False 时一律不校验；
+    exempt 命中的 AFN/Fn 不校验（实测应答 seq 不跟随请求，如 02H-F1/15H-F1）。
+    """
+    doc = load()
+    policy = doc.get("seq_match") or {}
+    if not policy.get("enabled", True):
+        return False
+    try:
+        a = _norm_afn(afn)
+    except (TypeError, ValueError):
+        return False
+    f = None
+    if fn is not None:
+        try:
+            f = _norm_fn(fn)
+        except (TypeError, ValueError):
+            f = None
+    for e in policy.get("exempt") or []:
+        try:
+            ea = _norm_afn(e.get("afn"))
+        except (TypeError, ValueError):
+            continue
+        if ea != a:
+            continue
+        ef = e.get("fn")
+        if ef is None:
+            return False
+        try:
+            if _norm_fn(ef) == f:
+                return False
+        except (TypeError, ValueError):
+            continue
+    return True
+
+
+def seq_policy_note(afn: Any, fn: Any = None) -> str:
+    """seq 校验口径的说明（写进 step 结果，便于 AI/人判断为什么没校验 seq）。"""
+    doc = load()
+    policy = doc.get("seq_match") or {}
+    if not policy.get("enabled", True):
+        return "seq 校验已全局关闭（expect_rules.seq_match.enabled=false）"
+    try:
+        a = _norm_afn(afn)
+    except (TypeError, ValueError):
+        return "afn 不可解析，跳过 seq 校验"
+    f = None
+    if fn is not None:
+        try:
+            f = _norm_fn(fn)
+        except (TypeError, ValueError):
+            f = None
+    for e in policy.get("exempt") or []:
+        try:
+            if _norm_afn(e.get("afn")) != a:
+                continue
+        except (TypeError, ValueError):
+            continue
+        ef = e.get("fn")
+        if ef is None or _norm_fn_safe(ef) == f:
+            return "该 AFn/Fn 在 seq_match.exempt 内，不校验 seq：" + str(e.get("note") or "")
+    return ""
+
+
+def _norm_fn_safe(v: Any) -> Optional[int]:
+    try:
+        return _norm_fn(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def is_report_afn(afn: Any) -> bool:
     """06H 主动上报：集中器侧下发无预期应答（no_expect_afn）。"""
     doc = load()

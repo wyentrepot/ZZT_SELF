@@ -65,9 +65,39 @@ class TestNodeParse(unittest.TestCase):
         n = _node_from_record({"从节点地址": "129078563412", "从节点信息": {"hex": "3400"}})
         self.assertEqual(n["signal"], 3)   # 0x34 → D7~D4=3
         self.assertEqual(n["relay"], 4)    # D3~D0=0
+        self.assertEqual(n["protocol"], 0)  # D13~D11 = 0（透明）
+        self.assertEqual(n["phase"], 0)     # D10~D8 = 0
         self.assertTrue(n["online"])
         n0 = _node_from_record({"从节点地址": "010203040506", "从节点信息": {"hex": "0500"}})
         self.assertFalse(n0["online"])     # 信号品质 0 → 离线
+
+    def test_protocol_phase(self):
+        # E3 真帧黄金（REQS-0043 §E3 / CASE-BACKLOG §G-7，位段 D13~D11）：
+        # 0x180F 线上小端 hex="0f18"（698 建档，run 20261125-082646-8cff48 s3c）
+        # → 协议类型 3（698.45，与 11H-F1 实发 0x03 闭环）/ 相位 0 / 信号 0 / 中继 0xF
+        n = _node_from_record({"从节点地址": "129078563412", "从节点信息": {"hex": "0f18"}})
+        self.assertEqual(n["protocol"], 3)
+        self.assertEqual(n["phase"], 0)
+        self.assertEqual(n["signal"], 0)
+        self.assertEqual(n["relay"], 0xF)
+        self.assertFalse(n["online"])
+        # 0x50F1 线上小端 hex="f150"（645 日常态真帧词，CASE-BACKLOG §G-7）
+        # → 协议类型 2（645-2007，与 645 建档一致）
+        n645 = _node_from_record({"从节点地址": "010203040506", "从节点信息": {"hex": "f150"}})
+        self.assertEqual(n645["protocol"], 2)
+        self.assertEqual(n645["phase"], 0)
+        self.assertEqual(n645["signal"], 0xF)
+        self.assertTrue(n645["online"])
+        # 合成样本：0x1334 → 协议 2（645-2007）/ 相位 3 / 信号 3 / 中继 4
+        n2 = _node_from_record({"从节点地址": "010203040506", "从节点信息": {"hex": "3413"}})
+        self.assertEqual(n2["protocol"], 2)
+        self.assertEqual(n2["phase"], 3)
+        self.assertEqual(n2["signal"], 3)
+        self.assertEqual(n2["relay"], 4)
+        # 原有关键键不缺失
+        for key in ("addr", "node_info_hex", "signal", "relay", "online",
+                    "protocol", "phase"):
+            self.assertIn(key, n2)
 
     def test_app_payload_slice(self):
         raw = _f2_reply([("010203040506", 0x0034)])
@@ -82,7 +112,9 @@ class TestQueryArchive(unittest.TestCase):
         sess = ArchiveSession()
         r = query_archive(io, session=sess, timeout=1.0)
         self.assertEqual(len(io.sent), 1)
-        self.assertEqual(r["nodes"][0]["addr"], "102030405060")  # BCD 反序输出
+        # 线上 01 02 03 04 05 06 按协议低字节在前还原 → 060504030201
+        # （2026-11-19 真机：档案 880000000000 → 表地址 000000000088）
+        self.assertEqual(r["nodes"][0]["addr"], "060504030201")
         self.assertEqual(sess.snapshot()["total"], 2)
         self.assertTrue(sess.snapshot()["nodes"][1]["online"])
 
@@ -106,8 +138,35 @@ class TestQueryArchive(unittest.TestCase):
             sess.export_excel(path)
             from openpyxl import load_workbook
             ws = load_workbook(path).active
-            self.assertEqual(ws.cell(row=2, column=2).value, "102030405060")
-            self.assertEqual(ws.cell(row=2, column=5).value, "在线")
+            # 列序：1序号 2从节点地址 3信号品质 4中继级别 5协议类型 6相位
+            #       7在网判定 8节点信息 9获取时间
+            self.assertEqual([ws.cell(row=1, column=c).value
+                              for c in range(1, 10)],
+                             ["序号", "从节点地址", "侦听信号品质", "中继级别",
+                              "协议类型", "相位", "在网判定",
+                              "从节点信息(hex)", "获取时间"])
+            self.assertEqual(ws.cell(row=2, column=2).value, "060504030201")
+            self.assertEqual(ws.cell(row=2, column=5).value, 0)   # 协议类型
+            self.assertEqual(ws.cell(row=2, column=6).value, 0)   # 相位
+            self.assertEqual(ws.cell(row=2, column=7).value, "在线")
+        finally:
+            os.unlink(path)
+
+    def test_excel_export_protocol_column(self):
+        """协议类型列：0x1800 小端 → D13~D11=3 → 协议类型=3（698.45，E3 位段口径）。"""
+        import tempfile, os
+        io = FakeIO(replies=[_f2_reply([("010203040506", 0x1800)])])
+        sess = ArchiveSession()
+        query_archive(io, session=sess, timeout=1.0)
+        fd, path = tempfile.mkstemp(suffix=".xlsx")
+        os.close(fd)
+        try:
+            sess.export_excel(path)
+            from openpyxl import load_workbook
+            ws = load_workbook(path).active
+            self.assertEqual(ws.cell(row=2, column=1).value, 1)
+            self.assertEqual(ws.cell(row=2, column=5).value, 3)
+            self.assertEqual(ws.cell(row=2, column=8).value, "0018")
         finally:
             os.unlink(path)
 

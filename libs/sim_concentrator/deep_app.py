@@ -118,10 +118,11 @@ class ArchiveSession:
         wb = Workbook()
         ws = wb.active
         ws.title = "从节点档案"
-        ws.append(["序号", "从节点地址", "侦听信号品质", "中继级别", "在网判定",
-                   "从节点信息(hex)", "获取时间"])
+        ws.append(["序号", "从节点地址", "侦听信号品质", "中继级别", "协议类型",
+                   "相位", "在网判定", "从节点信息(hex)", "获取时间"])
         for i, n in enumerate(snap["nodes"], 1):
             ws.append([i, n["addr"], n["signal"], n["relay"],
+                       n.get("protocol", 0), n.get("phase", 0),
                        "在线" if n["online"] else "离线",
                        n["node_info_hex"], snap["fetched_at"] or ""])
         wb.save(path)
@@ -129,7 +130,12 @@ class ArchiveSession:
 
 
 def _node_from_record(rec: dict) -> dict:
-    """F2 记录行 → 节点 dict（低字节 D7~D4 信号品质 / D3~D0 中继级别）。"""
+    """F2 记录行 → 节点 dict。
+
+    16 位节点信息（小端）布局：D15 备用 / D14 支持分钟采集 /
+    D13~D11 协议类型 / D10~D8 相位 / D7~D4 信号品质 / D3~D0 中继级别
+    （与 10376 解码器、安徽报文文档 §5 口径一致；E3 实测校正位段）。
+    """
     info = rec.get("从节点信息", {})
     raw = info.get("hex", "") if isinstance(info, dict) else str(info)
     try:
@@ -140,13 +146,21 @@ def _node_from_record(rec: dict) -> dict:
     low = v & 0xFF
     signal, relay = (low >> 4) & 0x0F, low & 0x0F
     addr_wire = str(rec.get("从节点地址", ""))
-    # 线上 BCD 字节序 → 人读地址（逐字节反转，与 simcon 档案口径一致）
-    addr = addr_wire[::-1] if len(addr_wire) == 12 else addr_wire
+    # 线上 BCD 字节序 → 人读地址。
+    # extractor（record_extractor._decode_value）已按协议做过一次低字节在前还原，
+    # 这里**不能再反转**：再转一次等于把地址又掰回去（2026-11-19 现场：
+    # 档案 88 00 00 00 00 00 应展示 000000000088，二次反转后成了 880000000000）。
+    addr = addr_wire
     return {
         "addr": addr,
         "node_info_hex": raw,
         "signal": signal,
         "relay": relay,
+        # 协议类型（D13~D11）：0 透明 / 1 645-1997 / 2 645-2007 / 3 698.45
+        # 真帧黄金：0x180F→3（698 建档，run 20261125-082646-8cff48 s3c）、
+        # 0x50F1→2（645 日常态，CASE-BACKLOG §G-7）；原 (v>>12)&7 实读 D14~D12，E3 实锤错位。
+        "protocol": (v >> 11) & 0x7,
+        "phase": (v >> 8) & 0x7,  # 相位 D10~D8
         "online": signal > 0,  # 有侦听信号品质即在网（10H-F2 口径）
     }
 

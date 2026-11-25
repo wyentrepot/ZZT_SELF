@@ -107,12 +107,128 @@ class TestAPI:
         assert body["port"] == "COM2"
         assert body["port_identity"]["mapping_id"] == ""
 
+    def test_step_request_accepts_mapping_id(self, monkeypatch, tmp_path):
+        """2026-11-19 现场：StepRequest 缺 mapping_id 字段 → Pydantic 静默丢弃 →
+        后端自动选口（/dev/ttyS0）报 Input/output error，页面「下发」必然失败。
+
+        配置用临时目录自建（不依赖仓库实况：simcon 映射已于 2026-11-19 移除）。
+        """
+        import shared.serial_mapping as serial_mapping
+
+        cfg = tmp_path / "serial_ports.json"
+        cfg.write_text(json.dumps({
+            "version": 1,
+            "ports": [{"id": "simcon", "windows_com": "COM31",
+                       "linux_device": "/dev/ttyUSB9", "label": "模拟集中器",
+                       "usage": "simcon", "module": "", "baudrate": 460800,
+                       "parity": "N", "bytesize": 8, "stopbits": 1,
+                       "enabled": True}],
+        }, ensure_ascii=False), encoding="utf-8")
+        monkeypatch.setattr(serial_mapping, "default_config_path", lambda: cfg)
+
+        created = self._stub_serial_io(monkeypatch)
+        client = TestClient(create_simcon_app(journal_dir=tmp_path))
+
+        r = client.post("/api/simcon/step", json={
+            "send": {"afn": "03", "fn": "F1", "params": {}},
+            "expect_timeout": 0.1,
+            "mapping_id": "simcon",
+        })
+
+        assert r.status_code == 200
+        assert created, "单步应打开显式指定的映射口"
+        assert created[0].port_identity["mapping_id"] == "simcon"
+
     def test_responders(self, client):
         r = client.get("/api/simcon/responders")
         assert r.status_code == 200
         rules = r.json()["rules"]
         assert len(rules) >= 5
         assert any("builtin.01xx_init" == x["id"] for x in rules)
+
+    # -- 换口/换参数必须重开，不能静默复用旧通道（2026-11-19 现场回归） --------
+    def _stub_serial_io(self, monkeypatch):
+        created = []
+
+        class FakeSerialIO:
+            def __init__(self, **kwargs):
+                self.port = kwargs["port"]
+                self.baudrate = kwargs["baudrate"]
+                self.bytesize = kwargs["bytesize"]
+                self.parity = kwargs["parity"]
+                self.stopbits = kwargs["stopbits"]
+                self.port_identity = kwargs.get("port_identity")
+                self._open = False
+                self.closed = False
+                self.sent = []
+                created.append(self)
+
+            def open(self):
+                self._open = True
+
+            def is_open(self):
+                return self._open
+
+            def close(self):
+                self._open = False
+                self.closed = True
+
+            def pending_frames(self):
+                return 0
+
+            def send_frame(self, raw):
+                self.sent.append(raw)
+
+            def recv_frame(self, timeout=None):
+                return None
+
+        monkeypatch.setattr(simcon_api, "SerialIO", FakeSerialIO)
+        return created
+
+    def test_open_switches_port_instead_of_reusing_old_channel(
+            self, monkeypatch, tmp_path):
+        created = self._stub_serial_io(monkeypatch)
+        client = TestClient(create_simcon_app(journal_dir=tmp_path))
+
+        first = client.post("/api/simcon/open",
+                            json={"port": "COM_A", "baudrate": 9600, "parity": "E"})
+        second = client.post("/api/simcon/open",
+                             json={"port": "COM_B", "baudrate": 460800, "parity": "N"})
+
+        assert first.json()["port"] == "COM_A"
+        # 换了口就必须真的换：旧通道关闭、新通道打开
+        assert second.json()["port"] == "COM_B"
+        assert [io.port for io in created] == ["COM_A", "COM_B"]
+        assert created[0].closed is True
+        assert client.get("/api/simcon/status").json()["port"] == "COM_B"
+
+    def test_open_reopens_when_baud_differs_on_same_port(
+            self, monkeypatch, tmp_path):
+        created = self._stub_serial_io(monkeypatch)
+        client = TestClient(create_simcon_app(journal_dir=tmp_path))
+
+        client.post("/api/simcon/open",
+                    json={"port": "COM_A", "baudrate": 9600, "parity": "E"})
+        again = client.post("/api/simcon/open",
+                            json={"port": "COM_A", "baudrate": 460800, "parity": "N"})
+
+        assert again.status_code == 200
+        assert len(created) == 2
+        assert created[1].baudrate == 460800
+        assert created[0].closed is True
+
+    def test_open_reuses_channel_when_port_and_params_match(
+            self, monkeypatch, tmp_path):
+        created = self._stub_serial_io(monkeypatch)
+        client = TestClient(create_simcon_app(journal_dir=tmp_path))
+
+        client.post("/api/simcon/open",
+                    json={"port": "COM_A", "baudrate": 460800, "parity": "N"})
+        again = client.post("/api/simcon/open",
+                            json={"port": "COM_A", "baudrate": 460800, "parity": "N"})
+
+        assert again.status_code == 200
+        assert len(created) == 1
 
     def test_verify_with_removed_simcon_mapping_returns_409(
             self, client_without_simcon_mapping):

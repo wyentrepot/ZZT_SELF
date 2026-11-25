@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -37,6 +38,7 @@ from sim_concentrator.frame_codec import (
     hex_to_bytes,
 )
 from sim_concentrator.matcher import deny_info, match_frame
+from sim_concentrator.expect_rules import is_report_afn
 from sim_concentrator.responder import Responder
 from sim_concentrator.serial_io import SerialIO, resolve_serial_config
 from sim_concentrator.scenario_codec import (
@@ -353,6 +355,8 @@ def run_step(io: SerialIO, responder: Optional[Responder],
         timeout = 5.0
     expect = step.get("expect")
     is_query = (expect is not None) and not expect_history
+    # 本次请求的 R 域 seq（构帧时注入的就是它，应答必须镜像）；recv_only 无请求 → None
+    expect_seq = int(seq) & 0xFF if (seq is not None and not recv_only) else None
 
     # 1) 构造并下发（recv_only 跳过；expect_history 且无 send 时不构帧，纯历史扫描）
     if not recv_only and not (expect_history and not step.get("send")):
@@ -363,6 +367,17 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             result["reason"] = f"构帧失败: {e!r}"
             return result
         result["sent_hex"] = frame_to_hex(raw)
+        # 发送前清空接收队列：上一步/上一次请求遗留的应答若还躺在队列里，
+        # 会被当成本次应答（2026-11-19 实测 sent seq=05 / matched seq=02 的假 pass）。
+        # 只清队列不动历史（history 供 expect_history 分支使用）。
+        drain = getattr(io, "drain_rx", None)
+        if callable(drain):
+            try:
+                drained = drain()
+                if drained:
+                    result["drained_stale_frames"] = int(drained)
+            except Exception:  # noqa: BLE001 - 清理失败不影响主流程
+                logger.exception("drain_rx 失败，继续发送")
         try:
             io.send_frame(raw)
         except Exception as e:
@@ -433,8 +448,6 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             continue
         result["matched"] = frame_to_hex(got)
         result["parsed"] = _safe_decode(got)
-        # 先自动应答（若命中规则），再匹配 expect
-        _auto_reply(io, responder, got)
         # 否认帧特判（REQS-0027 G2）：预期确认类应答（AFN=00H）时，到达的
         # 00H-F2 否认帧（FN=2）不满足 fn=1 的字面匹配，但业务上必须立即判定失败
         d = deny_info(_safe_decode(got))
@@ -446,6 +459,22 @@ def run_step(io: SerialIO, responder: Optional[Responder],
             return result
         matched, decoded, reasons = match_frame(got, expect)
         result["parsed"] = decoded
+        # seq 校验（2026-11-19）：AFN/Fn 命中还要求 R 域 seq 等于本次请求的 seq，
+        # 否则是上一轮请求的迟到应答，不能算「匹配成功」。exempt 的 AFN/Fn（02H-F1
+        # 并发单抄、15H-F1 文件分段）实测不镜像 seq，按 expect_rules.seq_match 放行。
+        if matched and expect_seq is not None and _seq_checked_for(expect):
+            got_seq = _seq_of(decoded)
+            if got_seq is not None and got_seq != expect_seq:
+                matched = False
+                reasons = [f"seq 不匹配: 期望{expect_seq}, 实际{got_seq}（疑似上一轮迟到应答）"]
+                result["seq_mismatch"] = {"expected": expect_seq, "actual": got_seq}
+        # 自动应答只针对「不是本次请求应答」的帧 + 主动上报帧。
+        # 把应答帧也回一帧会让对端把回帧当成新请求，形成乒乓风暴
+        # （2026-11-19 实测：simcon 以集中器身份发 03H-F1，CCO 的 03H-F1 应答
+        #  命中 builtin.03xx_query → 回 03H 查询帧 → CCO 再应答，tx/rx 无限增长，
+        #  并让队列里的旧应答被后续步骤误判为「匹配成功」）。
+        if not matched or is_report_afn(_afn_of(decoded)):
+            _auto_reply(io, responder, got)
         if matched:
             result["result"] = "pass"
             result["reason"] = "匹配成功" + (f"：{'; '.join(reasons)}" if reasons else "")
@@ -481,6 +510,31 @@ def run_step(io: SerialIO, responder: Optional[Responder],
     if bystanders:
         result["bystanders"] = bystanders
     return result
+
+
+def _seq_of(decoded: dict) -> Optional[int]:
+    """取 R 域里的报文序列号 seq（解析失败返回 None）。"""
+    info = (decoded.get("fields") or {}).get("信息域R") or {}
+    desc = str(info.get("desc") or "")
+    m = re.search(r"seq=(\d+)", desc)
+    if m:
+        return int(m.group(1))
+    value = str(info.get("value") or info.get("raw") or "")
+    if len(value) == 12 and all(c in "0123456789abcdefABCDEF" for c in value):
+        try:
+            return int(value, 16) & 0xFF
+        except ValueError:
+            return None
+    return None
+
+
+def _seq_checked_for(expect: dict) -> bool:
+    """本次 expect 是否要求校验 seq（按请求侧 AFN/Fn 查 expect_rules.seq_match）。"""
+    try:
+        from sim_concentrator.expect_rules import seq_checked
+        return bool(seq_checked(expect.get("afn"), expect.get("fn")))
+    except Exception:  # noqa: BLE001 - 规则库异常时按严格校验
+        return True
 
 
 def _afn_of(decoded: dict):

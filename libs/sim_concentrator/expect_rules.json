@@ -43,61 +43,138 @@
   "rules": [
     {
       "id": "er.02f1",
-      "match": { "afn": "02", "fn": 1 },
-      "expect": { "afn": "02", "fn": 1, "dir": "up", "form": "table" },
+      "match": {
+        "afn": "02",
+        "fn": 1
+      },
+      "expect": {
+        "afn": "02",
+        "fn": 1,
+        "dir": "up",
+        "form": "table"
+      },
       "timeout_tier": "single_read",
       "desc": "数据转发（单抄）→ 02H-F1 抄读应答（嵌套 645/698 数据）"
     },
     {
       "id": "er.03",
-      "match": { "afn": "03" },
-      "expect": { "afn": "self", "fn": "self", "dir": "up", "form": "table" },
+      "match": {
+        "afn": "03"
+      },
+      "expect": {
+        "afn": "self",
+        "fn": "self",
+        "dir": "up",
+        "form": "table"
+      },
       "timeout_tier": "default",
       "desc": "查询数据 → 同 AFN 同 Fn 数据帧"
     },
     {
       "id": "er.05",
-      "match": { "afn": "05" },
-      "expect": { "afn": "00", "fn": 1, "dir": "up", "form": "confirm_or_deny" },
+      "match": {
+        "afn": "05"
+      },
+      "expect": {
+        "afn": "00",
+        "fn": 1,
+        "dir": "up",
+        "form": "confirm_or_deny"
+      },
       "timeout_tier": "default",
       "desc": "控制命令 → 确认（00H-F1）或否认（00H-F2 + 错误状态字）"
     },
     {
       "id": "er.10",
-      "match": { "afn": "10" },
-      "expect": { "afn": "self", "fn": "self", "dir": "up", "form": "table" },
+      "match": {
+        "afn": "10"
+      },
+      "expect": {
+        "afn": "self",
+        "fn": "self",
+        "dir": "up",
+        "form": "table"
+      },
       "timeout_tier": "default",
       "desc": "路由查询 → 同 AFN 同 Fn 数据帧"
     },
     {
       "id": "er.11",
-      "match": { "afn": "11" },
-      "expect": { "afn": "00", "fn": 1, "dir": "up", "form": "confirm_or_deny" },
+      "match": {
+        "afn": "11"
+      },
+      "expect": {
+        "afn": "00",
+        "fn": 1,
+        "dir": "up",
+        "form": "confirm_or_deny"
+      },
       "timeout_tier": "default",
       "desc": "路由设置 → 确认（00H-F1）或否认（00H-F2）"
     },
     {
       "id": "er.12",
-      "match": { "afn": "12" },
-      "expect": { "afn": "00", "fn": 1, "dir": "up", "form": "confirm_or_deny" },
+      "match": {
+        "afn": "12"
+      },
+      "expect": {
+        "afn": "00",
+        "fn": 1,
+        "dir": "up",
+        "form": "confirm_or_deny"
+      },
       "timeout_tier": "default",
       "desc": "路由控制 → 确认（00H-F1）或否认（00H-F2）"
     },
     {
       "id": "er.13",
-      "match": { "afn": "13" },
-      "expect": { "afn": "self", "fn": "self", "dir": "up", "form": "table" },
+      "match": {
+        "afn": "13"
+      },
+      "expect": {
+        "afn": "self",
+        "fn": "self",
+        "dir": "up",
+        "form": "table"
+      },
       "timeout_tier": "batch_read",
       "desc": "路由数据转发（监控从节点）→ 同 AFN 同 Fn 应答"
     },
     {
       "id": "er.f1",
-      "match": { "afn": "F1", "fn": 1 },
-      "expect": { "afn": "F1", "fn": 1, "dir": "up", "form": "table" },
+      "match": {
+        "afn": "F1",
+        "fn": 1
+      },
+      "expect": {
+        "afn": "F1",
+        "fn": 1,
+        "dir": "up",
+        "form": "table"
+      },
       "timeout_tier": "batch_read",
       "desc": "并发抄表 → F1H-F1 抄读应答（失败表以 A1 回标）"
     }
   ],
-  "no_expect_afn": ["06"],
-  "no_expect_note": "06H 主动上报由模块侧发起，集中器侧下发无预期应答；如需感知用 recv_only"
+  "no_expect_afn": [
+    "06"
+  ],
+  "no_expect_note": "06H 主动上报由模块侧发起，集中器侧下发无预期应答；如需感知用 recv_only",
+  "seq_match": {
+    "enabled": true,
+    "mode": "strict_with_exempt",
+    "note": "应答 R 域 seq 是否必须等于本次请求的 seq。2026-11-19 全量会话日志统计：除 02H-F1（并发单抄，应答 seq 常滞后/跳动）与 15H-F1（文件分段，应答回的是段标识）外，其余 AFN/Fn 均严格镜像请求 seq（316 一致 / 0 差异）。因此默认严格校验，下列 exempt 放行；exempt 命中的帧仍要求 AFN/Fn 匹配，只是不校验 seq。",
+    "exempt": [
+      {
+        "afn": "02",
+        "fn": 1,
+        "note": "02H-F1 数据转发/单抄：CCO 侧 seq 与转发帧不同步，实测 38/259 不镜像"
+      },
+      {
+        "afn": "15",
+        "fn": 1,
+        "note": "15H-F1 文件传输：应答携带的是段标识而非请求 seq，实测 7/14 不镜像"
+      }
+    ]
+  }
 }

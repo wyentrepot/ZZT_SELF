@@ -71,9 +71,13 @@ def _validate_params(recipe: dict, overrides: dict) -> None:
 # 参数化：把 recipe + overrides 渲染成 execute_task 的 task dict
 # ---------------------------------------------------------------------------
 def _bcd_bytes(addr: str) -> bytes:
-    """12 位 BCD 地址 → 6 字节（与 adapter_10376._bcd_bytes 一致）。"""
-    return bytes.fromhex(addr) if len(addr) == 12 and all(c in "0123456789" for c in addr) \
-        else bytes.fromhex(addr.ljust(12, "0"))
+    """12 位 BCD 地址 → 6 字节帧内地址（委托 adapter_10376，口径单点维护）。
+
+    历史上这里是正序直转的副本，与 adapter 的低字节在前口径不一致；
+    统一委托后不会再出现「recipe 与构帧器两套字节序」的分裂。
+    """
+    from parser_lib.adapters.adapter_10376 import _bcd_bytes as _adapter_bcd_bytes
+    return _adapter_bcd_bytes(addr)
 
 
 def _step(name: str, send: dict, expect: Optional[dict] = None,
@@ -156,10 +160,20 @@ def run_recipe(recipe_id: str, overrides: Optional[dict] = None,
 # 清空档案：动态流程（查询全部 → 分批删除 → 复查）
 # ---------------------------------------------------------------------------
 def _query_all_archives(io: Any, profile_id: str) -> tuple[list[str], int | None]:
-    """分页查询全部从节点地址。返回 (地址列表, total)。"""
+    """分页查询全部从节点地址。返回 (地址列表, total)。
+
+    起点基址读全局设置 query_start_base（默认 1）：现场模块档案 1 起编号，
+    从 0 起查会回「总数量对、本次应答 0 条」的空壳，清空档案会误判"档案为空"。
+    """
+    try:
+        from shared.simcon_settings import query_start_base
+        base = query_start_base()
+    except Exception:                                    # noqa: BLE001 - 设置层是增强
+        base = 1
     all_addrs: list[str] = []
     total: Optional[int] = None
-    for start in range(0, 400, MAX_BATCH):
+    for offset in range(0, 400, MAX_BATCH):
+        start = offset + (1 if base == 1 else 0)
         r = run_single_step(
             io, send={"afn": "10", "fn": "F2", "params": {"start": start, "count": MAX_BATCH}},
             profile=load_profile(profile_id), name=f"查询档案start={start}",

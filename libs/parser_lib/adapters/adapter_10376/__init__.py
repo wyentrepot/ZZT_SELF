@@ -137,8 +137,22 @@ def dt_to_fn(dt1: int, dt2: int) -> int:
 # ---------------------------------------------------------------------------
 
 def _bcd_to_str(data: bytes) -> str:
-    """BCD 字节 -> 数字字符串（每字节高低半字节各一数字）。"""
+    """BCD 字节 -> 数字字符串（每字节高低半字节各一数字）。
+
+    注意：本函数**不做字节序还原**，仅供时间/日期/版本号等「非地址」BCD 使用
+    （时间 6B 秒分时日月年本身就是低字节在前的书写顺序，不能反转）。
+    地址类 BCD 一律走 `_bcd_addr_to_str`。
+    """
     return "".join(f"{(b >> 4) & 0xF}{b & 0xF}" for b in data)
+
+
+def _bcd_addr_to_str(data: bytes) -> str:
+    """地址类 BCD 6 字节（线上低字节在前）-> 人读 12 位地址。
+
+    与 `_bcd_bytes` 严格互逆：线上 88 00 00 00 00 00 -> "000000000088"。
+    真机口径见 `_bcd_bytes` docstring。
+    """
+    return _bcd_to_str(bytes(data)[::-1])
 
 
 def _str_to_bcd(s: str, nbytes: int) -> bytes:
@@ -293,13 +307,13 @@ def _parse_address(data: bytes) -> dict:
     n = len(data)
     if n == 0:
         return {"src": "", "relay": [], "dst": "", "has_address": False}
-    src = _bcd_to_str(data[0:6])
+    src = _bcd_addr_to_str(data[0:6])
     relay = []
     i = 6
     while i + 6 < n:
-        relay.append(_bcd_to_str(data[i:i + 6]))
+        relay.append(_bcd_addr_to_str(data[i:i + 6]))
         i += 6
-    dst = _bcd_to_str(data[i:i + 6]) if i < n else ""
+    dst = _bcd_addr_to_str(data[i:i + 6]) if i < n else ""
     return {"src": src, "relay": relay, "dst": dst, "has_address": True}
 
 # ---------------------------------------------------------------------------
@@ -391,7 +405,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 for i in range(n):
                     if pos + 8 > len(data):
                         break
-                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                         data[pos:pos + 6].hex())
                     q = data[pos + 6]
                     add(f"从节点{i + 1}信号品质", f"{q >> 4}", f"{q:02X}", "高4位")
@@ -400,7 +414,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                         f"{data[pos + 7]:02X}")
                     pos += 8
         elif fn == 4 and len(data) >= 6:
-            add("主节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+            add("主节点地址", _bcd_addr_to_str(data[0:6]), data[0:6].hex())
         elif fn == 5 and len(data) >= 2:
             st = data[0]
             n = st & 0x0F
@@ -449,7 +463,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 add("最大支持的报文长度", f"{le16(d[9:11])}B", d[9:11].hex())
                 add("文件传输最大单包长度", f"{le16(d[11:13])}B", d[11:13].hex())
                 add("升级操作等待时间", f"{d[13]}s", f"{d[13]:02X}")
-                add("主节点地址", _bcd_to_str(d[14:20]), d[14:20].hex())
+                add("主节点地址", _bcd_addr_to_str(d[14:20]), d[14:20].hex())
                 add("支持的最大从节点数量", f"{le16(d[20:22])}", d[20:22].hex())
                 add("当前从节点数量", f"{le16(d[22:24])}", d[22:24].hex())
                 add("协议发布日期", f"20{_bcd_to_str(d[24:25])}-{_bcd_to_str(d[25:26])}"
@@ -494,7 +508,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             add("从节点点名", "(无数据单元)", "")
         elif fn == 3 and len(data) >= 9:
             add("测试通信速率", f"{data[0]}", f"{data[0]:02X}")
-            add("目标地址", _bcd_to_str(data[1:7]), data[1:7].hex())
+            add("目标地址", _bcd_addr_to_str(data[1:7]), data[1:7].hex())
             add("通信协议类型", _proto_name(data[7]), f"{data[7]:02X}")
             plen = data[8]
             add("报文长度", f"{plen}B", f"{plen:02X}")
@@ -502,7 +516,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
     # AFN=05H 控制命令（上行应答均为 00H 确认/否认）
     elif afn == 0x05:
         if fn == 1 and len(data) >= 6:
-            add("主节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+            add("主节点地址", _bcd_addr_to_str(data[0:6]), data[0:6].hex())
         elif fn == 2 and len(data) >= 1:
             add("事件上报状态", "允许" if data[0] else "禁止", f"{data[0]:02X}")
         elif fn == 3 and len(data) >= 2:
@@ -543,7 +557,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             for i in range(n):
                 if pos + 9 > len(data):
                     break
-                add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
                 add(f"从节点{i + 1}协议类型", _proto_name(data[pos + 6]),
                     f"{data[pos + 6]:02X}")
@@ -571,7 +585,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             for i in range(n):
                 if pos + 11 > len(data):
                     break
-                add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
                 add(f"从节点{i + 1}协议类型", _proto_name(data[pos + 6]),
                     f"{data[pos + 6]:02X}")
@@ -591,7 +605,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                         if pos + 7 > len(data):
                             break
                         add(f"从节点{i + 1}下接节点{j + 1}地址",
-                            _bcd_to_str(data[pos:pos + 6]), data[pos:pos + 6].hex())
+                            _bcd_addr_to_str(data[pos:pos + 6]), data[pos:pos + 6].hex())
                         add(f"从节点{i + 1}下接节点{j + 1}协议类型",
                             _proto_name(data[pos + 6]), f"{data[pos + 6]:02X}")
                         pos += 7
@@ -619,7 +633,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                     addrs = content[1:]
                     for i in range(len(addrs) // 6):
                         add(f"通信单元{i + 1}地址",
-                            _bcd_to_str(addrs[i * 6:(i + 1) * 6]),
+                            _bcd_addr_to_str(addrs[i * 6:(i + 1) * 6]),
                             addrs[i * 6:(i + 1) * 6].hex())
             elif proto == 0x05 and content:  # 台区改切拒绝节点
                 n = content[0]
@@ -638,7 +652,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             # 结构：任务号(1B) + 从节点地址(6B BCD) + 通信协议类型(1B)
             #       + 采集时间(6B BCD 秒分时日月年) + 报文长度(2B 小端) + 报文内容(变长)
             add("任务号", f"{data[0]}", f"{data[0]:02X}")
-            add("从节点地址", _bcd_to_str(data[1:7]), data[1:7].hex())
+            add("从节点地址", _bcd_addr_to_str(data[1:7]), data[1:7].hex())
             add("通信协议类型", _proto_name(data[7]), f"{data[7]:02X}")
             if len(data) >= 13:
                 sec, minute, hour, day, month, year = data[8:14]
@@ -668,16 +682,16 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 for i in range(n):
                     if pos + 8 > len(data):
                         break
-                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                         data[pos:pos + 6].hex())
                     w = le16(data[pos + 6:pos + 8])
                     add(f"从节点{i + 1}信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
                         f"信号品质={(w >> 4) & 0xF} 中继级别={w & 0xF}"
-                        f" 相线={(w >> 8) & 0xF} 协议类型={(w >> 12) & 0x7}")
+                        f" 相线={(w >> 8) & 0x7} 协议类型={(w >> 11) & 0x7}")
                     pos += 8
         elif fn == 3:
             if not up and len(data) >= 6:
-                add("从节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+                add("从节点地址", _bcd_addr_to_str(data[0:6]), data[0:6].hex())
             elif up and len(data) >= 1:
                 n = data[0]
                 add("提供路由的从节点总数量", f"{n}", f"{n:02X}")
@@ -685,13 +699,13 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 for i in range(n):
                     if pos + 8 > len(data):
                         break
-                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                         data[pos:pos + 6].hex())
                     w = le16(data[pos + 6:pos + 8])
                     add(f"从节点{i + 1}信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
                         f"信号品质={(w >> 4) & 0xF} 中继级别={w & 0xF}")
                     pos += 8
-        elif fn == 4 and len(data) >= 17:
+        elif fn == 4 and len(data) >= 16:
             st = data[0]
             add("运行状态字", f"0x{st:02X}", f"{st:02X}",
                 f"纠错编码={(st >> 4) & 0xF} 上报事件={(st >> 3) & 1}"
@@ -812,7 +826,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 for i in range(n):
                     if pos + 11 > len(data):
                         break
-                    add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                    add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                         data[pos:pos + 6].hex())
                     w = le16(data[pos + 6:pos + 8])
                     add(f"从节点{i + 1}信息", f"0x{w:04X}", data[pos + 6:pos + 8].hex(),
@@ -868,7 +882,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             pos, i = 1, 0
             while pos + 7 <= len(data):
                 i += 1
-                add(f"从节点{i}地址", _bcd_to_str(data[pos:pos + 6]),
+                add(f"从节点{i}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
                 add(f"从节点{i}通信协议类型", _proto_name(data[pos + 6]),
                     f"{data[pos + 6]:02X}")
@@ -880,17 +894,17 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 pos = 1 + i * 6
                 if pos + 6 > len(data):
                     break
-                add(f"从节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                add(f"从节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
         elif fn == 3 and len(data) >= 7:
-            add("从节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+            add("从节点地址", _bcd_addr_to_str(data[0:6]), data[0:6].hex())
             lv = data[6]
             add("中继级别", f"{lv}", f"{lv:02X}")
             for i in range(lv):
                 pos = 7 + i * 6
                 if pos + 6 > len(data):
                     break
-                add(f"第{i + 1}级中继从节点地址", _bcd_to_str(data[pos:pos + 6]),
+                add(f"第{i + 1}级中继从节点地址", _bcd_addr_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
         elif fn == 4 and len(data) >= 3:
             mode = data[0]
@@ -929,7 +943,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             for i in range(n):
                 if pos + 6 > len(data):
                     break
-                add(f"附属节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                add(f"附属节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                     data[pos:pos + 6].hex())
                 pos += 6
             if pos < len(data):
@@ -952,7 +966,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                 add("通信相位",
                     {0: "未知相", 1: "第1相", 2: "第2相", 3: "第3相"}.get(data[0], f"保留({data[0]})"),
                     f"{data[0]:02X}")
-                add("从节点地址", _bcd_to_str(data[1:7]), data[1:7].hex())
+                add("从节点地址", _bcd_addr_to_str(data[1:7]), data[1:7].hex())
                 add("从节点序号", f"{le16(data[7:9])}", data[7:9].hex())
             elif not up and len(data) >= 3:
                 flag = data[0]
@@ -971,7 +985,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
                     for i in range(n):
                         if pos + 6 > len(data):
                             break
-                        add(f"附属节点{i + 1}地址", _bcd_to_str(data[pos:pos + 6]),
+                        add(f"附属节点{i + 1}地址", _bcd_addr_to_str(data[pos:pos + 6]),
                             data[pos:pos + 6].hex())
                         pos += 6
         elif fn == 2:
@@ -983,7 +997,7 @@ def _app_items(afn: int, fn: int, data: bytes, direction: str = "down") -> list:
             # 上行：无数据单元
         elif fn == 3:
             if up and len(data) >= 9:
-                add("从节点地址", _bcd_to_str(data[0:6]), data[0:6].hex())
+                add("从节点地址", _bcd_addr_to_str(data[0:6]), data[0:6].hex())
                 add("预计延迟时间", f"{le16(data[6:8])}s", data[6:8].hex())
                 ln = data[8]
                 add("抄读信息长度", f"{ln}B", f"{ln:02X}")
@@ -1065,12 +1079,27 @@ def _u16(v, name: str) -> int:
 
 
 def _bcd_bytes(addr, name: str = "地址") -> bytes:
+    """人读 12 位 BCD 地址 → 6 字节线上地址（**低字节在前，即整字节反序**）。
+
+    协议口径（Q/GDW 1376.2 备注：多字节一律低字节在前）对 BCD 地址同样适用：
+    人读地址的首字节是地址最低位，传输时放在最后。
+
+    真机实证（2026-11-19，与模拟电表 000000000088 联调）：
+        帧内发 88 00 00 00 00 00 → 建档确认 → 查档回读展示 000000000088
+                                  → 645 地址域用 000000000088 → 抄表 success=1
+    历史佐证（2026-10-27 台架，地址 201807240099 组网成功）：
+        帧内字节 99 00 24 07 18 20 = reverse(201807240099)
+
+    注意与「查档展示口径」区分：查档回读按半字节交换展示成另一种写法
+    （见 sim_concentrator/batch.py `_wire_addr_bytes` 注释），那是展示层
+    的独立约定，不影响本处写入帧的字节序。
+    """
     s = str(addr).strip()
     if not s.isdigit():
         raise ValueError(f"{name} 必须为 BCD 数字串: {addr!r}")
     if len(s) != 12:
         raise ValueError(f"{name} 必须为 12 位 BCD: {s}")
-    return _str_to_bcd(s, 6)
+    return _str_to_bcd(s, 6)[::-1]
 
 
 def _encode_11f231(params: dict) -> bytes:
@@ -1343,6 +1372,13 @@ def _encode_app_data(afn: int, fn: int, params: Optional[dict],
                 nodes = _nodes_list(params)
                 out = bytearray([_u8(len(nodes), "nodes")])
                 for nd in nodes:
+                    # 条目兼容两种写法：dict{"addr"/"sta", "protocol"} 或纯地址字符串
+                    if isinstance(nd, str):
+                        nd = {"addr": nd}
+                    elif not isinstance(nd, dict):
+                        raise ValueError(
+                            "从节点条目格式非法（应为 dict 或 12 位地址字符串）: "
+                            f"{nd!r}")
                     out += _bcd_bytes(nd.get("addr", nd.get("sta")), "从节点地址")
                     out.append(_u8(nd.get("protocol", 2), "protocol", 0, 3))
                 return bytes(out)
@@ -1633,8 +1669,9 @@ def _encode_app_data(afn: int, fn: int, params: Optional[dict],
                 if isinstance(info, dict):
                     w = (_u8(info.get("quality", 0), "quality", 0, 15) << 4) \
                         | _u8(info.get("relay", 0), "relay", 0, 15)
-                    w |= (_u8(info.get("proto", 0), "proto", 0, 7) << 12) \
-                        | (_u8(info.get("phase", 0), "phase", 0, 15) << 8)
+                    # 节点信息字位段（安徽报文文档 §5）：D13~D11 协议类型 / D10~D8 相位
+                    w |= (_u8(info.get("proto", 0), "proto", 0, 7) << 11) \
+                        | (_u8(info.get("phase", 0), "phase", 0, 7) << 8)
                 else:
                     w = _u16(info or 0, "info")
                 out += w.to_bytes(2, "little")

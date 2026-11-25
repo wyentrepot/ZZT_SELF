@@ -25,14 +25,18 @@ def _decode_hex(full_hex: str) -> dict:
 
 
 def test_11f1_arch_add_matches_verified_frame():
-    """旧用例添加档案 buff 逐字节还原（地址正序 BCD，以验证帧为准）。
+    """11H-F1 添加档案：地址按协议低字节在前（整字节反序）。
 
-    旧用例标注地址 080000000008 与帧内 08 00 00 00 00 00（正序=080000000000）
-    有出入；以帧为准：action=1 + addr 080000000000 + protocol=3(698)。
+    口径变更（2026-11-19 真机，模拟电表 000000000088 联调）：
+        帧内 88 00 00 00 00 00 -> 建档确认 -> 查档回读展示 000000000088
+        645 地址域 000000000088 -> 抄表 success=1
+    历史真机佐证（2026-10-27 台架组网成功）：地址 201807240099 的帧内字节为
+        99 00 24 07 18 20 = reverse(201807240099)
+    故 080000000000 在帧内应为 00 00 00 00 00 08。
     """
     params = {"action": "add", "addr": "080000000000", "protocol": 3}
     out = encode_app_data(0x11, 1, params)
-    assert out == bytes.fromhex("01 08 00 00 00 00 00 03")
+    assert out == bytes.fromhex("01 00 00 00 00 00 08 03")
     # 完整帧：带地址域（module_id=1），decode 回读 AFN/FN/地址正确
     r = build_frame_json({
         "afn": "11", "fn": 1,
@@ -46,6 +50,30 @@ def test_11f1_arch_add_matches_verified_frame():
     assert d["fields"]["FN"]["raw"] == 1
     assert d["fields"]["信息域R"]["raw"].endswith("07")  # seq=7
     assert d["fields"]["地址域A"]["value"].startswith("020103040506")
+
+
+def test_11f1_nodes_accept_plain_addr_strings():
+    """11H-F1 nodes 传纯地址字符串 == 传 dict(protocol=2) 字节一致。
+
+    前端「一行一行档案表」只给地址时按默认协议 645-2007(2) 编码。
+    """
+    by_str = encode_app_data(0x11, 1, {"nodes": ["080000000000", "080000000002"]})
+    by_dict = encode_app_data(0x11, 1, {"nodes": [
+        {"addr": "080000000000", "protocol": 2},
+        {"addr": "080000000002", "protocol": 2}]})
+    assert by_str == by_dict
+    # 地址低字节在前：080000000000 -> 00 00 00 00 00 08（口径见 _bcd_bytes docstring）
+    assert by_str == bytes.fromhex("02 00 00 00 00 00 08 02 02 00 00 00 00 08 02")
+    # 字符串条目仍走原 BCD 校验（不吞异常）
+    with pytest.raises(ValueError, match="12 位 BCD"):
+        encode_app_data(0x11, 1, {"nodes": ["08000000"]})
+
+
+def test_11f1_nodes_reject_non_dict_non_str():
+    """11H-F1 nodes 条目既非 dict 也非 str → 清晰 ValueError。"""
+    for bad in (123, None, [1, 2]):
+        with pytest.raises(ValueError, match="从节点条目格式非法"):
+            encode_app_data(0x11, 1, {"nodes": [bad]})
 
 
 def test_11f231_config_matches_verified_frame():
@@ -89,7 +117,7 @@ def test_11f231_flat_items_grouping():
 def test_11f232_arch_attach():
     """11H-F232 关联档案：任务号 + 数量2B小端 + 6B BCD×N。"""
     out = encode_app_data(0x11, 232, {"task_no": 7, "meters": ["013300000001", "013300000002"]})
-    assert out == bytes.fromhex("07 02 00 01 33 00 00 00 01 01 33 00 00 00 02")
+    assert out == bytes.fromhex("07 02 00 01 00 00 00 33 01 02 00 00 00 33 01")
 
 
 def test_10f2_query_nodes():

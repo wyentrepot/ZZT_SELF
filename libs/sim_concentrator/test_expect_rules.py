@@ -96,8 +96,9 @@ class FakeStepIO:
 
 
 def test_auto_expect_confirm():
+    # 真实设备应答镜像请求 seq（2026-11-19 实测 00H-F1 10/11 镜像）；补 seq=1
     io = FakeStepIO(lambda raw: [build_13762_frame(
-        afn=0x00, fn=1, appdata=b"", direction="up")])
+        afn=0x00, fn=1, appdata=b"", direction="up", info={"seq": 1})])
     out = run_single_step(io, send={"afn": 0x05, "fn": 2, "params": {"enable": 1}},
                           profile={}, seq=1)
     step = out["step"]
@@ -131,7 +132,7 @@ def test_auto_expect_timeout_tier_single_read():
 
 def test_explicit_expect_overrides_auto():
     io = FakeStepIO(lambda raw: [build_13762_frame(
-        afn=0x03, fn=4, appdata=b"", direction="up")])
+        afn=0x03, fn=4, appdata=b"", direction="up", info={"seq": 1})])
     out = run_single_step(io, send={"afn": 0x03, "fn": 4, "params": {}},
                           profile={}, expect={"afn": 0x03, "fn": 4, "dir": "up"},
                           seq=1)

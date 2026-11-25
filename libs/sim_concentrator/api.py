@@ -133,6 +133,15 @@ class StepRequest(BaseModel):
     recv_only: bool = False
     enable_responder: bool = True
     name: Optional[str] = None
+    # 串口目标：与 VerifyTask 同口径。缺了这几个字段，页面传 mapping_id 会被
+    # Pydantic 静默丢弃 → 后端退回自动选口（/dev/ttyS0）报 Input/output error
+    # （2026-11-19 现场：工作台重启后点「下发」必现）。
+    port: Optional[str] = None
+    mapping_id: Optional[str] = None
+    baudrate: Optional[int] = None
+    bytesize: Optional[int] = None
+    parity: Optional[str] = None
+    stopbits: Optional[int] = None
 
     @field_validator("send", mode="before")
     @classmethod
@@ -280,24 +289,50 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
              "reply": {"afn": 0x00, "fn": 1, "format": "local"}},
         ], builtin=False)
 
+    def _io_mismatch(io: SerialIO, resolved: dict[str, Any]) -> bool:
+        """已开通道与目标配置是否不一致（端口或串口参数）。
+
+        不一致时不能静默复用旧通道：否则页面/Profile 明明换了口或波特率，
+        实际仍在旧口上收发——现象正是「下发无应答」，且应用结果还报成功
+        （2026-11-19 复现：Profile 指向 ecu-biz/COM28，实占仍是 simcon/COM11）。
+        """
+        if str(getattr(io, "port", "")) != str(resolved.get("port", "")):
+            return True
+        for key in ("baudrate", "bytesize", "parity", "stopbits"):
+            current = getattr(io, key, None)
+            if current is not None and key in resolved and current != resolved[key]:
+                return True
+        return False
+
     def _open_io(resolved: dict[str, Any]) -> SerialIO:
+        stale = None
         with _holder["lock"]:
             io = _holder["io"]
-            if io is None or not io.is_open():
-                journal = _sessions.open_session(str(resolved["port"]))
-                io = SerialIO(
-                    port=resolved["port"],
-                    baudrate=resolved["baudrate"],
-                    bytesize=resolved["bytesize"],
-                    parity=resolved["parity"],
-                    stopbits=resolved["stopbits"],
-                    port_identity=resolved["port_identity"],
-                    resource_registry=app.state.serial_resource_registry,
-                    journal=journal,
-                    auto_responder=_auto_ack_responder(),
-                )
-                io.open()
-                _holder["io"] = io
+            if io is not None and io.is_open():
+                if not _io_mismatch(io, resolved):
+                    return io
+                # 换口/换参数：先把旧通道摘下来，锁外关闭（close 会等读写线程退出）
+                stale, _holder["io"] = io, None
+        if stale is not None:
+            journal = getattr(stale, "journal", None)
+            stale.close()
+            if journal is not None:
+                _sessions.finalize(journal)
+        with _holder["lock"]:
+            journal = _sessions.open_session(str(resolved["port"]))
+            io = SerialIO(
+                port=resolved["port"],
+                baudrate=resolved["baudrate"],
+                bytesize=resolved["bytesize"],
+                parity=resolved["parity"],
+                stopbits=resolved["stopbits"],
+                port_identity=resolved["port_identity"],
+                resource_registry=app.state.serial_resource_registry,
+                journal=journal,
+                auto_responder=_auto_ack_responder(),
+            )
+            io.open()
+            _holder["io"] = io
             return io
 
     def _close_io() -> None:
@@ -317,8 +352,21 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
     def simcon_close_io() -> None:
         _close_io()
 
+    def simcon_current_port() -> Optional[str]:
+        """当前真正打开的端口（None=未打开）。
+
+        Profile 应用必须读这个活状态，不能依赖调用方自己缓存的「上次打开的口」：
+        页面 `/api/simcon/open` 不经适配器，缓存会过期，导致「换了口却报
+        unchanged」的假成功。
+        """
+        io = _io()
+        if io is None or not io.is_open():
+            return None
+        return getattr(io, "port", None)
+
     app.state.simcon_open_io = simcon_open_io
     app.state.simcon_close_io = simcon_close_io
+    app.state.simcon_current_port = simcon_current_port
     app.state.simcon_catalog = catalog
 
     # -- 任务/单步执行核心：HTTP 路由与 AI 控制面（进程内注入）共用 -------------
@@ -498,6 +546,32 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         """应答预期规则库（REQS-0027 G2/G3）：映射表 + 否认码语义 + 超时档位。"""
         from sim_concentrator import expect_rules as er
         return er.load()
+
+    @app.get(f"{prefix}/settings")
+    async def simcon_settings_get():
+        """simcon 全局设置（当前值 + 字段说明）。
+
+        目前只有 query_start_base：10H-F2 从节点起始序号基址。
+        现场口径（2026-11-19）：本场模块档案 1 起编号——
+        start=0 回「总数量对、本次应答数量 0」的空壳，start=1 才回明细。
+        """
+        from shared.simcon_settings import SimconSettingsStore
+        return SimconSettingsStore().public()
+
+    @app.post(f"{prefix}/settings")
+    async def simcon_settings_post(payload: Dict[str, Any]):
+        """保存 simcon 全局设置（落盘 data/runtime/simcon_settings.json）。
+
+        入参：{"query_start_base": 0|1}（部分字段也接受，只更新给出的键）。
+        """
+        from shared.simcon_settings import SimconSettingsStore
+        store = SimconSettingsStore()
+        merged = store.load()
+        for key in ("query_start_base",):
+            if key in payload:
+                merged[key] = payload[key]
+        path = store.save(merged)
+        return {"saved": True, "path": str(path), **store.public()}
 
     @app.post(f"{prefix}/open")
     async def open_serial(request: OpenSpec):
@@ -831,9 +905,21 @@ def create_simcon_app(prefix: str = "/api/simcon", resource_registry: SerialReso
         return query_online(io, timeout=timeout, profile=load_profile("anhui"))
 
     @app.get(f"{prefix}/archive/query")
-    async def archive_query(start: int = 0, count: int = 200, timeout: float = 5.0):
-        """查档案（10H-F2 构帧下发，模块实时获取，临时存储，复位不保存）。"""
+    async def archive_query(start: int = 0, count: int = 200, timeout: float = 5.0,
+                            start_base: Optional[int] = None):
+        """查档案（10H-F2 构帧下发，模块实时获取，临时存储，复位不保存）。
+
+        start_base：从节点起始序号基址（0/1）。仅为显式覆盖时传——
+        缺省读全局设置 data/runtime/simcon_settings.json 的 query_start_base。
+
+        现场口径（2026-11-19）：本场模块档案 1 起编号，start=0 会回
+        「总数量对、本次应答数量 0」的空壳；start=1 才回出全部明细。
+        """
         try:
+            if start_base is None:
+                from shared.simcon_settings import query_start_base as _base
+                start_base = _base()
+            start = max(0, int(start) + (1 if int(start_base or 0) == 1 else 0))
             return _archive_query(start, count, timeout)
         except TimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
