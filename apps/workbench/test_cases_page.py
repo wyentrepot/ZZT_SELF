@@ -103,18 +103,39 @@ def test_theme_boot_script_follows_shell_contract():
 # ---------- UI-1 用例列表 ----------
 
 
-def test_case_list_rows_show_steps_and_expandable_detail():
+def test_case_list_rows_are_minimal_with_expandable_detail():
+    """清单卡片 144 台账极简口径（2026-11-25 用户裁决：「只用显示用例名即可」）。
+
+    覆盖行为说明（改前 8 层卡面 → 改后 收敛为 用例名 + 一句话描述 + 展开箭头）：
+    ① 卡面只渲染用例名（id 收进悬浮提示 title 属性）与声明 description 一句话描述
+       （.case-sum 描述行；后端未透传 / 与用例名相同时不渲染，卡片退为「名 + 箭头」）；
+    ② 反向守卫：步数芯片（n 步）、业务动作链摘要、分类标签组（case-cat/.tag）从卡面
+       与样式表一并移除，不新增任何视觉元素；
+    ③ 步骤 do/expect 只进展开区：data-hook="case-steps" 默认 hidden、「期望：」文案保留；
+    ④ kind 徽标收敛为一枚低调徽标：kindBadge 词典与三态文案保留（徽标说明删除的
+       既有守卫沿用），卡面仅 scenario / setup 渲染，回归（默认态）不亮徽标；
+    ⑤ step_count 仍在数据层（normCase 归一化 + 「排序：步骤数」），只是不再上卡面。
+    """
     js = js_text()
     html = html_text()
     assert 'data-hook="case-list"' in html
-    # 每行：用例名 + 步骤数 + 步骤摘要
-    assert "step_count" in js
-    assert "步</span>" in js
-    assert "stepSummary" in js
-    # 展开看完整 do / expect
+    # ① 卡面 = 用例名 + 一句话描述 + 展开箭头
+    assert "item.description" in js, "normCase 必须读取声明 description 字段"
+    assert 'class="case-sum"' in js and "case-title" in js, "卡片缺少描述行/用例名"
+    assert '"▸"' in js and '"▾"' in js, "展开入口必须是箭头（展开/收起两态）"
+    # ② 反向守卫：堆叠信息层确实从卡面与样式表移除
+    assert "步</span>" not in js, "步数芯片应从卡面移除"
+    assert "stepSummary" not in js and "STEP_ACTION" not in js, "业务动作链摘要应整体移除"
+    assert "case-cat" not in js and 'class="tag"' not in js, "分类标签组应从卡面移除"
+    assert ".case-cat" not in html and ".tag{" not in html and ".case-steps{" not in html, (
+        "已删元素的样式规则应一并移除"
+    )
+    # ③ 步骤 do / expect 只进展开区（展开区保留原文，不裁剪排查信息）
     assert 'data-hook="case-steps"' in js
     assert "step.expect" in js
     assert "期望：" in js
+    # ⑤ step_count 保留在数据层
+    assert "step_count" in js
 
 
 # ---------- D10-2 分类分组与筛选 ----------
@@ -136,12 +157,20 @@ def test_category_dimensions_and_filters():
 
 
 def test_category_missing_falls_back_to_uncategorized():
+    """分类缺失 → 「未分类」兜底（144 极简后：兜底只在分组/筛选维度，不上卡面）。
+
+    覆盖行为说明：卡面分类标签组（含卡面「未分类」标签 data-hook="uncategorized"）
+    已按 2026-11-25 用户裁决随标签组整体移除；「未分类」兜底保留在分组渲染
+    （data-group 组头，未分类组仍排最后可见）与筛选下拉（fillFilter / rail 末项），
+    用例仍可见、可筛、可分组（不过滤掉）。
+    """
     js = js_text()
     assert "未分类" in js
     # 缺失的维度返回空串 → 归入「未分类」，用例仍可见（不过滤掉）
     assert 'return UNCAT_LABEL;' in js
-    assert 'data-hook="uncategorized"' in js
+    assert 'data-hook="uncategorized"' not in js, "卡面未分类标签应随分类标签组移除"
     assert 'data-group="' in js  # 分组渲染仍会输出该组
+    assert "UNCAT" in js and "fillFilter(" in js, "筛选下拉仍保留未分类兜底"
 
 
 def test_default_sort_order_is_usage_domain_scene_title():
@@ -201,6 +230,32 @@ def test_bench_banner_collapses_when_ready_and_autoexpands_when_blocked():
     # 冗余说明确实删掉（反向守卫，注明覆盖行为：横幅一行不再带任何解释文字）
     for gone in ("运行闸门：5 口可用", "口全通 · ", "条关键事实成立"):
         assert gone not in js and gone not in html, f"冗余说明未删除：{gone}"
+
+
+def test_bench_banner_renders_immediately_marks_probing_and_polls():
+    """横幅慢修（2026-11-25）：秒开契约。
+
+    覆盖行为说明：后端 /api/cases/bench 改为进程级缓存 + stale-while-revalidate 后，
+    页面侧三条守卫——
+    ① loadBench 拿到快照**立即渲染横幅**（不等 loadCases/loadSuites 的 Promise.all），
+       stale / 占位快照也先渲染（端口芯片可见）；
+    ② stale=true 时显示轻量「事实检测中…」徽标（bench-probing），不阻塞清单/按钮渲染，
+       闸门口径（ready 置灰）不变；
+    ③ 每 30s 自动重取 bench 更新横幅（后台刷新写完缓存后下一轮自动取回真结论），
+       页面隐藏（document.hidden）时跳过本轮。
+    """
+    js = js_text()
+    html = html_text()
+    # ① 快照先渲染：loadBench 成功/失败两条路径都落 renderBench()
+    assert "computeBench();\n      renderBench();" in js.replace("\r\n", "\n"), \
+        "loadBench 必须拿到快照立即渲染横幅（不等其余加载）"
+    # ② stale 徽标：元素在 html、状态位与渲染在 js
+    assert 'id="bench-probing"' in html and "事实检测中…" in html
+    assert "S.benchStale" in js and "bench.stale === true" in js
+    assert 'probingEl.hidden = !S.benchStale' in js
+    # ③ 30s 自动轮询 + 页面隐藏跳过
+    assert "setInterval" in js and "30000" in js, "必须有 30s bench 自动轮询"
+    assert "document.hidden" in js, "页面隐藏时应跳过轮询"
 
 
 # ---------- UI-3 勾选 → 存方案 → 刷新恢复 ----------
@@ -282,7 +337,8 @@ def test_redundant_explanations_are_gone():
     # 历史运行入口 title 里的 API 细节（用户可见口径已删；js 内部代码注释不属用户层，不查）
     assert "GET /api/cases/runs?limit=10" not in html
     assert "（GET /api/cases/runs/{run_id}）" not in html
-    # 徽标本身保留（删的是说明，不是徽标）
+    # 徽标本身保留（删的是说明，不是徽标）；144 极简口径（工位 S，2026-11-25）再把
+    # 卡面收敛为一枚低调徽标：词典与三态文案仍在 js，仅 scenario/setup 渲染（回归不亮）
     assert "kind-badge" in js and '"回归"' in js and '"场景"' in js and '"台架准备"' in js
     # 汇总条芯片短文案仍在（承载分母口径的一句话）
     assert "台架准备 " in js and "（不计入分母）" in js
@@ -566,15 +622,19 @@ def test_bench_banner_humanizes_internal_details():
     assert 'raw.push("端口 " + port.id' in js
 
 
-def test_list_row_summary_is_business_chain():
-    """③ 行内摘要 = 业务动作链（5 步：档案 → 组网 → 绑表 → 抄表）；帧标识只留在展开区。"""
+def test_list_card_summary_replaced_by_declaration_description():
+    """③ 卡面说明行 = 声明 description 一句话（144 台账口径），不再是动作链摘要。
+
+    覆盖行为说明：用户裁决「用例过于啰嗦」——STEP_ACTION / FRAME_TOKEN / stepAction /
+    blockChain / stepChain / stepSummary 整套动作链摘要机器移除，卡面说明行改为渲染
+    声明的 description 字段；帧标识（11H-F1 等）与 do/expect 原文只进展开区；
+    报告区仍依赖的 actionLabel 词典（块名 → 业务动作）不受影响。
+    """
     js = js_text()
-    for token in ("STEP_ACTION", "FRAME_TOKEN", "stepAction", "stepChain", "stepSummary"):
-        assert token in js, f"行内摘要缺少 {token}"
-    assert '" → "' in js, "业务动作链应用「 → 」连接"
-    assert "H[-\\s]?F" in js, "缺少帧标识（如 11H-F1 / 10H-F21）剥离规则"
-    for action in ('"档案"', '"组网"', '"绑表"', '"抄表"', '"复位"'):
-        assert action in js, f"动作链缺少业务动作 {action}"
+    for gone in ("STEP_ACTION", "FRAME_TOKEN", "stepAction", "stepChain", "blockChain", "stepSummary"):
+        assert gone not in js, f"行内动作链摘要机器应整体移除：{gone}"
+    # 卡面说明行吃声明 description
+    assert "item.description" in js
     # 展开区仍保留 do/expect 原文（不裁剪排查信息）
     assert 'data-hook="case-steps"' in js and "step.expect" in js
 

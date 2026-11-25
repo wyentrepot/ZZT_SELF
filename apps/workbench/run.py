@@ -151,6 +151,12 @@ def _print_startup_preflight() -> None:
     纯 print 提示，不改变启动逻辑：列出环境变量门槛（缺省给出补救提示）
     与健康检查地址，避免"启动成功但 v2 调用裸 401"后才去排查。
     """
+    # 根日志补一个带时间戳的 handler：app 内部（如 §4.8 用例预热）的
+    # logging.info/warning 只有落到 root 才会进控制台/重定向文件；uvicorn
+    # 自有 loggers propagate=False，不会因此重复打印。
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
     full_access = os.environ.get("WORKBENCH_LOCAL_FULL_ACCESS", "").strip()
     full_hint = ("" if full_access else
                  "（缺省：v2 调用将要求 Bearer token；本机 loopback 可在启动时设 =1 免 token）")

@@ -93,6 +93,9 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .bench.is-ready .bench-state{color:var(--color-status-pass)}
 .bench.is-blocked .bench-state{color:var(--color-status-fail)}
 .bench.is-unknown .bench-state{color:var(--color-status-warn)}
+/* 「事实检测中…」轻量徽标（横幅慢修 2026-11-25）：stale 快照后台真探中，只提示不告警 */
+.bench-probing{font-size:11px;font-weight:600;color:var(--color-status-info);
+  border:1px solid var(--color-status-info-border);border-radius:var(--radius-full);padding:0 8px}
 .bench-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
 .bench-group .glabel{font-size:11px;color:var(--color-fg-muted);min-width:34px}
 .port,.fact{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:1px 8px;border-radius:var(--radius-full);border:1px solid var(--color-border-strong);color:var(--color-fg-muted);background:var(--color-bg-surface)}
@@ -152,16 +155,14 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .case-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .case-head .pick{width:14px;height:14px;accent-color:var(--color-accent-emphasis);cursor:pointer;flex:none}
 .case-title{font-weight:600}
-.case-id{font-size:11px;color:var(--color-fg-muted)}
-/* kind 徽标（REQS-0044 变更 4）：回归=默认色 / 场景=蓝（info 令牌）/ 台架准备=灰 */
+/* kind 徽标（REQS-0044 变更 4）：场景=蓝（info 令牌）/ 台架准备=灰。
+   144 极简口径（2026-11-25 用户裁决）：回归是默认态，卡面不再亮徽标——
+   一枚低调徽标只留给非默认类；词典与文案在 cases.js 原样保留。 */
 .kind-badge{display:inline-block;font-size:11px;line-height:1.5;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);padding:0 6px;color:var(--color-fg-muted);background:var(--color-bg-raised);white-space:nowrap}
 .kind-badge.scenario{color:var(--color-status-info);border-color:var(--color-status-info-border);background:var(--color-status-info-bg)}
 .kind-badge.setup{color:var(--color-fg-dim);border-color:var(--color-border-default);background:var(--color-bg-canvas)}
-.case-steps{font-size:11px;color:var(--color-fg-muted);border:1px solid var(--color-border-default);border-radius:var(--radius-sm);padding:0 6px;white-space:nowrap}
+/* 一句话描述（声明 description 字段）：卡面唯一说明行；后端未透传时不渲染 */
 .case-sum{margin-top:3px;font-size:12px;color:var(--color-fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.case-cat{margin-top:3px;display:flex;gap:5px;flex-wrap:wrap}
-.tag{display:inline-block;font-size:11px;color:var(--color-fg-muted);border:1px dashed var(--color-border-strong);border-radius:var(--radius-sm);padding:0 6px}
-.tag.uncat{color:var(--color-status-warn);border-color:var(--color-status-warn-border);border-style:solid}
 .steps{list-style:none;margin:8px 0 2px;padding:6px 0 0;border-top:1px dashed var(--color-border-default)}
 .step{display:flex;gap:8px;padding:4px 8px;border-left:2px solid var(--color-border-default);border-radius:var(--radius-sm);margin-bottom:4px}
 .step-no{flex:0 0 20px;height:20px;line-height:20px;text-align:center;font-size:11px;border-radius:50%;background:var(--color-bg-raised);color:var(--color-fg-muted);font-variant-numeric:tabular-nums}
@@ -356,6 +357,9 @@ table.bk td{color:var(--color-fg-muted)}
   <div class="bench-head">
     <b>台架就绪</b>
     <span class="bench-state" id="bench-state">检测中…</span>
+    <!-- 横幅慢修（2026-11-25）：快照 stale（缓存过期回旧值 / 重启后首查占位）时显示，
+         后台刷新中，30s 轮询自动取回真结论；不阻塞清单/按钮渲染 -->
+    <span class="bench-probing" id="bench-probing" hidden>事实检测中…</span>
     <span class="spacer"></span>
     <button class="mini" id="bench-detail-toggle" data-hook="bench-detail-toggle" aria-expanded="false" aria-controls="bench-details">▸ 详情</button>
   </div>

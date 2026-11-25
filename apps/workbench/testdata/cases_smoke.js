@@ -71,6 +71,9 @@ function makeSandbox(routes, store) {
     encodeURIComponent,
     setTimeout: (fn) => { sandbox.__timers.push(fn); return 1; },
     clearTimeout: () => {},
+    // 30s bench 轮询（横幅慢修 2026-11-25）：冒烟不真实触发（间隔远大于一次 flush）
+    setInterval: () => 0,
+    clearInterval: () => {},
     __timers: [],
     localStorage: {
       getItem: (k) => (k in store ? store[k] : null),
@@ -127,6 +130,8 @@ const CASES = {
   items: [
     {
       id: "meter_daily", title: "抄表日常（不复位）", step_count: 4,
+      // 一句话描述（144 极简口径）：后端透传声明 description 时，卡面说明行渲染它
+      description: "抄表日常回归用例：不复位 STA，档案在位后经查档、组网、绑表完成日常抄读",
       needs: ["bench.sta_online"], tags: ["smoke"],
       category: { usage: "common", domain: "STA", scene: "抄表", region: "国网通用" },
       protocols: ["645"],
@@ -138,6 +143,7 @@ const CASES = {
       ],
     },
     {
+      // 无 description：卡面退为「用例名 + 展开箭头」（描述行不渲染）
       id: "nwk_join", title: "组网入网", step_count: 2, category: { usage: "normal", domain: "CCO", scene: "组网" },
       protocols: ["1376.2"], steps: [{ no: 1, do: "复位 STA", expect: "复位成功" }],
     },
@@ -374,17 +380,20 @@ function run(name, routes, store, check) {
     const el = sandbox.__els;
     const list = el.get("list-wrap").innerHTML;
     if (!list.includes("meter_daily")) throw new Error("用例未渲染");
-    if (!list.includes("4 步")) throw new Error("步骤数未渲染");
-    // 行内摘要 = 业务动作链（不是 do 全文，也不带帧标识）
-    if (!list.includes("4 步：档案 → 组网 → 绑表 → 抄表")) {
-      throw new Error("行内摘要未收敛成业务动作链：" + visibleText(list).slice(0, 300));
+    // 144 极简卡面（2026-11-25 用户裁决）：用例名 + 一句话描述 + 展开箭头；
+    // 步数芯片 / 业务动作链摘要 / 分类标签组不再上卡面（反向守卫）
+    if (list.includes("步</span>") || list.includes("case-cat") || list.includes('class="tag"')) {
+      throw new Error("卡面仍渲染步数/摘要/分类标签组（应已按 144 口径移除）：" + visibleText(list).slice(0, 300));
     }
-    // 只查行内摘要（展开区保留原文，含帧标识是允许的）
+    // 卡面说明行 = 声明 description 一句话（仅 meter_daily 有 → 恰 1 条）；无 description 不渲染
     const summaries = caseSummaries(list);
-    if (!summaries.length) throw new Error("未渲染任何行内摘要");
-    if (/11H-F\d|10H-F\d|645\s*DI/.test(summaries.join(" "))) {
-      throw new Error("行内摘要仍含帧标识：" + summaries.join(" / "));
+    if (summaries.length !== 1 || summaries[0].indexOf("抄表日常回归用例") !== 0) {
+      throw new Error("卡面一句话描述未按声明 description 渲染：" + JSON.stringify(summaries));
     }
+    if (/11H-F\d|10H-F\d|645\s*DI/.test(summaries.join(" "))) {
+      throw new Error("卡面描述仍含帧标识：" + summaries.join(" / "));
+    }
+    if (!list.includes(">▸<")) throw new Error("缺少展开箭头");
     if (!list.includes("未分类")) throw new Error("category 缺失用例未归「未分类」");
     if (!list.includes('data-group=""') && !list.includes("未分类")) throw new Error("分组渲染缺失");
     // 常用度排序：common 组必须排在 normal / 未分类之前

@@ -493,3 +493,106 @@ def test_feedback_api_rejects_malformed_flow_compare(client):
     bad_field = client.post(
         "/api/feedback", json={"flow_compare": {"missing": "not-a-list", "verdict": "fail"}})
     assert bad_field.status_code == 422
+
+
+# ---------- §4.8 用例声明启动预热（消除页面首开冷启动卡顿）----------
+
+def test_cases_service_exposed_for_warmup(tmp_path):
+    """§4.7/§4.8：服务体挂到 app.state.cases_service（预热与请求共用同一实例）。"""
+    from workbench.cases_api import CasesService
+
+    app = create_workbench_app(
+        listener_factory=_stub_listener_factory,
+        module_log_factory=_stub_module_log_factory,
+        simcon_factory=_stub_simcon_factory,
+        ai_storage_dir=tmp_path / "ai-control",
+    )
+    assert isinstance(app.state.cases_service, CasesService)
+
+
+def test_spawn_cases_warmup_none_service_is_noop():
+    """服务体缺失（装配降级）→ 不起线程、安静跳过。"""
+    import threading
+
+    from workbench.app import _spawn_cases_warmup
+
+    before = {t.name for t in threading.enumerate()}
+    _spawn_cases_warmup(None)
+    assert "cases-warmup" not in {t.name for t in threading.enumerate()} - before
+
+
+class _FakeCasesApp:
+    """最小 app 替身：ASGI 自请求会触发一次 service.bundle()（模拟端点装载步）。"""
+
+    def __init__(self, service):
+        self.state = type("State", (), {"cases_service": service})()
+        self.status_seen = None
+
+    async def __call__(self, scope, receive, send):
+        assert scope["path"] == "/api/cases" and scope["method"] == "GET"
+        self.state.cases_service.bundle()  # 真端点在这里调 service.bundle()
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": b"{}"})
+        self.status_seen = 200
+
+
+def test_cases_warmup_runs_endpoint_once_on_startup(tmp_path, monkeypatch):
+    """lifespan startup 触发后台预热：经真实 ASGI 自请求恰好走一次 /api/cases。
+
+    预热把「声明装载 + FastAPI 路由惰性编译」从用户首查挪到启动后台；这里用
+    最小 app 替身验证接线（同一路径、恰好一次、后台执行），装载/编译行为本身
+    由 test_cases_api.py 与真机实测覆盖。
+    """
+    import threading
+
+    from workbench.app import _spawn_cases_warmup
+
+    calls = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    class Service:
+        def bundle(self):  # 端点在预热请求里会调一次
+            calls.append(threading.current_thread().name)
+            entered.set()
+            release.wait(timeout=5)
+            return None
+
+    fake_app = _FakeCasesApp(Service())
+    _spawn_cases_warmup(fake_app)
+    warm = [t for t in threading.enumerate() if t.name == "cases-warmup"]
+    assert warm and warm[0].is_alive(), "预热应起后台线程（不阻塞调用方）"
+    assert entered.wait(timeout=5), "预热线程应发起 ASGI 自请求打到 /api/cases"
+    release.set()
+    warm[0].join(timeout=5)
+    assert not warm[0].is_alive()
+    assert len(calls) == 1, "预热应恰好触发一次端点装载"
+    assert fake_app.status_seen == 200
+
+
+def test_cases_warmup_failure_swallowed(tmp_path, monkeypatch, caplog):
+    """预热失败（端点报错 → 非 2xx）只记 WARNING 不抬服务（降级 = 首查照旧冷装载）。"""
+    import logging
+    import threading
+
+    from workbench.app import _self_request_cases, _spawn_cases_warmup
+
+    class BadApp:
+        def __init__(self):
+            self.state = type("State", (), {"cases_service": object()})()
+
+        async def __call__(self, scope, receive, send):
+            await send({"type": "http.response.start", "status": 500, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+    with caplog.at_level(logging.WARNING, logger="workbench.app"):
+        _spawn_cases_warmup(BadApp())
+        warm = [t for t in threading.enumerate() if t.name == "cases-warmup"]
+        assert warm, "预热线程应被拉起"
+        warm[0].join(timeout=5)
+    assert not warm[0].is_alive()
+    assert any("预热失败" in rec.getMessage() for rec in caplog.records)
+    # 非 2xx 判定本身也要站得住：500 视为失败并抛 RuntimeError（由 _warm 降级）
+    with pytest.raises(RuntimeError):
+        _self_request_cases(BadApp())

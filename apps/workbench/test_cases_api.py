@@ -745,8 +745,13 @@ def test_list_facts_returns_probe_and_params_schema(client):
 
 
 def test_bench_snapshot_has_ports_and_all_facts(client):
-    """/bench = 逻辑口可用性（5 口）+ 全部事实三态（8 个），结构给 UI 置灰用。"""
-    resp = client.get("/api/cases/bench")
+    """/bench = 逻辑口可用性（5 口）+ 全部事实三态（8 个），结构给 UI 置灰用。
+
+    覆盖行为说明（横幅慢修 2026-11-25）：端点缺省走缓存 + 后台刷新（首查回占位快照），
+    本测试要断言**全量真探**的完整结论，故走 ``?refresh=1`` 强制同步探测路径；
+    缓存行为本身由下方「台架快照缓存」一节的新测试覆盖。
+    """
+    resp = client.get("/api/cases/bench?refresh=1")
     assert resp.status_code == 200, resp.text
     bench = resp.json()
 
@@ -797,7 +802,11 @@ def test_default_bridge_snapshot_provider_reads_real_serial_bridge_config():
 
 
 def test_bench_snapshot_reports_unreadable_bridge_but_keeps_facts(tmp_path, fake_root):
-    """桥状态读不到 → 如实报错、口列表为空，但事实三态照给（不整页 500）。"""
+    """桥状态读不到 → 如实报错、口列表为空，但事实三态照给（不整页 500）。
+
+    覆盖行为说明（横幅慢修 2026-11-25）：断言的是**全量真探**结果，走 ``?refresh=1``
+    强制同步路径（缺省首查已改为缓存占位，见下方「台架快照缓存」一节）。
+    """
     _reset_calls()
     _ensure_registered()
 
@@ -805,7 +814,7 @@ def test_bench_snapshot_reports_unreadable_bridge_but_keeps_facts(tmp_path, fake
         raise OSError("bridge down (fake)")
 
     client = _make_client(tmp_path, fake_root, provider=boom)
-    resp = client.get("/api/cases/bench")
+    resp = client.get("/api/cases/bench?refresh=1")
     assert resp.status_code == 200, resp.text
     bench = resp.json()
     assert bench["ports"] == [] and bench["ports_total"] == 0
@@ -847,6 +856,224 @@ def test_bench_skips_fact_probe_while_another_run_holds_env_lock(tmp_path, fake_
     assert bench.facts_total == 8
     assert bench.ports_usable == 5  # 口快照不依赖地址注入，照给
     assert CALLS["probes"] == []    # 一个事实都没探
+
+
+# --------------------------------------------------------------------------- #
+# 4b. 台架快照缓存（横幅慢修 2026-11-25）：stale-while-revalidate / 单飞 /
+#     占用临时态不入缓存 / 闸门事实优先
+# --------------------------------------------------------------------------- #
+
+
+def _wait_bench_idle(service: CasesService, timeout: float = 10.0) -> None:
+    """等 bench 后台刷新线程收尾（缓存写完或放弃 + 单飞位复位）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not service._bench_refreshing:
+            return
+        time.sleep(0.02)
+    raise AssertionError("bench 后台刷新未在 %.1fs 内收尾" % timeout)
+
+
+def _bench_service(tmp_path, fake_root) -> CasesService:
+    return CasesService(
+        tmp_path / "storage",
+        data_dir=fake_root,
+        register_domain=False,
+        bridge_snapshot_provider=_bridge_snapshot,
+    )
+
+
+def test_bench_cache_placeholder_then_ttl_hit(tmp_path, fake_root):
+    """重启后首查 → 占位（facts 全「检测中」、cache_age_s=None）+ 后台刷新；
+    TTL 内再查 → 命中缓存（stale=false），零探测。"""
+    _reset_calls()
+    _ensure_registered()
+    service = _bench_service(tmp_path, fake_root)
+
+    first = service.bench_cached(base_url="http://x:1", base_source="body")
+    assert first.stale is True and first.cache_age_s is None
+    assert first.facts_total == 8
+    assert all(f.state == "unknown" for f in first.facts)
+    assert all(f.detail == "首次快照探测中（后台）" for f in first.facts)
+    assert first.probe_skipped == ""
+    assert first.ports_total == 5 and first.ports_usable == 5  # 口部分照给（毫秒级）
+    _wait_bench_idle(service)
+    assert service._bench_cache is not None, "后台刷新完成后缓存应写入"
+    probes_after_refresh = len(CALLS["probes"])
+    assert probes_after_refresh == 8, "一轮全量探测：8 个事实各探一次"
+
+    second = service.bench_cached(base_url="http://x:1", base_source="body")
+    assert second.stale is False and second.cache_age_s is not None
+    assert len(CALLS["probes"]) == probes_after_refresh, "TTL 内命中缓存不得再探"
+    states = {f.fact_id: f.state for f in second.facts}
+    assert states["fake.ready"] == "yes" and states["fake.missing"] == "no"
+
+
+def test_bench_cache_single_flight_no_duplicate_refresh(tmp_path, fake_root):
+    """刷新中并发再查 → 单飞（不重复起线程）、仍立即回占位；全程只探一轮。"""
+    _reset_calls()
+    _ensure_registered()
+    # 慢探测事实（0.3s）：把刷新窗口拉长到足以覆盖第二次查询（毫秒级紧跟首查）
+    _write_json(fake_root / "facts" / "zz_slow.json", {
+        "id": "zz.slow", "title": "慢探测事实", "probe": "zz.slow",
+        "params_schema": {"type": "object", "properties": {}},
+    })
+    if not has_fact("zz.slow"):
+        def slow_probe(params):
+            time.sleep(0.3)
+            CALLS["probes"].append(("zz.slow", dict(params or {})))
+            return {"state": "yes", "detail": "慢探测完成"}
+        register_fact("zz.slow", slow_probe)
+    service = _bench_service(tmp_path, fake_root)
+
+    first = service.bench_cached()
+    assert service._bench_refreshing is True, "首查应同步置单飞位并起后台刷新"
+    second = service.bench_cached()
+    assert second.stale is True and second.cache_age_s is None
+    assert second.probe_skipped == ""
+    _wait_bench_idle(service)
+    slow_calls = [c for c in CALLS["probes"] if c[0] == "zz.slow"]
+    assert len(slow_calls) == 1, "单飞：刷新中不重复起线程，全程只探一轮"
+    third = service.bench_cached()
+    assert third.stale is False and third.cache_age_s is not None
+    assert {f.fact_id: f.state for f in third.facts}["zz.slow"] == "yes"
+
+
+def test_bench_cache_expired_returns_stale_then_revalidates(tmp_path, fake_root):
+    """TTL 过期 → 立即回旧缓存（stale=true、cache_age_s 超 TTL）并触发后台再刷新。"""
+    from workbench.cases_api import BENCH_CACHE_TTL_S
+
+    _reset_calls()
+    _ensure_registered()
+    service = _bench_service(tmp_path, fake_root)
+    fresh = service.bench()
+    service._store_bench_cache(fresh)
+    before = len(CALLS["probes"])
+    service._bench_cache["mono"] = time.monotonic() - (BENCH_CACHE_TTL_S + 5.0)
+
+    stale = service.bench_cached()
+    assert stale.stale is True
+    assert stale.cache_age_s is not None and stale.cache_age_s > BENCH_CACHE_TTL_S
+    assert {f.fact_id: f.state for f in stale.facts}["fake.ready"] == "yes", "旧数据先顶上"
+    _wait_bench_idle(service)
+    assert len(CALLS["probes"]) > before, "过期缓存应触发后台再刷新（真探一轮）"
+    assert service._bench_cache["mono"] > time.monotonic() - 1.0, "缓存应被新快照覆盖"
+
+
+def test_bench_cache_occupied_snapshot_not_stored(tmp_path, fake_root):
+    """运行占用（env_lock 被持）期间的 probe_skipped 全 unknown 临时态不入缓存、不阻塞查询。"""
+    _reset_calls()
+    _ensure_registered()
+    service = _bench_service(tmp_path, fake_root)
+    holding = threading.Event()
+    release = threading.Event()
+
+    def holder() -> None:
+        service.env_lock.acquire()
+        holding.set()
+        release.wait(5.0)
+        service.env_lock.release()
+
+    thread = threading.Thread(target=holder, daemon=True)
+    thread.start()
+    assert holding.wait(5.0), "持锁线程没起来"
+    try:
+        snap = service.bench_cached()
+        assert snap.stale is True and snap.cache_age_s is None  # 占位立即返回
+        _wait_bench_idle(service)
+        assert service._bench_cache is None, "占用临时态（probe_skipped）不许污染缓存"
+        again = service.bench_cached()
+        assert again.stale is True, "无缓存时继续立即回占位，绝不阻塞"
+        _wait_bench_idle(service)  # 第二个 worker 也收尾（仍拿不到锁）后再放锁，避免竞态
+    finally:
+        release.set()
+        thread.join(5.0)
+    assert CALLS["probes"] == [], "占用期间一个事实都没探"
+
+
+def test_bench_facts_probe_required_first(tmp_path, fake_root, monkeypatch):
+    """闸门事实优先：预算截断时先保住 needs 并集的事实，信息性事实殿后。
+
+    事实声明顺序 ea.info（信息性、慢 0.5s）→ eb.req（必需、瞬时）：预算 0.2s 下——
+    旧顺序先探 ea.info 会把 eb.req 截成 unknown；闸门优先后 eb.req 必为 yes，
+    且 fake.ready（真实状态 yes）被截成 unknown 证明预算确实用尽（不是靠加大预算通过的）。
+    """
+    from workbench import cases_api as capi
+
+    _reset_calls()
+    _ensure_registered()
+    _write_json(fake_root / "facts" / "ea_info_slow.json", {
+        "id": "ea.info", "title": "信息性事实·慢", "probe": "ea.info",
+        "params_schema": {"type": "object", "properties": {}},
+    })
+    _write_json(fake_root / "facts" / "eb_req_fast.json", {
+        "id": "eb.req", "title": "必需事实·瞬时", "probe": "eb.req",
+        "params_schema": {"type": "object", "properties": {}},
+    })
+    _write_json(fake_root / "cases" / "case_gate.json", {
+        "id": "case_gate", "title": "闸门优先用例",
+        "steps": [{"no": 1, "do": "跑块", "expect": "通过"}],
+        "needs": ["eb.req"], "blocks": ["fake.ok"], "asserts": [], "tags": ["fake"],
+    })
+    if not has_fact("ea.info"):
+        def slow_info_probe(params):
+            time.sleep(0.5)
+            return {"state": "yes", "detail": "信息性事实（慢）就绪"}
+        register_fact("ea.info", slow_info_probe)
+    if not has_fact("eb.req"):
+        register_fact("eb.req", _probe("yes"))
+    monkeypatch.setattr(capi, "BENCH_SNAPSHOT_BUDGET_S", 0.2)
+    service = _bench_service(tmp_path, fake_root)
+
+    bench = service.bench()
+    states = {fact.fact_id: fact.state for fact in bench.facts}
+    assert "eb.req" in bench.required_facts, "case_gate 的 needs 必须进闸门事实并集"
+    assert states["eb.req"] == "yes", "闸门事实必须先拿到预算（旧顺序会被截成 unknown）"
+    assert states["fake.addr"] == "yes"
+    # 预算耗尽见证：fake.simcon 是信息性事实（声明里真实状态 yes、不进 needs 并集），
+    # 排在 ea.info（慢 0.5s）之后被截断——证明预算确实用尽，不是靠加大预算通过的。
+    assert states["fake.simcon"] == "unknown", "信息性事实殿后，应被预算截断"
+    cut = next(f for f in bench.facts if f.fact_id == "fake.simcon")
+    assert "预算" in cut.detail
+    assert states["ea.info"] == "yes", "ea.info 在闸门事实之后、预算检查前开探，仍能拿到值"
+    assert "eb.req" not in bench.unmet_required
+
+
+def test_bench_endpoint_cache_flow_placeholder_then_hit(tmp_path, fake_root):
+    """端点级：首查立即回占位（stale=true）→ 后台刷新 → 再查命中缓存（stale=false）；
+    ``?refresh=1`` 强制同步全量探测。"""
+    _reset_calls()
+    _ensure_registered()
+    app = FastAPI()
+    rt = create_cases_router(
+        storage_dir=tmp_path / "storage",
+        data_dir=fake_root,
+        register_domain=False,
+        bridge_snapshot_provider=_bridge_snapshot,
+    )
+    app.include_router(rt)
+    client = TestClient(app)
+    service = rt.cases_service
+    assert isinstance(service, CasesService)
+
+    started = time.monotonic()
+    r1 = client.get("/api/cases/bench")
+    latency = time.monotonic() - started
+    assert r1.status_code == 200, r1.text
+    d1 = r1.json()
+    assert d1["stale"] is True and d1["cache_age_s"] is None
+    assert d1["facts_total"] == 8
+    assert all(f["detail"] == "首次快照探测中（后台）" for f in d1["facts"])
+    assert latency < 5.0, "占位快照必须立即返回（实测毫秒级），不许全量探测阻塞首查"
+    _wait_bench_idle(service)
+    r2 = client.get("/api/cases/bench")
+    d2 = r2.json()
+    assert d2["stale"] is False and d2["cache_age_s"] is not None
+    assert {f["fact_id"]: f["state"] for f in d2["facts"]}["fake.ready"] == "yes"
+    r3 = client.get("/api/cases/bench?refresh=1")
+    d3 = r3.json()
+    assert d3["stale"] is False and d3["cache_age_s"] == 0.0
+    assert {f["fact_id"]: f["state"] for f in d3["facts"]}["fake.ready"] == "yes"
 
 
 # --------------------------------------------------------------------------- #
@@ -2079,3 +2306,16 @@ def test_defaults_put_corrupt_config_refused(tmp_path, fake_root):
     assert resp.status_code == 500, resp.text
     assert resp.json()["detail"]["code"] == "defaults_config_unreadable"
     assert config_path.read_text(encoding="utf-8") == "{oops not json"
+
+
+# --------------------------------------------------------------------------- #
+# 启动预热复用位（workbench.app §4.8）
+# --------------------------------------------------------------------------- #
+
+
+def test_cases_router_exposes_service_for_warmup(tmp_path, fake_root):
+    """路由工厂把服务体挂到路由对象上：app 工厂拿它做启动预热（同一实例，
+    与 GET /api/cases 同路径，不另起第二套装载）。"""
+    rt = create_cases_router(storage_dir=tmp_path / "storage", data_dir=fake_root)
+    service = getattr(rt, "cases_service", None)
+    assert isinstance(service, CasesService)

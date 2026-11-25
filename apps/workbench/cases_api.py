@@ -63,6 +63,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -128,6 +129,17 @@ ENV_BASE_URL = "WORKBENCH_BASE"
 #: 进而让 ``ready=false`` → UI 误把运行按钮置灰（台架明明可用）。故快照单独给 20s。
 BENCH_SNAPSHOT_BUDGET_S: float = 20.0
 
+#: ``GET /api/cases/bench`` 快照缓存 TTL（秒，横幅慢修 2026-11-25）。
+#:
+#: 真机实测全量探测 19.2s/22.9s（simcon 串口往返 + STA 日志扫描），页面每次打开横幅
+#: 都干等十几秒不可接受。端点改为进程级缓存 + stale-while-revalidate：
+#: age ≤ TTL 立即回缓存（``stale=false``）；过期回旧缓存 + 后台刷新（``stale=true``）；
+#: 重启后首查立即回「仅口状态」占位（毫秒级，facts 全 ``unknown``「检测中」）+ 后台刷新。
+BENCH_CACHE_TTL_S: float = 30.0
+
+#: 重启后首查占位快照里的事实 ``detail``（前端不用解析它，只是排查时可读）。
+BENCH_FIRST_PROBE_DETAIL = "首次快照探测中（后台）"
+
 #: 运行结果落盘目录名（``<storage_dir>/case_runs/<run_id>/result.json``）
 RUNS_DIRNAME = "case_runs"
 RESULT_FILENAME = "result.json"
@@ -179,6 +191,10 @@ DEFAULT_ENV_LOCK_TIMEOUT_S = 15.0
 def _now() -> str:
     """本地时区的 ISO 时间（带偏移，前端直接可读）。"""
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+#: bench 后台刷新线程的异常只记日志（线程里抛了没人接，端点早已返回）
+_LOG = logging.getLogger(__name__)
 
 
 def _round1(value: float) -> float:
@@ -461,6 +477,12 @@ class BenchSnapshot(BaseModel):
     base_url_source: str = "none"
     probed_at: str = ""
     duration_s: float = 0.0
+    #: 横幅慢修（2026-11-25）：true = 缓存读出（TTL 过期，后台刷新中）或重启后首查的
+    #: 「仅口状态」占位（后台探测中）；false = 同步全量探测或 TTL 内热缓存。前端据此显示
+    #: 轻量「事实检测中…」徽标，**不阻塞**清单/按钮渲染。
+    stale: bool = False
+    #: 缓存年龄（秒）；同步探测 = 0.0；无缓存（占位）= None。字段只加不改，兼容现有页面。
+    cache_age_s: Optional[float] = None
     problems: list[str] = Field(default_factory=list)
 
     @property
@@ -569,6 +591,8 @@ class CaseView(BaseModel):
 
     id: str
     title: str
+    #: 一句话描述（144 台账风格，工位 S）：清单卡片展示用，步骤/预期只在展开区
+    description: str = ""
     steps: list[CaseStep] = Field(default_factory=list)
     blocks: list[str] = Field(default_factory=list)
     block_count: int = 0
@@ -987,6 +1011,7 @@ def _case_view(
     return CaseView(
         id=case.id,
         title=case.title,
+        description=str(getattr(case, "description", "") or ""),
         steps=list(case.steps),
         # 块清单必须按**可执行步骤**展开（plan 用例的 `case.blocks` 恒为空——
         # 2026-11-23 浏览器实测：页面行摘要因此显示"0 步/错链"）
@@ -1231,6 +1256,15 @@ class CasesService:
         #: 证据保留轮数（REQS-0042 v11 D11-4）：每轮 job 终态后只留最近 N 轮
         #: ``case_runs/<run_id>``，``<=0`` = 不限；**当前这一轮永不删除**。
         self.keep_runs = int(keep_runs)
+        #: ``/api/cases/bench`` 进程级快照缓存（横幅慢修 2026-11-25）：
+        #: ``None`` 或 ``{"snapshot": BenchSnapshot, "mono": float}``（``mono`` = 探测完成
+        #: 时刻的 ``time.monotonic()``，算缓存年龄用）。stale-while-revalidate 见
+        #: :meth:`bench_cached`。
+        self._bench_cache: Optional[dict[str, Any]] = None
+        #: 后台刷新单飞位：True = 已有线程在跑全量探测，不再重复起线程
+        self._bench_refreshing: bool = False
+        #: 只保护上面两个状态位的短临界区（探测本体不持它，避免长时间互斥）
+        self._bench_cache_lock = threading.Lock()
 
     # -- 声明装载 ----------------------------------------------------------- #
 
@@ -1631,8 +1665,15 @@ class CasesService:
         ports_usable = sum(1 for port in enabled if port.usable)
         ports_ok = bool(enabled) and ports_usable == len(enabled)
         bundle = self.bundle()  # 一次请求只装一次声明（口快照与事实三态共用）
+        #: 用例库真正需要的事实（全库用例 needs 并集）：只有它们参与 ready/facts_ok；
+        #: 横幅慢修（2026-11-25）：这份清单同时交给 _bench_facts 做**闸门事实优先**探测
+        required_facts: list[str] = []
+        for case in getattr(bundle, "cases", []) or []:
+            for fact_id in (case.needs or []):
+                if fact_id not in required_facts:
+                    required_facts.append(fact_id)
         facts, probe_skipped = self._bench_facts(
-            bundle, base_url=base_url, base_source=base_source
+            bundle, required_ids=required_facts, base_url=base_url, base_source=base_source
         )
         fact_counts = {"yes": 0, "no": 0, "unknown": 0}
         for fact in facts:
@@ -1652,12 +1693,6 @@ class CasesService:
             for fact in facts
             if fact.state != "yes"
         }
-        #: 用例库真正需要的事实（全库用例 needs 并集）：只有它们参与 ready/facts_ok
-        required_facts: list[str] = []
-        for case in getattr(bundle, "cases", []) or []:
-            for fact_id in (case.needs or []):
-                if fact_id not in required_facts:
-                    required_facts.append(fact_id)
         unmet_required = {
             fact_id: value for fact_id, value in unmet.items() if fact_id in set(required_facts)
         }
@@ -1687,6 +1722,140 @@ class CasesService:
             duration_s=round(time.monotonic() - started, 3),
             problems=list(bundle.problems),
         )
+
+    # -- 台架快照缓存（stale-while-revalidate，横幅慢修 2026-11-25） ---------- #
+
+    def bench_cached(self, *, base_url: str = "", base_source: str = "none") -> BenchSnapshot:
+        """``GET /api/cases/bench`` 的入口：进程级缓存 + stale-while-revalidate。
+
+        - 缓存存在且 age ≤ ``BENCH_CACHE_TTL_S`` → 立即返回（``stale=false``）；
+        - 缓存过期 → 立即返回旧缓存（``stale=true``）并后台刷新（单飞，刷新中不重复起线程）；
+        - 完全无缓存（重启后首查）→ 立即返回「仅口状态」占位（毫秒级，facts 全
+          ``unknown``「检测中」，``cache_age_s=None``）并后台刷新。
+
+        全量探测本体仍是 :meth:`bench`（后台线程跑）；``probe_skipped`` 的占用临时态
+        **不入缓存**（见 :meth:`_store_bench_cache`）。
+        """
+        started = time.monotonic()
+        entry: Optional[dict[str, Any]] = None
+        expired_age: Optional[float] = None
+        should_refresh = False
+        with self._bench_cache_lock:
+            entry = self._bench_cache
+            if entry is not None:
+                age = started - entry["mono"]
+                if age <= BENCH_CACHE_TTL_S:
+                    return entry["snapshot"].model_copy(
+                        update={"stale": False, "cache_age_s": round(age, 3)}
+                    )
+                expired_age = round(age, 3)
+            if not self._bench_refreshing:
+                self._bench_refreshing = True
+                should_refresh = True
+        if should_refresh:
+            self._start_bench_refresh(base_url=base_url, base_source=base_source)
+        if entry is not None:
+            # 过期缓存先顶上（stale-while-revalidate）：横幅立刻有真数据，后台补新
+            return entry["snapshot"].model_copy(
+                update={"stale": True, "cache_age_s": expired_age}
+            )
+        return self._bench_placeholder(base_url=base_url, base_source=base_source)
+
+    def bench_refresh_sync(self, *, base_url: str = "", base_source: str = "none") -> BenchSnapshot:
+        """绕过缓存同步全量探测并写缓存（``?refresh=1`` 强制路径，排查/测试用）。"""
+        snapshot = self.bench(base_url=base_url, base_source=base_source)
+        self._store_bench_cache(snapshot)
+        snapshot.cache_age_s = 0.0  # 刚探完
+        return snapshot
+
+    def _bench_placeholder(self, *, base_url: str, base_source: str) -> BenchSnapshot:
+        """重启后首查的「仅口状态」即时快照：口部分实测毫秒级，facts 全 unknown「检测中」。
+
+        这不是探测结论（所以 ``stale=true``、``cache_age_s=None``），只是给横幅先渲染
+        的底座——真结论由后台刷新写进缓存，页面 30s 轮询取回。
+        """
+        started = time.monotonic()
+        snapshot, bridge_error = self._bridge_snapshot()
+        ports = self._bench_ports(snapshot)
+        enabled = [port for port in ports if port.enabled]
+        ports_usable = sum(1 for port in enabled if port.usable)
+        bundle = self.bundle()  # 1-4ms：拿事实清单与 needs 并集，facts 全标「检测中」
+        required_facts: list[str] = []
+        for case in getattr(bundle, "cases", []) or []:
+            for fact_id in (case.needs or []):
+                if fact_id not in required_facts:
+                    required_facts.append(fact_id)
+        facts = [
+            BenchFactView(
+                fact_id=spec.id,
+                title=spec.title,
+                state="unknown",
+                detail=BENCH_FIRST_PROBE_DETAIL,
+                declared=spec.id in {item.id for item in bundle.facts},
+            )
+            for spec in bundle.facts
+        ]
+        fact_counts = {"yes": 0, "no": 0, "unknown": len(facts)}
+        supervisor = (snapshot or {}).get("supervisor")
+        return BenchSnapshot(
+            ready=False,
+            ports_ok=bool(enabled) and ports_usable == len(enabled),
+            facts_ok=False,
+            required_facts=required_facts,
+            unmet_required={},
+            ports=ports,
+            ports_total=len(enabled),
+            ports_usable=ports_usable,
+            ports_disabled=sum(1 for port in ports if not port.enabled),
+            bridge_ok=bool((snapshot or {}).get("ok")),
+            bridge_error=bridge_error or str((snapshot or {}).get("config_error") or ""),
+            bridge_supervisor=dict(supervisor) if isinstance(supervisor, Mapping) else {},
+            facts=facts,
+            facts_total=len(facts),
+            fact_counts=fact_counts,
+            unmet_facts={},
+            probe_skipped="",
+            base_url=base_url,
+            base_url_source=base_source,
+            probed_at=_now(),
+            duration_s=round(time.monotonic() - started, 3),
+            stale=True,
+            cache_age_s=None,
+            problems=list(bundle.problems),
+        )
+
+    def _store_bench_cache(self, snapshot: BenchSnapshot) -> None:
+        """把一次**完整探测**写进缓存；``probe_skipped``（运行占用临时态）不入缓存。
+
+        占用态的全 unknown 快照是临时结论（那轮运行结束后再探就不是这个样子），
+        写进去会污染缓存 30s，宁可不缓存。
+        """
+        if snapshot.probe_skipped:
+            return
+        with self._bench_cache_lock:
+            self._bench_cache = {"snapshot": snapshot, "mono": time.monotonic()}
+
+    def _start_bench_refresh(self, *, base_url: str, base_source: str) -> None:
+        """起一个后台刷新线程（调用方已在锁内置好单飞位，这里只管起线程）。"""
+        threading.Thread(
+            target=self._bench_refresh_worker,
+            kwargs={"base_url": base_url, "base_source": base_source},
+            name="bench-snapshot-refresh",
+            daemon=True,
+        ).start()
+
+    def _bench_refresh_worker(self, *, base_url: str, base_source: str) -> None:
+        """后台全量探测 + 写缓存；异常只记日志（端点早已返回，别让线程静默炸掉）。"""
+        try:
+            snapshot = self.bench(base_url=base_url, base_source=base_source)
+            self._store_bench_cache(snapshot)
+        except Exception as exc:  # noqa: BLE001 - 后台线程兜底：记日志，缓存维持旧值/占位
+            _LOG.warning(
+                "bench 快照后台刷新失败（缓存维持原状）：%s: %s", type(exc).__name__, exc
+            )
+        finally:
+            with self._bench_cache_lock:
+                self._bench_refreshing = False
 
     def _bridge_snapshot(self) -> tuple[Optional[dict[str, Any]], str]:
         """取一次串口桥状态快照（注入源优先；异常收敛成「读不到」而不是 500）。"""
@@ -1725,9 +1894,20 @@ class CasesService:
         return ports
 
     def _bench_facts(
-        self, bundle: Bundle, *, base_url: str = "", base_source: str = "none"
+        self,
+        bundle: Bundle,
+        required_ids: Sequence[str],
+        *,
+        base_url: str = "",
+        base_source: str = "none",
     ) -> tuple[list[BenchFactView], str]:
-        """探全部事实的三态（复用 libs 的探测路径：``probe_fact_params`` + ``FactsContext``）。"""
+        """探全部事实的三态（复用 libs 的探测路径：``probe_fact_params`` + ``FactsContext``）。
+
+        横幅慢修（2026-11-25）——**闸门事实优先**：``required_ids``（全库用例 needs 并集，
+        与 ``unmet_required``/``ready`` 同一份清单）先探，预算有余再探信息性事实。
+        两组共享同一 20s 预算与同一个 ``FactsContext``；响应里 ``facts`` 仍按**声明顺序**
+        输出（只改探测顺序，不改输出顺序，前端芯片次序稳定）。
+        """
         fact_params = probe_fact_params(bundle)
         declared = {spec.id for spec in bundle.facts}
         started = time.monotonic()
@@ -1755,33 +1935,41 @@ class CasesService:
                 probe=self.fact_probe,
                 params={key: dict(value) for key, value in fact_params.items()},
             )
-            facts: list[BenchFactView] = []
-            for spec in bundle.facts:
+            # 探测顺序：required 并集（声明里存在的，按 needs 并集先后）在前，
+            # 其余信息性事实按声明顺序殿后——保证闸门事实总能拿到预算。
+            specs_by_id = {spec.id: spec for spec in bundle.facts}
+            probe_order: list[Any] = [
+                specs_by_id[fact_id] for fact_id in required_ids if fact_id in specs_by_id
+            ]
+            required_set = set(required_ids)
+            probe_order += [
+                spec for spec in bundle.facts if spec.id not in required_set
+            ]
+            probed: dict[str, BenchFactView] = {}
+            for spec in probe_order:
                 params = dict(fact_params.get(spec.id) or {})
                 if time.monotonic() - started > BENCH_SNAPSHOT_BUDGET_S:
-                    facts.append(
-                        BenchFactView(
-                            fact_id=spec.id,
-                            title=spec.title,
-                            state="unknown",
-                            detail="台架快照探测超出 %.1fs 预算，未探测" % BENCH_SNAPSHOT_BUDGET_S,
-                            params=params,
-                            declared=spec.id in declared,
-                        )
-                    )
-                    continue
-                value = ctx.get(spec.id)
-                facts.append(
-                    BenchFactView(
+                    probed[spec.id] = BenchFactView(
                         fact_id=spec.id,
                         title=spec.title,
-                        state=value.state,  # type: ignore[arg-type]
-                        detail=value.detail,
-                        evidence=list(value.evidence),
+                        state="unknown",
+                        detail="台架快照探测超出 %.1fs 预算，未探测" % BENCH_SNAPSHOT_BUDGET_S,
                         params=params,
                         declared=spec.id in declared,
                     )
+                    continue
+                value = ctx.get(spec.id)
+                probed[spec.id] = BenchFactView(
+                    fact_id=spec.id,
+                    title=spec.title,
+                    state=value.state,  # type: ignore[arg-type]
+                    detail=value.detail,
+                    evidence=list(value.evidence),
+                    params=params,
+                    declared=spec.id in declared,
                 )
+            # 输出仍按声明顺序（前端芯片次序不因探测优先级而抖动）
+            facts = [probed[spec.id] for spec in bundle.facts if spec.id in probed]
             return facts, ""
 
     def bench_ports_evidence(self) -> dict[str, Any]:
@@ -2709,6 +2897,10 @@ def create_cases_router(
         defaults_config_path=defaults_config_path,
     )
     rt = APIRouter(prefix="/api/cases", tags=["cases"])
+    # 启动预热复用位（workbench.app §4.8）：把服务体挂到路由对象上，让 app 工厂
+    # 能拿到**同一个** CasesService 去后台跑一次 bundle()——与 GET /api/cases
+    # 完全同一路径，不另建服务、不另建缓存。
+    rt.cases_service = service  # type: ignore[attr-defined]
 
     # -- 目录（API-2 / API-3 + D10-2 筛选排序）------------------------------ #
 
@@ -2745,15 +2937,28 @@ def create_cases_router(
     # -- 台架快照（D2-8 / UI-2）------------------------------------------- #
 
     @rt.get("/bench", response_model=BenchSnapshot)
-    def bench_snapshot(request: Request, base_url: Optional[str] = Query(None)) -> BenchSnapshot:
+    def bench_snapshot(
+        request: Request,
+        base_url: Optional[str] = Query(None),
+        refresh: bool = Query(
+            False,
+            description="绕过缓存同步全量探测（排查/测试用；缺省走缓存 + 后台刷新）",
+        ),
+    ) -> BenchSnapshot:
         """台架就绪快照：逻辑口可用性（``/api/serial-bridge/status``）+ 全部事实三态。
 
         只读：不开串口、不写任何东西、不写死端口。``base_url`` 只用于事实探测
         （注入 > ``WORKBENCH_BASE`` > 本次请求 origin）。
+
+        横幅慢修（2026-11-25）：缺省走进程级缓存（TTL 30s，stale-while-revalidate）——
+        全量探测实测 19.2s/22.9s，页面每次打开横幅不能再干等十几秒；``refresh=1``
+        才同步全量探测（并刷新缓存）。
         """
         explicit = (base_url or "").strip()
         value, source = resolve_job_base_url(explicit, str(request.base_url))
-        return service.bench(base_url=value, base_source=source)
+        if refresh:
+            return service.bench_refresh_sync(base_url=value, base_source=source)
+        return service.bench_cached(base_url=value, base_source=source)
 
     # -- 默认参数（REQS-0044 工位 E）---------------------------------------- #
 
@@ -2836,6 +3041,9 @@ def create_cases_router(
 
 __all__ = [
     "CATEGORY_DIMENSIONS",
+    "BENCH_CACHE_TTL_S",
+    "BENCH_FIRST_PROBE_DETAIL",
+    "BENCH_SNAPSHOT_BUDGET_S",
     "DEFAULT_ENV_LOCK_TIMEOUT_S",
     "DEFAULTS_CONFIG_FILENAME",
     "DEFAULTS_LABELS",

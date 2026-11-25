@@ -17,8 +17,11 @@ listener 依赖 C# DLL/pythonnet，惰性导入 + 挂载失败降级（页签显
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -29,8 +32,91 @@ from .api import router as orchestration_router
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+logger = logging.getLogger(__name__)
+
 # 统一入口端口（详细设计 §3.2：8790）
 PORT = 8790
+
+
+def _self_request_cases(app) -> int:
+    """进程内模拟一次 ``GET /api/cases``（真实 ASGI 调用，与真实请求完全同路径）。
+
+    把首查要付的**一次性代价**提前付掉（现场实测 ~190ms，leader 环境 0.6~1.4s）：
+
+    1. 声明装载：endpoint 内调 :meth:`CasesService.bundle`（块领域模块首次导入、
+       声明全量校验、OS 页缓存）；
+    2. **FastAPI 路由惰性编译**（Starlette 1.x 首次匹配才构建 dependant 与
+       pydantic TypeAdapter，`/api/cases` 的响应模型嵌套多层，这块占大头）；
+    3. 响应序列化首次路径。
+
+    不写任何数据、不外发网络请求；返回模拟请求的 HTTP 状态码（非 2xx 抛错，
+    由调用方记日志降级）。
+    """
+    import asyncio
+
+    async def _run() -> int:
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/api/cases",
+            "raw_path": b"/api/cases",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [(b"host", b"127.0.0.1")],
+            "client": ("127.0.0.1", 0),
+            "server": ("127.0.0.1", 0),
+        }
+        status = 0
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = int(message["status"])
+
+        await app(scope, receive, send)
+        return status
+
+    status = asyncio.run(_run())
+    if not 200 <= status < 300:
+        raise RuntimeError("预热请求返回 HTTP %d" % status)
+    return status
+
+
+def _spawn_cases_warmup(app) -> None:
+    """启动完成即后台预热用例清单装载（消除页面首开冷启动卡顿）。
+
+    工作台频繁重启，用户首开常撞冷启动，故把 ``GET /api/cases`` 的完整路径
+    在启动时**后台**跑一遍：
+
+    - **复用位**：走的就是 §4.7 挂进 ``app.state.cases_service`` 的那个
+      CasesService、同一套路由与端点（进程内 ASGI 自请求，见
+      :func:`_self_request_cases`）——不另建服务、不另建缓存、不加锁；
+      bundle() 本身按次装载（改 JSON 立即生效），预热只把「进程级一次性代价」
+      （模块导入、路由惰性编译、页缓存）提前付掉；
+    - **不阻塞启动**：daemon 线程，uvicorn 的 lifespan startup 阶段立即返回；
+    - **失败降级 = 现状**：异常只记 WARNING，用户首查照旧走冷装载。
+    """
+    if app is None or getattr(app.state, "cases_service", None) is None:
+        return  # 装配被替换/降级时安静跳过
+
+    def _warm() -> None:
+        started = time.perf_counter()
+        try:
+            _self_request_cases(app)
+        except Exception as exc:  # noqa: BLE001 - 预热失败不抬服务
+            logger.warning("用例声明预热失败（首查照旧冷装载）：%s", exc)
+        else:
+            logger.info(
+                "用例声明预热完成（%.0f ms）", (time.perf_counter() - started) * 1000,
+            )
+
+    threading.Thread(target=_warm, name="cases-warmup", daemon=True).start()
 
 
 def _workbench_static_dir() -> Path:
@@ -189,10 +275,18 @@ def create_workbench_app(
     参数可注入替代工厂（测试用）；listener 挂载失败自动降级（mount_listener=False）。
     simcon_factory：REQS-0023 起 simcon 拆为平级子应用，测试可注入假实现隔离依赖。
     """
+
+    async def _lifespan(app: FastAPI):
+        # startup：后台预热用例清单装载（§4.8，不阻塞监听；失败只记日志）。
+        # shutdown：无需清理（warmup 是 daemon 线程，随进程退出）。
+        _spawn_cases_warmup(app)
+        yield
+
     app = FastAPI(
         title="AI 闭环研发验证工作台",
         description="统一集成程序：侦听台 / 模块日志 / 模拟集中器 / 验证工作台",
         version="0.1.0",
+        lifespan=_lifespan,
     )
     # 统一工作台内的所有后端串口服务使用同一资源登记表。UI/AI 不持有
     # 物理句柄，只读取这些服务暴露的状态、日志和索引。
@@ -497,7 +591,15 @@ def create_workbench_app(
     # 结果落 <storage_dir>/case_runs/<run_id>/result.json；工作台地址不写死
     # （body.base_url > WORKBENCH_BASE > 本次请求 origin）。
     from .cases_api import create_cases_router
-    app.include_router(create_cases_router(storage_dir=storage_dir))
+    _cases_router = create_cases_router(storage_dir=storage_dir)
+    app.include_router(_cases_router)
+    # 服务体挂到 app.state（§4.8 预热的复用位；路由对象上也有同一实例）
+    app.state.cases_service = getattr(_cases_router, "cases_service", None)
+
+    # ---- 4.8 用例声明启动预热 ----
+    # 实际动作在模块级 _spawn_cases_warmup()；这里由 lifespan 的 startup 阶段
+    # 调用（见 create_workbench_app 开头的 _lifespan），取的正是上面这个
+    # CasesService 实例——与 GET /api/cases 同路径，不引入第二套装载。
 
     # ---- 4. 静态外壳（页签式 SPA）----
     _wb_static = _workbench_static_dir()

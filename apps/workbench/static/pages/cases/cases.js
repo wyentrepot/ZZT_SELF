@@ -119,6 +119,9 @@
     return {
       id: String(item.id || ""),
       title: String(item.title || item.name || item.id || ""),
+      // 一句话描述（144 台账极简口径，2026-11-25）：来自声明 description 字段；
+      // 后端未透传时为空串 → 卡片只显用例名（用户裁决：只用显示用例名即可）
+      description: String(item.description || ""),
       steps: steps,
       step_count: num(item.step_count) || steps.length,
       block_count: num(item.block_count) || arr(item.blocks).length,
@@ -251,6 +254,7 @@
     suiteId: "",
     bench: null,
     benchMode: "checking",       // checking | ready | blocked | unavailable | unknown
+    benchStale: false,           // 横幅慢修：stale/占位快照（后台检测中）→ 横幅显示「事实检测中…」徽标
     benchReasons: [],            // 默认区：每条一句人话
     benchRaw: [],                // 开发者详情：端口/事实 id、原始 errors/detail
     benchInfo: [],               // 信息性事实（不参与运行闸门，仅展示）
@@ -344,8 +348,10 @@
     return api("GET", "/api/cases/bench").then(function (data) {
       S.bench = obj(data);
       computeBench();
+      renderBench();   // 横幅先渲染（横幅慢修）：后端缓存后 <1s 返回，不等 loadCases/loadSuites
     }).catch(function (error) {
       S.bench = null;
+      S.benchStale = false;
       S.benchPorts = [];
       S.benchFacts = [];
       S.benchMode = "unavailable";
@@ -356,11 +362,16 @@
       S.benchRaw = [missing
         ? "GET /api/cases/bench → HTTP 404"
         : ("GET /api/cases/bench 失败：" + (error && error.message ? error.message : String(error)))];
+      renderBench();
     });
   }
 
   function computeBench() {
     var bench = S.bench || {};
+    // 横幅慢修（2026-11-25）：stale=true = 缓存过期回旧值 / 重启后首查占位快照，
+    // 后台都在真探——横幅显示轻量「事实检测中…」徽标，但**不阻塞**清单/按钮渲染，
+    // 也不改闸门口径（ready 置灰逻辑不变）。
+    S.benchStale = bench.stale === true;
     S.benchPorts = normPorts(bench);
     S.benchFacts = normFacts(bench);
     // 非闸门事实标注（REQS-0044 变更 4）：不在 required_facts 并集里的 = 信息性事实，
@@ -536,6 +547,10 @@
         checking: "检测中…"
       }[S.benchMode] || "";
     }
+    // 「事实检测中…」徽标（横幅慢修 2026-11-25）：stale 快照（缓存过期回旧值 /
+    // 重启后首查占位）后台都在真探，30s 轮询会自动取回新结论
+    var probingEl = $("bench-probing");
+    if (probingEl) probingEl.hidden = !S.benchStale;
 
     var portsBox = document.querySelector('[data-hook="bench-ports"]');
     if (portsBox) {
@@ -779,85 +794,11 @@
     });
   }
 
-  // ---------- 渲染：用例列表（UI-1） ----------
-  function categoryTags(item) {
-    var category = catOf(item);
-    var tags = [];
-    ["usage", "domain", "scene", "region"].forEach(function (dim) {
-      if (category[dim]) {
-        tags.push('<span class="tag">' + esc(dimLabel(dim, category[dim])) + "</span>");
-      }
-    });
-    if (!category.usage && !category.domain && !category.scene && !category.region) {
-      tags.push('<span class="tag uncat" data-hook="uncategorized">' + UNCAT_LABEL + "</span>");
-    }
-    item.protocols.forEach(function (protocol) {
-      tags.push('<span class="tag">' + esc(protocol) + "</span>");
-    });
-    item.tags.slice(0, 4).forEach(function (tag) {
-      tags.push('<span class="tag">#' + esc(tag) + "</span>");
-    });
-    return tags.join("");
-  }
-
-  // 列表行摘要：业务动作链（档案 → 组网 → 绑表 → 抄表），不再把 do 全文/帧标识怼给用户；
-  // 完整 do/expect 留给「展开」（D11-1 的列表侧口径）。
-  var STEP_ACTION = [
-    [/(复位|重启|reboot|reset)/i, "复位"],
-    [/(档案|建档|archive)/i, "档案"],
-    [/(组网|拓扑|入网|onnet|topolog|nwk)/i, "组网"],
-    [/(绑表|建档表|表地址|addr_probe)/i, "绑表"],
-    [/(抄表|抄读|电能|read_645|645)/i, "抄表"],
-    [/(自检|预检|诊断|preflight|自愈|simcon|simeter|串口)/i, "台架自检"]
-  ];
-  // 帧标识/协议指令号（11H-F1、10H-F21、645 DI…）：行内摘要一律剥掉
-  var FRAME_TOKEN = /\b\d{1,3}H[-\s]?F\d+\b|\b(?:645|698|376\.2|1376\.2)\s*(?:DI|AFN|FN)\b/gi;
-
-  function stepAction(step) {
-    // 「不复位 STA」这类否定表述先剥掉，否则会被 /复位/ 误判成复位动作
-    var text = String(step.do || "").replace(/不\s*(复位|重启|reboot|reset|改动|影响)/gi, "");
-    for (var i = 0; i < STEP_ACTION.length; i += 1) {
-      if (STEP_ACTION[i][0].test(text)) return STEP_ACTION[i][1];
-    }
-    var plain = text.replace(FRAME_TOKEN, " ").replace(/\s{2,}/g, " ").trim();
-    return clip(plain || "动作", 10);
-  }
-
-  function blockChain(item) {
-    var blocks = arr(item.blocks);
-    var labels = [];
-    blocks.forEach(function (id) {
-      // 复用文件后部唯一的 actionLabel 词典；行内摘要去掉「（取表地址）」这类补充说明
-      var label = String(actionLabel(String(id || "")) || "").split("（")[0].trim();
-      if (!label) return;
-      if (labels[labels.length - 1] === label) return;   // 连续重复动作只留一个
-      labels.push(label);
-    });
-    return labels;
-  }
-
-  function stepChain(item) {
-    var fromBlocks = blockChain(item);
-    if (fromBlocks.length) return fromBlocks;   // 优先用**可执行块链**（plan 用例也准）
-    var labels = [];
-    item.steps.forEach(function (step) {
-      var label = stepAction(step);
-      if (!label) return;
-      if (labels[labels.length - 1] === label) return;   // 连续重复动作只留一个
-      labels.push(label);
-    });
-    return labels;
-  }
-
-  function stepSummary(item) {
-    // 步数取**可执行步数**（block_count/blocks），不是人读说明条数
-    var count = num(item.block_count) || arr(item.blocks).length || item.step_count || item.steps.length || 0;
-    var chain = stepChain(item);
-    if (!chain.length) return "（声明无步骤）";
-    var shown = chain.slice(0, 5);
-    return count + " 步：" + shown.join(" → ") + (chain.length > shown.length ? " → …" : "");
-  }
-
+  // ---------- 渲染：用例列表（UI-1 · 144 台账极简口径，2026-11-25 用户裁决） ----------
+  // 卡片收敛为「用例名 + 一句话描述 + 展开箭头」：此前的步数芯片 / 业务动作链摘要 /
+  // 分类标签组（usage/domain/scene/region/协议/#tags）/ kind 徽标堆叠全部移除——
+  // 分类仍由左栏分组与筛选承载（renderRail / renderFilters），帧标识与完整 do/expect
+  // 只进「展开」区（renderSteps）。用例 id 收进用例名悬浮提示，不再平铺在卡面。
   function renderSteps(item) {
     if (!item.steps.length) return "";
     return '<ol class="steps" data-hook="case-steps" hidden>' + item.steps.map(function (step) {
@@ -875,18 +816,22 @@
     html += '<div class="case-head">';
     html += '<input type="checkbox" class="pick" data-id="' + esc(item.id) + '"' +
       (S.sel[item.id] ? " checked" : "") + ' aria-label="勾选 ' + esc(item.id) + '">';
-    html += "<b class=\"case-title\">" + esc(item.title) + "</b>";
-    html += '<span class="case-id mono">' + esc(item.id) + "</span>";
-    html += kindBadge(item.kind);
-    var execSteps = num(item.block_count) || arr(item.blocks).length || item.step_count;
-    html += '<span class="case-steps">' + execSteps + " 步</span>";
+    html += '<b class="case-title" title="' + esc(item.id) + '">' + esc(item.title) + "</b>";
+    // kind 徽标收敛为一枚低调徽标且只留给非默认类（场景/台架准备）：回归是默认态，
+    // 卡面不再亮徽标（D/E 轮守卫保留的 kindBadge 词典与文案原样保留）
+    if (item.kind === "scenario" || item.kind === "setup") html += kindBadge(item.kind);
     if (last) html += badge(last);
     html += '<span class="spacer"></span>';
     html += '<button class="mini run-one" data-id="' + esc(item.id) + '" title="立即运行此用例">▶</button>';
-    html += '<button class="mini expand" data-id="' + esc(item.id) + '">展开</button>';
+    html += '<button class="mini expand" data-id="' + esc(item.id) +
+      '" title="展开步骤与预期" aria-label="展开 ' + esc(item.id) + ' 的步骤与预期">▸</button>';
     html += "</div>";
-    html += '<div class="case-sum" title="' + esc(stepSummary(item)) + '">' + esc(stepSummary(item)) + "</div>";
-    html += '<div class="case-cat">' + categoryTags(item) + "</div>";
+    // 一句话描述（声明 description 字段）：卡面唯一说明行；后端未透传 / 与用例名相同
+    // 时不渲染，卡片退为「用例名 + 展开箭头」
+    var description = String(item.description || "");
+    if (description && description !== item.title) {
+      html += '<div class="case-sum">' + esc(description) + "</div>";
+    }
     html += renderSteps(item);
     html += "</article>";
     return html;
@@ -943,7 +888,7 @@
           var steps = row.querySelector(".steps");
           if (!steps) return;
           steps.hidden = !steps.hidden;
-          expand.textContent = steps.hidden ? "展开" : "收起";
+          expand.textContent = steps.hidden ? "▸" : "▾";
         };
       }
       var run = row.querySelector(".run-one");
@@ -2150,7 +2095,9 @@
       if (tag === "SCRIPT" || tag === "STYLE") return true;
       if (LEAK_SKIP[el.id]) return true;
       var hook = el.getAttribute && el.getAttribute("data-hook");
-      return hook === "bench-dev-details" || hook === "dev-details";
+      // case-steps（清单展开区，默认 hidden）同属折叠区：步骤 do/expect 原文里引用的
+      // 块名按 D11-2 口径允许（2026-11-25 用户裁决：具体步骤预期收进展开详情）
+      return hook === "bench-dev-details" || hook === "dev-details" || hook === "case-steps";
     }
     function walkText(el) {
       if (isSkipEl(el)) return;   // 折叠区（块 id / 事实 id 允许出现）整棵子树跳过
@@ -2475,4 +2422,11 @@
   // ---------- 启动 ----------
   bind();
   loadAll();
+  // 横幅自动刷新（横幅慢修 2026-11-25）：每 30s 重取 /api/cases/bench 更新横幅——
+  // 后台刷新写完缓存后，下一轮轮询自动把真结论补上（stale-while-revalidate）。
+  // 页面隐藏（document.hidden）时跳过本轮，恢复可见后从下一轮继续（省后端探测压力）。
+  setInterval(function () {
+    if (document.hidden) return;
+    loadBench().then(function () { renderRunButtons(); });
+  }, 30000);
 })();
