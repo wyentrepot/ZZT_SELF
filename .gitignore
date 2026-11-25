@@ -428,3 +428,6 @@ config/*.bak-*
 config/*.usbipd-backup-*.json
 # zcode 工具残留（.gitignore 的副本，本机专用）
 .zcodeignore
+
+# 运行结果不入库（0041 §3.4 口径）
+data/case_runs/
