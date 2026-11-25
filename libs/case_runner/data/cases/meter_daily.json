@@ -1,6 +1,7 @@
 {
   "id": "meter_daily",
-  "title": "抄表日常回归（不复位，日常）：档案 → 查档 → 组网 → 绑表 → 抄表",
+  "title": "抄表日常流程测试",
+  "description": "抄表日常回归用例：不复位 STA，档案在位后经查档、组网、绑表完成日常抄读",
   "kind": "regression",
   "category": {
     "usage": "common",

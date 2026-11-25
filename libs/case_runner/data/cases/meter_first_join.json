@@ -1,6 +1,7 @@
 {
   "id": "meter_first_join",
-  "title": "抄表首次组网（含复位，首次组网）：复位 → 档案 → 查档 → 组网 → 绑表 → 抄表",
+  "title": "首次组网流程测试",
+  "description": "首次组网流程用例：复位 STA 后经建档、组网、绑表完成首次抄表",
   "kind": "regression",
   "category": {
     "usage": "common",

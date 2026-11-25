@@ -1,6 +1,7 @@
 {
   "id": "archive_multi",
-  "title": "多档下发（同一建档块实例化两次，各下发一块不同表地址的档案；仅用于单测）",
+  "title": "多档下发流程测试",
+  "description": "多档下发用例：同一建档块按不同表地址实例化两次，仅用于单测",
   "kind": "regression",
   "category": {
     "usage": "rare",

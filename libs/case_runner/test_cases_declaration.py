@@ -520,13 +520,34 @@ def test_cases_only_use_declared_fields() -> None:
     两种编排写法共用同一份白名单。
     """
     # REQS-0044：kind（L1 setup/regression/scenario）、category/protocols（D10-2）已入模
+    # description（2026-11-25 144 极简口径）：一句话描述，清单卡片展示层
     allowed = {
-        "id", "title", "steps", "needs", "blocks", "plan", "asserts", "tags",
-        "kind", "category", "protocols",
+        "id", "title", "description", "steps", "needs", "blocks", "plan", "asserts",
+        "tags", "kind", "category", "protocols",
     }
     for path in _json_files(loader.CASES_DIRNAME):
         extra = set(_read_json(path)) - allowed
         assert extra == set(), f"{path.name}: 出现未知字段 {sorted(extra)}"
+
+
+def test_cases_carry_one_line_description() -> None:
+    """144 台账极简口径（2026-11-25 用户裁决）：每条用例一句 description。
+
+    一句话 = 无换行、≤60 字、无帧 hex / 十六进制痕迹（与 §7 同口径：帧标识与
+    完整判据留在 steps/expect，展开区可见）；只进清单卡片展示层（用例名 +
+    一句话描述 + 展开箭头），不参与执行与判定。title 收敛为 144 式短名
+    （「组网流程测试」「档案同步流程测试」直接贴齐 144 台账措辞，其余同风格自拟）。
+    """
+    for path in _json_files(loader.CASES_DIRNAME):
+        raw = _read_json(path)
+        description = str(raw.get("description") or "")
+        assert description, f"{path.name}: 缺一句话 description（清单卡片展示层）"
+        assert "\n" not in description and len(description) <= 60, (
+            f"{path.name}: description 必须是一句话（≤60 字、无换行）：{description!r}"
+        )
+        assert not FRAME_HEX_RE.search(description) and not HEX_LITERAL_RE.search(description), (
+            f"{path.name}: description 不得出现帧 hex / 十六进制痕迹（留展开区）：{description!r}"
+        )
 
 
 def test_case_blocks_are_strings_not_inline_params() -> None:

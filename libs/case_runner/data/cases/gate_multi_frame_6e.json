@@ -1,6 +1,7 @@
 {
   "id": "gate_multi_frame_6e",
-  "title": "协议一致性·单帧条数闸门（一帧 14 条 645 报文 >13）：观测 00H-F2 否认码 6E（否定式期望）",
+  "title": "单帧条数闸门测试",
+  "description": "协议一致性闸门用例：单帧打包 14 条读表报文超过单帧条数上限，应被否认拒绝（否定式期望）",
   "kind": "regression",
   "category": {
     "usage": "normal",

@@ -393,7 +393,10 @@ def test_meter_daily_has_no_reset_step() -> None:
     assert case.needs == DAILY_NEEDS, (
         "不复位就不该依赖 bench.sta_online：needs 只留 bench.simcon_online，实际 %s" % case.needs
     )
-    assert "不复位" in case.title and "日常" in case.title, case.title
+    # 144 极简口径（工位 S，2026-11-25）：title 收敛为短名；「不复位」安全口径移到
+    # description（清单卡片说明行，仍是一眼可见）
+    assert "日常" in case.title, case.title
+    assert "不复位" in case.description, case.description
 
 
 def test_meter_first_join_starts_with_reset() -> None:
@@ -409,7 +412,9 @@ def test_meter_first_join_starts_with_reset() -> None:
     assert case.needs == JOIN_NEEDS, (
         "复位要 bench.sta_online，其余动作要 bench.simcon_online，实际 %s" % case.needs
     )
-    assert "含复位" in case.title and "首次组网" in case.title, case.title
+    # 144 极简口径：title 短名化；「含复位」口径移到 description（复位仍是第一步，上方守卫）
+    assert "首次组网" in case.title, case.title
+    assert "复位" in case.description, case.description
 
 
 @pytest.mark.parametrize("case_id", [DAILY, FIRST_JOIN])
@@ -607,8 +612,10 @@ def test_steps_text_documents_six_steps_for_daily() -> None:
         assert budget in step.do, (step.no, step.do)
 
     assert set(DAILY_TAGS) <= set(case.tags), case.tags
+    # 144 极简口径（工位 S，2026-11-25）：动作链不再进 title，改由 description
+    # 一句话承载（清单卡片说明行，仍是一眼可见）
     for action in ("档案", "组网", "绑表", "抄表"):
-        assert action in case.title, "标题要能一眼看出动作：缺 %r" % action
+        assert action in case.description, "描述要能一眼看出动作：缺 %r" % action
 
 
 def test_steps_text_documents_seven_steps_for_first_join() -> None:
@@ -633,8 +640,10 @@ def test_steps_text_documents_seven_steps_for_first_join() -> None:
     assert "A 相电压" in voltage.do and "数值可解" in voltage.expect
 
     assert set(JOIN_TAGS) <= set(case.tags), case.tags
-    for action in ("复位", "档案", "组网", "绑表", "抄表"):
-        assert action in case.title, "标题要能一眼看出动作：缺 %r" % action
+    # 144 极简口径：动作链不再进 title，改由 description 承载（建档=档案下发动作）
+    for action in ("复位", "组网", "绑表", "抄表"):
+        assert action in case.description, "描述要能一眼看出动作：缺 %r" % action
+    assert "建档" in case.description, "建档（档案下发）要出现在描述里"
 
 
 @pytest.mark.parametrize("file_name", ["meter_daily.json", "meter_first_join.json"])

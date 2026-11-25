@@ -1,6 +1,7 @@
 {
   "id": "archive_ready",
-  "title": "档案就绪（下发档案 + 查档确认已落地）",
+  "title": "档案同步流程测试",
+  "description": "档案同步流程用例：下发从节点档案并查询档案表确认落地",
   "kind": "regression",
   "category": {
     "usage": "common",

@@ -1,6 +1,7 @@
 {
   "id": "bench_ready",
-  "title": "台架就绪自检（模拟集中器 + 模拟电表表口）",
+  "title": "台架就绪自检",
+  "description": "台架就绪自检用例：确认模拟集中器在位、模拟电表服务在位且表口已打开",
   "kind": "setup",
   "category": {
     "usage": "common",

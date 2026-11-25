@@ -1,6 +1,7 @@
 {
   "id": "meter_batch_single",
-  "title": "并发抄表单表变体（F1H-F1 每表一帧）：起任务 → 轮询快照 → 成功回装计数 ≥1 且无意外否认",
+  "title": "并发抄表流程测试",
+  "description": "并发抄表用例：并发抄表每表一帧，成功回装计数达标且无意外否认",
   "kind": "regression",
   "category": {
     "usage": "normal",

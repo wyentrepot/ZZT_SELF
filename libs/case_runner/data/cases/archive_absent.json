@@ -1,6 +1,7 @@
 {
   "id": "archive_absent",
-  "title": "档案清空反证（查档确认目标地址不在档）——与档案就绪用同一查询块、相反期望",
+  "title": "档案清空反证测试",
+  "description": "档案清空反证用例：与档案就绪用同一查询块、相反期望，查档确认目标地址不在档",
   "kind": "regression",
   "category": {
     "usage": "normal",

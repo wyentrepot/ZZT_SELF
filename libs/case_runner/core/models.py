@@ -415,6 +415,9 @@ class ProcedureSpec(BaseModel):
     category: ProcedureCategory = Field(default_factory=ProcedureCategory)
     #: 协议标签（D10-2）：1376.2 / 645 / 698.45 / 10376.2 …
     protocols: list[str] = Field(default_factory=list)
+    #: 一句话描述（用户裁决「144 台账极简化」2026-11-25）：清单卡片的展示层文案，
+    #: 只进 UI（用例名 + 一句话描述 + 展开箭头），不参与执行/判定；缺省空串 = 卡片只显用例名。
+    description: str = ""
 
     @model_validator(mode="before")
     @classmethod

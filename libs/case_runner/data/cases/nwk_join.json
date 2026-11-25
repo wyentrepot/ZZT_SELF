@@ -1,6 +1,7 @@
 {
   "id": "nwk_join",
-  "title": "组网（建档 → 查档 → 查网络拓扑判定入网）",
+  "title": "组网流程测试",
+  "description": "组网流程用例：下发档案后周期查询网络拓扑，判定从节点入网达标",
   "kind": "regression",
   "category": {
     "usage": "normal",

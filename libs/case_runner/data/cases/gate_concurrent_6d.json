@@ -1,6 +1,7 @@
 {
   "id": "gate_concurrent_6d",
-  "title": "协议一致性·并发帧数闸门（连发 21 帧并发抄表 >20）：观测 00H-F2 否认码 6D（否定式期望）",
+  "title": "并发帧数闸门测试",
+  "description": "协议一致性闸门用例：连发 21 帧并发抄表超过并发队列上限，应被否认拒绝（否定式期望）",
   "kind": "regression",
   "category": {
     "usage": "normal",

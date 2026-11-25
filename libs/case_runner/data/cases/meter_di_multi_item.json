@@ -1,6 +1,7 @@
 {
   "id": "meter_di_multi_item",
-  "title": "抄表多数据项逐项采集（单表 5 项连续点抄）：档案 → 查档 → 组网 → 绑表 → 逐项抄读",
+  "title": "多数据项逐项抄表测试",
+  "description": "抄表多数据项用例：单表连续点抄 5 个数据项，覆盖电能、电压、电流与功率",
   "kind": "regression",
   "category": {
     "usage": "common",
