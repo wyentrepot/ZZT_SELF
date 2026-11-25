@@ -5,6 +5,7 @@ metadata:
   author: reasonix
   version: "1.1.0"
   applies-to: /01-workfile-ai/01-zzt/ZZT_SELF
+disable-model-invocation: true
 ---
 
 > v1.1.0（2026-11-03）：REQS-0037 — 工具节新增 minute_assert 断言库入口（`assert_698_11e3_chain`，离线核 698 11E3 补抄帧）。

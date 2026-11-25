@@ -17,9 +17,16 @@
 
   var state = {
     afnList: [], curAfn: -1, curFn: -1,
-    filter: "", lastSeq: 0, pollTimer: null, statusTimer: null, sending: false,
+    filter: "", lastSeq: 0, sessionId: null, pollTimer: null, statusTimer: null, sending: false,
+    // 收发记录渲染去重（2026-11-19 现场「一帧显示两遍」）：
+    // framesBusy/framesQueued 做单飞，seenSeq 兜底按 seq 去重。
+    framesBusy: false, framesQueued: false, seenSeq: Object.create(null),
+    // 全局协议口径（落盘 data/runtime/simcon_settings.json，UI 与后端共用）：
+    // queryStartBase = 10H-F2 从节点起始序号基址，1 = 本场模块 1 起编号。
+    queryStartBase: 1,
     resp: null, mode: "auto",           // REQS-0013：当前 Fn 响应契约 + 查询模式
     snapshots: [], curSnapshot: null,
+    arcRows: null,                      // 11H-F1/F2 行编辑表（一行一个从节点：addr + proto）
   };
 
   function banner(msg) {
@@ -43,22 +50,77 @@
 
   /* ================= 串口会话 ================= */
 
+  /* 端口选择的三条硬规则（2026-11-19 现场：Profile 指 COM28，页面却开 COM11 → 14762 无应答）：
+   *  1) 预选以「串口配置页」已保存的 Profile（simcon.main.mapping_id）为准，不靠枚举顺序；
+   *  2) 选中已映射端口时按 mapping_id 打开，让映射的波特率/校验位生效，不用下拉默认值覆盖；
+   *  3) 物理通道没连通的端口在选项里直标「通道未连通」，避免选到不存在的 COM。 */
+  var portCtx = { details: [], byDevice: {}, usable: {} };
+
+  function portOptionText(d) {
+    var tag = d.role_label || d.label || "";
+    var text = (tag ? tag + " · " : "") + d.device;
+    if (d.mapping_id && portCtx.usable[d.mapping_id] === false) text += "（通道未连通）";
+    else if (d.online === false) text += "（离线）";
+    return text;
+  }
+
+  /* 当前页面选中的端口目标：已映射端口只给 mapping_id（让映射的波特率/校验生效），
+   * 未映射才带 port+参数。下发/分钟采集都必须带上它——否则后端走自动选口，
+   * 会掉到 /dev/ttyS0 报 Input/output error（重启工作台后尤其明显）。 */
+  function currentTarget() {
+    var d = portCtx.byDevice[$("#portSel").value] || null;
+    if (d && d.mapping_id) return { mapping_id: d.mapping_id };
+    return { port: $("#portSel").value || null, baudrate: +$("#baudSel").value, parity: $("#paritySel").value };
+  }
+
+  function syncPortParams() {
+    var d = portCtx.byDevice[$("#portSel").value] || null;
+    var mapped = !!(d && d.mapping_id);
+    var baudSel = $("#baudSel"), parSel = $("#paritySel");
+    if (mapped) {
+      var baud = String(d.baudrate || "");
+      var has = Array.prototype.some.call(baudSel.options, function (o) { return o.value === baud; });
+      if (!has && baud) baudSel.add(new Option(baud, baud));
+      baudSel.value = baud;
+      parSel.value = (d.parity || "N").toUpperCase();
+    }
+    baudSel.disabled = mapped;
+    parSel.disabled = mapped;
+  }
+
+  function applyPorts(portsData, profData) {
+    var details = portsData.port_details || [];
+    portCtx.details = details;
+    portCtx.byDevice = {};
+    details.forEach(function (d) { portCtx.byDevice[d.device] = d; });
+    var sel = $("#portSel");
+    sel.innerHTML = details.length
+      ? details.map(function (item) {
+          return '<option value="' + esc(item.device) + '">' + esc(portOptionText(item)) + "</option>";
+        }).join("")
+      : "<option value=''>无可用串口</option>";
+    // 预选：Profile 里 simcon.main 配的映射 → 对应设备
+    var profile = (profData && profData.profiles && profData.profiles["simcon.main"]) || null;
+    var wantMapping = profile && profile.enabled ? (profile.mapping_id || "") : "";
+    var pick = wantMapping
+      ? details.filter(function (d) { return d.mapping_id === wantMapping; })[0]
+      : null;
+    if (pick) sel.value = pick.device;
+    syncPortParams();
+    if (portsData.mapping_error) banner("串口映射提示：" + portsData.mapping_error);
+  }
+
   function loadPorts() {
-    api("/api/simcon/ports").then(function (data) {
-      var sel = $("#portSel");
-      var details = data.port_details || [];
-      // 用 port_details 渲染：显示角色标签（如 “CCO 日志口 · COM8”）
-      var opts = details.length
-        ? details.map(function (item) {
-            var tag = item.role_label || item.label || "";
-            var text = tag ? tag + " · " : "";
-            text += item.device;
-            if (item.online === false) text += "（离线）";
-            return '<option value="' + esc(item.device) + '">' + esc(text) + "</option>";
-          }).join("")
-        : "<option value=''>无可用串口</option>";
-      sel.innerHTML = opts;
-      if (data.mapping_error) banner("串口映射提示：" + data.mapping_error);
+    Promise.all([
+      api("/api/simcon/ports"),
+      api("/api/serial-profile").catch(function () { return null; }),
+      api("/api/serial-bridge/status").catch(function () { return null; }),
+    ]).then(function (res) {
+      var bridge = res[2];
+      (bridge && bridge.ports ? bridge.ports : []).forEach(function (p) {
+        portCtx.usable[p.id] = p.usable !== false;
+      });
+      applyPorts(res[0], res[1]);
     }).catch(function (err) { banner(err.message); });
     refreshStatus();
     if (state.statusTimer) clearInterval(state.statusTimer);
@@ -69,8 +131,11 @@
     api("/api/simcon/status").then(function (st) {
       var chip = $("#stChip");
       if (st.open) {
+        var id = st.port_identity || {};
+        var shown = (id.label || "") + (id.windows_com ? "（" + id.windows_com + "）" : "");
+        shown = shown || st.port || "";
         chip.innerHTML = "<span class='dot' style='color:var(--color-status-pass)'></span>" +
-          esc(st.port || "") + " · 待发帧 " + (st.pending_frames || 0);
+          esc(shown) + " · 待发帧 " + (st.pending_frames || 0);
         $("#btnOpen").textContent = "重新打开";
       } else {
         chip.innerHTML = "<span class='dot' style='color:var(--color-fg-dim)'></span>未连接";
@@ -82,12 +147,14 @@
     });
   }
 
+  $("#portSel").addEventListener("change", syncPortParams);
+
   $("#btnOpen").addEventListener("click", function () {
-    var body = {
-      port: $("#portSel").value || null,
-      baudrate: +$("#baudSel").value,
-      parity: $("#paritySel").value,
-    };
+    var d = portCtx.byDevice[$("#portSel").value] || null;
+    // 已映射端口：只传 mapping_id，波特率/校验位一律取映射配置（下拉不可覆盖）
+    var body = (d && d.mapping_id)
+      ? { mapping_id: d.mapping_id }
+      : { port: $("#portSel").value || null, baudrate: +$("#baudSel").value, parity: $("#paritySel").value };
     api("/api/simcon/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       .then(function () { banner(null); refreshStatus(); startPolling(); })
       .catch(function (err) { banner(err.message); });
@@ -174,6 +241,9 @@
       return;
     }
     $("#btnSend").style.display = "";
+
+    // 11H-F1/F2 路由档案：一行一个地址+协议，通用字段表单表达不了（字典里地址/协议 key=null）
+    if (isArchiveFn()) { renderArchivePanel(f); setupRespGrid(f); return; }
 
     var fields = ((f.req && f.req.fields) || f.fields || []);
     var formable = fields.filter(function (x) { return x.key !== null && x.key !== undefined; });
@@ -405,6 +475,8 @@
 
   /* 从表单字段（data-k）组装业务参数；数值字段转数字，时间拆 BCD 六元组 */
   function collectFormParams() {
+    // 11H-F1/F2 与 10H-F2：参数来自「一行一个」档案表，而不是通用字段表单
+    if (isArchiveFn()) return arcInlineParams();
     var params = {};
     var els = document.querySelectorAll("#parBody .ff-in");
     els.forEach(function (el) {
@@ -440,6 +512,9 @@
 
   function buildPreview() {
     if (state.curAfn < 0 || state.curFn < 0) return;
+    // 档案表超过单帧上限：预览也必须按实际下发口径逐帧显示，否则「预览 1 帧、实发 2 帧」
+    // 会让人以为一次全发出去了（帧长也对不上）。
+    if (isArchiveFn()) { arcBuildChunkedPreview(); return; }
     var send;
     try { send = currentSend(); }
     catch (e) {
@@ -458,10 +533,63 @@
       $("#frameMeta").textContent = "构帧失败";
     });
   }
+
+  /* 档案表预览：≤16 条走单帧；>16 条按 ARC_MAX_PER_FRAME 拆帧逐帧构帧并列显示 */
+  function arcBuildChunkedPreview() {
+    var rows;
+    try { rows = arcValidRows(); }
+    catch (e) {
+      $("#prevHex").innerHTML = "<span style='color:var(--color-status-fail)'>" + esc(e.message) + "</span>";
+      $("#frameMeta").textContent = "—";
+      return;
+    }
+    if (!rows.length) {
+      $("#prevHex").innerHTML = "<span style='color:var(--color-fg-dim)'>填写档案后自动构建</span>";
+      $("#frameMeta").textContent = "—";
+      return;
+    }
+    var isAdd = arcIsAdd();
+    var chunks = [];
+    for (var i = 0; i < rows.length; i += ARC_MAX_PER_FRAME) chunks.push(rows.slice(i, i + ARC_MAX_PER_FRAME));
+    var buildOne = function (chunk) {
+      var params = isAdd
+        ? { nodes: chunk.map(function (r) { return { addr: r.addr, protocol: r.proto }; }) }
+        : { meters: chunk.map(function (r) { return r.addr; }) };
+      return api("/api/simcon/build", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ afn: 0x11, fn: isAdd ? 1 : 2, params: params,
+                               profile: $("#profileSel").value }),
+      });
+    };
+    Promise.all(chunks.map(function (c) { return buildOne(c).catch(function (e) { return { error: e.message }; }); }))
+      .then(function (res) {
+        var html = res.map(function (r, ci) {
+          var label = chunks.length > 1
+            ? '<div class="hint" style="margin:0 0 4px">帧 ' + (ci + 1) + "/" + chunks.length +
+              "（" + chunks[ci].length + " 条，共 " + rows.length + " 条）</div>"
+            : "";
+          var body = r.error
+            ? "<span style='color:var(--color-status-fail)'>" + esc(r.error) + "</span>"
+            : colorHex(r.hex);
+          return '<div style="margin-bottom:' + (ci === res.length - 1 ? "0" : "10px") + '">' + label + body + "</div>";
+        }).join("");
+        $("#prevHex").innerHTML = html;
+        var total = res.reduce(function (s, r) { return s + (r.length || 0); }, 0);
+        $("#frameMeta").textContent = chunks.length > 1
+          ? (chunks.length + " 帧 · 合计 " + total + " 字节")
+          : ("帧长 " + total + " 字节");
+      });
+  }
   $("#btnBuild").addEventListener("click", buildPreview);
 
   $("#btnSend").addEventListener("click", function () {
     if (state.sending) return;
+    // 11H-F1/F2：档案表超过单帧上限时按 16 条拆帧逐帧下发（协议就是这么用的），
+    // 不走单帧路径——否则用户填 40 行只会发出第 1 帧、后面静默丢弃。
+    if (isArchiveFn()) {
+      try { arcSendChunks(); } catch (e) { banner(e.message); }
+      return;
+    }
     var send;
     try { send = currentSend(); }
     catch (e) { banner(e.message); return; }
@@ -475,9 +603,14 @@
                    afnHex: a0.code, fnNo: f0.no };
     } catch (e) {}
     if (sendDesc) panelPending(sendDesc);   // REQS-0027：等待配对（倒计时）
+    // 下发接口是同步等应答的（默认档 5s），帧在发出时已落日志；
+    // 先补一次刷新，让「下发数量 / TX 行」立刻 +1，不用等应答超时返回。
+    setTimeout(refreshFrames, 350);
     api("/api/simcon/step", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ send: send, profile: $("#profileSel").value, enable_responder: true, name: "page-send" }),
+      body: JSON.stringify(Object.assign(
+        { send: send, profile: $("#profileSel").value, enable_responder: true, name: "page-send" },
+        currentTarget())),
     }).then(function (r) {
       banner(null);
       $("#frameMeta").textContent = "已下发 · " + new Date().toLocaleTimeString();
@@ -514,6 +647,9 @@
      postMessage 交给壳层（app.js 监听 wb-dock-push），本页不依赖壳存在。 */
   function pushDockFrame(f) {
     try {
+      // 本页自带收发记录；外壳「全局面板」镜像默认关闭，避免同一批帧在屏上重复占位。
+      // 需要外壳镜像时：控制台执行 localStorage.setItem("wb-dock-mirror","1") 后刷新。
+      try { if (localStorage.getItem("wb-dock-mirror") !== "1") return; } catch (e) { return; }
       if (!window.parent || window.parent === window) return;
       window.parent.postMessage({
         type: "wb-dock-push",
@@ -526,10 +662,34 @@
     } catch (e) { /* 非嵌套环境静默 */ }
   }
 
+  /* 一帧只落一行：清空调色板外的渲染状态（换会话 / 切方向筛选都要重来）。 */
+  function resetFrameView() {
+    state.seenSeq = Object.create(null);
+    state.lastSeq = 0;
+    $("#trBody").innerHTML = "";
+  }
+
   function refreshFrames() {
+    // 单飞：游标 lastSeq 只在响应回来后才推进，800ms 轮询、下发后 350ms 补刷、
+    // visibilitychange、打开串口都会各自调进来。两条请求在途时带的是同一个
+    // after_seq，同一批帧会被插入 DOM 两遍 —— 这就是「收发一帧数据，显示了 2 遍」。
+    // 在途时只记一个待办，等当前响应处理完再补一次，绝不并发取同一游标。
+    if (state.framesBusy) { state.framesQueued = true; return; }
+    state.framesBusy = true;
     var dir = $("#segF button.on").dataset.f || "";
     api("/api/simcon/frames?limit=200" + (dir ? "&direction=" + dir : "") + (state.lastSeq ? "&after_seq=" + state.lastSeq : ""))
       .then(function (data) {
+        // 会话切换（关/重开串口、应用 Profile、服务重启）会新建 sc-* 会话，帧 seq 从 1 重计；
+        // 旧游标 after_seq 比新 seq 大 → 新帧被全部过滤，表现为「必须刷新页面才出新帧」。
+        if (data.session_id && state.sessionId && data.session_id !== state.sessionId) {
+          state.sessionId = data.session_id;
+          resetFrameView();
+          state.framesBusy = false;
+          state.framesQueued = false;
+          refreshFrames();
+          return;
+        }
+        state.sessionId = data.session_id || state.sessionId;
         var frames = data.entries || [];
         var body = $("#trBody");
         if (data.counts) {
@@ -546,40 +706,202 @@
         var empty = body.querySelector(".empty");
         if (empty) empty.remove();
         frames.reverse().forEach(function (f) {
+          // 兜底去重：同一 seq 已经在屏上就不再插一行（防重放/防响应乱序重复插入）。
+          if (f.seq != null) {
+            if (state.seenSeq[f.seq]) return;
+            state.seenSeq[f.seq] = true;
+          }
           var row = document.createElement("div");
           row.className = "tr-row";
+          row.dataset.seq = String(f.seq || "");
           row.innerHTML =
-            '<button class="tr-main"><span class="tm">' + esc((f.ts || "").replace("T", " ").slice(0, 12)) + "</span>" +
+            '<button class="tr-main" title="' + esc((f.ts || "").replace("T", " ")) + '"><span class="tm">' + esc((f.ts || "").slice(11, 19)) + "</span>" +
             '<span class="dir ' + f.dir + '">' + (f.dir === "tx" ? "TX" : "RX") + "</span>" +
-            '<span class="afn-tag2">' + esc(f.afn || "—") + " " + esc(f.fn || "") + "</span>" +
+            '<span class="afn-tag2">' + esc(afnLabel(f)) + "</span>" +
             (f.kind ? '<span class="kind-tag">' + esc(f.kind) + "</span>" : "") +
-            '<span class="sum mono">' + esc(f.frame_hex || "") + "</span></button>" +
-            '<div class="tr-det"><div class="hexwrap"><div class="hex">' + colorHex(f.frame_hex) + "</div></div>" +
-            (f.updown ? '<div class="hint" style="margin-top:6px">CCO 主动上报（updown=' + esc(f.updown) + "）</div>" : "") + "</div>";
-          row.querySelector(".tr-main").addEventListener("click", function () { row.classList.toggle("open"); });
+            '<span class="sum">' + (f.parsed ? '<b class="psm">' + esc(parsedSummary(f)) + "</b>" : "") +
+            '<span class="mono">' + esc(f.frame_hex || "") + "</span></span></button>" +
+            '<div class="tr-det"></div>';
+          // 明细懒渲染：几百行历史帧不必在轮询里一次算完（展开时才建解析表）
+          row.querySelector(".tr-main").addEventListener("click", function () {
+            row.classList.toggle("open");
+            var det = row.querySelector(".tr-det");
+            if (row.classList.contains("open") && !det.dataset.built) {
+              det.innerHTML = frameDetail(f);
+              det.dataset.built = "1";
+            }
+          });
           body.insertBefore(row, body.firstChild);
           if (!firstBatch) pushDockFrame(f);   // REQS-0031 P2：增量帧 → 外壳全局 Dock
           // REQS-0013：上行响应帧 → 刷新响应表格（匹配当前选中 Fn）
-          if (f.dir === "rx" && f.updown === "up" && f.resp && state.resp && f.afn === (state.afnList[state.curAfn] || {}).code && f.fn === (state.afnList[state.curAfn] || {}).fns[state.curFn].no) {
+          if (f.dir === "rx" && f.updown === "up" && f.resp && state.resp && frameMatchesSelection(f)) {
             renderRespTable(f.resp);
           }
         });
         while (body.children.length > 300) body.removeChild(body.lastChild);
-      }).catch(function () { /* 会话未建立时静默，状态条已提示 */ });
+      }).catch(function () { /* 会话未建立时静默，状态条已提示 */ })
+      .then(function () {
+        // 无论成功失败都释放单飞锁；期间攒下的调用合并成一次补刷（不并发、不丢帧）。
+        state.framesBusy = false;
+        if (state.framesQueued) { state.framesQueued = false; refreshFrames(); }
+      });
+  }
+
+  /* ================= 帧解析展示（1376.2 字段树 / 应用数据单元 / 内嵌报文 / 响应） ================= */
+
+  function normAfnCode(code) {
+    // 字典里是 "03H" 记法，帧日志里是 "03"；统一去掉 H 后缀再比
+    return String(code == null ? "" : code).toUpperCase().replace(/H$/, "");
+  }
+
+  function dictAfn(code) {
+    var want = normAfnCode(code);
+    var hit = null;
+    (state.afnList || []).forEach(function (a) {
+      if (normAfnCode(a.code) === want) hit = a;
+    });
+    return hit;
+  }
+
+  /* 帧是否命中「当前选中 Fn」的响应契约。
+   * 字典里 AFN 是 "03H" 记法、帧日志是 "03"，直接比较永远不相等——
+   * 这正是「响应表格・标量响应 一直没有响应结果」的原因（2026-11-19 现场）。 */
+  function frameMatchesSelection(f) {
+    var curA = state.afnList[state.curAfn] || null;
+    var curF = curA && curA.fns ? curA.fns[state.curFn] : null;
+    if (!curF) return false;
+    if (normAfnCode(f.afn) !== normAfnCode(curA.code)) return false;
+    return String(f.fn) === String(curF.no);
+  }
+
+  function afnLabel(f) {
+    var a = dictAfn(f.afn);
+    var fnName = "";
+    if (a) {
+      (a.fns || []).forEach(function (x) { if (x.no === f.fn) fnName = x.name; });
+    }
+    var head = (f.afn || "—") + (f.fn ? " " + f.fn : "");
+    var tail = fnName || (a ? a.name : "");
+    return tail ? head + " " + tail : head;
+  }
+
+  function parsedSummary(f) {
+    var fl = (f.parsed || {}).fields || {};
+    var out = [];
+    var r = fl["信息域R"] || {};
+    var m = /seq=(\d+)/.exec(r.desc || "");
+    if (m) out.push("seq " + m[1]);
+    var dt = fl["数据单元标识"] || {};
+    if (dt.value) out.push(dt.value);
+    var L = fl["长度L"] || {};
+    if (L.value != null) out.push("L=" + L.value);
+    if (f.resp && f.resp.records && f.resp.records.length) out.push("解析 " + f.resp.records.length + " 行");
+    return out.join(" · ") || "已解析";
+  }
+
+  function fieldTable(fields) {
+    if (!fields) return "";
+    var keys = Object.keys(fields);
+    if (!keys.length) return "";
+    return '<table class="rtab"><thead><tr><th>字段</th><th>值</th><th>HEX</th><th>说明</th></tr></thead><tbody>' +
+      keys.map(function (k) {
+        var v = fields[k] || {};
+        return "<tr><td>" + esc(v.name || k) + "</td><td>" + esc(v.value == null ? "" : v.value) +
+          (v.unit ? " " + esc(v.unit) : "") + "</td><td>" + esc(v.hex || "") +
+          "</td><td>" + esc(v.desc || "") + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  function itemTable(items) {
+    if (!items || !items.length) return "";
+    return '<table class="rtab"><thead><tr><th>数据项</th><th>值</th><th>HEX</th><th>说明</th></tr></thead><tbody>' +
+      items.map(function (it) {
+        return "<tr><td>" + esc(it.name || "") + "</td><td>" + esc(it.value == null ? "" : it.value) +
+          (it.unit ? " " + esc(it.unit) : "") + "</td><td>" + esc(it.hex || "") +
+          "</td><td>" + esc(it.desc || "") + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  function nestedBlock(nested) {
+    if (!nested || !nested.length) return "";
+    var html = nested.map(function (n) {
+      var title = (n.structure || n.kind || "内嵌报文") + (n.name ? " · " + n.name : "");
+      var inner = (n.items && n.items.length ? itemTable(n.items) : "") + nestedBlock(n.nested);
+      return '<div class="fdet-sub"><b>' + esc(title) + "</b>" +
+        fieldTable(n.fields) + inner + "</div>";
+    }).join("");
+    return html;
+  }
+
+  function respBlock(resp) {
+    if (!resp) return "";
+    var head = resp.head || {};
+    var kvs = Object.keys(head).filter(function (k) { return k.indexOf("__hex") < 0; }).map(function (k) {
+      return '<div class="kv"><div class="k">' + esc(k) + "</div><div class='v'>" + esc(head[k]) + "</div></div>";
+    });
+    var html = kvs.length ? '<div class="resp-scalar" style="padding:0">' + kvs.join("") + "</div>" : "";
+    var rec = resp.records || [];
+    if (rec.length) {
+      var cols = Object.keys(rec[0]).filter(function (k) {
+        return k.indexOf("__hex") < 0 && k.charAt(0) !== "_";
+      });
+      html += '<table class="rtab"><thead><tr><th>#</th>' + cols.map(function (c) {
+        return "<th>" + esc(c) + "</th>";
+      }).join("") + "</tr></thead><tbody>" + rec.map(function (r, i) {
+        return "<tr><td class='num'>" + (i + 1) + "</td>" + cols.map(function (c) {
+          return "<td>" + esc(r[c] == null ? "" : r[c]) + "</td>";
+        }).join("") + "</tr>";
+      }).join("") + "</tbody></table>";
+    }
+    var warns = resp.warnings || [];
+    if (warns.length) html += '<div class="hint">' + esc(warns.join("；")) + "</div>";
+    return html || '<div class="hint">无结构化响应</div>';
+  }
+
+  function frameDetail(f) {
+    var p = f.parsed || null;
+    var secs = [];
+    if (p) {
+      secs.push('<div class="fdet-sec"><b>1376.2 字段</b>' + fieldTable(p.fields) + "</div>");
+      if (p.items && p.items.length) {
+        secs.push('<div class="fdet-sec"><b>应用数据单元</b>' + itemTable(p.items) + "</div>");
+      }
+      var nst = nestedBlock(p.nested);
+      if (nst) secs.push('<div class="fdet-sec"><b>内嵌报文</b>' + nst + "</div>");
+      if (p.warnings && p.warnings.length) {
+        secs.push('<div class="fdet-sec"><b>解析告警</b><div class="hint">' + esc(p.warnings.join("；")) + "</div></div>");
+      }
+    } else {
+      secs.push('<div class="fdet-sec"><b>解析</b><div class="hint">本帧无解析结果（parse unavailable）</div></div>');
+    }
+    if (f.resp) secs.push('<div class="fdet-sec"><b>响应解析</b>' + respBlock(f.resp) + "</div>");
+    if (f.run_id) secs.push('<div class="fdet-sec"><b>运行上下文</b><div class="mono hint">run_id=' + esc(f.run_id) + "</div></div>");
+    return '<div class="hexwrap"><div class="hex">' + colorHex(f.frame_hex) + "</div></div>" +
+      (f.updown ? '<div class="hint" style="margin-top:6px">' +
+        (String(f.afn) === "06" ? "CCO 主动上报（06H）" : "上行应答（对本次下发的响应）") + "</div>" : "") +
+      '<div class="fdet">' + secs.join("") + "</div>";
   }
 
   function startPolling() {
     if (state.pollTimer) clearInterval(state.pollTimer);
-    state.pollTimer = setInterval(refreshFrames, 2500);
+    // 800ms 轮询：原来 2.5s 一轮，收帧看着明显「慢半拍」；页面不可见时跳过，省 CPU。
+    state.pollTimer = setInterval(function () {
+      if (document.hidden) return;
+      refreshFrames();
+    }, 800);
     refreshFrames();
   }
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refreshFrames();
+  });
 
   $("#segF").addEventListener("click", function (e) {
     var btn = e.target.closest("button");
     if (!btn) return;
     Array.prototype.forEach.call(document.querySelectorAll("#segF button"), function (x) { x.classList.remove("on"); });
     btn.classList.add("on");
-    state.lastSeq = 0;
+    // 换筛选 = 换视图：清屏、清游标、清去重表，重新全量拉一遍。
+    resetFrameView();
     $("#trBody").innerHTML = '<div class="empty" style="height:120px"><p>加载中…</p></div>';
     refreshFrames();
   });
@@ -1074,6 +1396,369 @@
     });
   }
 
+  /* ================= 路由档案（11H-F1 添加 / 11H-F2 删除 / 10H-F2 读取） =================
+   * 现场问题（2026-11-19）：11H-F1 的数据单元是「数量n + (地址 + 协议类型)×n」，字典里
+   * 地址/协议两个字段 key=null（只有 n 有 key），通用字段表单**根本无法表达**地址与协议，
+   * 只能手拼；而 11H-F1 正常姿势就是一行一个档案、批量下发。故本页提供专用编辑表：
+   * 一行 = 一个从节点（地址 12 位 BCD + 协议类型下拉），可增删行、可从模块实读档案导入，
+   * 构帧/下发仍走后端（前端不手拼字节）；读取（10H-F2）以表格回显，可直接勾选删除。
+   */
+  var ARC_PROTO = [
+    [0, "00H 透明传输"], [1, "01H DL/T 645-1997"],
+    [2, "02H DL/T 645-2007"], [3, "03H DL/T 698.45"],
+  ];
+  var ARC_PROTO_NAME = { 0: "透明传输", 1: "645-1997", 2: "645-2007", 3: "698.45" };
+  var ARC_MAX_PER_FRAME = 16;   // 与 recipes.MAX_BATCH 一致：单帧上限
+  var arcReadNodes = [];        // 最近一次 10H-F2 读取结果（表格回显 + 勾选来源）
+
+  function curAfnFn() {
+    var a = state.afnList[state.curAfn] || null;
+    var f = a && a.fns ? a.fns[state.curFn] : null;
+    return { afn: a, fn: f, code: normAfnCode(a && a.code), no: f && f.no };
+  }
+
+  /* 哪些 Fn 走档案编辑表：11H-F1（加档案，地址+协议）、11H-F2（删档案，只地址） */
+  function isArchiveFn() {
+    var sel = curAfnFn();
+    return sel.code === "11" && (sel.no === "F1" || sel.no === "F2");
+  }
+
+  function arcIsAdd() { return curAfnFn().no === "F1"; }
+
+  /* 编辑行：{addr, proto}。add 模式带协议，delete 模式忽略协议。 */
+  function arcRows() {
+    if (!state.arcRows) state.arcRows = [{ addr: "", proto: 2 }];
+    return state.arcRows;
+  }
+
+  function arcProtoSelect(sel, idx) {
+    return '<select class="mini-in arc-proto" data-i="' + idx + '" style="width:178px">' +
+      ARC_PROTO.map(function (p) {
+        return '<option value="' + p[0] + '"' + (Number(sel) === p[0] ? " selected" : "") + ">" + esc(p[1]) + "</option>";
+      }).join("") + "</select>";
+  }
+
+  function renderArchivePanel(f) {
+    var add = arcIsAdd();
+    var rows = arcRows();
+    var rowHtml = rows.map(function (r, i) {
+      return '<tr data-i="' + i + '">' +
+        "<td class='num'>" + (i + 1) + "</td>" +
+        "<td><input class='fld arc-addr mono' data-i='" + i + "' value='" + esc(r.addr || "") +
+          "' placeholder='12 位 BCD 地址，如 080000000001' style='width:180px' spellcheck='false'></td>" +
+        (add ? "<td>" + arcProtoSelect(r.proto, i) + "</td>" : "") +
+        "<td><button class='btn btn--sm btn--ghost arc-del' data-i='" + i + "' title='删除本行'>✕</button></td>" +
+        "</tr>";
+    }).join("");
+    var head = "<tr><th class='num'>#</th><th>从节点地址</th>" + (add ? "<th>通信协议类型</th>" : "") + "<th></th></tr>";
+
+    $("#parBody").innerHTML =
+      '<div class="card"><div class="card-h">' + (add ? "添加从节点档案" : "删除从节点档案") +
+        '<span class="hint">一行一个从节点</span></div><div class="card-in">' +
+        '<div class="ff-desc">' + (add
+          ? "地址为 12 位 BCD 数字串；协议类型 00H 透明 / 01H 645-1997 / 02H 645-2007 / 03H 698.45。"
+          : "按行删除；仅需地址（11H-F2 数据单元 = 数量 + 地址×n）。") +
+        '</div><div class="arc-tblwrap"><table class="rtab arc-tbl"><thead>' + head + "</thead><tbody>" +
+        (rowHtml || "") + "</tbody></table></div>" +
+        '<div class="pbody-row" style="margin-top:9px">' +
+          '<button class="btn btn--sm btn--primary" id="arcAddRow">＋ 新增一行</button>' +
+          '<button class="btn btn--sm btn--ghost" id="arcClearRows">清空</button>' +
+          '<span class="sp" style="margin-left:auto"></span>' +
+          '<span class="chip chip--ghost" id="arcMeta"></span>' +
+        "</div></div></div>" +
+
+      '<div class="card" style="margin-top:14px"><div class="card-h">从模块读取档案（10H-F2）' +
+        '<span class="hint">表格回显 · 可勾选导入/删除</span></div><div class="card-in">' +
+        '<div class="pbody-row">' +
+          '<button class="btn btn--sm btn--primary" id="arcRead">读取当前档案</button>' +
+          '<button class="btn btn--sm btn--ghost" id="arcImport">勾选导入编辑表</button>' +
+          '<button class="btn btn--sm btn--ghost" id="arcDelSel" style="display:' + (add ? "none" : "inline-flex") + '">勾选删除（11H-F2）</button>' +
+          '<label class="set-row" style="margin-left:6px" title="与「会话设置 → 协议口径」同一个全局开关">' +
+            '<input type="checkbox" id="arcStartBase">' +
+            '<span>起始序号从 1 开始</span>' +
+          "</label>" +
+          '<span class="chip chip--ghost" id="arcReadMeta">未读取</span>' +
+        "</div>" +
+        '<div id="arcReadTable" style="margin-top:9px"><div class="empty" style="height:44px">' +
+          "<p>点「读取当前档案」后按表格显示：地址 / 协议类型 / 信号品质 / 中继级别 / 在网</p></div></div>" +
+        "</div></div>" +
+
+      '<div class="card" style="margin-top:14px"><div class="card-h">帧预览 · 68H|L|C|R|A|AFN|DT|数据|CS|16H' +
+        '<span class="hint">只算不发</span></div>' +
+        '<div class="card-in"><div class="hexwrap"><div class="hex" id="prevHex">填写档案后自动构建</div></div></div></div>';
+
+    arcBind();
+    arcSyncMeta();
+    buildPreview();
+  }
+
+  function arcBind() {
+    Array.prototype.forEach.call(document.querySelectorAll("#parBody .arc-addr"), function (el) {
+      el.addEventListener("input", function () {
+        arcRows()[+el.dataset.i].addr = el.value.trim();
+        arcSyncMeta();
+        debounceBuild();
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#parBody .arc-proto"), function (el) {
+      el.addEventListener("change", function () {
+        arcRows()[+el.dataset.i].proto = parseInt(el.value, 10);
+        debounceBuild();
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#parBody .arc-del"), function (el) {
+      el.addEventListener("click", function () {
+        var rows = arcRows();
+        rows.splice(+el.dataset.i, 1);
+        if (!rows.length) rows.push({ addr: "", proto: 2 });
+        renderArchivePanel(curAfnFn().fn);
+      });
+    });
+    $("#arcAddRow").addEventListener("click", function () {
+      arcRows().push({ addr: "", proto: 2 });
+      renderArchivePanel(curAfnFn().fn);
+    });
+    $("#arcClearRows").addEventListener("click", function () {
+      state.arcRows = [{ addr: "", proto: 2 }];
+      renderArchivePanel(curAfnFn().fn);
+    });
+    $("#arcRead").addEventListener("click", arcReadArchive);
+    $("#arcImport").addEventListener("click", arcImportSelected);
+    $("#arcDelSel").addEventListener("click", arcDeleteSelected);
+    var startBaseChk = $("#arcStartBase");
+    if (startBaseChk) {
+      startBaseChk.checked = state.queryStartBase === 1;
+      startBaseChk.addEventListener("change", function () {
+        saveQueryStartBase(startBaseChk.checked ? 1 : 0);
+      });
+    }
+  }
+
+  /* 有效行 = 地址非空；校验 12 位数字 + 去重 */
+  function arcValidRows() {
+    var out = [], seen = {}, errs = [];
+    arcRows().forEach(function (r, i) {
+      var a = String(r.addr || "").trim();
+      if (!a) return;
+      if (!/^\d{12}$/.test(a)) errs.push("第 " + (i + 1) + " 行地址须为 12 位数字：" + a);
+      else if (seen[a]) errs.push("第 " + (i + 1) + " 行地址重复：" + a);
+      else { seen[a] = 1; out.push({ addr: a, proto: parseInt(r.proto, 10) || 0 }); }
+    });
+    if (errs.length) throw new Error(errs.join("；"));
+    return out;
+  }
+
+  function arcSyncMeta() {
+    var m = $("#arcMeta");
+    if (!m) return;
+    var rows = arcRows().filter(function (r) { return String(r.addr || "").trim(); });
+    var frames = Math.max(1, Math.ceil(rows.length / ARC_MAX_PER_FRAME));
+    m.textContent = "有效档案 " + rows.length + " 条 · 单帧上限 " + ARC_MAX_PER_FRAME +
+      (rows.length > ARC_MAX_PER_FRAME ? " · 将拆 " + frames + " 帧下发" : "");
+  }
+
+  /* 参数：add → {nodes:[{addr,protocol}]}；delete → {meters:[addr]} */
+  function arcInlineParams() {
+    var rows = arcValidRows();
+    if (!rows.length) throw new Error("请至少填写一条从节点地址");
+    if (arcIsAdd()) {
+      return { nodes: rows.map(function (r) { return { addr: r.addr, protocol: r.proto }; }) };
+    }
+    return { meters: rows.map(function (r) { return r.addr; }) };
+  }
+
+  /* 读取档案（10H-F2）：后端构帧下发并解析，前端只做表格回显 */
+  function arcReadArchive() {
+    $("#arcReadMeta").textContent = "读取中…（10H-F2 下发，起始序号 " +
+      (state.queryStartBase === 1 ? "01 00" : "00 00") + "）";
+    // start_base 显式传给后端：与全局勾选一致，不被后端默认值盖掉（两处同源）。
+    api("/api/simcon/archive/query?count=200&start_base=" + encodeURIComponent(state.queryStartBase)).then(function (d) {
+      arcReadNodes = d.nodes || [];
+      var total = d.session && d.session.total != null ? d.session.total : arcReadNodes.length;
+      $("#arcReadMeta").textContent = "档案 " + total + " 条 · 本次应答 " + arcReadNodes.length + " 条 · 获取于 " +
+        ((d.session && d.session.fetched_at) || "").replace("T", " ").slice(0, 19);
+      renderArcReadTable();
+      banner(null);
+      // 明明有总数量却回 0 条明细：把口径问题直说，别让人以为"模块没档案"。
+      if (!arcReadNodes.length && total > 0) {
+        banner("模块报告档案 " + total + " 条，但本次应答 0 条：" +
+          (state.queryStartBase === 1
+            ? "起始序号已用 01 00，仍为空——请确认模块档案是否真的已建档"
+            : "试试勾选「起始序号从 1 开始」"));
+      }
+    }).catch(function (e) {
+      $("#arcReadMeta").textContent = "读取失败：" + e.message;
+      $("#arcReadTable").innerHTML = '<div class="empty" style="height:64px"><p>' + esc(e.message) +
+        "</p></div>";
+    });
+  }
+
+  /* ================= 全局协议口径（simcon_settings.json） =================
+   * 一处落盘、多处生效：「会话设置 → 协议口径」与「从模块读取档案」旁的勾选、
+   * 后端 recipe 清空档案的分页起点都读同一份设置。 */
+  function applyQueryStartBase(base) {
+    state.queryStartBase = base === 0 ? 0 : 1;
+    var a = $("#setStartBase"), b = $("#arcStartBase");
+    if (a) a.checked = state.queryStartBase === 1;
+    if (b) b.checked = state.queryStartBase === 1;
+    var hint = $("#setStartBaseHint");
+    if (hint) {
+      hint.textContent = state.queryStartBase === 1
+        ? "当前：起始序号 01 00（本场模块口径）"
+        : "当前：起始序号 00 00";
+    }
+  }
+
+  function loadSettings() {
+    api("/api/simcon/settings").then(function (d) {
+      var base = (d.settings || {}).query_start_base;
+      applyQueryStartBase(base == null ? 1 : Number(base));
+    }).catch(function () { applyQueryStartBase(state.queryStartBase); });
+  }
+
+  function saveQueryStartBase(base) {
+    applyQueryStartBase(base);
+    api("/api/simcon/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query_start_base: base }),
+    }).then(function (d) {
+      var saved = (d.settings || {}).query_start_base;
+      applyQueryStartBase(saved == null ? base : Number(saved));
+      banner("已保存：10H-F2 起始序号从 " + (state.queryStartBase === 1 ? "1" : "0") + " 开始（全局生效）");
+    }).catch(function (e) {
+      banner("保存失败：" + e.message);
+    });
+  }
+
+  function renderArcReadTable() {
+    var box = $("#arcReadTable");
+    if (!arcReadNodes.length) {
+      box.innerHTML = '<div class="empty" style="height:64px"><p>模块档案为空</p></div>';
+      return;
+    }
+    box.innerHTML = '<table class="rtab"><thead><tr><th><input type="checkbox" id="arcAll"></th>' +
+      "<th class='num'>#</th><th>从节点地址</th><th>协议类型</th><th class='num'>信号品质</th>" +
+      "<th class='num'>中继级别</th><th class='num'>相位</th><th>在网</th></tr></thead><tbody>" +
+      arcReadNodes.map(function (n, i) {
+        var proto = n.protocol == null ? "—" : (ARC_PROTO_NAME[n.protocol] || ("代码 " + n.protocol));
+        return "<tr><td><input type='checkbox' class='arcChk' data-i='" + i + "'></td>" +
+          "<td class='num'>" + (i + 1) + "</td><td class='mono'>" + esc(n.addr) + "</td>" +
+          "<td>" + esc(proto) + "</td>" +
+          "<td class='num'>" + (n.signal == null ? "—" : n.signal) + "</td>" +
+          "<td class='num'>" + (n.relay == null ? "—" : n.relay) + "</td>" +
+          "<td class='num'>" + (n.phase == null ? "—" : n.phase) + "</td>" +
+          "<td>" + (n.online ? '<span class="badge badge--ok">在线</span>'
+                             : '<span class="badge badge--idle">离线</span>') + "</td></tr>";
+      }).join("") + "</tbody></table>";
+    var all = $("#arcAll");
+    if (all) all.addEventListener("change", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".arcChk"), function (c) { c.checked = all.checked; });
+    });
+  }
+
+  function arcCheckedNodes() {
+    var out = [];
+    Array.prototype.forEach.call(document.querySelectorAll(".arcChk:checked"), function (c) {
+      var n = arcReadNodes[+c.dataset.i];
+      if (n) out.push(n);
+    });
+    return out;
+  }
+
+  function arcImportSelected() {
+    var picked = arcCheckedNodes();
+    if (!picked.length) { banner("请先在读取表里勾选要导入的档案"); return; }
+    var rows = arcRows().filter(function (r) { return String(r.addr || "").trim(); });
+    var seen = {};
+    rows.forEach(function (r) { seen[r.addr] = 1; });
+    var added = 0;
+    picked.forEach(function (n) {
+      if (seen[n.addr]) return;
+      seen[n.addr] = 1;
+      rows.push({ addr: n.addr, proto: n.protocol == null ? 2 : n.protocol });
+      added++;
+    });
+    state.arcRows = rows.length ? rows : [{ addr: "", proto: 2 }];
+    renderArchivePanel(curAfnFn().fn);
+    banner("已导入 " + added + " 条档案（原表已有 " + picked.length + " 条被跳过）");
+  }
+
+  /* 勾选删除：直接按 11H-F2 下发（一行一帧不必要，协议就是一帧带 n 个地址） */
+  function arcDeleteSelected() {
+    var picked = arcCheckedNodes();
+    if (!picked.length) { banner("请先在读取表里勾选要删除的档案"); return; }
+    var send = {
+      afn: parseInt("11", 16), fn: 2,
+      params: { meters: picked.map(function (n) { return n.addr; }) },
+    };
+    banner("删除 " + picked.length + " 条档案，下发中…");
+    api("/api/simcon/step", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({
+        send: send, profile: $("#profileSel").value, enable_responder: true, name: "page-archive-delete",
+      }, currentTarget())),
+    }).then(function (r) {
+      var s = (r && r.step) || {};
+      banner(s.deny ? ("删除被否认：" + s.deny.text)
+        : s.result === "pass" ? ("已删除 " + picked.length + " 条（" + picked.map(function (n) { return n.addr; }).join(",") + "）")
+        : ("删除未确认：" + (s.reason || "超时")));
+      refreshFrames();
+      arcReadArchive();
+    }).catch(function (e) { banner("删除失败：" + e.message); });
+  }
+
+  /* 多帧下发：超过单帧上限时按 ARC_MAX_PER_FRAME 拆帧顺序下发，逐帧报结果 */
+  function arcSendChunks(sendDesc) {
+    if (state.arcSending) { banner("上一次档案下发还在进行中，请等它跑完"); return; }
+    var rows = arcValidRows();
+    if (!rows.length) { banner("请至少填写一条从节点地址"); return; }
+    var chunks = [];
+    for (var i = 0; i < rows.length; i += ARC_MAX_PER_FRAME) chunks.push(rows.slice(i, i + ARC_MAX_PER_FRAME));
+    var isAdd = arcIsAdd();
+    var done = 0, failed = [];
+    state.arcSending = true;
+    $("#frameMeta").textContent = "拆帧下发 " + chunks.length + " 帧…";
+    var chain = Promise.resolve();
+    chunks.forEach(function (chunk, ci) {
+      chain = chain.then(function () {
+        var params = isAdd
+          ? { nodes: chunk.map(function (r) { return { addr: r.addr, protocol: r.proto }; }) }
+          : { meters: chunk.map(function (r) { return r.addr; }) };
+        return api("/api/simcon/step", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(Object.assign({
+            send: { afn: 0x11, fn: isAdd ? 1 : 2, params: params },
+            profile: $("#profileSel").value, enable_responder: true,
+            name: "page-archive-" + (isAdd ? "add" : "del") + "-" + (ci + 1),
+          }, currentTarget())),
+        }).then(function (r) {
+          var s = (r && r.step) || {};
+          if (s.deny || s.result !== "pass") {
+            failed.push("第 " + (ci + 1) + " 帧（" + chunk.length + " 条）" +
+              (s.deny ? "否认 " + s.deny.code_hex + " " + s.deny.text : (s.reason || "超时")));
+          }
+          done++;
+          $("#frameMeta").textContent = "拆帧下发 " + done + "/" + chunks.length + " 帧";
+          return r;
+        });
+      });
+    });
+    chain.then(function () {
+      state.arcSending = false;
+      refreshFrames();
+      refreshStatus();
+      banner(failed.length
+        ? ("下发完成，但有 " + failed.length + " 帧异常：" + failed.join("；"))
+        : ("已下发 " + rows.length + " 条档案（" + chunks.length + " 帧全部确认）"));
+      if (sendDesc) switchPanel("pair", true);
+      arcReadArchive();
+    }).catch(function (e) {
+      state.arcSending = false;
+      banner("拆帧下发中断（已成功 " + done + " 帧）：" + e.message);
+      $("#frameMeta").textContent = "拆帧下发中断";
+    });
+  }
+
   /* ---- 面板页签 ---- */
   function stopPanelTimers() {
     if (readTimer) { clearInterval(readTimer); readTimer = null; }
@@ -1164,11 +1849,11 @@
   function mcSendStep(send, label) {
     return api("/api/simcon/step", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify(Object.assign({
         send: send, profile: $("#profileSel").value,
         expect: { format: "local", afn: 17, fn: send.fn === "F231" ? 231 : 232 },
         enable_responder: true, name: label,
-      }),
+      }, currentTarget())),
     });
   }
 
@@ -1244,7 +1929,8 @@
     };
     $("#mcScenarioMeta").textContent = "执行中…（wait 步骤最长等 timeout_s）";
     return api("/api/simcon/verify", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({}, body, currentTarget())),
     }).then(function (r) {
       var s = r.summary || {};
       $("#mcScenarioMeta").textContent = "结论 " + (s.verdict || "—") + " · 通过 " + (s.pass || 0) + "/" + (s.total || 0) +
@@ -1450,11 +2136,19 @@
 
   $("#mcF230Refresh").addEventListener("click", loadMcltStore);
 
+  /* 全局协议口径勾选（会话设置页签，静态节点；另一处勾选随档案面板重建时绑定） */
+  (function bindStartBaseCheckbox() {
+    var el = $("#setStartBase");
+    if (!el) return;
+    el.addEventListener("change", function () { saveQueryStartBase(el.checked ? 1 : 0); });
+  })();
+
   /* ================= 初始化 ================= */
   loadDict();
   loadPorts();
   loadResponders();
   loadExpectRules();
+  loadSettings();   // 全局协议口径（10H-F2 起始序号基址），读取后同步两处勾选
   renderBatchForm();
   renderDeepPanel();
   loadDeepStats();

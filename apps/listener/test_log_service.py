@@ -5,8 +5,13 @@ from pathlib import Path
 
 from listener import network_assessment
 from listener.log_service import (
+    FRAME_RECORD,
+    IGNORED_LINE,
     LogFileService,
+    TEXT_RECORD,
+    UNTIMED_FRAME,
     _BACKFILL_STATE,
+    classify_log_line,
     extract_log_record,
 )
 
@@ -72,6 +77,15 @@ def _e4_summary(source_mac="340100141223", ori_s="009", finl_d="001", task=7,
     return summary
 
 
+class EmptySummaryParserService(FakeParserService):
+    """模拟 parse_backend=none：深度解析不可用，simple 只能为空。"""
+
+    def parse_summary(self, value: str) -> dict:
+        self.summary_calls += 1
+        return {"frame": {"length": len(value.split()), "normalized_hex": value},
+                "simple": {}}
+
+
 class FakeMinuteParserService:
     """按行顺序返回预置摘要的假解析器，用于分钟上报持久化测试。"""
 
@@ -91,6 +105,24 @@ class FakeMinuteParserService:
         result = self.parse_summary(value)
         result["full"] = {"解析层级": ["侦听台外层", "FCH", "MPDU"]}
         return result
+
+
+def _trace_rows(service):
+    """按 sequence 索引的追踪物化列（测试直查索引库，避免新增对外接口）。"""
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{service.database_path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        return {
+            row["sequence"]: dict(row)
+            for row in connection.execute(
+                "SELECT sequence, app_id, msg_seq, flow_dir, meter_addrs, sta_tei"
+                " FROM frames"
+            )
+        }
+    finally:
+        connection.close()
 
 
 def _write_log(lines):
@@ -130,6 +162,133 @@ class LogRecordTests(unittest.TestCase):
 
     def test_ignores_line_without_complete_frame(self):
         self.assertIsNone(extract_log_record(b"[1][00:00:00.001]not a frame"))
+
+
+class ClassifyLogLineTests(unittest.TestCase):
+    """逐行分类：双括号头 / 单括号头（模块文本日志）/ 无时间戳帧 / 无法识别。"""
+
+    def test_single_bracket_header_time_is_normalized_to_clock(self):
+        # CCO 模块日志形态：[YYYYMMDD-HH:MM:SS:mmm]payload，毫秒分隔符是冒号
+        line = "[20261116-10:27:33:672]7E FF 02 FF 24 6B 7E\r\n".encode()
+        kind, record = classify_log_line(line)
+        self.assertEqual(kind, FRAME_RECORD)
+        self.assertEqual(record.log_time, "10:27:33.672")
+        self.assertEqual(record.sequence, "20261116-10:27:33:672")
+        self.assertEqual(record.hex_frame, "7E FF 02 FF 24 6B 7E")
+
+    def test_single_bracket_header_without_frame_is_text_record(self):
+        line = ("[20261116-10:27:33:672]226996 | info | aps_report_state.c (504)"
+                "| no report delay\r\n").encode()
+        self.assertEqual(classify_log_line(line), (TEXT_RECORD, None))
+        self.assertIsNone(extract_log_record(line))
+
+    def test_tagged_frame_without_clock_keeps_hex_frame(self):
+        # 串口工具把异常帧写成 [Error]7E ...（无序号无时间），帧本身完整
+        line = b"[Error]7E FF 02 FF 24 6B 7E\r\n"
+        kind, record = classify_log_line(line)
+        self.assertEqual(kind, UNTIMED_FRAME)
+        self.assertEqual(record.sequence, "Error")
+        self.assertEqual(record.log_time, "")
+        self.assertEqual(record.hex_frame, "7E FF 02 FF 24 6B 7E")
+
+    def test_unrecognized_line_returns_none(self):
+        self.assertEqual(classify_log_line(b"226996 | info | no header\r\n"),
+                         (IGNORED_LINE, None))
+
+
+class ModuleLogAdaptationTests(unittest.TestCase):
+    """模块/设备文本日志与无时间戳帧行的索引行为（不再整行静默丢弃）。"""
+
+    def _service(self, parser=None):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        service = LogFileService(
+            parser or FakeParserService(), Path(directory.name) / "index.sqlite3"
+        )
+        self.addCleanup(service.close)
+        return service, Path(directory.name)
+
+    def test_text_records_are_counted_not_indexed(self):
+        directory, path = _write_log([
+            b"[406727][00:00:00.016]7E FF 02 FF 24 6B 7E\r\n",
+            b"[20261116-10:27:33:672]226996 | info | aps_report_state.c (504)| no report delay\r\n",
+            b"[20261116-10:27:33:673]226997 | info | aps_affair_state.c (175)| P:701e4c30\r\n",
+        ])
+        self.addCleanup(directory.cleanup)
+        service, _ = self._service()
+        status = service.index_file(path)
+        self.assertEqual(status["frame_count"], 1)
+        self.assertEqual(status["line_count"], 3)
+        self.assertEqual(status["text_count"], 2)
+        self.assertEqual(service.list_frames(limit=10)["total"], 1)
+
+    def test_module_text_log_says_frame_index_not_applicable(self):
+        directory, path = _write_log([
+            b"[20261116-10:27:33:672]226996 | info | aps_report_state.c (504)| no report delay\r\n",
+        ])
+        self.addCleanup(directory.cleanup)
+        service, _ = self._service()
+        status = service.index_file(path)
+        self.assertEqual(status["frame_count"], 0)
+        self.assertEqual(status["text_count"], 1)
+        # 旧版只报"共 0 帧"，看不出原因；现在明说帧索引不适用并指向离线路径
+        self.assertIn("非帧文本记录", status["message"])
+        self.assertIn("帧索引基本不适用", status["message"])
+
+    def test_untimed_frame_inherits_previous_line_time(self):
+        directory, path = _write_log([
+            b"[406727][00:00:00.016]7E FF 02 FF 24 6B 7E\r\n",
+            b"[Error]7E FF 02 FF 25 6B 7E\r\n",
+        ])
+        self.addCleanup(directory.cleanup)
+        service, _ = self._service()
+        status = service.index_file(path)
+        self.assertEqual(status["frame_count"], 2)
+        self.assertEqual(status["untimed_count"], 1)
+        items = service.list_frames(limit=10)["items"]
+        self.assertEqual([item["log_time"] for item in items],
+                         ["00:00:00.016", "00:00:00.016"])
+        self.assertEqual(items[1]["sequence"], "Error")
+
+    def test_trace_columns_materialize_without_dll_summary(self):
+        # parse_backend=none：解析器只能给出空 simple，追踪列靠纯 Python 解码兜底
+        service, _ = self._service(parser=EmptySummaryParserService())
+        service.index_file(SAMPLE_FILE)
+        rows = _trace_rows(service)
+        down = rows["406737"]        # CCO 下发的并发抄表请求
+        up = rows["406744"]          # STA 上行应答
+        self.assertEqual(down["app_id"], "0003")
+        self.assertEqual(down["flow_dir"], 0)
+        self.assertEqual(down["sta_tei"], "087")
+        self.assertIn("00200201", json.loads(down["meter_addrs"]))
+        self.assertEqual(up["flow_dir"], 1)
+        self.assertTrue(up["meter_addrs"].startswith('[{"addr": "00200201"'))
+
+    def test_mixed_file_does_not_claim_frame_index_unusable(self):
+        # 帧+文本混排：帧索引照常有效，文案不能写成"不适用"（会误导现场）
+        directory, path = _write_log([
+            b"[406727][00:00:00.016]7E FF 02 FF 24 6B 7E\r\n",
+            b"[20261116-10:27:33:672]226996 | info | aps.c (504)| no report delay\r\n",
+            b"[20261116-10:27:33:673]226997 | info | aps.c (175)| P:701e4c30\r\n",
+        ])
+        self.addCleanup(directory.cleanup)
+        service, _ = self._service()
+        status = service.index_file(path)
+        self.assertEqual(status["frame_count"], 1)
+        self.assertIn("另有 2 条非帧文本记录未入索引", status["message"])
+        self.assertNotIn("不适用", status["message"])
+
+    def test_degenerate_seven_e_pair_is_not_indexed_as_frame(self):
+        # 模块日志里的零散 7e（如 fseq:7e,sseq:7e）不能变成 2 字节退化帧
+        directory, path = _write_log([
+            b"[20261116-10:27:33:672]fseq:7e,sseq:7e\r\n",
+        ])
+        self.addCleanup(directory.cleanup)
+        service, _ = self._service()
+        status = service.index_file(path)
+        self.assertEqual(status["frame_count"], 0)
+        self.assertEqual(status["text_count"], 1)
+
 
 
 class LogFileServiceTests(unittest.TestCase):

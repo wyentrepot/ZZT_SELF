@@ -1,29 +1,35 @@
 # tools/scripts — 运维脚本
 
-## WSL 环境部署（Python 串口桥 + usbipd + 解析网关）
+## 宿主控制（串口桥 / 解析网关 / 海思诊断服务）
 
-**入口**：`wsl环境部署.bat`（双击启动）+ `uart-map.ps1`（主脚本，UTF-8 BOM，中文界面）。
+> 2026-11-17 迁移：`uart-map.ps1` 与新的控制面服务都在 **`tools/win_host/`**
+> （`tools/scripts/uart-map.ps1` 已删除，避免两份脚本漂移）。
+> 本目录的 `wsl环境部署.bat` 已改为调用 `..\win_host\uart-map.ps1`。
 
-**默认串口方案是 Python 桥**：Windows COM ↔ TCP ↔ WSL `/run/hplc/serial/<id>`，
-不需要管理员、不再依赖 usbipd；菜单 `[6]` 一键启停（停止即释放 COM 给 Windows 工具）。
-`[1]/[2]` 保留 usbipd 旧方案；`[4]/[5]` 控制 Windows 侧**解析网关**（REQS-0019）。
+| 入口 | 说明 |
+|---|---|
+| `tools/win_host/uart-map.ps1` | **人用的**交互菜单（UTF-8 BOM，中文） |
+| `tools/win_host/wsl-control.py` + `dashboard.html` | 常驻控制面（8766）+ 看板，计划任务 `FC-Wsl-Control` 拉起 |
+| `wsl环境部署.bat` | 双击入口（转调 `..\win_host\uart-map.ps1`） |
 
-> **不用 usbipd 时不需要关 Hyper-V 防火墙**：Python 桥走 Windows→WSL 的 TCP
-> localhost，菜单 [6]/[7] 不调用 usbipd、不检查防火墙；[3] 的 usbipd 视图带 3 秒
-> 超时，usbipd 因防火墙卡住时只会提示并跳过，不会卡死菜单。前提是 COM 在 Windows
-> 侧可用（设备为 `Shared`/未 `Attached`）。
+**usbipd 已移除**：串口统一走 Python 桥（Windows COM ↔ TCP ↔ WSL `/run/hplc/serial/<id>`），
+不再 attach 到 WSL；HTTP 侧 `/api/usbipd/*` 返回 410。详见 `tools/win_host/README.md`
+与 `tools/win_host/WSL-CONTROL-API.md`。
 
-### 菜单
+### 菜单（`tools/win_host/uart-map.ps1`）
 
 | 选项 | 功能 |
 | --- | --- |
-| [1] | 映射串口到 WSL（attach + 加载驱动） |
-| [2] | 恢复串口到 Windows（detach） |
-| [3] | 查看状态（Python 桥 + usbipd + 解析网关 `/health`） |
-| [4] | 启动解析网关（Windows 侧，端口 8700） |
-| [5] | 停止解析网关 |
-| [6] | **Python 串口桥开关**：启动 WSL supervisor + Windows `pythonw` 桥；再按一次停止，释放 COM |
-| [7] | 查看 Python 串口桥状态（Windows 侧 PID / WSL 侧 PID / 每口 data/control/baud） |
+| [1] | 查看宿主状态（系统串口 + 桥 + 解析网关 + 诊断服务） |
+| [2] | 启动串口桥（Windows 桥接管 COM） |
+| [3] | 停止串口桥（释放 COM 给 Windows 工具） |
+| [4] | 重启串口桥 |
+| [5] | 启动解析网关（8700） |
+| [6] | 停止解析网关 |
+| [7] | 启动诊断服务（`FC-Diag-Service`，8765） |
+| [8] | 停止诊断服务 |
+| [9] | 重启诊断服务 |
+| [0] | 查看诊断服务状态 |
 | [Q] | 退出 |
 
 ### 非交互调用（自动化 / 脚本）
@@ -32,8 +38,7 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action start-gateway
 powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action stop-gateway
 powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action status
-powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action map      # 映射串口（usbipd）
-powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action restore  # 恢复串口（usbipd）
+powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action host-info  # COM 列表/桥配置/工作台探活
 powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action bridge-toggle  # Python 桥开关
 powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action bridge-start   # 启动桥
 powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action bridge-stop    # 停止桥（释放 COM）
@@ -42,24 +47,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action bridge-
 
 ### 依赖
 
-- **usbipd-win**（`winget install usbipd`；服务需运行）
 - **WSL2** 发行版（脚本默认 `Ubuntu-22.04`，可改顶部 `$script:WslDist`）
+- Windows Python（桥的 Windows 半边：`pythonw.exe` / `pyw.exe`）
 - **解析网关**：`D:\019-wy-tool\ZZT_SELF\.build_plain`（明文区，规避 E-SafeNet）+
   主工作区 `.venv`（含 fastapi/uvicorn/httpx/pythonnet）
 
-### 串口对应速查（usbipd 旧方案实测）
+### 串口对应速查
 
-> Python 桥的端口/波特率以 `config/serial_bridge.json` 为准，WSL 路径为
-> `/run/hplc/serial/<id>`（simcon/cco-main/sta-main/listener/factory）。
-> 下表仅用于 `[1]` usbipd 分支排查。
-
-| Windows COM | 芯片 | WSL 设备 |
-| --- | --- | --- |
-| COM3 | CH343 (1a86:55d3) | `/dev/ttyACM0`（需 cdc_acm） |
-| COM4 / COM24 | CP210x (10c4:ea60) | `/dev/ttyUSB0` / `/dev/ttyUSB1` |
-| COM23 | CH340 (1a86:7523) | `/dev/ttyUSB2` |
-
-> 映射后 Windows 侧对应 COM 被独占，WSL 侧使用完毕用菜单 `[2]` 恢复。
+端口/波特率一律以 `config/serial_bridge.json` 为准，WSL 路径 `/run/hplc/serial/<id>`。
+现场口径见 `tools/win_host/VERIFY-20261117.md`（2026-11-17：COM18=非降本 STA、
+COM28/29=海思业务/管理、COM8=海思诊断/升级、COM12=CCO、COM27=侦听台、COM20=模拟表）。
 
 ## 解析网关说明（REQS-0019）
 
@@ -88,5 +85,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File uart-map.ps1 -Action bridge-
 ## 部署到桌面
 
 ```powershell
-Copy-Item wsl环境部署.bat, uart-map.ps1 "$env:USERPROFILE\Desktop\"
+# 控制面三件套（wsl-control.py / dashboard.html / uart-map.ps1）都在 tools/win_host
+Copy-Item ..\win_host\wsl-control.py, ..\win_host\dashboard.html, ..\win_host\uart-map.ps1 "$env:USERPROFILE\Desktop\"
+Copy-Item wsl环境部署.bat "$env:USERPROFILE\Desktop\"
 ```

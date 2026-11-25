@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from typing import Any, Callable
 
 from shared.serial_profile import PROFILE_SLOTS, SerialProfileStore
@@ -38,15 +40,37 @@ class SimconProfileAdapter:
 
     通过注入的 simcon_open_io / simcon_close_io（来自 create_simcon_app 的
     app.state），applier 可以不发 HTTP 直接控制模拟集中器串口。
+
+    current_port：注入「当前真正打开的口」活查询（simcon_current_port）。
+    有它时 open_port 一律读活状态，不依赖本地缓存——页面 `/api/simcon/open`
+    走 HTTP 路由、不经本适配器，缓存会过期，曾导致 Profile 应用把
+    「实占 COM11、配置 COM28」判成 unchanged（2026-11-19 实测）。
     """
 
     def __init__(self, open_io: Callable[[dict[str, Any]], None],
                  close_io: Callable[[], None],
-                 resolve: Callable[..., dict[str, Any]]):
+                 resolve: Callable[..., dict[str, Any]],
+                 current_port: Callable[[], str | None] | None = None):
         self._open_io = open_io
         self._close_io = close_io
         self._resolve = resolve
-        self.open_port: str | None = None
+        self._current_port = current_port
+        self._cached_port: str | None = None
+
+    @property
+    def open_port(self) -> str | None:
+        if self._current_port is not None:
+            try:
+                live = self._current_port()
+            except Exception:  # noqa: BLE001 - 状态查询失败按「未开」处理，宁重开不假成功
+                live = None
+            self._cached_port = live or None
+            return self._cached_port
+        return self._cached_port
+
+    @open_port.setter
+    def open_port(self, value: str | None) -> None:
+        self._cached_port = value
 
     def open(self, port: str) -> None:
         resolved = self._resolve(port=port)
@@ -55,7 +79,7 @@ class SimconProfileAdapter:
 
     def close(self) -> None:
         self._close_io()
-        self.open_port = None
+        self._cached_port = None
 
 
 class _SlotResult(dict):
@@ -107,12 +131,20 @@ class SerialProfileApplier:
 
         module 的 start_session 会对 None 参数直接 int() 崩溃；listener 则会
         沿用上次的运行参数，均不是期望的 auto 口径，故在此统一解析。
+
+        PTY 校验位强制 N：WSL 侧串口是桥接 PTY，**不接受 PARENB**——给 PTY 设
+        偶校验会直接抛 `(22, 'Invalid argument')`（2026-11-19 实测），真机校验位
+        由 Windows 桥按 serial_bridge.json 实现。因此这里把槽里写的 E/O 统一压成 N，
+        避免"页面填 E → 应用必失败"（cco 槽曾因此长期 failed）。
         """
         defaults = self.profile_store.mapping_params(mapping_id)
-        return {
+        params = {
             key: profile.get(key) if profile.get(key) is not None else defaults[key]
             for key in _PARAM_KEYS
         }
+        if os.name != "nt":
+            params["parity"] = "N"
+        return params
 
     def _apply_slot(self, slot: str, profile: dict[str, Any]) -> dict[str, Any]:
         enabled = bool(profile.get("enabled", False))
@@ -201,6 +233,11 @@ class SerialProfileApplier:
                                current_state={"state": "open", "port": open_port})
         self.simcon_service.open(device)
         actual_port = getattr(self.simcon_service, "open_port", None)
+        if device and actual_port != device:
+            # 换口没生效必须报失败：否则页面仍对着旧口收发，表现为「下发无应答」
+            return _SlotResult(slot="simcon.main", status="failed",
+                               reason=f"实际占用端口 {actual_port or '（无）'} 与配置 {device} 不一致",
+                               current_state={"state": "open", "port": actual_port})
         return _SlotResult(slot="simcon.main", status="started",
                            current_state={"state": "open", "port": actual_port})
 

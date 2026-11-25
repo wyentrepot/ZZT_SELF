@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI 闭环研发验证工作台</title>
 <link rel="stylesheet" href="/static/tokens-v2.css">
-<link rel="stylesheet" href="/static/styles.css">
+<link rel="stylesheet" href="/static/styles.css?v=wbcss-v4-20261119">
 <!-- P0-4 防主题闪跳：必须在首屏渲染前执行，故内联于 head 且不 defer。
      原先 app.js 在 </body> 前才应用主题，非默认主题下刷新会先渲染默认深蓝，
      再经 body 的 transition 0.3s 渐变跳到目标主题 —— 一次可见的闪跳。
@@ -72,7 +72,7 @@
         <div class="wb-menu-dd">
           <button type="button" id="wbMenuTheme">切换主题（墨夜 / 晴昼）</button>
           <button type="button" id="wbMenuRail">折叠侧栏<span class="wb-menu-kb">Ctrl+B</span></button>
-          <button type="button" id="wbMenuDock">折叠底部面板<span class="wb-menu-kb">Ctrl+J</span></button>
+          <button type="button" id="wbMenuDock" hidden>折叠底部面板<span class="wb-menu-kb">Ctrl+J</span></button>
         </div>
       </div>
       <div class="wb-menu">
@@ -103,7 +103,9 @@
   <!-- REQS-0031 P1：全局 Dock（跨模块"示波器"）。
        子页面经 postMessage({type:"wb-dock-push", view, dir, source, tag, text}) 推送行；
        帧日志 / 日志流 / 事件 三页签，可折叠（Ctrl+J）、拖顶边调高。 -->
-  <section class="wb-dock" id="wbDock" aria-label="全局面板">
+  <!-- 暂屏蔽（2026-11-19 用户要求）：全局面板不显示。恢复时删掉本段注释与下面的 hidden，
+       并把 app.js 里 DOCK_ENABLED 改回 true。 -->
+  <section class="wb-dock" id="wbDock" aria-label="全局面板" hidden>
     <div class="wb-dock-grip" id="wbDockGrip" title="拖动调整高度"></div>
     <div class="wb-dock-h">
       <button type="button" class="wb-dock-car" id="wbDockCar" aria-label="折叠/展开全局面板">
@@ -116,10 +118,11 @@
       <span class="wb-dock-sp"></span>
       <span class="wb-dock-chip wb-dock-chip--tx">发送 <b id="wbDockTx">0</b></span>
       <span class="wb-dock-chip wb-dock-chip--rx">接收 <b id="wbDockRx">0</b></span>
-      <span class="wb-dock-hint">跨模块推送 · 拖顶边调高 · Ctrl+J 折叠</span>
+      <button type="button" class="wb-dock-mode" id="wbDockMode" title="切换固定 / 悬浮">固定</button>
+      <span class="wb-dock-hint">跨模块推送 · 空闲 15s 自动收起 · 悬浮可拖动 · Ctrl+J 折叠</span>
     </div>
     <div class="wb-dock-b">
-      <div class="wb-dock-view on" id="wbDockViewFrame"><div class="wb-dock-empty">子页面下发 / 接收的帧将实时显示在这里（simcon 已接入）</div></div>
+      <div class="wb-dock-view on" id="wbDockViewFrame"><div class="wb-dock-empty">子页面推送的帧显示在这里（模拟集中器页已有内置收发记录，默认不镜像；需要镜像见 app.js 的 wb-dock-mirror）</div></div>
       <div class="wb-dock-view" id="wbDockViewLog"><div class="wb-dock-empty">模块日志流将显示在这里（第二步接入）</div></div>
       <div class="wb-dock-view" id="wbDockViewEvent"><div class="wb-dock-empty">验证台 / 追踪事件将显示在这里</div></div>
     </div>
@@ -128,11 +131,11 @@
   <footer class="wb-statusbar">
     <span class="wb-sb-kv" id="wb-status">统一集成程序</span>
     <span class="wb-sb-sp"></span>
-    <span class="wb-sb-kv">Dock <b id="wbSbDock">展开</b></span>
+    <span class="wb-sb-kv" hidden>Dock <b id="wbSbDock">展开</b></span>
     <span class="wb-sb-kv">主题 <b id="wbSbTheme">—</b></span>
-    <span class="wb-sb-demo">软件化统一壳 · REQS-0031 · Ctrl+B 侧栏 / Ctrl+J 面板</span>
+    <span class="wb-sb-demo">软件化统一壳 · REQS-0031 · Ctrl+B 侧栏</span>
   </footer>
 </div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=wbapp-v8-20261119"></script>
 </body>
 </html>

@@ -1,0 +1,92 @@
+[
+  {
+    "id": "parse-single-frame",
+    "utterance": "手头只有一帧 68 开头的 645 报文，帮我解析出每个字段是什么意思，不要启动工作台。",
+    "expected": { "skill": "wb-appframe" },
+    "note": "解析单帧报文→wb-appframe：纯离线解析，明确不启工作台，单域任务。"
+  },
+  {
+    "id": "flash-and-confirm",
+    "utterance": "烧一版 iap 固件到 STA，烧完帮我确认真的烧成了、模块能正常入网。",
+    "expected": { "chain": "烧录验证链" },
+    "note": "烧固件并确认烧成→烧录验证链：烧录+入网证据跨 wb-serial/wb-flash/wb-listener，按 ai-control-plane §2 走链。"
+  },
+  {
+    "id": "flash-job-verdict",
+    "utterance": "上次提交的 flash job 显示 succeeded，这到底算不算真烧成？帮我判定一下。",
+    "expected": { "skill": "wb-flash" },
+    "note": "只判定烧录结果→wb-flash 单域（区别于烧完还要确认入网的烧录验证链）。"
+  },
+  {
+    "id": "listener-query-frames",
+    "utterance": "侦听台里已经建好索引了，帮我把 0003 这批已解析帧查出来，按会话捋一遍通信流。",
+    "expected": { "skill": "wb-listener" },
+    "note": "查已解析帧/通信流→wb-listener：只查帧，不驱动串口/模拟设备/烧录。"
+  },
+  {
+    "id": "listener-index-trace",
+    "utterance": "把这份 7E 原始日志建个索引，然后追踪一轮完整的通信流。",
+    "expected": { "skill": "wb-listener" },
+    "note": "建索引+追踪通信流是 wb-listener 单域能力。"
+  },
+  {
+    "id": "mclt-miss-analysis",
+    "utterance": "分钟采集报表漏了几个点，帮我从 11E4/11E3 和时钟偏移角度离线分析漏在哪。",
+    "expected": { "skill": "mclt-collect-analysis" },
+    "note": "分钟采集漏点分析→mclt-collect-analysis 专项（纯离线文件分析，只读日志）。"
+  },
+  {
+    "id": "serial-open-send",
+    "utterance": "开 CCO 串口会话，给模块发一条版本查询指令，再把日志增量读出来。",
+    "expected": { "skill": "wb-serial" },
+    "note": "开串口发指令→wb-serial 单域（含 module_log 增量读）。"
+  },
+  {
+    "id": "simeter-645-reply",
+    "utterance": "把模拟电表开表口，喂一帧 645 请求，看看它的应答帧对不对。",
+    "expected": { "skill": "wb-simeter" },
+    "note": "调模拟电表 645 应答→wb-simeter。"
+  },
+  {
+    "id": "simcon-concurrent",
+    "utterance": "用模拟集中器跑一遍并发抄表验证，看有多少块表能抄回来。",
+    "expected": { "skill": "wb-simcon" },
+    "note": "并发抄表验证→wb-simcon。"
+  },
+  {
+    "id": "simcon-step-send",
+    "utterance": "单步下发一帧 afn/fn 到 CCO 本地总线，只等对端一帧反应。",
+    "expected": { "skill": "wb-simcon" },
+    "note": "单步下发/只等一帧上报对应 wb-simcon 的 step/recv_only 能力。"
+  },
+  {
+    "id": "casetest-author",
+    "utterance": "把 CCO 03H-F1 这条送检用例写成自动化脚本，指定运行一次并出验证文档。",
+    "expected": { "skill": "wb-casetest" },
+    "note": "把单条用例做成自动化并运行→wb-casetest 单域（区别于搭整套回归的用例回归链）。"
+  },
+  {
+    "id": "casetest-regression-chain",
+    "utterance": "帮我把这批送检用例搭成一套可重复跑的回归，端到端整链跑一遍。",
+    "expected": { "chain": "用例回归链" },
+    "note": "搭回归+端到端链路是 ai-control-plane §2 用例回归链的触发语（跨 wb-base/wb-casetest/wb-simcon/wb-listener）。"
+  },
+  {
+    "id": "base-token-401",
+    "utterance": "调工作台接口一直 401，我要先拿个 token，该怎么弄？",
+    "expected": { "skill": "wb-base" },
+    "note": "拿 token/401 处置→wb-base（接入·授权·错误码）。"
+  },
+  {
+    "id": "collect-troubleshoot-chain",
+    "utterance": "这轮抄表不入网，帮我排查采集到底断在哪一跳，复现一下，再把关键几帧解释清楚。",
+    "expected": { "chain": "采集排障链" },
+    "note": "漏点/不入网/断在哪跳+解释帧是 ai-control-plane §2 采集排障链的触发语（区别于纯离线的 mclt-collect-analysis 单项分析）。"
+  },
+  {
+    "id": "appframe-build-645",
+    "utterance": "帮我按 645 语义构一帧读电能的数据帧，拿去做测试用例。",
+    "expected": { "skill": "wb-appframe" },
+    "note": "构一帧 645 读电能→wb-appframe build（离线构帧）。"
+  }
+]

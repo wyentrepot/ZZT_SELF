@@ -12,33 +12,9 @@
   },
   "ports": [
     {
-      "id": "simcon",
-      "label": "模拟集中器",
-      "windows_com": "COM4",
-      "tcp_port": 8814,
-      "baudrate": 115200,
-      "bytesize": 8,
-      "parity": "E",
-      "stopbits": 1,
-      "enabled": true,
-      "control_port": 9814
-    },
-    {
-      "id": "factory",
-      "label": "厂测上位机",
-      "windows_com": "COM7",
-      "tcp_port": 8817,
-      "baudrate": 9600,
-      "bytesize": 8,
-      "parity": "E",
-      "stopbits": 1,
-      "enabled": true,
-      "control_port": 9817
-    },
-    {
       "id": "listener",
       "label": "侦听台 / STA 底座口",
-      "windows_com": "COM20",
+      "windows_com": "COM27",
       "tcp_port": 8824,
       "baudrate": 115200,
       "bytesize": 8,
@@ -50,7 +26,7 @@
     {
       "id": "sta-main",
       "label": "STA 模块日志口",
-      "windows_com": "COM9",
+      "windows_com": "COM18",
       "tcp_port": 8818,
       "baudrate": 115200,
       "bytesize": 8,
@@ -62,7 +38,7 @@
     {
       "id": "cco-main",
       "label": "CCO 模块日志口",
-      "windows_com": "COM8",
+      "windows_com": "COM12",
       "tcp_port": 8819,
       "baudrate": 115200,
       "bytesize": 8,
@@ -74,7 +50,7 @@
     {
       "id": "simeter",
       "label": "模拟电表",
-      "windows_com": "COM11",
+      "windows_com": "COM20",
       "tcp_port": 8825,
       "baudrate": 9600,
       "bytesize": 8,
@@ -82,6 +58,48 @@
       "stopbits": 1,
       "enabled": true,
       "control_port": 9825
+    },
+    {
+      "id": "ecu-biz",
+      "label": "ECU 业务口",
+      "windows_com": "COM28",
+      "tcp_port": 8840,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "E",
+      "stopbits": 1,
+      "enabled": false,
+      "control_port": 9840,
+      "usage": "simcon",
+      "note": "ECU 环境已废弃（2026-11-23 用户确认）；COM28 在 Windows 侧 com_present=false"
+    },
+    {
+      "id": "ecu-mgmt",
+      "label": "ECU 管理口",
+      "windows_com": "COM29",
+      "tcp_port": 8841,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "E",
+      "stopbits": 1,
+      "enabled": false,
+      "control_port": 9841,
+      "usage": "",
+      "note": "ECU 环境已废弃（2026-11-23 用户确认）；COM29 在 Windows 侧 com_present=false"
+    },
+    {
+      "id": "simcon",
+      "label": "模拟集中器",
+      "windows_com": "COM4",
+      "tcp_port": 8814,
+      "baudrate": 115200,
+      "bytesize": 8,
+      "parity": "E",
+      "stopbits": 1,
+      "enabled": true,
+      "control_port": 9814,
+      "usage": "simcon",
+      "note": "COM4 模拟集中器（2026-11-23 用户口述确认；Windows 侧为 Silicon Labs CP210x）；物理 115200/8/E"
     }
   ]
 }

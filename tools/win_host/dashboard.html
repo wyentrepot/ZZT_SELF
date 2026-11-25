@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows 宿主控制面</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#161b22; --panel2:#1c232c; --line:#2a3441;
+    --fg:#e6edf3; --muted:#8b98a5; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+    --info:#58a6ff; --accent:#1f6feb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.4px}
+  header .meta{color:var(--muted);font-size:12px}
+  header .spacer{flex:1}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer}
+  button:hover{border-color:#3d4b5c;background:#222b36}
+  button.primary{background:var(--accent);border-color:var(--accent)}
+  button.danger{color:var(--bad)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  main{padding:16px 20px 60px;max-width:1320px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .card h2{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+  .card .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px}
+  .card .kv{margin:6px 0;font-size:13px}
+  .card .kv b{font-weight:600;color:var(--fg)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)} .dot.info{background:var(--info)}
+  .actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+  .link{color:var(--info);text-decoration:none;font-size:12px}
+  .link:hover{text-decoration:underline}
+  section{margin-top:18px}
+  section h2{font-size:14px;margin:0 0 8px;color:var(--fg)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);font-size:12.5px;white-space:nowrap}
+  th{background:var(--panel2);color:var(--muted);font-weight:600;font-size:12px}
+  tr:last-child td{border-bottom:none}
+  tr.absent td{background:rgba(210,153,34,.06)}
+  tr.conflict td{background:rgba(248,81,73,.08)}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid var(--line)}
+  .tag.ok{color:var(--ok);border-color:rgba(63,185,80,.4)}
+  .tag.warn{color:var(--warn);border-color:rgba(210,153,34,.4)}
+  .tag.bad{color:var(--bad);border-color:rgba(248,81,73,.4)}
+  .tag.info{color:var(--info);border-color:rgba(88,166,255,.4)}
+  .muted{color:var(--muted)}
+  .two{display:grid;grid-template-columns:1.1fr .9fr;gap:12px}
+  @media(max-width:900px){.two{grid-template-columns:1fr}}
+  .checks{list-style:none;margin:0;padding:0}
+  .checks li{display:flex;gap:8px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .checks li:last-child{border-bottom:none}
+  .checks .t{min-width:130px;color:var(--fg)}
+  .checks .d{color:var(--muted)}
+  .audit{font:12px/1.6 ui-monospace,Consolas,monospace;color:var(--muted);max-height:260px;overflow:auto;white-space:pre-wrap}
+  #toast{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:20}
+  .toast{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--ok);padding:9px 12px;border-radius:6px;font-size:12.5px;box-shadow:0 6px 20px rgba(0,0,0,.4);max-width:420px}
+  .toast.err{border-left-color:var(--bad)}
+  .banner{background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.35);color:#e3b341;padding:8px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px;display:none}
+  dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:18px;max-width:460px}
+  dialog input{width:100%;padding:8px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;font-family:ui-monospace,Consolas,monospace}
+  dialog select{width:100%;padding:8px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;font-size:13px}
+  dialog label{display:block;font-size:12px;color:var(--muted);margin:10px 0 3px}
+  dialog .hint{color:var(--muted);font-size:12px;margin:8px 0}
+  h2.section-bar{display:flex;align-items:center;gap:8px}
+  h2.section-bar .spacer{flex:1}
+  .warnline{color:var(--bad);font-size:12px;margin:8px 0 0;display:none}
+  .confirm-list{max-height:220px;overflow:auto;font-size:12.5px;margin:6px 0;padding-left:18px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Windows 宿主控制面</h1>
+  <span class="meta" id="svcMeta">连接中…</span>
+  <span class="spacer"></span>
+  <span class="meta" id="countdown"></span>
+  <button id="btnRefresh">刷新</button>
+  <button id="btnDoctor" class="primary">自检</button>
+  <button id="btnToken" title="设置访问令牌">令牌</button>
+</header>
+
+<main>
+  <div class="banner" id="banner"></div>
+
+  <div class="grid" id="services"></div>
+
+  <section>
+    <h2 class="section-bar">串口 / 端口映射
+      <span class="muted" id="portsHint" style="font-weight:400;font-size:12px;flex:1"></span>
+      <button id="btnTakeAll">一键接管</button>
+      <button id="btnReleaseAll" class="danger">一键释放</button>
+      <button id="btnAddPort" class="primary">＋ 添加串口</button>
+    </h2>
+    <table>
+      <thead><tr>
+        <th>端口</th><th>COM</th><th>设备</th><th>归属</th><th>数据/控制</th><th>波特率</th><th>操作</th>
+      </tr></thead>
+      <tbody id="ports"></tbody>
+    </table>
+  </section>
+
+  <section class="two">
+    <div>
+      <h2>自检 <span class="muted" id="doctorVerdict" style="font-weight:400;font-size:12px"></span></h2>
+      <div class="card"><ul class="checks" id="checks"><li class="muted">点“自检”生成</li></ul></div>
+    </div>
+    <div>
+      <h2>最近操作</h2>
+      <div class="card"><div class="audit" id="audit">暂无</div></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<dialog id="tokenDlg">
+  <form method="dialog">
+    <h3 style="margin:0 0 8px">访问令牌</h3>
+    <div class="hint">非回环访问需要令牌。Windows 本机可直接从 <code>%USERPROFILE%\.wsl-control\token</code> 读取；WSL 内读 <code>/mnt/c/Users/&lt;user&gt;/.wsl-control/token</code>。</div>
+    <input id="tokenInput" placeholder="粘贴 token" autocomplete="off">
+    <div class="actions" style="justify-content:flex-end">
+      <button value="cancel">取消</button>
+      <button value="save" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="portDlg">
+  <form method="dialog">
+    <h3 style="margin:0 0 4px" id="portDlgTitle">添加串口映射</h3>
+    <label>端口 ID（小写字母开头，小写字母/数字/连字符）</label>
+    <input id="pfId" placeholder="如 ecu-biz2" autocomplete="off">
+    <label>名称</label>
+    <input id="pfLabel" placeholder="如 ECU 管理口" autocomplete="off">
+    <label>Windows COM 口</label>
+    <input id="pfCom" list="comOptions" placeholder="COM12（可下拉选扫描结果，也可手输）" autocomplete="off" style="text-transform:uppercase">
+    <datalist id="comOptions"></datalist>
+    <label>波特率</label>
+    <input id="pfBaud" type="number" value="115200" min="50">
+    <label>校验位</label>
+    <select id="pfParity">
+      <option value="N">N 无校验</option>
+      <option value="E">E 偶校验</option>
+      <option value="O">O 奇校验</option>
+    </select>
+    <label>用途（可选）</label>
+    <input id="pfUsage" placeholder="如 ecu / flash / simcon" autocomplete="off">
+    <div class="hint" id="portDlgHint"></div>
+    <div class="warnline" id="portDlgWarn"></div>
+    <div class="actions" style="justify-content:flex-end">
+      <button value="cancel">取消</button>
+      <button value="save" class="primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirmDlg">
+  <form method="dialog">
+    <h3 style="margin:0 0 8px" id="confirmTitle">确认</h3>
+    <div class="hint" id="confirmText"></div>
+    <ul class="confirm-list" id="confirmList"></ul>
+    <div class="warnline" id="confirmWarn"></div>
+    <div class="actions" style="justify-content:flex-end">
+      <button value="cancel">取消</button>
+      <button value="ok" class="primary" id="confirmOk">确认</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const TOKEN_KEY = 'host-control-token';
+let token = window.__HOST_TOKEN__ || localStorage.getItem(TOKEN_KEY) || '';
+let lastStatus = null;
+let timer = null;
+let countdown = 6;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function toast(msg, isErr=false){
+  const el = document.createElement('div');
+  el.className = 'toast' + (isErr ? ' err' : '');
+  el.textContent = msg;
+  $('toast').appendChild(el);
+  setTimeout(()=>el.remove(), 5200);
+}
+
+async function api(path, method='GET', body=null){
+  const headers = {};
+  if (token) headers['X-Host-Token'] = token;
+  if (body !== null) headers['Content-Type'] = 'application/json';
+  const resp = await fetch(path, {method, headers, body: body === null ? undefined : JSON.stringify(body)});
+  if (resp.status === 401){
+    openToken();
+    throw new Error('需要令牌：请在“令牌”里粘贴');
+  }
+  const data = await resp.json();
+  if (!data.ok) throw new Error((data.error && data.error.message) || '请求失败');
+  return data.data;
+}
+
+function svcUrl(port, path='/'){
+  const host = location.hostname;
+  return `http://${host}:${port}${path}`;
+}
+function diagUrl(){
+  const host = location.hostname;
+  const loop = host === '127.0.0.1' || host === 'localhost';
+  return loop ? 'http://127.0.0.1:8765/' : null;
+}
+
+function dot(level){ return `<span class="dot ${level}"></span>`; }
+function tag(level, text){ return `<span class="tag ${level}">${esc(text)}</span>`; }
+
+function renderServices(d){
+  const b = d.bridge, gw = d.gateway, diag = d.diag, wb = d.host.workbench;
+  const wsl = b.wsl || {}, win = b.windows || {};
+  const conn = (b.wsl.ports ? Object.values(b.wsl.ports) : []).filter(p => p.client_connected).length;
+  const total = (d.ports || []).filter(p => p.enabled && p.com_present).length;
+  const missing = (d.ports || []).filter(p => p.enabled && !p.com_present).map(p => p.com);
+  const diagOk = diag.task_state === 'Running' && diag.health_ok;
+  const cards = [
+    {
+      title:'串口桥（Windows 半边）',
+      level: win.running ? 'ok' : 'warn',
+      text: win.running ? `运行中 · pid ${win.pid}` : '未运行：COM 归 Windows 工具所有',
+      kv: `WSL supervisor ${wsl.running ? '在线' : '未运行'}${wsl.pid ? '（pid '+wsl.pid+'）' : ''}<br>已连通 ${conn}/${total} 个可用口` +
+          (missing.length ? `<br><span class="muted">系统里没有：${esc(missing.join(', '))}</span>` : ''),
+      actions: `<button data-svc="bridge" data-act="start">启动</button>
+                <button data-svc="bridge" data-act="stop" class="danger">停止（让口）</button>
+                <button data-svc="bridge" data-act="restart">重启</button>`
+    },
+    {
+      title:'解析网关 8700',
+      level: gw.running ? 'ok' : 'info',
+      text: gw.running ? `运行中 · pid ${gw.pid}` : '未运行（WSL 深度解析降级 none）',
+      kv: gw.health ? `dll_available=<b>${esc(gw.health.dll_available)}</b>` : '未启动',
+      actions: `<button data-svc="gateway" data-act="start">启动</button>
+                <button data-svc="gateway" data-act="stop" class="danger">停止</button>
+                <button data-svc="gateway" data-act="restart">重启</button>
+                ${gw.running ? `<a class="link" href="${svcUrl(8700,'docs')}" target="_blank">打开 /docs</a>` : ''}`
+    },
+    {
+      title:'诊断服务 8765（海思）',
+      level: diagOk ? 'ok' : (diag.task_installed ? 'warn' : 'bad'),
+      text: `${esc(diag.task)} · ${esc(diag.task_state || '未安装')}`,
+      kv: `${diag.health_ok ? 'health ok · v' + esc((diag.health||{}).version) : '无响应'}` +
+          (diag.state && diag.state.port ? `<br>口 <b>${esc(diag.state.port)}</b> · open=${esc(diag.state.port_open)} · 登录=${esc(diag.state.logged_in)}` : ''),
+      actions: `<button data-svc="diag" data-act="start">启动</button>
+                <button data-svc="diag" data-act="stop" class="danger">停止</button>
+                <button data-svc="diag" data-act="restart">重启</button>
+                ${diagUrl() ? `<a class="link" href="${diagUrl()}" target="_blank">打开</a>` : `<span class="muted" title="8765 只监听回环，需在 Windows 本机打开">仅本机可开</span>`}`
+    },
+    {
+      title:'AI 工作台 8790',
+      level: wb.reachable ? 'ok' : 'info',
+      text: wb.reachable ? '可达' : '不可达（在 WSL 侧启动）',
+      kv: `Windows→WSL 探活 ${wb.reachable ? '正常' : '失败'}`,
+      actions: wb.reachable ? `<a class="link" href="${svcUrl(8790)}" target="_blank">打开工作台</a>` : '<span class="muted">启动命令见 wb-base §1.2</span>'
+    },
+  ];
+  $('services').innerHTML = cards.map(c => `
+    <div class="card">
+      <h2>${dot(c.level)}${esc(c.title)}</h2>
+      <div class="kv">${esc(c.text)}</div>
+      <div class="kv muted" style="font-size:12px">${c.kv}</div>
+      <div class="actions">${c.actions}</div>
+    </div>`).join('');
+  $('services').querySelectorAll('button[data-svc]').forEach(btn => {
+    btn.onclick = () => serviceAction(btn.dataset.svc, btn.dataset.act, btn);
+  });
+}
+
+function renderPorts(d){
+  const rows = d.ports || [];
+  $('portsHint').textContent = `${rows.length} 个映射 · 归属由系统串口表 + 桥连接 + 诊断服务占用共同判定`;
+  $('ports').innerHTML = rows.map(p => {
+    const cls = [p.conflict ? 'conflict' : '', p.com_present ? '' : 'absent'].join(' ').trim();
+    const ownerTag = {
+      'serial-bridge': tag('ok','串口桥'),
+      'fc-diag': tag('info','诊断服务'),
+      'free': tag('','空闲'),
+      'absent': tag('warn','口不存在'),
+      'disabled': tag('','已禁用'),
+    }[p.owner] || tag('', p.owner);
+    const ch = `${p.bridge.client_connected ? '✓' : '—'} / ${p.bridge.control_connected ? '✓' : '—'}`;
+    const op = `<button data-port-edit="${esc(p.id)}">编辑</button>` +
+      (p.enabled
+        ? `<button data-port="${esc(p.id)}" data-act="disable" class="danger">释放</button>`
+        : `<button data-port="${esc(p.id)}" data-act="enable">接管</button>`);
+    return `<tr class="${cls}">
+      <td>${esc(p.id)}${p.label ? `<br><span class="muted" style="font-size:11px">${esc(p.label)}</span>` : ''}</td>
+      <td>${esc(p.com || '—')}</td>
+      <td class="muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${esc(p.device || '—')}</td>
+      <td>${ownerTag}${p.conflict ? ' ' + tag('bad','冲突') : ''}</td>
+      <td>${ch}</td>
+      <td>${esc(p.baud || '')} ${esc(p.parity || '')}</td>
+      <td>${op}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted">无映射</td></tr>';
+  $('ports').querySelectorAll('button[data-port]').forEach(btn => {
+    btn.onclick = () => portAction(btn.dataset.port, btn.dataset.act, btn);
+  });
+  $('ports').querySelectorAll('button[data-port-edit]').forEach(btn => {
+    btn.onclick = () => openPortDlg('edit', btn.dataset.portEdit);
+  });
+}
+
+function renderStatus(d){
+  lastStatus = d;
+  const m = d.meta || {};
+  $('svcMeta').textContent = `v${m.version} · pid ${m.pid} · 快照 ${m.age_seconds}s 前${m.stale ? '（旧）' : ''}`;
+  $('banner').style.display = 'none';
+  renderServices(d);
+  renderPorts(d);
+}
+
+async function load(fresh=false){
+  try {
+    const d = await api('/api/v1/status' + (fresh ? '?fresh=1' : ''));
+    renderStatus(d);
+    loadAudit();
+  } catch (e) {
+    $('banner').textContent = '控制面不可达：' + e.message;
+    $('banner').style.display = 'block';
+  }
+}
+
+async function loadAudit(){
+  try {
+    const d = await api('/api/v1/audit?lines=20');
+    const lines = (d.lines || []).map(x => `${x.ts.slice(11,19)}  ${x.ok ? '✔' : '✘'}  ${x.action} → ${x.target}${x.error ? '  (' + x.error + ')' : ''}`);
+    $('audit').textContent = lines.length ? lines.reverse().join('\n') : '暂无操作记录';
+  } catch(e) { /* 忽略 */ }
+}
+
+async function serviceAction(name, act, btn){
+  btn.disabled = true;
+  const label = {start:'启动', stop:'停止', restart:'重启'}[act] || act;
+  toast(`${label} ${name} …`);
+  try {
+    await api(`/api/v1/services/${name}/${act}`, 'POST', {});
+    toast(`${label} ${name} 完成`);
+    await load(true);
+  } catch(e){
+    toast(`${label} ${name} 失败：${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function portAction(id, act, btn){
+  btn.disabled = true;
+  const verb = act === 'enable' ? '接管' : '释放';
+  toast(`${verb} ${id}（会重启 Windows 桥，约 5–15s）…`);
+  try {
+    const r = await api(`/api/v1/ports/${id}/${act}`, 'POST', {restart:true});
+    toast(`${verb} ${id}：${r.changed ? '已生效' : '无变化'}`);
+    await load(true);
+  } catch(e){
+    toast(`${verb} ${id} 失败：${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function ownerLabel(p){
+  return {'serial-bridge':'串口桥','fc-diag':'诊断服务','free':'空闲',
+          'absent':'口不存在','disabled':'已禁用'}[p.owner] || p.owner;
+}
+
+function confirmDialog(title, itemsHtml, warn, okLabel){
+  return new Promise(resolve => {
+    $('confirmTitle').textContent = title;
+    $('confirmList').innerHTML = itemsHtml;
+    $('confirmWarn').textContent = warn || '';
+    $('confirmWarn').style.display = warn ? 'block' : 'none';
+    $('confirmOk').textContent = okLabel || '确认';
+    const dlg = $('confirmDlg');
+    dlg.onclose = () => resolve(dlg.returnValue === 'ok');
+    dlg.showModal();
+  });
+}
+
+async function batchPorts(action){
+  const ports = (lastStatus && lastStatus.ports) || [];
+  const targets = ports.filter(p => action === 'disable' ? p.enabled : !p.enabled);
+  const verb = action === 'disable' ? '释放' : '接管';
+  if (!targets.length){ toast(`没有可${verb}的端口`); return; }
+  const busy = targets.filter(p => p.owner === 'serial-bridge' || p.owner === 'fc-diag'
+                                 || (p.bridge && p.bridge.client_connected));
+  const items = targets.map(p =>
+    `<li>${esc(p.id)}（${esc(p.com || '—')} · ${esc(ownerLabel(p))}${p.bridge && p.bridge.client_connected ? ' · 有客户端连接' : ''}）</li>`).join('');
+  const warn = busy.length
+    ? `其中 ${busy.length} 个端口正在被占用，${verb}会立即断开相关会话！`
+    : `保存配置后将重启 Windows 桥（约 5–15s）。`;
+  const yes = await confirmDialog(`一键${verb} ${targets.length} 个端口`, items, warn, `确认${verb}`);
+  if (!yes) return;
+  toast(`一键${verb}中（重启 Windows 桥，约 5–15s）…`);
+  try {
+    const r = await api('/api/v1/ports/batch', 'POST', {action, restart: true});
+    toast(`一键${verb}完成：${(r.changed || []).length} 个变更` +
+          (r.restarted ? '，桥已重启' : (r.changed || []).length ? '' : '（无变化）'));
+    await load(true);
+  } catch(e){
+    toast(`一键${verb}失败：${e.message}`, true);
+  }
+}
+
+let comIndex = [];
+let portDlgMode = 'create';
+
+function showPortWarn(msg){
+  $('portDlgWarn').textContent = msg;
+  $('portDlgWarn').style.display = 'block';
+}
+
+function updateComNote(){
+  const com = $('pfCom').value.trim().toUpperCase();
+  if (!com) { $('portDlgWarn').style.display = 'none'; return; }
+  const hit = comIndex.find(c => c.com === com);
+  if (hit && hit.mapped_by && hit.mapped_by !== $('pfId').value.trim()){
+    showPortWarn(`COM ${com} 已被端口「${hit.mapped_by}」映射，保存会被拒绝；请换一个口或先释放它。`);
+  } else if (!hit){
+    showPortWarn(`COM ${com} 当前不在系统串口列表里（设备没插？）。仍可保存，桥会把该口标记为缺席。`);
+  } else if (hit.diag_used){
+    showPortWarn(`COM ${com} 正被诊断服务 8765 占用，保存并重启桥后可能产生冲突。`);
+  } else {
+    $('portDlgWarn').style.display = 'none';
+  }
+}
+
+async function openPortDlg(mode, portId){
+  portDlgMode = mode;
+  $('portDlgTitle').textContent = mode === 'create' ? '添加串口映射' : '编辑串口映射：' + portId;
+  $('pfId').value = mode === 'create' ? '' : portId;
+  $('pfId').disabled = mode !== 'create';
+  $('pfLabel').value = ''; $('pfCom').value = ''; $('pfUsage').value = '';
+  $('pfBaud').value = 115200; $('pfParity').value = 'N';
+  $('portDlgHint').textContent = mode === 'create'
+    ? 'tcp / control 端口号将自动分配空闲号；保存会重启 Windows 桥（约 5–15s）。'
+    : '改 COM / 波特率等会重启 Windows 桥断开当前连接（约 5–15s）；仅改名称/用途不会重启。';
+  $('portDlgWarn').style.display = 'none';
+  if (mode === 'edit'){
+    const p = ((lastStatus && lastStatus.ports) || []).find(x => x.id === portId);
+    if (p){
+      $('pfLabel').value = p.label || '';
+      $('pfCom').value = p.com || '';
+      $('pfBaud').value = p.baud || 115200;
+      $('pfParity').value = (p.parity || 'N').toUpperCase();
+      $('pfUsage').value = p.usage || '';
+      if (p.owner === 'serial-bridge' || p.owner === 'fc-diag'
+          || (p.bridge && p.bridge.client_connected)){
+        showPortWarn(`该口当前被占用（${ownerLabel(p)}${p.bridge && p.bridge.client_connected ? '、有客户端连接' : ''}），保存改动会断开并重启桥。`);
+      }
+    }
+  }
+  $('portDlg').showModal();
+  try {
+    const d = await api('/api/v1/coms?fresh=1');
+    comIndex = d.coms || [];
+    $('comOptions').innerHTML = comIndex.map(c =>
+      `<option value="${esc(c.com)}">${esc(c.device || '')}${c.mapped_by ? '（已被 ' + esc(c.mapped_by) + ' 占用）' : ''}</option>`).join('');
+    updateComNote();
+  } catch(e){
+    comIndex = []; $('comOptions').innerHTML = '';
+  }
+}
+
+async function doctor(){
+  $('checks').innerHTML = '<li class="muted">自检中…</li>';
+  try {
+    const d = await api('/api/v1/doctor', 'POST');
+    $('doctorVerdict').textContent = `结论：${d.verdict} · ${d.generated_at.replace('T',' ')}`;
+    $('checks').innerHTML = (d.checks || []).map(c => `
+      <li>${dot(c.level === 'error' ? 'bad' : c.level === 'warn' ? 'warn' : c.level === 'info' ? 'info' : 'ok')}
+        <span class="t">${esc(c.title)}</span>
+        <span class="d">${esc(c.detail || '')}${(c.fix && c.level !== 'ok') ? `<br><span class="muted">建议：${esc(c.fix)}</span>` : ''}</span></li>`).join('');
+  } catch(e){
+    $('checks').innerHTML = `<li class="bad">自检失败：${esc(e.message)}</li>`;
+  }
+}
+
+function openToken(){
+  $('tokenInput').value = token;
+  $('tokenDlg').showModal();
+}
+$('tokenDlg').addEventListener('close', () => {
+  if ($('tokenDlg').returnValue === 'save'){
+    token = $('tokenInput').value.trim();
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    toast('令牌已保存');
+    load(true);
+  }
+});
+
+$('btnRefresh').onclick = () => load(true);
+$('btnDoctor').onclick = doctor;
+$('btnToken').onclick = openToken;
+$('btnAddPort').onclick = () => openPortDlg('create');
+$('btnTakeAll').onclick = () => batchPorts('enable');
+$('btnReleaseAll').onclick = () => batchPorts('disable');
+$('pfCom').addEventListener('input', updateComNote);
+$('pfId').addEventListener('input', updateComNote);
+
+$('portDlg').addEventListener('close', async () => {
+  if ($('portDlg').returnValue !== 'save') return;
+  const payload = {
+    label: $('pfLabel').value.trim(),
+    windows_com: $('pfCom').value.trim().toUpperCase(),
+    baudrate: parseInt($('pfBaud').value, 10) || 115200,
+    parity: $('pfParity').value,
+    usage: $('pfUsage').value.trim(),
+    restart: true,
+  };
+  try {
+    if (portDlgMode === 'create'){
+      payload.id = $('pfId').value.trim();
+      if (!payload.id) throw new Error('端口 ID 不能为空');
+      if (!/^COM\d+$/i.test(payload.windows_com)) throw new Error('COM 口需形如 COM12');
+      toast('添加串口映射中…');
+      const r = await api('/api/v1/ports', 'POST', payload);
+      const c = r.created || {};
+      toast(`已添加 ${c.id}（${c.windows_com}，tcp ${c.tcp_port} / control ${c.control_port}）` +
+            (r.restarted ? '，桥已重启' : ''));
+    } else {
+      const id = $('pfId').value.trim();
+      toast('保存修改中…');
+      const r = await api('/api/v1/ports/' + encodeURIComponent(id), 'PATCH', payload);
+      toast(r.changed
+        ? `已更新 ${id}（${Object.keys(r.changes || {}).join(', ')}）${r.restarted ? '，桥已重启' : ''}`
+        : '内容无变化');
+    }
+    await load(true);
+  } catch(e){
+    toast('保存失败：' + e.message, true);
+  }
+});
+
+function tick(){
+  countdown -= 1;
+  $('countdown').textContent = document.hidden ? '暂停' : `${countdown}s 后刷新`;
+  if (countdown <= 0){
+    countdown = 6;
+    load(false);
+  }
+}
+load(true);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

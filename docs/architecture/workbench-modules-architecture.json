@@ -1,0 +1,408 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AI 工作台功能模块框架",
+    "locale": "zh-CN",
+    "output": "workbench-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1300,
+      710
+    ],
+    "views": [
+      {
+        "id": "access",
+        "label": "使用入口",
+        "focus": [
+          "user",
+          "agent",
+          "shell",
+          "aiplane",
+          "api"
+        ],
+        "note": "人与 AI 两条入口，共用同一套能力。"
+      },
+      {
+        "id": "capability",
+        "label": "能力层",
+        "focus": [
+          "api",
+          "parser",
+          "casecat",
+          "listener",
+          "sim",
+          "modulelog"
+        ],
+        "note": "解析、用例、观测、激励、运维五类能力。"
+      },
+      {
+        "id": "hardware",
+        "label": "硬件与台架",
+        "focus": [
+          "bridge",
+          "device",
+          "listener",
+          "sim"
+        ],
+        "note": "串口桥把物理串口接进 WSL，虚拟台架可脱离真机。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "测试工程师",
+      "sublabel": "Web 页面",
+      "pos": [
+        260,
+        36
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "AI 代理",
+      "sublabel": "技能 / 脚本",
+      "pos": [
+        885,
+        36
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "shell",
+      "type": "frontend",
+      "label": "工作台前端",
+      "sublabel": "统一壳 · 多页",
+      "pos": [
+        260,
+        138
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "aiplane",
+      "type": "security",
+      "label": "AI 控制面",
+      "sublabel": "v1 专家 / v2 任务 · 证据",
+      "pos": [
+        840,
+        138
+      ],
+      "size": [
+        240,
+        64
+      ],
+      "tag": "授权 + job + L1/L2/L3"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "工作台服务  FastAPI :8790",
+      "sublabel": "路由编排 · 串口与资源租约",
+      "pos": [
+        120,
+        250
+      ],
+      "size": [
+        1040,
+        70
+      ]
+    },
+    {
+      "id": "parser",
+      "type": "backend",
+      "label": "解析能力",
+      "sublabel": "1376.2 / 698 / 645",
+      "pos": [
+        120,
+        390
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "含递归内嵌"
+    },
+    {
+      "id": "casecat",
+      "type": "backend",
+      "label": "用例与断言",
+      "sublabel": "用例库 · 编排",
+      "pos": [
+        340,
+        390
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "listener",
+      "type": "backend",
+      "label": "侦听台",
+      "sublabel": "链路观测",
+      "pos": [
+        560,
+        390
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "sim",
+      "type": "backend",
+      "label": "模拟设备",
+      "sublabel": "集中器 + 电表",
+      "pos": [
+        780,
+        390
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "modulelog",
+      "type": "backend",
+      "label": "模块日志与烧录",
+      "sublabel": "日志 · iap",
+      "pos": [
+        1000,
+        390
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "bridge",
+      "type": "cloud",
+      "label": "串口桥",
+      "sublabel": "COM ↔ TCP ↔ PTY",
+      "pos": [
+        560,
+        530
+      ],
+      "size": [
+        560,
+        60
+      ],
+      "tag": "Windows ↔ WSL"
+    },
+    {
+      "id": "device",
+      "type": "external",
+      "label": "真实台架硬件",
+      "sublabel": "CCO / STA / 电表",
+      "pos": [
+        730,
+        622
+      ],
+      "size": [
+        220,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "工作台服务进程 :8790",
+      "wraps": [
+        "api",
+        "parser",
+        "casecat"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "需授权才可调用",
+      "wraps": [
+        "aiplane"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "观测 · 激励 · 运维",
+      "wraps": [
+        "listener",
+        "sim",
+        "modulelog",
+        "bridge"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-shell",
+      "from": "user",
+      "to": "shell",
+      "label": "点选操作",
+      "variant": "emphasis",
+      "labelDy": 30
+    },
+    {
+      "id": "agent-aiplane",
+      "from": "agent",
+      "to": "aiplane",
+      "label": "任务调用",
+      "variant": "emphasis",
+      "labelDy": 30,
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "shell-api",
+      "from": "shell",
+      "to": "api",
+      "label": "REST / WS",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "aiplane-api",
+      "from": "aiplane",
+      "to": "api",
+      "label": "job + 证据",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-parser",
+      "from": "api",
+      "to": "parser",
+      "label": "解析请求",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-casecat",
+      "from": "api",
+      "to": "casecat",
+      "label": "用例编排",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-listener",
+      "from": "api",
+      "to": "listener",
+      "label": "帧取证",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": -70,
+      "labelDy": 30
+    },
+    {
+      "id": "api-sim",
+      "from": "api",
+      "to": "sim",
+      "label": "下发 / 验证",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "api-modulelog",
+      "from": "api",
+      "to": "modulelog",
+      "label": "日志 / 烧录",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "casecat-parser",
+      "from": "casecat",
+      "to": "parser",
+      "label": "断言",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "listener-bridge",
+      "from": "listener",
+      "to": "bridge",
+      "label": "串口",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "sim-bridge",
+      "from": "sim",
+      "to": "bridge",
+      "label": "串口",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": 60,
+      "labelDy": 30
+    },
+    {
+      "id": "modulelog-bridge",
+      "from": "modulelog",
+      "to": "bridge",
+      "label": "串口",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "bridge-device",
+      "from": "bridge",
+      "to": "device",
+      "label": "物理 COM",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 26
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "两类使用者",
+      "items": [
+        "人走 Web 统一壳的多页面",
+        "AI 走 /api/ai/v2 任务流",
+        "两条入口共用同一套能力"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "五类能力",
+      "items": [
+        "解析：1376.2 内嵌 698/645 递归",
+        "用例：用例库 + 断言",
+        "观测：侦听台看真实链路帧",
+        "激励：模拟集中器 + 模拟电表",
+        "运维：模块日志与 iap 烧录"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "工程化缺口",
+      "items": [
+        "无 CI：海量用例无人调度",
+        "无报告：每次运行单份 JSON",
+        "无通知：长任务靠人肉轮询"
+      ]
+    }
+  ]
+}

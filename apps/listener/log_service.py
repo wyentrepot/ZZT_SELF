@@ -9,13 +9,34 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from listener import network_assessment
+from parser_lib.adapters.adapter_dualmac.adapter import (
+    decode_frame as decode_dual_mac_frame,
+)
 from parser_lib.adapters.adapter_dualmode.trace_extract import extract_trace_fields, ack_peer_tei
 
 
+# 头部归一：兼容两种落盘形态
+# ① 侦听台/网关双括号头：[序号][HH:MM:SS.mmm]payload
+# ② 模块/设备文本日志单括号头：[YYYYMMDD-HH:MM:SS:mmm]payload
+#   （CCO 模块日志、串口工具日志等；括号内的标记同时充当序号）
+# 第二组括号可选：缺失时时间从标记内的时钟串归一（见 _log_time）。
 HEADER_PATTERN = re.compile(
-    r"^\[(?P<sequence>[^\]]+)\]\[(?P<time>[^\]]+)\](?P<payload>.*)$"
+    r"^\[(?P<sequence>[^\]]+)\](?:\[(?P<time>[^\]]+)\])?(?P<payload>.*)$"
 )
 HEX_BYTE_PATTERN = re.compile(r"(?i)\b[0-9a-f]{2}\b")
+# 标记内时钟：可选日期前缀（YYYYMMDD 或 YYYY-MM-DD）+ HH:MM:SS + 可选毫秒
+# （毫秒分隔符可能是 "." 或 ":"，模块日志实测为 "20261116-10:27:33:672"）。
+TAG_CLOCK_PATTERN = re.compile(
+    r"(?:(?:\d{8}|\d{4}-\d{2}-\d{2})[T _-]*)?"
+    r"(\d{2}):(\d{2}):(\d{2})(?:[.,:](\d{1,3}))?$"
+)
+PLAIN_CLOCK_PATTERN = re.compile(r"^\d{2}:\d{2}:\d{2}(?:\.\d{3})?$")
+
+# 逐行分类结果
+FRAME_RECORD = "frame"            # 可索引帧记录（有时间戳）
+UNTIMED_FRAME = "untimed_frame"   # 可索引帧记录但首部无时钟（沿用上一行时间）
+TEXT_RECORD = "text"              # 有头部但不含成对 7E 的文本记录（不入 frames）
+IGNORED_LINE = "ignored"          # 无任何可识别头部
 
 # 通信流追踪（需求 0009）物化列提取所关注的报文 ID（DESIGN §7.2）。
 TRACE_APP_IDS = {"0001", "0002", "0003", "0008", "0011", "0020", "00A1"}
@@ -44,13 +65,43 @@ class LogRecord:
     hex_frame: str
 
 
-def extract_log_record(line: bytes) -> Optional[LogRecord]:
-    text = line.decode("ascii", errors="ignore").strip()
-    match = HEADER_PATTERN.match(text)
+def _tag_clock(text: str) -> Optional[str]:
+    """从头部标记里抽取时钟并归一成 HH:MM:SS.mmm；抽取不到或越界返回 None。
+
+    例：``20261116-10:27:33:672`` → ``10:27:33.672``；``10:26:58.634`` 原样。
+    """
+    if not text:
+        return None
+    match = TAG_CLOCK_PATTERN.search(text.strip())
     if not match:
         return None
+    hour, minute, second, milli = match.groups()
+    if int(hour) > 23 or int(minute) > 59 or int(second) > 59:
+        return None
+    return f"{hour}:{minute}:{second}.{(milli or '000').ljust(3, '0')}"
 
-    tokens = HEX_BYTE_PATTERN.findall(match.group("payload"))
+
+def _log_time(time_text: Optional[str], tag_text: Optional[str]) -> Optional[str]:
+    """规范化 log_time：优先括号里的时间，退化到从头部标记内抽时钟。"""
+    for candidate in (time_text, tag_text):
+        if not candidate:
+            continue
+        if PLAIN_CLOCK_PATTERN.match(candidate):
+            return candidate
+        clock = _tag_clock(candidate)
+        if clock:
+            return clock
+    return None
+
+
+def _frame_bytes(payload: str) -> Optional[str]:
+    """取 payload 内首尾 7E 之间的字节串；不存在成对 7E 时返回 None。
+
+    至少要求一个非空帧体（`7E xx … 7E`，即 ≥3 字节）：模块日志里常出现零散的
+    `7e`（如 `fseq:7e,sseq:7e`），只按"首尾两个 7E"取会把它们变成 `7E 7E` 这种
+    2 字节退化帧入库，污染帧计数与网络评估分母。
+    """
+    tokens = HEX_BYTE_PATTERN.findall(payload)
     try:
         first = next(index for index, token in enumerate(tokens) if token.upper() == "7E")
         last = len(tokens) - 1 - next(
@@ -58,11 +109,63 @@ def extract_log_record(line: bytes) -> Optional[LogRecord]:
         )
     except StopIteration:
         return None
-
-    if first >= last:
+    if last - first < 2:
         return None
-    frame = " ".join(token.upper() for token in tokens[first : last + 1])
-    return LogRecord(match.group("sequence"), match.group("time"), frame)
+    return " ".join(token.upper() for token in tokens[first : last + 1])
+
+
+def classify_log_line(line: bytes) -> tuple[str, Optional[LogRecord]]:
+    """把一行日志分成 帧记录 / 无时间戳帧 / 非帧文本 / 无法识别（四选一）。
+
+    单括号头（模块/设备文本日志）与双括号头（侦听台落盘）都归一到同一
+    log_time 口径；不含成对 7E 的行归 TEXT_RECORD，交由调用方计数上报，
+    不入 frames 表（无协议帧可解析）。首部无时钟但有帧的行归 UNTIMED_FRAME，
+    由调用方决定时间归属（索引器沿用上一有效行时间）。
+    """
+    text = line.decode("ascii", errors="ignore").strip()
+    match = HEADER_PATTERN.match(text)
+    if not match:
+        return IGNORED_LINE, None
+
+    frame = _frame_bytes(match.group("payload"))
+    if frame is None:
+        return TEXT_RECORD, None
+    log_time = _log_time(match.group("time"), match.group("sequence"))
+    if log_time is None:
+        return UNTIMED_FRAME, LogRecord(match.group("sequence"), "", frame)
+    return FRAME_RECORD, LogRecord(match.group("sequence"), log_time, frame)
+
+
+def extract_log_record(line: bytes) -> Optional[LogRecord]:
+    """旧的单记录接口：只返回可索引的帧记录（文本/忽略行返回 None）。"""
+    return classify_log_line(line)[1]
+
+
+def python_frame_fields(raw_hex: str) -> dict:
+    """纯 Python（不依赖 DLL）从 7E 帧提取追踪所需的最小摘要字段。
+
+    仅在 DLL 深度解析不可用（``parse_backend=none``，Linux/无网关环境常态）时
+    作兜底，复用组网观测同一解码器 ``adapter_dualmac``，产出与 DLL summary 同名
+    的三个键：MAC 层 SRC/DST（三位 TEI 文本）+ APP_PORT/APP_ID/APP_RAW。
+
+    APP_RAW 布局与 DLL 一致：``端口(1B) + 报文ID(2B 小端) + 控制字(1B) + 业务``，
+    故可直接喂给 ``trace_extract.extract_trace_fields``。非 SOF 帧（信标/选择确认/
+    网间协调）无 MAC 头，返回空 dict。
+    """
+    try:
+        frame = decode_dual_mac_frame(raw_hex)
+    except Exception:  # 坏帧/截断帧一律按"无摘要"处理，不污染索引
+        return {}
+    mac = frame.mac
+    if mac is None:
+        return {}
+    fields = {"SRC": f"{mac.teis:03X}", "DST": f"{mac.teid:03X}"}
+    data = frame.msdu.data if frame.msdu is not None else b""
+    if mac.msdu_type == 48 and len(data) >= 4:  # 48 = 应用层报文
+        fields["APP_PORT"] = f"{data[0]:02X}"
+        fields["APP_ID"] = f"{int.from_bytes(data[1:3], 'little'):04X}"
+        fields["APP_RAW"] = data.hex().upper()
+    return fields
 
 
 class LogFileService:
@@ -129,6 +232,8 @@ class LogFileService:
             "line_count": 0,
             "frame_count": 0,
             "error_count": 0,
+            "text_count": 0,
+            "untimed_count": 0,
             "message": "请选择日志文件",
         }
 
@@ -330,6 +435,8 @@ class LogFileService:
             line_count=0,
             frame_count=0,
             error_count=0,
+            text_count=0,
+            untimed_count=0,
             message="索引已清空（串口模式）",
         )
 
@@ -383,15 +490,20 @@ class LogFileService:
             line_count=0,
             frame_count=0,
             error_count=0,
+            text_count=0,
+            untimed_count=0,
             message="正在逐行建立索引",
         )
 
         line_count = 0
         frame_count = 0
         error_count = 0
+        text_count = 0
+        untimed_count = 0
         bytes_read = 0
         minute_day_offset = 0
         minute_prev_abs_ms = None
+        last_log_time = ""
 
         with source.open("rb") as stream, self._connect() as connection:
             insert_sql = """
@@ -413,9 +525,22 @@ class LogFileService:
             for line in stream:
                 line_count += 1
                 bytes_read += len(line)
-                record = extract_log_record(line)
+                kind, record = classify_log_line(line)
+                if kind == TEXT_RECORD:
+                    # 非帧文本记录（模块/设备文本日志）：不入 frames，仅计数上报
+                    text_count += 1
+                    continue
                 if record is None:
                     continue
+                if kind == UNTIMED_FRAME:
+                    # 首部无时钟的帧行（如串口工具的 [Error]7E... 行）：沿用上一
+                    # 有效行时间。同类日志里该行紧夹在前后两行之间，时间误差
+                    # 小于一次落盘间隔（本现场实测 <1ms），比整行丢弃更可取。
+                    untimed_count += 1
+                    if not last_log_time:
+                        continue
+                    record = LogRecord(record.sequence, last_log_time, record.hex_frame)
+                last_log_time = record.log_time
 
                 summary_json = None
                 parse_error = None
@@ -479,6 +604,8 @@ class LogFileService:
                         line_count=line_count,
                         frame_count=frame_count,
                         error_count=error_count,
+                        text_count=text_count,
+                        untimed_count=untimed_count,
                     )
 
             connection.commit()
@@ -490,8 +617,32 @@ class LogFileService:
             line_count=line_count,
             frame_count=frame_count,
             error_count=error_count,
-            message=f"索引完成，共 {frame_count} 帧",
+            text_count=text_count,
+            untimed_count=untimed_count,
+            message=self._index_message(frame_count, text_count, untimed_count),
         )
+
+    @staticmethod
+    def _index_message(frame_count: int, text_count: int, untimed_count: int) -> str:
+        """索引完成文案：把被跳过的两类行显式透出，避免"共 0 帧"看不出原因。
+
+        两种文件要分开说，否则会误导：
+        - **整份无 7E 帧**（纯模块/设备文本日志，如 CCO 模块日志）：明说帧索引
+          不适用，并指向模块日志/离线抽取路径；
+        - **帧+文本混排**（7E 日志里夹了非帧行）：帧索引照常有效，只报跳过条数，
+          不能写成"不适用"。
+        """
+        message = f"索引完成，共 {frame_count} 帧"
+        if untimed_count:
+            message += f"（{untimed_count} 行无时间戳，已沿用上一行时间）"
+        if text_count and frame_count == 0:
+            message += (
+                f"；跳过 {text_count} 条非帧文本记录：该文件不含 7E 帧，"
+                "帧索引基本不适用（请用模块日志或离线抽取脚本）"
+            )
+        elif text_count:
+            message += f"；另有 {text_count} 条非帧文本记录未入索引"
+        return message
 
     # -- 通信流追踪物化列（需求 0009）---------------------------------------
 
@@ -508,6 +659,12 @@ class LogFileService:
             "app_port": None, "app_id": "", "msg_seq": None, "flow_dir": None,
             "meter_addrs": None, "sta_tei": None, "ori_tei": None, "ack_peer": None,
         }
+        # DLL 深度解析不可用（summary 无任何字段，parse_backend=none）时，用纯
+        # Python 解码兜底补齐 SRC/DST/APP_PORT/APP_ID/APP_RAW：方向、表地址、
+        # 任务号等追踪物化列因此不依赖 Windows 解析网关。DLL 在位时（有
+        # FrmType）完全走原路径，行为不变。
+        if raw_hex and not simple.get("FrmType"):
+            simple = {**python_frame_fields(raw_hex), **simple}
         src = (simple.get("SRC") or "").upper() or None
         dst = (simple.get("DST") or "").upper() or None
         ori = (simple.get("ORI_S") or "").upper() or None

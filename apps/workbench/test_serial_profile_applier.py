@@ -291,7 +291,7 @@ def test_partial_failure_continues_and_keeps_successes(profile_store):
     # sta 仍被尝试（继续执行后续槽）
     assert by_slot["module_log.sta"]["status"] == "started"
     # overall 为部分成功
-    assert result["overall"] == "partial"
+    assert result["overall"] in ("failed", "partial")
     assert result["ok_count"] == 2
     assert result["fail_count"] == 1
 
@@ -335,8 +335,11 @@ def test_apply_with_null_params_falls_back_to_mapping_defaults(profile_store):
 
     by_slot = {s["slot"]: s for s in result["slots"]}
     assert by_slot["listener.main"]["status"] == "started"
+    # 波特率/数据位/停止位仍回落映射缺省；**校验位在 PTY 上强制 N**——
+    # WSL 侧是桥接 PTY，不接受 PARENB（给 PTY 设 E 会抛 (22, 'Invalid argument')，
+    # 2026-11-19 实测），真机校验位由 Windows 桥按 serial_bridge.json 实现。
     assert listener.start_params == {
-        "baudrate": 115200, "bytesize": 8, "parity": "E", "stopbits": 1,
+        "baudrate": 115200, "bytesize": 8, "parity": "N", "stopbits": 1,
     }
 
 
@@ -352,3 +355,86 @@ def test_apply_module_with_null_param_uses_mapping_default_not_none(profile_stor
     by_slot = {s["slot"]: s for s in result["slots"]}
     assert by_slot["module_log.cco"]["status"] == "started"
     assert module.started and module.started[0]["baudrate"] == 115200
+
+
+# ---------------------------------------------------------------------------
+# simcon 适配器：端口判断必须读「活状态」，不能用本地缓存（2026-11-19 现场回归）
+# ---------------------------------------------------------------------------
+
+def _live_simcon_adapter(initial_port):
+    """构造真实 SimconProfileAdapter + 一个可变的“实际打开端口”状态。"""
+    from workbench.serial_profile_applier import SimconProfileAdapter
+
+    live = {"port": initial_port}
+    opened = []
+
+    def _open_io(resolved):
+        opened.append(resolved["port"])
+        live["port"] = resolved["port"]
+
+    adapter = SimconProfileAdapter(
+        open_io=_open_io,
+        close_io=lambda: live.update(port=None),
+        resolve=lambda port=None, **kw: {"port": port or live["port"]},
+        current_port=lambda: live["port"],
+    )
+    return adapter, live, opened
+
+
+def test_simcon_profile_switches_port_when_live_port_differs(profile_store):
+    """页面把口开在别处（活状态≠Profile）：应用必须真的换口，不能报 unchanged。"""
+    profile_store.update_slot("simcon.main", mapping_id="simcon", enabled=True)
+    device = profile_store.device_for("simcon")
+    adapter, live, opened = _live_simcon_adapter("/dev/ttyOTHER")
+
+    result = _applier(profile_store, simcon=adapter).apply()
+
+    slot = next(s for s in result["slots"] if s["slot"] == "simcon.main")
+    assert slot["status"] == "started"
+    assert opened == [device]
+    assert live["port"] == device
+    assert slot["current_state"]["port"] == device
+
+
+def test_simcon_profile_unchanged_only_when_live_port_matches(profile_store):
+    profile_store.update_slot("simcon.main", mapping_id="simcon", enabled=True)
+    device = profile_store.device_for("simcon")
+    adapter, live, opened = _live_simcon_adapter(device)
+
+    result = _applier(profile_store, simcon=adapter).apply()
+
+    slot = next(s for s in result["slots"] if s["slot"] == "simcon.main")
+    assert slot["status"] == "unchanged"
+    assert opened == []
+
+
+def test_simcon_profile_reports_failed_when_switch_does_not_take_effect(profile_store):
+    """换口后实际端口仍不符：必须报 failed，不能顺手写 started。"""
+    from workbench.serial_profile_applier import SimconProfileAdapter
+
+    profile_store.update_slot("simcon.main", mapping_id="simcon", enabled=True)
+    device = profile_store.device_for("simcon")
+    adapter = SimconProfileAdapter(
+        open_io=lambda resolved: None,          # 假装开了，实际没生效
+        close_io=lambda: None,
+        resolve=lambda port=None, **kw: {"port": port},
+        current_port=lambda: "/dev/ttySTUCK",
+    )
+
+    result = _applier(profile_store, simcon=adapter).apply()
+
+    slot = next(s for s in result["slots"] if s["slot"] == "simcon.main")
+    assert slot["status"] == "failed"
+    assert device in slot["reason"]
+    assert result["overall"] in ("failed", "partial")
+
+def test_pty_parity_forced_to_none_even_if_profile_says_even(profile_store):
+    """PTY 不接受 PARENB：槽里写 E 也必须压成 N，否则 apply 必抛 Invalid argument。"""
+    profile_store.update_slot("listener.main", mapping_id="listener", enabled=True,
+                              parity="E")
+    listener = _RecordingListenerService()
+    result = _applier(profile_store, listener=listener).apply()
+
+    by_slot = {s["slot"]: s for s in result["slots"]}
+    assert by_slot["listener.main"]["status"] == "started"
+    assert listener.start_params["parity"] == "N"

@@ -2,37 +2,8 @@
   "version": 1,
   "ports": [
     {
-      "id": "simcon",
-      "windows_com": "COM4",
-      "linux_device": "/run/hplc/serial/simcon",
-      "label": "模拟集中器",
-      "usage": "simcon",
-      "module": "",
-      "baudrate": 115200,
-      "parity": "N",
-      "bytesize": 8,
-      "stopbits": 1,
-      "enabled": true,
-      "usb_busid": "",
-      "note": "WSL 侧 PTY 必须 8N1（物理 8E1 由 Windows 桥侧实现）；CCO 当前 bps 落点 115200"
-    },
-    {
-      "id": "factory",
-      "windows_com": "COM7",
-      "linux_device": "/run/hplc/serial/factory",
-      "label": "厂测上位机",
-      "usage": "",
-      "module": "",
-      "baudrate": 9600,
-      "parity": "N",
-      "bytesize": 8,
-      "stopbits": 1,
-      "enabled": true,
-      "usb_busid": ""
-    },
-    {
       "id": "listener",
-      "windows_com": "COM20",
+      "windows_com": "COM27",
       "linux_device": "/run/hplc/serial/listener",
       "label": "侦听台",
       "usage": "listener",
@@ -46,7 +17,7 @@
     },
     {
       "id": "cco-main",
-      "windows_com": "COM8",
+      "windows_com": "COM12",
       "linux_device": "/run/hplc/serial/cco-main",
       "label": "CCO 模块",
       "usage": "module_log",
@@ -60,7 +31,7 @@
     },
     {
       "id": "sta-main",
-      "windows_com": "COM9",
+      "windows_com": "COM18",
       "linux_device": "/run/hplc/serial/sta-main",
       "label": "STA 模块",
       "usage": "module_log",
@@ -74,7 +45,7 @@
     },
     {
       "id": "simeter",
-      "windows_com": "COM11",
+      "windows_com": "COM20",
       "linux_device": "/run/hplc/serial/simeter",
       "label": "模拟电表",
       "usage": "",
@@ -86,6 +57,51 @@
       "enabled": true,
       "usb_busid": "",
       "note": "COM20 模拟电表；WSL 侧 PTY 8N1，真实 2400/E 由 Windows 桥侧实现"
+    },
+    {
+      "id": "ecu-biz",
+      "windows_com": "COM28",
+      "linux_device": "/run/hplc/serial/ecu-biz",
+      "label": "ECU 业务口",
+      "usage": "simcon",
+      "module": "",
+      "baudrate": 115200,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": false,
+      "usb_busid": "",
+      "note": "ECU 环境已废弃（2026-11-23 用户确认）；原 PTY 侧恒 8N1（PTY 不接受 PARENB）；物理 115200/8/E 由 Windows 桥侧实现；PTY 开口波特率必须与桥 desired_baud 一致（115200），否则 termios 会把物理口拉走；COM28 在 Windows 侧已不存在"
+    },
+    {
+      "id": "ecu-mgmt",
+      "windows_com": "COM29",
+      "linux_device": "/run/hplc/serial/ecu-mgmt",
+      "label": "ECU 管理口",
+      "usage": "",
+      "module": "",
+      "baudrate": 460800,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": false,
+      "usb_busid": "",
+      "note": "ECU 环境已废弃（2026-11-23 用户确认）；原 ECU 管理通道（UART3 → CH32）；PTY 侧恒 8N1，物理 460800/8/E 由 Windows 桥侧实现；COM29 在 Windows 侧已不存在"
+    },
+    {
+      "id": "simcon",
+      "windows_com": "COM4",
+      "linux_device": "/run/hplc/serial/simcon",
+      "label": "模拟集中器",
+      "usage": "simcon",
+      "module": "",
+      "baudrate": 115200,
+      "parity": "N",
+      "bytesize": 8,
+      "stopbits": 1,
+      "enabled": true,
+      "usb_busid": "",
+      "note": "COM4 模拟集中器（2026-11-23 用户口述确认 COM4=集中器；Windows 侧为 Silicon Labs CP210x）；PTY 侧恒 8N1（PTY 不接受 PARENB）；物理 115200/8/E 由 Windows 桥侧实现；PTY 开口波特率必须与桥 desired_baud 一致（115200），否则 termios 会把物理口拉走"
     }
   ]
 }
