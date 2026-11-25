@@ -239,18 +239,25 @@ def _validate_oad(oad: bytes) -> bytes:
     return oad
 
 
-def build_get_normal_response(parsed: Parsed698, oad: bytes, data: bytes) -> bytes:
+def build_get_normal_response(parsed: Parsed698, oad: bytes, data: bytes,
+                              sa: Optional[bytes] = None) -> bytes:
     """构造 GET-Response-Normal 完整线上帧（含 FE×4、HCS/FCS）。
 
     内层 APDU = 85 01 PIID OAD 01 data（OAD 后的 01=响应选择"数据"，与
     jzjc 应答定长头口径一致）；请求是安全请求时加 90 00 <len> 包装。
+
+    sa：应答帧源地址 SA（含首字节，如 ``05 + 6B 表地址``）。缺省 None 时
+    回显请求帧 SA（parsed.addr）；探帧与数据 OAD 应答一律传本表真实地址
+    （REQS-0043 §K/工位 N：STA 表口 698 绑表按应答帧 SA 取 MAC，回显通配
+    AA×6 会让 STA 自置 MAC=AA×6 被 CCO 白名单拒之门外）。
     """
     oad = _validate_oad(oad)
     piid = parsed.piid if parsed.piid is not None else 1
     inner = (bytes([APDU_GET_RESPONSE, 0x01, piid & 0xFF]) + oad
              + b"\x01" + bytes(data))
     apdu = _security_wrap_response(inner) if parsed.security is not None else inner
-    frame = build_frame(apdu, parsed.addr, ca=parsed.ca, control=CTRL_SERVER_RESPONSE)
+    frame = build_frame(apdu, sa if sa is not None else parsed.addr,
+                        ca=parsed.ca, control=CTRL_SERVER_RESPONSE)
     return FE_PREAMBLE + frame
 
 

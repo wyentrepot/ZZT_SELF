@@ -36,6 +36,46 @@ from sim_meter.protocol_698 import (
     parse_698_frame,
 )
 
+#: STA 表口协议探测 OAD（OI 4001=通信地址，属性 2 octet-string；698.45 表 A.5 IC8，
+#: 仓库 docs 复核报告 §4001 系列 / dict-ui 同口径）。探帧实测 run 20261124-192633
+#: （simeter 帧日志 seq 59/76）：STA `try 698 pro` 发 GET-RequestNormal
+#: ``05 01 PIID 40 01 02 00 00``，此前被当未知 OAD 不应答 → STA 表口锁 645
+#: （CASE-BACKLOG §G H2）。补齐应答（回本表通信地址）让 STA 能识别 698 态电表。
+PROBE_OAD = b"\x40\x01\x02\x00"
+
+# ---------------------------------------------------------------------------
+# 698 数据 OAD 注册表（REQS-0043 工位 N）：GET-RequestNormal 单点读的应答数据。
+# 语义/编码出处（每条都留痕）：
+# - 645↔698 两套编号对照：KB `用例库/STA/能力域/141_分钟级采集_用例蒸馏.md:33-40`
+#   （单相 645 02010100/02020100 ↔ 698 20000201/20010201；三相 645 0201FF00~0204FF00
+#   ↔ 698 20000200/20010200）；
+# - OI 语义与换算：仓库 `docs/_archive/2026-08-28/698.45-OAD覆盖/复核报告.md` §3.1
+#   （2000=电压 V 换算-1、2001=电流 A 换算-3、属性 2=分相数值组 array）+ parser_lib
+#   `adapter_698/metadata/oad.json`（20000201/20010201/20000200/20010200 同口径）。
+# - 编码取单值标量：20000201/20010201 是「属性 2+索引 01」取 A 相的读法，GET 正常
+#   响应按索引回单值（复核报告 P13：按索引返回单值则 data_type 应为标量——
+#   long-unsigned/double-long；真机样本待对照，先按标量口径落）。array 条目
+#   （20000200/20010200）按属性 2 分相数值组 array 编码（A/B/C 三元素）。
+# 数值不落静态表：应答时实时取 645 寄存器数据集（_DEFAULT_REGISTERS / set_register，
+# 同源同值——220.1 V / 001.234 A 等，set_register 改值应答跟变）。
+# 值格式：(数据项名, 645 寄存器 DI 元组, 编码器, 698 换算小数位, 单位)。
+_OAD_DATA_MAP: Dict[str, Tuple[str, Tuple[str, ...], str, int, str]] = {
+    "20000201": ("A相计量电压", ("02010100",), "long-unsigned", 1, "V"),
+    "20010201": ("A相计量电流", ("02020100",), "double-long", 3, "A"),
+    "20000200": ("电压分相数值组",
+                 ("02010100", "02010200", "02010300"),
+                 "array-long-unsigned", 1, "V"),
+    "20010200": ("电流分相数值组",
+                 ("02020100", "02020200", "02020300"),
+                 "array-double-long", 3, "A"),
+}
+
+# A-XDR 数据标签（DL/T 698.45 数据 notation，与 parser_lib
+# adapter_698._AXDR_TYPE_NAMES 同词表；整数型均为大端）
+_AXDR_TAG_ARRAY = 0x01           # array：01 + n + 元素
+_AXDR_TAG_DOUBLE_LONG = 0x05     # double-long（有符号 4B）
+_AXDR_TAG_LONG_UNSIGNED = 0x12   # long-unsigned（无符号 2B）
+
 _BROADCAST_READ_ADDR = b"\xFE" * 6      # 13H/15H 广播方式使用的地址域（知识库口径）
 _BROADCAST_CTRL = b"\x99" * 6           # 广播校时地址域
 _BROADCAST_AA = b"\xAA" * 6             # AA×6 广播（STA 绑表状态机 remap645_addr_buff_AA）
@@ -140,6 +180,56 @@ def _parse_addr(addr: str) -> bytes:
 def _bcd_byte(b: int) -> int:
     """单字节 BCD → 整数（0x30 → 30）。"""
     return ((b >> 4) & 0xF) * 10 + (b & 0xF)
+
+
+def _axdr_scalar(tag: int, value: int, size: int) -> bytes:
+    """A-XDR 整数标量：tag + 定长大端字节（double-long 有符号，其余无符号）。"""
+    return bytes([tag]) + int(value).to_bytes(
+        size, "big", signed=(tag == _AXDR_TAG_DOUBLE_LONG))
+
+
+def _encode_oad_data(spec: Tuple[str, Tuple[str, ...], str, int, str],
+                     get_value) -> Optional[Tuple[bytes, str]]:
+    """698 数据 OAD 注册表条目 → (A-XDR 数据字节, 人读值串)。
+
+    值实时取自 645 寄存器数据集（get_value(di) → 数值字符串或 None）：
+    raw = round(值 × 10^scale)（698 对象换算位，复核报告 §3.1），facade 解码
+    再按 scale 除回去。任一源寄存器缺失 / 值非法 / 编码越界 → None（不应答）。
+    """
+    _name, dis, kind, scale, _unit = spec
+    raws: List[str] = []
+    for di in dis:
+        raw = get_value(di)
+        if raw is None:
+            return None
+        try:
+            float(str(raw).strip())
+        except ValueError:
+            return None
+        raws.append(str(raw).strip())
+    try:
+        if kind == "long-unsigned":
+            data = _axdr_scalar(_AXDR_TAG_LONG_UNSIGNED,
+                                round(float(raws[0]) * 10 ** scale), 2)
+        elif kind == "double-long":
+            data = _axdr_scalar(_AXDR_TAG_DOUBLE_LONG,
+                                round(float(raws[0]) * 10 ** scale), 4)
+        elif kind == "array-long-unsigned":
+            data = (bytes([_AXDR_TAG_ARRAY, len(raws)])
+                    + b"".join(_axdr_scalar(_AXDR_TAG_LONG_UNSIGNED,
+                                            round(float(v) * 10 ** scale), 2)
+                               for v in raws))
+        elif kind == "array-double-long":
+            data = (bytes([_AXDR_TAG_ARRAY, len(raws)])
+                    + b"".join(_axdr_scalar(_AXDR_TAG_DOUBLE_LONG,
+                                            round(float(v) * 10 ** scale), 4)
+                               for v in raws))
+        else:
+            return None
+    except (OverflowError, ValueError):
+        return None
+    shown = raws[0] if len(raws) == 1 else "[" + ", ".join(raws) + "]"
+    return data, shown
 
 
 class JzjcConfig:
@@ -579,10 +669,20 @@ class MeterBrain:
         """698.45 从站应答：只处理 DIR=0（客户机发出）、功能码 3（用户数据）
         的 GET-Request，且 SA=本表地址（或广播地址）。
 
-        OAD=43000200（重庆即装即采读设备描述符）固定应答；其余 OAD 走采集
-        数据集（REQS-0037）：WithList 按 OAD 逐条命中应答（缺项/未配置条目
-        不进应答，STA 读层按任务配置长度补 FF），Normal 单点命中也应答；
-        数据集未命中保持历史行为——不应答（reason=未知 OAD），不悄悄变。
+        OAD=43000200（重庆即装即采读设备描述符）与 STA 表口协议探测 OAD=40010200
+        （读通信地址，`try 698 pro` 探帧）固定应答；其中探帧受**协议一致闸**
+        约束（REQS-0043 §K）：jzjc 档案协议类型=02H（645-2007）时不应答
+        （表是 645，答 698 探帧会让 STA 误绑 698、拿着错口径地址去入网），
+        03H（698.45）应答本表真实地址。其余 OAD 走采集数据集（REQS-0037）：
+        WithList 按 OAD 逐条命中应答（缺项/未配置条目不进应答，STA 读层按
+        任务配置长度补 FF），Normal 单点命中也应答；数据集未命中时查**数据
+        OAD 注册表**（REQS-0043 工位 N，`_OAD_DATA_MAP`：20000201/20010201/
+        20000200/20010200，值实时取自 645 寄存器数据集）——GET-RequestNormal
+        → GET-ResponseNormal，SECURITY 包装跟随请求，应答 SA=本表真实地址；
+        **只在 jzjc=03H（698 态）应答**（与探帧闸同款语义延伸：645/透明态
+        空 wire，reason=协议不一致）。数据集显式条目（含 missing=true）优先
+        于注册表；注册表也没有的 OAD 维持历史行为——不应答（reason=未知 OAD），
+        不悄悄变。WithList 路径保持数据集口径不变（注册表不进 WithList）。
         """
         try:
             parsed = parse_698_frame(raw)
@@ -624,6 +724,32 @@ class MeterBrain:
             note["security"] = parsed.security is not None
             return HandleResult(None, note, wire=wire)
 
+        if parsed.oad == PROBE_OAD:
+            # 协议一致闸（REQS-0043 §K 根因①②）：jzjc 档案协议类型=02H
+            # （645-2007）时表口不是 698，不答 698 探帧（行为=未知 OAD 同款：
+            # 空 wire 不应答）——否则 STA 会把表口误判成 698 并按应答帧 SA
+            # 绑 MAC，被 CCO 白名单拒（ASSOC_RSLT_OUTOFLIST）。03H/00H 态
+            # 保持应答（698 态行为不变；00H 透明态历史行为不动，待议）。
+            if self.jzjc.protocol_type == 0x02:
+                note["func"] = "698 探帧(40010200) 命中但 jzjc 协议=645-2007，不应答"
+                note["reason"] = "协议不一致(jzjc=645)"
+                return HandleResult(None, note)
+            # STA 表口协议探测（addrmap 后的 `try 698 pro`）：应答本表通信地址
+            # （octet-string，6B 线序与 645 13H 读地址应答同源）。收到合法应答
+            # STA 才会把表口判成 698（判读指纹 check_procotol:N 待 E2 校准）。
+            # SA 必须是本表真实地址（05 + 6B 线序，单地址头，KB 698 帧格式
+            # §2.5）：STA 表口 698 绑表按**应答帧 SA**取 MAC，回显请求通配
+            # AA×6 会让 STA 自置 MAC=AA×6 被 CCO 白名单拒（§K.4 实锤）。
+            with self._lock:
+                self.tx_count += 1
+            note["func"] = "698 表口协议探测读通信地址(40010200)"
+            note["probe_addr"] = self._addr.hex().upper()
+            note["security"] = parsed.security is not None
+            return HandleResult(None, note,
+                                wire=build_get_normal_response(parsed, parsed.oad,
+                                                               self._addr,
+                                                               sa=b"\x05" + self._addr))
+
         # ---- 采集 OAD 数据集匹配（REQS-0037）----------------------------
         dataset = self._oad_effective()
 
@@ -657,11 +783,44 @@ class MeterBrain:
         entry = dataset.get(parsed.oad.hex().upper()) if parsed.oad else None
         if entry is None or entry["missing"]:
             oad_hex = parsed.oad.hex().upper() if parsed.oad else ""
+            # ---- 数据 OAD 注册表（REQS-0043 工位 N）--------------------------
+            # 数据集无显式条目时查内建注册表（显式 missing=true 是台架明确的
+            # 「不应答」配置，优先于注册表默认值，REQS-0037 注入口径不变）。
+            spec = _OAD_DATA_MAP.get(oad_hex) if (parsed.oad is not None
+                                                  and entry is None) else None
+            if spec is not None:
+                # 协议一致闸（探帧闸同款语义延伸）：数据 OAD 应答只在 jzjc=
+                # 03H（698.45）态生效；645/透明态空 wire 不应答——645 表答
+                # 698 数据读与「三方一致」口径相悖（REQS-0043 §K）。
+                if self.jzjc.protocol_type != 0x03:
+                    note["func"] = (
+                        f"698 数据OAD({oad_hex}) 命中但 jzjc 协议≠698.45，不应答")
+                    note["reason"] = (
+                        "协议不一致(jzjc=645)" if self.jzjc.protocol_type == 0x02
+                        else f"协议不一致(jzjc={self.jzjc.protocol_type})")
+                    return HandleResult(None, note)
+                encoded = _encode_oad_data(
+                    spec, lambda di: self._registers.get(di, {}).get("value"))
+                if encoded is None:
+                    note["func"] = f"698 数据OAD({oad_hex}) 源寄存器缺失，不应答"
+                    note["reason"] = "OAD 缺项"
+                    return HandleResult(None, note)
+                data, shown = encoded
+                wire = build_get_normal_response(parsed, parsed.oad, data,
+                                                 sa=b"\x05" + self._addr)
+                with self._lock:
+                    self.tx_count += 1
+                note["func"] = f"698 数据读点({spec[0]} {oad_hex})"
+                note["value"] = shown
+                note["unit"] = spec[4]
+                note["security"] = parsed.security is not None
+                return HandleResult(None, note, wire=wire)
             note["func"] = f"698 OAD=0x{oad_hex} 非 43000200，不应答"
             note["reason"] = "未知 OAD" if entry is None else "OAD 缺项"
             return HandleResult(None, note)
         wire = build_get_normal_response(parsed, parsed.oad,
-                                         bytes.fromhex(entry["data_hex"]))
+                                         bytes.fromhex(entry["data_hex"]),
+                                         sa=b"\x05" + self._addr)
         with self._lock:
             self.tx_count += 1
         note["func"] = f"698 采集读点({entry['oad']})"
