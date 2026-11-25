@@ -174,6 +174,35 @@ def test_bench_banner_and_run_gating():
     assert "台架未就绪" in js
 
 
+def test_bench_banner_collapses_when_ready_and_autoexpands_when_blocked():
+    """工位 E 反馈 2/3：就绪态横幅收成一行「✓ 就绪」+「▸ 详情」；不就绪才自动展开。
+
+    覆盖行为说明（收起 ≠ 删除）：口状态 / 事实芯片 / 逐项原因整体搬进 `bench-details`
+    折叠容器，元素与数据渲染全部保留（可展开、可断言）；原「运行闸门：5 口可用 +
+    必需事实成立」说明文字删除（反馈 5 删冗余说明）。本用例新增三条实质断言替代旧的
+    「芯片平铺在默认区」的隐含预期：
+    ① 详情容器 + 展开/收起按键存在且默认 hidden；
+    ② 折叠口径 = 不就绪自动展开（blocked），用户点过「详情」以用户为准；
+    ③ 事实芯片默认不进横幅一行（反馈 3：默认不展示任何事实芯片）。
+    """
+    js = js_text()
+    html = html_text()
+    # ① 详情折叠容器 + 按键（默认收起：hidden）
+    assert 'data-hook="bench-details"' in html and " hidden" in html.split('data-hook="bench-details"')[1][:200]
+    assert 'data-hook="bench-detail-toggle"' in html
+    assert 'aria-controls="bench-details"' in html
+    assert "▸ 详情" in js and "▾ 详情" in js, "详情按键必须有展开/收起两个态"
+    # ② 自动展开口径：只有不就绪（blocked）才展开；用户选择优先
+    assert "benchDetailsOpen" in js
+    assert 'S.benchMode === "blocked"' in js, "不就绪（unmet_required 非空 / 口不可用）必须自动展开"
+    assert "benchDetailsShouldOpen" in js and "setBenchDetails(" in js
+    # ③ 折叠后的芯片仍被渲染（收进折叠 ≠ 不渲染）：bench-ports / bench-facts 的填充逻辑还在
+    assert 'data-hook="bench-ports"' in js and 'data-hook="bench-facts"' in js
+    # 冗余说明确实删掉（反向守卫，注明覆盖行为：横幅一行不再带任何解释文字）
+    for gone in ("运行闸门：5 口可用", "口全通 · ", "条关键事实成立"):
+        assert gone not in js and gone not in html, f"冗余说明未删除：{gone}"
+
+
 # ---------- UI-3 勾选 → 存方案 → 刷新恢复 ----------
 
 
@@ -189,6 +218,76 @@ def test_selection_survives_reload_via_suite_and_localstorage():
     assert "suite_id" in js
 
 
+# ---------- REQS-0044 工位 E：默认参数入口（反馈 4） ----------
+
+
+def test_defaults_entry_modal_and_save_flow():
+    """默认参数：一行当前默认 +「修改」；小表单保存走 PUT，成功后刷新默认值显示。
+
+    覆盖行为说明：原工具条上的逐轮覆盖输入框 p-meter-addr **移除**（工位 E 反馈 5
+    「默认信息没有改动的地方」——默认值改由 config/case_defaults.json 承载，运行参数
+    不再平铺第二个入口；collectParams 保留但恒空，运行能力不回退）。表单键与业务文案
+    全部来自 GET /api/cases/defaults 下发（后端白名单 = config 里已存在的键），页面
+    **不造键**：「STA 通信地址」等无配置键的项不得在前端硬编码。
+    """
+    js = js_text()
+    html = html_text()
+    # 入口：一行默认值 + 修改按键（后端 404 时整行隐藏，不占默认视图）
+    assert 'data-hook="defaults-line"' in html and " hidden" in html
+    assert 'data-hook="defaults-edit"' in html
+    assert 'id="defaults-text"' in html
+    assert "默认参数：" in js, "入口一行必须以「默认参数：」开头"
+    # 小表单 + 保存链路
+    assert 'data-hook="defaults-modal"' in html
+    assert 'id="defaults-form"' in html
+    assert 'id="defaults-save"' in html and 'id="defaults-cancel"' in html
+    assert '"GET", "/api/cases/defaults"' in js
+    assert '"PUT", "/api/cases/defaults"' in js
+    assert "values: values" in js, "PUT 请求体必须是 {values: {...}}"
+    assert "renderDefaults();" in js and "保存成功后刷新页面默认值显示" in js
+    # 键与文案都吃后端下发的 items（label 由后端给），前端不维护键表、不造键
+    assert "S.defaults = arr(obj(data).items)" in js
+    assert 'data-key="\' + esc(item.key)' in js, "表单 input 必须带后端下发的 data-key"
+    # 反向守卫：前端不得出现任何硬编码配置键/造出来的键
+    for invented in ("sta_addr", "sta通信地址", "STA 通信地址", "p-meter-addr"):
+        assert invented not in js and invented not in html, f"前端硬编码/残留键：{invented}"
+    # 逐轮覆盖输入框确实移除，collectParams 不再读任何输入框
+    assert 'id="p-meter-addr"' not in html
+    assert "function collectParams()" in js
+    assert "meter_addr = input.value" not in js
+
+
+# ---------- 工位 E 反馈 5：删冗余说明（反向守卫） ----------
+
+
+def test_redundant_explanations_are_gone():
+    """图例 / 大段解释 / 徽标说明删除；初始视图只留【清单 + 运行 + 结果】。
+
+    覆盖行为说明：以下文字从默认视图删除（有的连 title 悬浮说明一起删）；
+    被删文字承载的信息保留在原能力里——产品通过率分母口径在「台架准备 n 项
+    （不计入分母）」芯片里仍可见，历史运行入口文字与下拉保留。
+    """
+    js = js_text()
+    html = html_text()
+    for gone in (
+        "点击卡片展开步骤",                       # listbar 说明
+        "防「永真用例」",                         # sumbar 大段解释
+        "setup 行不计入产品通过率分母（REQS-0044",  # sumbar 解释（芯片短文案保留）
+        "（REQS-0044 §4.4）",                     # 证据路径 title 里的文档引用
+        "常驻回归（计入产品通过率）",               # kind 徽标悬浮说明
+        "一次性方案验证（不进回归方案）",
+        "台架准备型流程（不计入产品通过率）",
+    ):
+        assert gone not in js and gone not in html, f"冗余说明未删除：{gone}"
+    # 历史运行入口 title 里的 API 细节（用户可见口径已删；js 内部代码注释不属用户层，不查）
+    assert "GET /api/cases/runs?limit=10" not in html
+    assert "（GET /api/cases/runs/{run_id}）" not in html
+    # 徽标本身保留（删的是说明，不是徽标）
+    assert "kind-badge" in js and '"回归"' in js and '"场景"' in js and '"台架准备"' in js
+    # 汇总条芯片短文案仍在（承载分母口径的一句话）
+    assert "台架准备 " in js and "（不计入分母）" in js
+
+
 # ---------- UI-4 两级运行 + 轮询 ----------
 
 
@@ -202,6 +301,44 @@ def test_two_level_run_and_job_polling():
     assert "/api/cases/jobs/" in js
     assert "setTimeout(pollJob" in js
     assert 'data-hook="job-panel"' in html
+
+
+def test_job_panel_single_line_and_collapsed_done():
+    """工位 E 反馈 1：运行中只显示单行进度；完成后自动收起为一行，点击该行才展开。
+
+    覆盖行为说明（收起 ≠ 删除）：
+    - 运行中单行 = 方案名（job-line）+ 进度 n/m + 当前用例名（job-progress-line）；
+      原进度条 / job-current / 逐卡结果全部保留在 job-collapsible 里（展开可见）；
+    - 终态自动收起一行 = ✔/✘（jobDoneGlyph）+ run_id + verdict + 耗时（job-done-line）；
+    - 点击 job-collapsed 才展开（setJobExpanded），且仅终态可点（S.jobTerminal）；
+    - job 终态**不再整页自动跳转**结果视图：renderRunReport 改由「查看完整报表」
+      （btn-open-report → loadRun）与历史运行下拉进入——结果视图本身保留（六列表 +
+      汇总条 + 开发者详情一个不少，见 test_report_card_dom_hooks / test_two_level_run）。
+    """
+    js = js_text()
+    html = html_text()
+    # 单行结构：折叠行 + 运行中进度短语 + 终态一行
+    assert 'data-hook="job-collapsed"' in html and 'role="button"' in html
+    assert 'data-hook="job-progress-line"' in html
+    assert 'data-hook="job-done-line"' in html
+    assert 'data-hook="job-collapsible"' in html and "hidden" in html
+    # 运行中单行 = 方案名 + 进度 n/m + 当前用例名
+    assert "进度 " in js and 'done + "/" + total' in js and "　当前：" in js
+    # 终态自动收起 + 一行内容四要素
+    assert "function collapseJobDone(" in js
+    assert "function jobDoneGlyph(" in js
+    assert '"✔"' in js and '"✘"' in js
+    assert "duration_seconds" in js, "终态一行须带耗时"
+    assert "setJobExpanded(false)" in js, "完成后必须自动收起"
+    # 点击该行才展开（且仅终态可展开；运行中保持单行）
+    assert "S.jobTerminal" in js
+    assert 'if (!S.jobTerminal) return;' in js
+    assert "setJobExpanded(!S.jobExpanded)" in js
+    # 结果视图入口保留：查看完整报表 → loadRun（按 run_id 打开 Excel 式结果视图）
+    assert 'data-hook="job-open-report"' in html
+    assert 'openReport.onclick = function () { loadRun(clean(job.run_id)); };' in js
+    # 终态不再自动跳转结果视图（旧的 renderRunReport(job) 自动切换已按工位 E 口径移除）
+    assert "renderRunReport(job);" not in js, "job 终态不得自动整页切结果视图（改为收起一行）"
 
 
 # ---------- UI-5 断点可视化 ----------

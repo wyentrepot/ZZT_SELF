@@ -65,6 +65,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -110,7 +111,7 @@ from case_runner.core.executor import (
 from case_runner.core.models import BlockSpec, CaseSpec, CaseStep, FactSpec, SuiteSpec
 from case_runner.core.planner import FactsContext
 from case_runner.core.registry import has_block, has_fact
-from case_runner.core.report import summarize_case, summarize_run
+from case_runner.core.report import build_run_report, summarize_case, summarize_run
 from case_runner.core.retention import DEFAULT_KEEP_RUNS, prune_runs
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +131,11 @@ BENCH_SNAPSHOT_BUDGET_S: float = 20.0
 #: 运行结果落盘目录名（``<storage_dir>/case_runs/<run_id>/result.json``）
 RUNS_DIRNAME = "case_runs"
 RESULT_FILENAME = "result.json"
+
+#: ``GET /api/cases/runs``（历史运行索引，REQS-0044 变更 4）：默认返回最近 10 轮、上限 50。
+#: 超界不回 422，直接夹取（只读列举端点，宁可得给少一点也不甩校验错误）。
+RUNS_LIST_DEFAULT_LIMIT = 10
+RUNS_LIST_MAX_LIMIT = 50
 
 JOB_QUEUED = "queued"
 JOB_RUNNING = "running"
@@ -304,6 +310,9 @@ class BlockResultView(BaseModel):
     facts: dict[str, FactValueView] = Field(default_factory=dict)
     assertion_id: str = ""
     message: str = ""
+    #: 本步的**观测**（REQS-0044 §4.2）：``{values, complete, reason_code, detail}``；
+    #: ``None`` = 本步走旧路径（块没报观测）。它不是结论，供证据/报告引用。
+    observation: Optional[dict[str, Any]] = None
 
 
 class CaseRunView(BaseModel):
@@ -505,11 +514,41 @@ class RunRecordView(BaseModel):
     preflight: dict[str, Any] = Field(default_factory=dict)
     #: 报告式一句话结论（D11-1）：``{headline, reasons[], reason, case_summaries[], evidence_paths[]}``
     summary: dict[str, Any] = Field(default_factory=dict)
+    #: 报表契约（REQS-0044 变更 3 L2，字段冻结）：``{rows[], summary{}}`` ——
+    #: rows 每行 group/subgroup/name/kind/steps_text/verdict/reason/evidence_paths/
+    #: counts_as_product；summary 含 product_pass_rate（分母不含 setup 行）。
+    #: 语义只加不改；落盘与读回逐字一致。
+    report: dict[str, Any] = Field(default_factory=dict)
     #: D11-4 旧证据清理留痕：本轮结束时被删掉的 ``run_id`` 列表（从旧到新）
     pruned: list[str] = Field(default_factory=list)
     error: str = ""
     result_path: str = ""
     problems: list[str] = Field(default_factory=list)
+
+
+class RunIndexEntry(BaseModel):
+    """``GET /api/cases/runs``（历史运行索引，REQS-0044 变更 4）的单条记录。
+
+    只读各 run 目录 ``result.json`` 的头部字段（不展开逐用例明细）；目录缺
+    ``result.json`` / 文件损坏的轮次**跳过并忽略**（不占名额、不报错）。
+    选中某轮后的完整读回走 ``GET /api/cases/runs/{run_id}``（同一条载入路径）。
+    """
+
+    run_id: str
+    verdict: Optional[Verdict] = None
+    finished_at: str = ""
+    #: 本轮各用例的业务名（取 results[].title，缺 title 回退 case_id；保序去重）
+    case_names: list[str] = Field(default_factory=list)
+    #: 一句话摘要：``{headline, product_pass_rate}``（D11-1 headline + 变更 3 L2 通过率）
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunsListResponse(BaseModel):
+    """``GET /api/cases/runs?limit=N``：最近 N 轮（新的在前）。"""
+
+    runs: list[RunIndexEntry] = Field(default_factory=list)
+    total: int = 0
+    limit: int = RUNS_LIST_DEFAULT_LIMIT
 
 
 class CaseCategory(BaseModel):
@@ -542,6 +581,9 @@ class CaseView(BaseModel):
     classified: bool = False
     #: 被「未来字段容忍」剥掉的声明键（过渡期可见性：声明已加、模型还没加）
     tolerated_fields: list[str] = Field(default_factory=list)
+    #: Procedure 类别（REQS-0044 变更 3 L1 / 变更 4）：regression / scenario / setup。
+    #: 字段只加不改；页面据此渲染徽标（回归=默认色 / 场景=蓝 / 台架准备=灰）。
+    kind: str = "regression"
 
 
 class CaseListResponse(BaseModel):
@@ -957,6 +999,8 @@ def _case_view(
         protocols=list(protocols),
         classified=category.classified,
         tolerated_fields=list(tolerated_fields),
+        # ProcedureSpec.kind（变更 3 L1）：regression / scenario / setup；缺失按 regression
+        kind=str(getattr(case, "kind", "") or "regression"),
     )
 
 
@@ -1009,6 +1053,135 @@ def _default_bridge_snapshot() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# 默认参数读/写（REQS-0044 工位 E：GET / PUT ``/api/cases/defaults``）
+# --------------------------------------------------------------------------- #
+
+#: 仓库根（``apps/workbench/cases_api.py`` 上溯 3 层）；现场覆盖文件缺省放这里
+REPO_ROOT: Path = Path(__file__).resolve().parents[2]
+
+#: 现场覆盖文件名（与 ``case_runner.core.defaults.CONFIG_OVERRIDE_FILE`` 同一口径；
+#: 服务可注入 ``defaults_config_path`` 换路径，测试隔离用）
+DEFAULTS_CONFIG_FILENAME = "case_defaults.json"
+
+#: ``_`` 开头的键是说明文字（与 ``case_runner.core.defaults.NOTE_PREFIX`` 同口径），
+#: 既不是配置项也不进白名单
+DEFAULTS_NOTE_PREFIX = "_"
+
+#: 已知键 → 业务文案（REQS-0044 工位 E：表单用业务语言，不甩裸键名）。
+#: 只作展示映射；配置里出现词典外的键时回退用键名本身，**不造新键**。
+DEFAULTS_LABELS: dict[str, str] = {
+    "meter_addr": "默认表地址",
+    "simeter.addr": "模拟电表地址",
+    "simeter.version": "模拟电表版本",
+    "mapping_id.simcon": "集中器逻辑口名",
+    "mapping_id.simeter": "模拟电表逻辑口名",
+    "mapping_id.sta": "STA 逻辑口名",
+}
+
+#: 表地址类键（12 位十进制 BCD 校验，与 ``case_runner.core.defaults.ADDR_LEN`` 同口径）
+DEFAULTS_ADDR_LEN = 12
+
+
+def _flatten_leaves(mapping: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    """把一层/两层嵌套配置摊平成 ``{"meter_addr": v, "simeter.addr": v, ...}``。
+
+    ``_`` 开头的说明键跳过；更深层的嵌套不摊（当前配置最深两层，够用）。
+    """
+    leaves: dict[str, Any] = {}
+    for key, value in mapping.items():
+        if str(key).startswith(DEFAULTS_NOTE_PREFIX):
+            continue
+        full = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            leaves.update(_flatten_leaves(dict(value), full))
+        else:
+            leaves[full] = value
+    return leaves
+
+
+def _read_defaults_mapping(path: Path) -> tuple[dict[str, Any], str]:
+    """读一个默认配置 JSON → ``(mapping, 状态)``；状态 ∈ ``ok`` / ``missing`` / ``corrupt``。"""
+    if not Path(path).is_file():
+        return {}, "missing"
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, ValueError):
+        return {}, "corrupt"
+    return (dict(payload) if isinstance(payload, Mapping) else {}), (
+        "ok" if isinstance(payload, Mapping) else "corrupt"
+    )
+
+
+def _merge_defaults(factory: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """两层合并（与 ``case_runner.core.defaults._merge`` 同口径）：顶层键覆盖、
+    ``mapping_id`` 按子键合并、值为 ``null`` 的覆盖键不生效（null = 取出厂默认）。"""
+    merged: dict[str, Any] = dict(factory)
+    for key, value in override.items():
+        if value is None:
+            continue
+        if key == "mapping_id" and isinstance(value, Mapping):
+            base = dict(merged.get(key) or {}) if isinstance(merged.get(key), Mapping) else {}
+            base.update({str(name): item for name, item in value.items() if item is not None})
+            merged[key] = base
+            continue
+        merged[key] = value
+    return merged
+
+
+def _leaf_value(merged: Mapping[str, Any], key: str) -> Any:
+    """按 ``a.b`` 点号键从合并结果里取值（取不到 → ``None``）。"""
+    if "." in key:
+        head, _, tail = key.partition(".")
+        node = merged.get(head)
+        if not isinstance(node, Mapping):
+            return None
+        return node.get(tail)
+    return merged.get(key)
+
+
+class CaseDefaultsItem(BaseModel):
+    """一条可编辑默认参数（表单只暴露 ``config/case_defaults.json`` 里实际存在的键）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(description="点号键：meter_addr / simeter.addr / simeter.version …")
+    label: str = Field(description="业务文案（默认表地址 / 模拟电表地址 …）")
+    value: Any = Field(description="两层合并后的当前值")
+    source: Literal["config", "factory"] = Field(
+        description="当前值来自现场覆盖（config）还是出厂默认（factory）"
+    )
+
+
+class CaseDefaultsGetResponse(BaseModel):
+    """``GET /api/cases/defaults``：白名单 + 当前值（白名单 = config 里已存在的键）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    config_path: str = Field(description="现场覆盖文件的绝对路径")
+    keys: list[str] = Field(default_factory=list, description="可覆盖键的白名单（点号键）")
+    items: list[CaseDefaultsItem] = Field(default_factory=list)
+
+
+class CaseDefaultsPutRequest(BaseModel):
+    """``PUT /api/cases/defaults`` 请求体：``{"values": {键: 新值}}``。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, Any] = Field(
+        default_factory=dict,
+        description="只允许白名单键；未知键 422；表地址类键须 12 位十进制",
+    )
+
+
+class CaseDefaultsPutResponse(CaseDefaultsGetResponse):
+    """``PUT /api/cases/defaults`` 响应：保存后的最新视图 + 备份位置。"""
+
+    saved: list[str] = Field(default_factory=list, description="本次实际写入的键")
+    backup_path: str = Field(default="", description="写前备份文件（原值）；未写盘时为空串")
+
+
+# --------------------------------------------------------------------------- #
 # 服务（装配 + 预检 + 调度 + 落盘）
 # --------------------------------------------------------------------------- #
 
@@ -1027,11 +1200,18 @@ class CasesService:
         bridge_snapshot_provider: Any = None,
         env_lock_timeout_s: float = DEFAULT_ENV_LOCK_TIMEOUT_S,
         keep_runs: int = DEFAULT_KEEP_RUNS,
+        defaults_config_path: Optional[Path] = None,
     ) -> None:
         self.storage_dir = Path(storage_dir)
         #: 用户方案目录里的坏文件问题（不拖垮整表，随读表回显）
         self._suite_problems: list[str] = []
         self.data_dir = Path(data_dir) if data_dir is not None else decl_loader.DATA_DIR
+        #: 现场覆盖文件（``GET/PUT /api/cases/defaults`` 的白名单与写入目标）；
+        #: 缺省 = 仓库根 ``config/case_defaults.json``（测试注入临时路径隔离）
+        self.defaults_config_path = (
+            Path(defaults_config_path) if defaults_config_path is not None
+            else REPO_ROOT / "config" / DEFAULTS_CONFIG_FILENAME
+        )
         #: 注入的能力替身（``{"simcon": fake, "simeter": fake, "module": fake}``），
         #: 与 ``case_runner.cli.main(extras=...)`` 是同一个装配位（测试/共享句柄用）
         self.extras: dict[str, Any] = dict(extras or {})
@@ -2155,6 +2335,15 @@ class CasesService:
             CaseRunView.from_outcome(outcome, summary=case_summaries[index])
             for index, outcome in enumerate(outcomes)
         ]
+        # 报表契约（L2）：行数据从同一批 summary_entries + ProcedureSpec 组装（零第二套判定）
+        report_entries = [
+            dict(entry, summary=case_summaries[index])
+            for index, entry in enumerate(summary_entries)
+        ]
+        run_report = build_run_report(
+            report_entries,
+            cases={outcome.case.id: outcome.case for outcome in outcomes},
+        )
         verdicts = [item.verdict for item in results]
         verdict = _aggregate_verdict(verdicts)
         total = len(job.case_ids)
@@ -2212,6 +2401,7 @@ class CasesService:
             },
             preflight=job.preflight.to_dict(),
             summary=run_summary,
+            report=run_report,
             pruned=list(job.pruned),
             error=job.error,
             result_path=job.result_path,
@@ -2282,6 +2472,207 @@ class CasesService:
                 500, "run_unreadable", "结果文件结构非法：%s：%s" % (path, exc)
             ) from None
 
+    def run_index(self, limit: int = RUNS_LIST_DEFAULT_LIMIT) -> RunsListResponse:
+        """最近 N 轮运行索引（``GET /api/cases/runs``，REQS-0044 变更 4）。
+
+        读各 run 目录 ``result.json`` 的头部字段；目录名按字典序 = 时间序
+        （``YYYYMMDD-HHMMSS-xxxxxx``），**新的在前**。三条硬规则：
+
+        1. ``limit`` 夹在 ``[1, RUNS_LIST_MAX_LIMIT]``（默认 10、上限 50），
+           非数字 / 超界一律夹取，不回 422（只读列举端点，宁少勿错）；
+        2. 缺 ``result.json`` 的目录（占位 / 清理一半）与坏文件**跳过并忽略**，
+           不占名额、不报 500——索引只是目录，证据读回才严格校验；
+        3. 零判定：``verdict`` 是落盘时的原值，本方法不重新聚合。
+        """
+        try:
+            wanted = int(limit)
+        except (TypeError, ValueError):
+            wanted = RUNS_LIST_DEFAULT_LIMIT
+        wanted = max(1, min(wanted, RUNS_LIST_MAX_LIMIT))
+        entries: list[RunIndexEntry] = []
+        runs_dir = self.runs_dir
+        if runs_dir.is_dir():
+            run_ids = sorted(
+                (
+                    path.name
+                    for path in runs_dir.iterdir()
+                    if path.is_dir() and _ID_RE.fullmatch(path.name)
+                ),
+                reverse=True,
+            )
+            for run_id in run_ids:
+                if len(entries) >= wanted:
+                    break
+                path = runs_dir / run_id / RESULT_FILENAME
+                if not path.is_file():
+                    continue  # 缺文件：跳过并忽略（REQS-0044 变更 4 口径）
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue  # 坏文件同样跳过
+                if not isinstance(raw, dict):
+                    continue
+                summary_raw = raw.get("summary")
+                summary_raw = summary_raw if isinstance(summary_raw, Mapping) else {}
+                report_raw = raw.get("report")
+                report_raw = report_raw if isinstance(report_raw, Mapping) else {}
+                report_summary = report_raw.get("summary")
+                report_summary = (
+                    report_summary if isinstance(report_summary, Mapping) else {}
+                )
+                names: list[str] = []
+                for item in raw.get("results") or []:
+                    if not isinstance(item, Mapping):
+                        continue
+                    title = _text(item.get("title")) or _text(item.get("case_id"))
+                    if title and title not in names:
+                        names.append(title)
+                verdict = raw.get("verdict")
+                entries.append(
+                    RunIndexEntry(
+                        run_id=run_id,
+                        verdict=verdict if verdict in VERDICTS else None,
+                        finished_at=_text(raw.get("finished_at")),
+                        case_names=names,
+                        summary={
+                            "headline": _text(summary_raw.get("headline")),
+                            "product_pass_rate": _text(report_summary.get("product_pass_rate")),
+                        },
+                    )
+                )
+        return RunsListResponse(runs=entries, total=len(entries), limit=wanted)
+
+    # -- 默认参数（REQS-0044 工位 E）---------------------------------------- #
+
+    def defaults_view(self) -> CaseDefaultsGetResponse:
+        """``GET /api/cases/defaults``：白名单 + 当前值。
+
+        白名单 = **现场覆盖文件里实际存在的键**（摊平成点号键）；出厂默认文件里
+        有而覆盖文件没有的键（如 ``mapping_id.*``）**不进表单**——本端点只允许
+        覆盖已有键，不造新键。覆盖文件缺失 / 坏 JSON → 空白名单（只读降级，不炸）。
+        """
+        override, _state = _read_defaults_mapping(self.defaults_config_path)
+        factory, _ = _read_defaults_mapping(self.data_dir / DEFAULTS_CONFIG_FILENAME)
+        merged = _merge_defaults(factory, override)
+        whitelist = sorted(_flatten_leaves(override))
+        items: list[CaseDefaultsItem] = []
+        for key in whitelist:
+            current = _leaf_value(merged, key)
+            source: Literal["config", "factory"] = (
+                "config" if current is not None else "factory"
+            )
+            if current is None:
+                # 覆盖文件写了 null（= 取出厂默认）：白名单仍收录，值回退出厂默认
+                current = _leaf_value(factory, key)
+            items.append(CaseDefaultsItem(
+                key=key,
+                label=DEFAULTS_LABELS.get(key, key),
+                value=current,
+                source=source,
+            ))
+        return CaseDefaultsGetResponse(
+            config_path=str(self.defaults_config_path),
+            keys=whitelist,
+            items=items,
+        )
+
+    def save_defaults(self, payload: CaseDefaultsPutRequest) -> CaseDefaultsPutResponse:
+        """``PUT /api/cases/defaults``：覆盖现场默认值（REQS-0044 工位 E）。
+
+        硬规则：
+        1. **白名单**：只允许覆盖 ``config/case_defaults.json`` 里**已存在**的键
+           （点号键）；键不存在 → 422 ``defaults_key_unknown``（不造键）；
+        2. **写前备份**：把原文件原样拷成 ``<名字>.bak-defaults-<时间戳>``；
+        3. **原子写**：先写 ``.tmp`` 再 ``os.replace``，永不留半个 JSON；
+        4. **说明键与未知键原样保留**：``_note`` 等不丢；嵌套键只动指定子键。
+        """
+        override, state = _read_defaults_mapping(self.defaults_config_path)
+        if state == "corrupt":
+            raise _error(
+                500,
+                "defaults_config_unreadable",
+                "现场覆盖文件存在但不是合法 JSON，拒绝改写（请先手工修复）：%s"
+                % self.defaults_config_path,
+            )
+        whitelist = set(_flatten_leaves(override))
+        values = dict(payload.values or {})
+        unknown = sorted(key for key in values if key not in whitelist)
+        if unknown:
+            raise _error(
+                422,
+                "defaults_key_unknown",
+                "配置里没有这些键，不允许覆盖：%s（白名单：%s）"
+                % ("、".join(unknown) or "（空）", "、".join(sorted(whitelist)) or "（空）"),
+                keys=sorted(whitelist),
+            )
+        for key, value in values.items():
+            if value is None:
+                raise _error(
+                    422,
+                    "defaults_value_null",
+                    "%s：不能置空（置空等于「取出厂默认」，请直接删除配置键）" % key,
+                )
+            if isinstance(value, (dict, list)):
+                raise _error(
+                    422,
+                    "defaults_value_type",
+                    "%s：只接受标量值（嵌套用点号键，如 simeter.addr）" % key,
+                )
+            text = str(value).strip()
+            if key == "meter_addr" or key.endswith(".addr"):
+                if not (len(text) == DEFAULTS_ADDR_LEN and text.isdigit()):
+                    raise _error(
+                        422,
+                        "defaults_value_invalid",
+                        "%s：表地址必须是 %d 位十进制（收到 %r）" % (key, DEFAULTS_ADDR_LEN, value),
+                    )
+            elif not isinstance(value, str) or not text or len(text) > 64:
+                raise _error(
+                    422,
+                    "defaults_value_invalid",
+                    "%s：值须为 1–64 字符的字符串（收到 %r）" % (key, value),
+                )
+        saved = sorted(values)
+        if not saved:
+            view = self.defaults_view()
+            return CaseDefaultsPutResponse(
+                config_path=view.config_path,
+                keys=view.keys,
+                items=view.items,
+                saved=[],
+                backup_path="",
+            )
+        backup_path = ""
+        if self.defaults_config_path.is_file():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup = self.defaults_config_path.with_name(
+                "%s.bak-defaults-%s" % (self.defaults_config_path.name, stamp)
+            )
+            shutil.copy2(self.defaults_config_path, backup)
+            backup_path = str(backup)
+        # 只动白名单键；_note / 未知键 / 其它子键原样保留
+        updated = dict(override)
+        for key, value in values.items():
+            if "." in key:
+                head, _, tail = key.partition(".")
+                node = dict(updated.get(head) or {}) if isinstance(updated.get(head), Mapping) else {}
+                node[tail] = value
+                updated[head] = node
+            else:
+                updated[key] = value
+        text = json.dumps(updated, ensure_ascii=False, indent=2) + "\n"
+        tmp = self.defaults_config_path.with_name(self.defaults_config_path.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, self.defaults_config_path)
+        view = self.defaults_view()
+        return CaseDefaultsPutResponse(
+            config_path=view.config_path,
+            keys=view.keys,
+            items=view.items,
+            saved=saved,
+            backup_path=backup_path,
+        )
+
 
 # --------------------------------------------------------------------------- #
 # 路由工厂
@@ -2297,13 +2688,15 @@ def create_cases_router(
     register_domain: bool = True,
     bridge_snapshot_provider: Any = None,
     keep_runs: int = DEFAULT_KEEP_RUNS,
+    defaults_config_path: Optional[Path] = None,
 ) -> APIRouter:
-    """创建 ``/api/cases/*`` 路由（10 个端点，REQS-0042 §3.6）。
+    """创建 ``/api/cases/*`` 路由（13 个端点，REQS-0042 §3.6 + 0044 变更 4 runs 索引
+    + 0044 工位 E 默认参数）。
 
     ``storage_dir``：job 结果落盘根（结果写 ``<storage_dir>/case_runs/<run_id>/result.json``）。
     ``data_dir``：声明根（默认 ``libs/case_runner/data``）；``extras`` / ``fact_probe`` /
     ``bridge_snapshot_provider`` 是能力替身、事实探测源与台架快照源的注入位（测试用），
-    生产路径全部走缺省。
+    生产路径全部走缺省；``defaults_config_path`` 是默认参数覆盖文件的注入位（测试隔离）。
     """
     service = CasesService(
         storage_dir,
@@ -2313,6 +2706,7 @@ def create_cases_router(
         register_domain=register_domain,
         bridge_snapshot_provider=bridge_snapshot_provider,
         keep_runs=keep_runs,
+        defaults_config_path=defaults_config_path,
     )
     rt = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -2361,6 +2755,27 @@ def create_cases_router(
         value, source = resolve_job_base_url(explicit, str(request.base_url))
         return service.bench(base_url=value, base_source=source)
 
+    # -- 默认参数（REQS-0044 工位 E）---------------------------------------- #
+
+    @rt.get("/defaults", response_model=CaseDefaultsGetResponse)
+    def get_defaults() -> CaseDefaultsGetResponse:
+        """默认参数读模型：白名单 = ``config/case_defaults.json`` 里实际存在的键。
+
+        只读不写；出厂默认文件里有而覆盖文件没有的键（如 ``mapping_id.*``）不进
+        表单——**不造键**。覆盖文件缺失 / 坏 JSON → 空白名单（页面隐藏入口）。
+        """
+        return service.defaults_view()
+
+    @rt.put("/defaults", response_model=CaseDefaultsPutResponse)
+    def put_defaults(body: CaseDefaultsPutRequest) -> CaseDefaultsPutResponse:
+        """覆盖现场默认参数（REQS-0044 工位 E）。
+
+        - 白名单校验：键不在 ``config/case_defaults.json`` → **422**；
+        - 表地址类键（``meter_addr`` / ``*.addr``）须 12 位十进制，否则 422；
+        - 写前把原文件备份成 ``.bak-defaults-<时间戳>``，响应带备份路径。
+        """
+        return service.save_defaults(body)
+
     # -- 方案（API-2 / SU-1）---------------------------------------------- #
 
     @rt.get("/suites", response_model=SuiteListResponse)
@@ -2398,6 +2813,19 @@ def create_cases_router(
         """job 快照：state / progress / 当前用例 / 已出结果（含断点字段与四态 verdict）。"""
         return service.job_view(job_id)
 
+    @rt.get("/runs", response_model=RunsListResponse)
+    def list_runs(
+        limit: int = Query(
+            RUNS_LIST_DEFAULT_LIMIT,
+            description="返回最近 N 轮（默认 10，上限 50；超界夹取）",
+        ),
+    ) -> RunsListResponse:
+        """历史运行索引（REQS-0044 变更 4）：最近 N 轮
+        ``{run_id, verdict, finished_at, case_names, summary}``，新的在前；
+        缺 ``result.json`` 的轮次跳过并忽略。完整读回走 ``GET /api/cases/runs/{run_id}``。
+        """
+        return service.run_index(limit)
+
     @rt.get("/runs/{run_id}", response_model=RunRecordView)
     def run_result(run_id: str) -> RunRecordView:
         """按 run_id 取历史结果（``<storage_dir>/case_runs/<run_id>/result.json``）。"""
@@ -2409,9 +2837,13 @@ def create_cases_router(
 __all__ = [
     "CATEGORY_DIMENSIONS",
     "DEFAULT_ENV_LOCK_TIMEOUT_S",
+    "DEFAULTS_CONFIG_FILENAME",
+    "DEFAULTS_LABELS",
     "ENV_BASE_URL",
     "RESULT_FILENAME",
     "RUNS_DIRNAME",
+    "RUNS_LIST_DEFAULT_LIMIT",
+    "RUNS_LIST_MAX_LIMIT",
     "RUN_BLOCKED",
     "TOLERATED_CASE_FIELDS",
     "USAGE_ORDER",
@@ -2426,6 +2858,10 @@ __all__ = [
     "BlockResultView",
     "BlockView",
     "CaseCategory",
+    "CaseDefaultsGetResponse",
+    "CaseDefaultsItem",
+    "CaseDefaultsPutRequest",
+    "CaseDefaultsPutResponse",
     "CaseListResponse",
     "CaseRunView",
     "CaseVerdictCounts",
@@ -2435,9 +2871,11 @@ __all__ = [
     "FactValueView",
     "FactView",
     "JobProgress",
+    "RunIndexEntry",
     "RunRecordView",
     "RunRequest",
     "RunResponse",
+    "RunsListResponse",
     "SuiteDeleteResponse",
     "SuiteListResponse",
     "SuiteSaveResponse",

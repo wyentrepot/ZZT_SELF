@@ -71,9 +71,27 @@ def write_runtime_file(host: str = "0.0.0.0", port: int = PORT) -> Path | None:
         return None
 
 
+def _port_already_served(port: int = PORT, host: str = "127.0.0.1",
+                         timeout: float = 1.0) -> bool:
+    """探测端口是否已有活实例在监听（REQS-0043 I1，与 run.py 同口径）。
+
+    已有活监听 → 不写运行时文件、不再起服（防死 pid 误导 ``case_run`` 服务发现）。
+    """
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _start_server() -> None:
     import uvicorn
 
+    if _port_already_served():
+        print(f"[workbench] 端口 {PORT} 已有实例在监听；跳过起服与运行时文件覆写"
+              "（REQS-0043 I1：运行时文件保持指向真实监听进程）。")
+        return
     _runtime = write_runtime_file(host="0.0.0.0", port=PORT)
     if _runtime is not None:
         print(f"[workbench] 运行时文件：{_runtime}（case_run 据此发现本服务，REQS-0042 D2-3）")

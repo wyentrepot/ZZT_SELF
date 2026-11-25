@@ -39,17 +39,24 @@ window.addEventListener("message", function (e) {
 });
 </script>
 <style>
-/* 用例库页面样式：只用 REQS-0012 三层 token 的语义层变量（var(--color-*)），
-   禁止裸色值；四态着色 pass 绿 / fail 红 / blocked 灰 / inconclusive 黄。 */
+/* 用例库页面样式（REQS-0044：界面移植自 docs/ui/cases_v2_demo.html）。
+   只用 REQS-0012 三层 token 的语义层变量（var(--color-*)），禁止裸色值；
+   四态着色沿用本页语义：pass 绿 / fail 红 / blocked 灰 / inconclusive 黄（warn）。 */
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:var(--font-sans);font-size:13px;line-height:1.6;color:var(--color-fg-default);background:var(--color-bg-canvas);overflow:auto}
 .mono{font-family:var(--font-mono);font-variant-ligatures:none}
 .spacer{flex:1}
+.hint{color:var(--color-fg-muted);font-size:12px}
+.dim{color:var(--color-fg-dim)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--color-border-strong);border-radius:var(--radius-full);border:2px solid transparent;background-clip:content-box}
+:focus-visible{outline:2px solid var(--color-border-focus);outline-offset:1px;border-radius:var(--radius-sm)}
 
 /* ---------- 顶栏 ---------- */
 .topbar{display:flex;align-items:center;gap:8px;padding:9px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);position:sticky;top:0;z-index:8;flex-wrap:wrap}
-.topbar h1{font-size:15px;font-weight:600;margin-right:2px}
+.topbar h1{font-size:15px;font-weight:600;margin-right:2px;white-space:nowrap}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:var(--radius-full);font-size:12px;border:1px solid var(--color-border-strong);color:var(--color-fg-muted)}
 .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--color-fg-muted)}
 .pill.ok{color:var(--color-status-pass);border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
@@ -66,7 +73,16 @@ button.primary:hover{color:var(--color-fg-inverse);filter:brightness(1.08)}
 button:disabled{opacity:.42;cursor:not-allowed;filter:none}
 button.mini{padding:2px 9px;font-size:12px;border-radius:var(--radius-sm)}
 
-/* ---------- 台架就绪横幅（UI-2） ---------- */
+/* ---------- 筛选工具条（下拉筛选 + 排序 + 分组维度 + 默认参数入口） ---------- */
+.toolbar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);flex-wrap:wrap;position:sticky;top:41px;z-index:7}
+.toolbar input[type=search],.toolbar input[type=text]{font:inherit;padding:3px 9px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
+.toolbar input[type=text]{width:150px}
+select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default);cursor:pointer}
+.chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--color-fg-muted);cursor:pointer;user-select:none}
+/* 默认参数入口（工位 E）：一行当前默认 +「修改」，表单在 defaults-modal 里 */
+.def-line{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-raised)}
+
+/* ---------- A · 台架就绪横幅：5 口 + 关键事实三态；不满足 → 运行置灰 + 逐项原因 ---------- */
 .bench{margin:10px 16px 0;border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-raised);padding:8px 12px 6px}
 .bench.is-ready{border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
 .bench.is-blocked{border-color:var(--color-status-fail-border);background:var(--color-status-fail-bg)}
@@ -87,35 +103,43 @@ button.mini{padding:2px 9px;font-size:12px;border-radius:var(--radius-sm)}
 .port.off .dot,.fact.no .dot{background:var(--color-status-fail)}
 .fact.unknown{color:var(--color-status-warn);border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
 .fact.unknown .dot{background:var(--color-status-warn)}
+/* 非闸门事实（required=false 的信息性事实，如运行期回写型 archive.written 等）：
+   三态芯片一律中性灰——unknown 不用黄色「未知」，避免误读为台架故障（REQS-0044 变更 4）。
+   闸门判定（ready / unmet_required 置灰运行钮）不受本样式影响。 */
+.fact.info{color:var(--color-fg-muted);border-color:var(--color-border-strong);background:var(--color-bg-surface)}
+.fact.info .dot{background:var(--color-fg-muted)}
 .bench-reasons{list-style:none;margin:6px 0 2px;padding:0}
 .bench-reasons li{font-size:12px;color:var(--color-status-fail);padding:1px 0}
 .bench-reasons li:before{content:"✕ ";font-weight:700}
 .bench-reasons li.heal{color:var(--color-status-info)}
+/* 详情折叠（工位 E）：就绪态横幅一行，口/事实芯片都收在这里 */
+.bench-details{margin-top:2px}
 .bench-dev-head{margin:2px 0 0}
 .dev-raw{font-family:var(--font-mono);font-size:11px;background:var(--color-bg-canvas);border:1px solid var(--color-border-default);
   border-radius:var(--radius-sm);padding:5px 8px;max-height:110px;overflow:auto;white-space:pre-wrap;color:var(--color-fg-muted)}
 
-/* ---------- 筛选工具条 ---------- */
-.toolbar{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--color-border-default);background:var(--color-bg-surface);flex-wrap:wrap;position:sticky;top:0;z-index:7}
-.toolbar input[type=search],.toolbar input[type=text]{font:inherit;padding:3px 9px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
-.toolbar input[type=search]{width:180px}
-.toolbar input[type=text]{width:150px}
-select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
-.hint{color:var(--color-fg-muted);font-size:12px}
-.chk{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--color-fg-muted);cursor:pointer;user-select:none}
-
-/* ---------- 主体：左侧分组栏 + 用例列表 ---------- */
+/* ---------- B+C 主体：左栏（分组/筛选）+ 主区 ---------- */
 .layout{display:flex;align-items:flex-start;gap:0}
-.rail{flex:0 0 214px;width:214px;border-right:1px solid var(--color-border-default);padding:10px 10px 24px;position:sticky;top:41px;max-height:calc(100vh - 41px);overflow:auto}
+.rail{flex:0 0 216px;width:216px;border-right:1px solid var(--color-border-default);padding:10px 10px 24px;position:sticky;top:83px;max-height:calc(100vh - 83px);overflow:auto}
 .rail-head{display:flex;align-items:center;gap:6px;justify-content:space-between;margin-bottom:6px}
 .rail-head b{font-size:12px;color:var(--color-fg-muted);font-weight:600}
-.rail select{width:100%;margin-bottom:8px}
-.rail-item{display:flex;align-items:center;gap:6px;padding:3px 8px;border-radius:var(--radius-sm);cursor:pointer;font-size:12px;color:var(--color-fg-default)}
+.rail .fsearch{width:100%;margin-bottom:8px;font:inherit;padding:3px 9px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
+.rail-group{margin-bottom:10px}
+.rail-group>b{display:block;font-size:11px;color:var(--color-fg-dim);letter-spacing:.04em;margin:2px 0 3px;border-bottom:1px dashed var(--color-border-default);padding-bottom:2px}
+.rail-item{display:flex;align-items:center;gap:6px;padding:2px 8px;border-radius:var(--radius-sm);cursor:pointer;font-size:12px;color:var(--color-fg-default);user-select:none}
 .rail-item:hover{background:var(--color-bg-hover)}
 .rail-item.on{background:var(--color-accent-soft);color:var(--color-accent-fg);font-weight:600}
 .rail-item .rcount{margin-left:auto;font-size:11px;color:var(--color-fg-muted);font-variant-numeric:tabular-nums}
-.rail-item .swatch{width:6px;height:6px;border-radius:50%;background:var(--color-border-emphasis)}
-.list{flex:1;min-width:0;padding:12px 16px 32px}
+.rail-item .swatch{width:6px;height:6px;border-radius:50%;background:var(--color-border-emphasis);flex:none}
+.rail-item.on .swatch{background:var(--color-accent-fg)}
+.rail-clear{margin-top:2px}
+.maincol{flex:1;min-width:0;padding:12px 16px 40px}
+
+/* ---------- C · 用例清单 ---------- */
+#view-list[hidden]{display:none}
+.listbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.hist{display:inline-flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap}
+.hist input[type=text]{font:inherit;width:240px;padding:2px 8px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default);font-family:var(--font-mono);font-size:11px}
 
 .group{margin-bottom:14px}
 .group-head{display:flex;align-items:center;gap:8px;margin:0 0 6px;padding-bottom:4px;border-bottom:1px solid var(--color-border-default)}
@@ -123,13 +147,17 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .group-head .gcount{font-size:11px;color:var(--color-fg-muted)}
 .group-head .gbar{height:3px;border-radius:var(--radius-full);background:var(--color-accent-emphasis);opacity:.55;width:18px}
 
-.case{border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-surface);margin-bottom:6px;padding:6px 10px}
+.case{border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-surface);margin-bottom:6px;padding:6px 10px;cursor:pointer}
 .case:hover{border-color:var(--color-border-strong)}
 .case-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.case-head .pick{width:14px;height:14px;accent-color:var(--color-accent-emphasis);cursor:pointer}
+.case-head .pick{width:14px;height:14px;accent-color:var(--color-accent-emphasis);cursor:pointer;flex:none}
 .case-title{font-weight:600}
 .case-id{font-size:11px;color:var(--color-fg-muted)}
-.case-steps{font-size:11px;color:var(--color-fg-muted);border:1px solid var(--color-border-default);border-radius:var(--radius-sm);padding:0 6px}
+/* kind 徽标（REQS-0044 变更 4）：回归=默认色 / 场景=蓝（info 令牌）/ 台架准备=灰 */
+.kind-badge{display:inline-block;font-size:11px;line-height:1.5;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);padding:0 6px;color:var(--color-fg-muted);background:var(--color-bg-raised);white-space:nowrap}
+.kind-badge.scenario{color:var(--color-status-info);border-color:var(--color-status-info-border);background:var(--color-status-info-bg)}
+.kind-badge.setup{color:var(--color-fg-dim);border-color:var(--color-border-default);background:var(--color-bg-canvas)}
+.case-steps{font-size:11px;color:var(--color-fg-muted);border:1px solid var(--color-border-default);border-radius:var(--radius-sm);padding:0 6px;white-space:nowrap}
 .case-sum{margin-top:3px;font-size:12px;color:var(--color-fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .case-cat{margin-top:3px;display:flex;gap:5px;flex-wrap:wrap}
 .tag{display:inline-block;font-size:11px;color:var(--color-fg-muted);border:1px dashed var(--color-border-strong);border-radius:var(--radius-sm);padding:0 6px}
@@ -140,8 +168,11 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .step-do{font-size:12px}
 .step-expect{font-size:12px;color:var(--color-fg-muted)}
 .step-expect b{color:var(--color-fg-dim);font-weight:600}
+.empty{padding:36px 16px;text-align:center;color:var(--color-fg-muted)}
+.empty b{display:block;margin-bottom:6px;color:var(--color-fg-default)}
+.degraded{padding:10px 16px;color:var(--color-status-warn);font-size:12px}
 
-/* ---------- 四态着色（UI-6）：pass 绿 / fail 红 / blocked 灰 / inconclusive 黄 ---------- */
+/* ---------- 四态着色：pass 绿 / fail 红 / blocked 灰 / inconclusive 黄 ---------- */
 .verdict{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;letter-spacing:.04em;padding:0 8px;border-radius:var(--radius-full);border:1px solid var(--color-border-strong);color:var(--color-fg-muted);background:var(--color-bg-raised)}
 .verdict .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
 .verdict-pass{color:var(--color-status-pass);border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
@@ -152,9 +183,76 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .verdict-inconclusive{color:var(--color-status-warn);border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
 .verdict-unknown{color:var(--color-fg-muted);border-color:var(--color-border-strong);background:var(--color-bg-raised)}
 
-/* ---------- 运行结果与断点（UI-4 / UI-5） ---------- */
+/* ---------- D · 结果视图（REQS-0044 变更 3 报表契约：run.report.rows/summary） ---------- */
+#view-result[hidden]{display:none}
+.res-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.res-head b{font-size:13px}
+.evchip{display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:11px;padding:1px 8px;border-radius:var(--radius-sm);border:1px solid var(--color-border-default);background:var(--color-bg-raised);color:var(--color-fg-muted);max-width:52ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sumbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-surface);padding:8px 14px;margin-bottom:10px}
+.sum-rate{display:flex;align-items:baseline;gap:7px}
+.sum-rate b{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--color-accent-emphasis)}
+.sum-rate span{font-size:12px;color:var(--color-fg-muted)}
+.sum-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:1px 10px;border-radius:var(--radius-full);border:1px solid var(--color-border-strong);font-variant-numeric:tabular-nums;color:var(--color-fg-muted)}
+.sum-chip.pass{color:var(--color-status-pass);border-color:var(--color-status-pass-border);background:var(--color-status-pass-bg)}
+.sum-chip.fail{color:var(--color-status-fail);border-color:var(--color-status-fail-border);background:var(--color-status-fail-bg)}
+.sum-chip.blocked{color:var(--color-fg-muted)}
+.sum-chip.inconclusive{color:var(--color-status-warn);border-color:var(--color-status-warn-border);background:var(--color-status-warn-bg)}
+.sum-setup{font-size:12px;color:var(--color-fg-dim);border-left:1px solid var(--color-border-default);padding-left:12px}
+.tablewrap{overflow:auto;max-height:calc(100vh - 330px);border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-surface)}
+table.res{width:100%;min-width:1060px;border-collapse:collapse;font-size:12px}
+table.res th,table.res td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--color-border-default);vertical-align:top}
+table.res th{position:sticky;top:0;z-index:2;background:var(--color-bg-input);color:var(--color-fg-dim);font-size:11px;font-weight:600;letter-spacing:.05em;border-bottom:1px solid var(--color-border-strong);white-space:nowrap}
+table.res tbody tr:nth-child(even){background:var(--color-bg-hover)}
+table.res td.c-name{font-weight:600;white-space:nowrap}
+table.res td.c-steps{max-width:360px}
+table.res td.c-reason{min-width:230px}
+table.res tr.r-setup td{color:var(--color-fg-muted)}
+table.res tr.r-pass{border-left:3px solid var(--color-status-pass)}
+table.res tr.r-fail{border-left:3px solid var(--color-status-fail);background:var(--color-status-fail-bg)}
+table.res tr.r-blocked{border-left:3px solid var(--color-border-emphasis);background:var(--color-bg-raised)}
+table.res tr.r-inconclusive{border-left:3px solid var(--color-status-warn);background:var(--color-status-warn-bg)}
+.muted-dash{color:var(--color-fg-dim)}
+.reason{font-size:12px}
+table.res tr.r-fail .reason{color:var(--color-status-fail);font-weight:500}
+table.res tr.r-blocked .reason{color:var(--color-fg-muted)}
+table.res tr.r-inconclusive .reason{color:var(--color-status-warn)}
+.ev-toggle{margin-top:2px;padding:0 7px;font-size:11px;border-radius:var(--radius-sm);color:var(--color-fg-muted)}
+.ev-paths{margin-top:3px;display:flex;flex-direction:column;gap:3px}
+.ev-paths code{font-family:var(--font-mono);font-size:11px;padding:1px 7px;border-radius:var(--radius-sm);border:1px solid var(--color-border-default);background:var(--color-bg-raised);color:var(--color-fg-muted);cursor:pointer;word-break:break-all}
+.ev-paths code:hover{color:var(--color-accent-fg);border-color:var(--color-border-emphasis)}
+.res-empty{padding:24px 16px;color:var(--color-fg-muted);font-size:12px}
+
+/* ---------- E · 开发者详情（块级明细只在这里；用户层禁止块名，REQS-0042 D11-2） ---------- */
+details.dev{margin-top:14px;border:1px dashed var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-bg-surface)}
+details.dev summary{cursor:pointer;padding:7px 12px;font-size:12px;font-weight:600;color:var(--color-fg-muted);user-select:none;list-style:none}
+details.dev summary:before{content:"▸ ";color:var(--color-fg-dim)}
+details.dev[open] summary:before{content:"▾ "}
+details.dev summary:hover{color:var(--color-fg-default)}
+.dev-body{padding:0 12px 12px;border-top:1px dashed var(--color-border-default)}
+.dev-note{margin:8px 0;font-size:12px;color:var(--color-fg-muted)}
+.dev-row{margin-bottom:10px}
+.dev-row>b{font-size:12px}
+table.bk{width:100%;border-collapse:collapse;margin-top:4px;font-size:11px}
+table.bk th,table.bk td{text-align:left;padding:3px 8px;border-bottom:1px solid var(--color-border-default);vertical-align:top}
+table.bk th{color:var(--color-fg-dim);font-weight:600}
+table.bk td.bkid{font-family:var(--font-mono);color:var(--color-fg-subtle);white-space:nowrap}
+table.bk td{color:var(--color-fg-muted)}
+.bk-obs{font-family:var(--font-mono);color:var(--color-fg-subtle)}
+
+/* ---------- 运行进度面板（UI-4，工位 E 简化）+ 报告卡 / 断点（UI-5） ---------- */
 #job-panel{position:sticky;bottom:0;border-top:2px solid var(--color-border-strong);background:var(--color-bg-raised);padding:8px 16px;display:none;max-height:46vh;overflow:auto;z-index:9}
 #job-panel.show{display:block}
+/* 单行态：运行中 = 方案名 + 进度 n/m + 当前用例名；完成后 = ✔/✘ + run_id + verdict + 耗时。
+   点击该行（job-collapsed）才展开下方 job-collapsible（报告卡 + 日志）。 */
+.job-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;user-select:none;cursor:default;min-height:24px}
+#job-panel.clickable .job-line{cursor:pointer}
+#job-panel.clickable .job-line:hover b{color:var(--color-accent-fg)}
+#job-panel.clickable .job-line:hover #job-expander{color:var(--color-accent-fg)}
+.job-done-line{font-size:12px;color:var(--color-fg-default);display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.job-glyph{font-weight:700}
+.job-glyph.is-pass{color:var(--color-status-pass)}
+.job-glyph.is-fail{color:var(--color-status-fail)}
+.job-runid{font-family:var(--font-mono);font-size:11px;color:var(--color-fg-muted)}
 .job-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .job-head b{font-size:13px}
 .job-stage{font-size:12px;color:var(--color-fg-muted)}
@@ -213,20 +311,26 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
 .block-state.inconclusive{color:var(--color-status-warn)}
 .job-log{font-family:var(--font-mono);font-size:11px;background:var(--color-bg-canvas);border:1px solid var(--color-border-default);border-radius:var(--radius-sm);padding:6px 8px;max-height:120px;overflow:auto;white-space:pre-wrap;margin-top:6px;color:var(--color-fg-muted)}
 
-/* ---------- 空态 / 提示 / 存方案对话框 ---------- */
-.empty{padding:36px 16px;text-align:center;color:var(--color-fg-muted)}
-.empty b{display:block;margin-bottom:6px;color:var(--color-fg-default)}
-.degraded{padding:10px 16px;color:var(--color-status-warn);font-size:12px}
+/* ---------- 存方案对话框 / Toast ---------- */
 #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--color-accent-emphasis);color:var(--color-fg-inverse);padding:6px 16px;border-radius:var(--radius-md);opacity:0;transition:.25s;z-index:50;pointer-events:none}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .modal{position:fixed;inset:0;background:var(--color-bg-overlay);display:none;align-items:center;justify-content:center;z-index:40}
 .modal.show{display:flex}
-.modal .box{width:380px;max-width:92vw;border:1px solid var(--color-border-strong);border-radius:var(--radius-lg);background:var(--color-bg-surface);padding:14px 16px}
+.modal .box{width:400px;max-width:92vw;border:1px solid var(--color-border-strong);border-radius:var(--radius-lg);background:var(--color-bg-surface);padding:14px 16px}
 .modal h2{font-size:14px;margin-bottom:10px}
 .modal .row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 .modal .row label{font-size:12px;color:var(--color-fg-muted);min-width:64px}
 .modal .row input[type=text]{flex:1;font:inherit;padding:4px 8px;border:1px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-bg-input);color:var(--color-fg-default)}
 .modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+
+/* ---------- 窄屏 <1000px：侧栏改横向铺开，表格横向滚动 ---------- */
+@media (max-width:999px){
+  .layout{flex-direction:column;align-items:stretch}
+  .maincol{width:100%;max-width:100%;padding:10px 12px 40px}
+  .rail{position:static;width:auto;flex:none;max-height:none;border-right:none;border-bottom:1px solid var(--color-border-default)}
+  .tablewrap{max-height:none}
+  .topbar{gap:6px}
+}
 </style>
 </head>
 <body>
@@ -238,34 +342,44 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
   <span class="spacer"></span>
   <span class="hint" id="sel-count" data-hook="sel-count"></span>
   <button class="mini" id="btn-clear-sel" disabled>清除勾选</button>
-  <button class="mini" id="btn-save-suite" data-hook="suite-save">存方案</button>
+  <select id="suite-select" data-hook="suite-select" title="回归方案（Suite）"><option value="">（未选方案）</option></select>
+  <button class="mini" id="btn-del-suite" data-hook="suite-delete" disabled title="删除当前选中的方案">删方案</button>
+  <button class="mini" id="btn-save-suite" data-hook="suite-save" title="把勾选的用例存为方案">存方案</button>
   <button class="mini" id="btn-refresh">刷新</button>
   <button class="mini primary" id="btn-run-now" data-hook="run-now" disabled title="勾选用例后运行">▶ 立即运行</button>
   <button class="mini primary" id="btn-run-suite" data-hook="run-suite" disabled title="选择方案后运行">▶ 按方案运行</button>
 </div>
 
-<!-- UI-2 台架就绪横幅：5 口 + 关键事实三态；不满足时运行按钮置灰并逐项给原因 -->
+<!-- UI-2 台架就绪横幅（REQS-0044 工位 E 简化）：就绪态只留一行「✓ 就绪」+「▸ 详情」，
+     口状态 / 事实芯片全部收进详情；只有不就绪（unmet_required 非空）才自动展开列缺什么。 -->
 <section class="bench" id="bench-banner" data-hook="bench-banner" aria-live="polite">
   <div class="bench-head">
     <b>台架就绪</b>
     <span class="bench-state" id="bench-state">检测中…</span>
     <span class="spacer"></span>
-    <span class="hint" id="bench-hint"></span>
+    <button class="mini" id="bench-detail-toggle" data-hook="bench-detail-toggle" aria-expanded="false" aria-controls="bench-details">▸ 详情</button>
   </div>
-  <div class="bench-group" data-hook="bench-ports"><span class="glabel">串口</span><span class="hint">读取中…</span></div>
-  <div class="bench-group" data-hook="bench-facts"><span class="glabel">事实</span><span class="hint">读取中…</span></div>
-  <ul class="bench-reasons" id="bench-reasons" data-hook="bench-reasons"></ul>
-  <!-- 内部细节（端口/事实 id、原始 errors/detail、注入变量）只放这里，默认收起 -->
-  <div class="bench-dev-head" id="bench-dev-head" hidden>
-    <button class="mini rc-dev-toggle" id="bench-dev-toggle" data-hook="bench-dev-toggle" aria-expanded="false">开发者详情 ▸</button>
-  </div>
-  <div class="rc-dev" data-hook="bench-dev-details" hidden>
-    <pre class="dev-raw" id="bench-raw"></pre>
+  <div class="bench-details" id="bench-details" data-hook="bench-details" hidden>
+    <div class="bench-group" data-hook="bench-ports"><span class="glabel">串口</span><span class="hint">读取中…</span></div>
+    <div class="bench-group" data-hook="bench-facts"><span class="glabel">事实</span><span class="hint">读取中…</span></div>
+    <ul class="bench-reasons" id="bench-reasons" data-hook="bench-reasons"></ul>
+    <!-- 内部细节（端口/事实 id、原始 errors/detail、注入变量）只放这里，默认收起 -->
+    <div class="bench-dev-head" id="bench-dev-head" hidden>
+      <button class="mini rc-dev-toggle" id="bench-dev-toggle" data-hook="bench-dev-toggle" aria-expanded="false">开发者详情 ▸</button>
+    </div>
+    <div class="rc-dev" data-hook="bench-dev-details" hidden>
+      <pre class="dev-raw" id="bench-raw"></pre>
+    </div>
   </div>
 </section>
 
 <div class="toolbar">
-  <input type="search" id="q" data-hook="filter-search" placeholder="搜用例名 / ID / 步骤…">
+  <select id="group-by" data-hook="group-by" title="清单按该维度分组">
+    <option value="usage">按常用度分组</option>
+    <option value="domain">按设备域分组</option>
+    <option value="scene">按业务场景分组</option>
+    <option value="region">按省份 / 区域分组</option>
+  </select>
   <select id="f-usage" data-hook="filter-usage"><option value="">常用度：全部</option></select>
   <select id="f-domain" data-hook="filter-domain"><option value="">设备域：全部</option></select>
   <select id="f-scene" data-hook="filter-scene"><option value="">场景：全部</option></select>
@@ -277,55 +391,120 @@ select{font:inherit;padding:3px 6px;border:1px solid var(--color-border-strong);
     <option value="steps">排序：步骤数</option>
   </select>
   <span class="spacer"></span>
-  <select id="suite-select" data-hook="suite-select"><option value="">（未选方案）</option></select>
-  <button class="mini" id="btn-del-suite" data-hook="suite-delete" disabled>删方案</button>
-  <input type="text" id="p-meter-addr" data-hook="param-meter-addr" placeholder="meter_addr（可选）">
-  <label class="chk" title="存方案时写入：首个用例失败即停"><input type="checkbox" id="sw-stop" checked>首败即停（存方案）</label>
+  <!-- 默认参数入口（REQS-0044 工位 E）：一行显示当前默认 +「修改」，表单只暴露
+       config/case_defaults.json 里实际存在的键（文案由 GET /api/cases/defaults 下发） -->
+  <span class="def-line" id="defaults-line" data-hook="defaults-line" hidden>
+    <span class="hint" id="defaults-text"></span>
+    <button class="mini" id="btn-defaults-edit" data-hook="defaults-edit" title="修改台架默认参数（保存到 config/case_defaults.json，写前自动备份）">修改</button>
+  </span>
 </div>
 
 <div class="layout">
   <aside class="rail" data-hook="group-rail">
     <div class="rail-head"><b>分组 / 筛选</b><span class="hint" id="rail-total"></span></div>
-    <select id="group-by" data-hook="group-by">
-      <option value="usage">按常用度分组</option>
-      <option value="domain">按设备域分组</option>
-      <option value="scene">按业务场景分组</option>
-      <option value="region">按省份 / 区域分组</option>
-    </select>
+    <input type="search" id="q" class="fsearch" data-hook="filter-search" placeholder="搜用例名 / ID / 步骤…">
     <div id="rail-body"></div>
+    <button class="mini rail-clear" id="btn-clear-filter">清除筛选</button>
   </aside>
-  <main class="list" id="list-wrap" data-hook="case-list">
-    <div class="empty">加载中…</div>
+  <main class="maincol">
+    <!-- ═══ C · 用例清单（勾选 → 存方案 → 运行；卡片可展开步骤 do/expect） ═══ -->
+    <section id="view-list">
+      <div class="listbar">
+        <span class="hint" id="list-count"></span>
+        <div class="hist">
+          <span class="hint">历史运行</span>
+          <select id="runs-select" data-hook="runs-select" title="最近 10 轮运行：选中即载入结果视图"><option value="">最近运行…</option></select>
+          <span class="hint">历史结果</span>
+          <input type="text" id="run-id-input" placeholder="run_id，如 20261124-161629-df6184" title="按 run_id 读取历史运行结果">
+          <button class="mini" id="btn-load-run">查看结果</button>
+        </div>
+      </div>
+      <div id="list-wrap" data-hook="case-list">
+        <div class="empty">加载中…</div>
+      </div>
+    </section>
+
+    <!-- ═══ D · 结果视图：Excel 式结果表（六列固定）+ 汇总条 + 开发者详情折叠 ═══ -->
+    <section id="view-result" hidden>
+      <div class="res-head">
+        <b id="res-title">运行结果</b>
+        <span class="evchip" id="res-dir" title="证据落盘位置（result.json / 运行目录）"></span>
+        <span class="hint" id="res-meta"></span>
+        <span class="spacer"></span>
+        <button class="mini" id="btn-back-list">↩ 返回清单</button>
+        <button class="mini primary" id="btn-rerun" title="用同一批用例再发起一轮运行">▶ 再跑一次</button>
+      </div>
+      <div class="sumbar" id="sumbar"></div>
+      <div class="tablewrap">
+        <table class="res" id="res-table">
+          <thead><tr>
+            <th>测试大类</th><th>测试子类</th><th>用例名称</th><th>测试步骤</th><th>结果</th><th>失败原因 / 说明</th>
+          </tr></thead>
+          <tbody id="res-tbody"></tbody>
+        </table>
+        <div class="res-empty" id="res-empty" hidden></div>
+      </div>
+      <!-- ═══ E · 开发者详情：块级观测明细（块 id 仅此处可见，REQS-0042 D11-2） ═══ -->
+      <details class="dev" id="dev-details-run" data-hook="run-dev-details">
+        <summary>开发者详情 · 块级观测明细（内部块 id 仅此处可见）</summary>
+        <div class="dev-body" id="dev-body"></div>
+      </details>
+    </section>
   </main>
 </div>
 
-<!-- UI-4 job 面板 + UI-5 断点可视化 -->
+<!-- UI-4 job 面板（REQS-0044 工位 E 简化）：运行中只显示单行进度（方案名 + 进度 n/m +
+     当前用例名）；完成后自动收起为一行（✔/✘ + run_id + verdict + 耗时），点击该行才展开
+     完整结果（报告卡 + 日志）；Excel 式完整报表视图保留，从「查看完整报表」进入。 -->
 <div id="job-panel" data-hook="job-panel">
-  <div class="job-head">
+  <div class="job-line" id="job-collapsed" data-hook="job-collapsed" role="button" tabindex="0" aria-expanded="false">
     <b id="job-line">任务</b>
-    <span class="job-stage" id="job-stage"></span>
+    <span class="job-stage" id="job-progress-line" data-hook="job-progress-line"></span>
+    <span class="job-done-line" id="job-done-line" data-hook="job-done-line" hidden></span>
     <span class="spacer"></span>
-    <span class="hint" id="job-summary"></span>
+    <span class="hint dim" id="job-expander" data-hook="job-expander" hidden>▸</span>
   </div>
-  <div style="display:flex;align-items:center;gap:10px">
-    <div class="progress"><b id="job-bar"></b></div>
-    <span class="hint" id="job-current"></span>
+  <div class="job-collapsible" id="job-collapsible" data-hook="job-collapsible" hidden>
+    <div class="job-head">
+      <span class="job-stage" id="job-stage"></span>
+      <span class="spacer"></span>
+      <span class="hint" id="job-summary"></span>
+      <button class="mini" id="btn-open-report" data-hook="job-open-report" hidden title="按 run_id 打开 Excel 式完整报表（结果视图）">查看完整报表</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="progress"><b id="job-bar"></b></div>
+      <span class="hint" id="job-current"></span>
+    </div>
+    <div id="job-results" data-hook="job-results"></div>
+    <pre class="job-log" id="job-log"></pre>
   </div>
-  <div id="job-results" data-hook="job-results"></div>
-  <pre class="job-log" id="job-log"></pre>
 </div>
 
 <!-- 存方案对话框（UI-3） -->
 <div class="modal" id="suite-modal" data-hook="suite-modal">
   <div class="box">
-    <h2>存为方案</h2>
+    <h2>存为方案（Suite）</h2>
     <div class="row"><label>方案 ID</label><input type="text" id="suite-id" placeholder="如 smoke_meter"></div>
     <div class="row"><label>方案名</label><input type="text" id="suite-name" placeholder="如 抄表冒烟"></div>
     <div class="row"><label>备注</label><input type="text" id="suite-notes" placeholder="可选"></div>
+    <div class="row"><label>执行策略</label><label class="chk" title="存方案时写入：首个用例失败即停"><input type="checkbox" id="sw-stop" checked>首败即停</label></div>
     <div class="hint" id="suite-cover">方案用例：0 条</div>
     <div class="actions">
       <button class="mini" id="suite-cancel">取消</button>
       <button class="mini primary" id="suite-ok">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 默认参数小表单（REQS-0044 工位 E）：只渲染 GET /api/cases/defaults 下发的键（白名单），
+     保存走 PUT，后端做白名单校验 + 写前备份；成功后页面刷新默认值显示 -->
+<div class="modal" id="defaults-modal" data-hook="defaults-modal">
+  <div class="box">
+    <h2>默认参数</h2>
+    <div id="defaults-form"></div>
+    <div class="actions">
+      <button class="mini" id="defaults-cancel">取消</button>
+      <button class="mini primary" id="defaults-save">保存</button>
     </div>
   </div>
 </div>

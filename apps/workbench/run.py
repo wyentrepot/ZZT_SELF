@@ -127,6 +127,24 @@ def _ensure_serial_nodes() -> None:
         pass
 
 
+def _port_already_served(port: int = PORT, host: str = "127.0.0.1",
+                         timeout: float = 1.0) -> bool:
+    """探测端口是否已有活实例在监听（REQS-0043 I1：防双起覆写运行时文件）。
+
+    E3 实锤（reqs/0043 DONE §E3）：旧实例 pid 88119 仍持有 8790 时，两次新启动
+    （pid 271064 / 293294）都在 ``write_runtime_file``（位于 uvicorn 绑定**之前**）
+    用自己的 pid 覆写了 ``data/runtime/workbench.json``，随后绑定失败退出 →
+    文件里留下死 pid，``case_run`` 服务发现被误导。本探测在写文件之前跑：
+    已有活监听 → 拒绝双起、**不碰**运行时文件。
+    """
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _print_startup_preflight() -> None:
     """启动前置检查横幅（REQS-0034 BR-1，工作台使用优化）。
 
@@ -154,6 +172,10 @@ def _open() -> None:
 
 
 if __name__ == "__main__":
+    if _port_already_served():
+        print(f"[workbench] 端口 {PORT} 已有实例在监听（data/runtime/workbench.json 应指向它）；"
+              "拒绝双起、不覆写运行时文件（REQS-0043 I1）。如需重启请先停旧实例。")
+        sys.exit(2)
     _ensure_serial_nodes()
     _print_startup_preflight()
     _runtime = write_runtime_file(host="0.0.0.0", port=PORT)

@@ -60,7 +60,7 @@ from workbench.cases_api import (
 
 _FAKE_BLOCKS = {
     "fake.ok": {
-        "id": "fake.ok",
+        "id": "fake.ok", "kind": "case", "side_effect": "none", "version": 1,
         "title": "假块·通过",
         "needs": [],
         "provides": [],
@@ -69,7 +69,7 @@ _FAKE_BLOCKS = {
         "tags": ["fake"],
     },
     "fake.ok2": {
-        "id": "fake.ok2",
+        "id": "fake.ok2", "kind": "case", "side_effect": "none", "version": 1,
         "title": "假块·通过（第二块）",
         "needs": [],
         "provides": [],
@@ -78,7 +78,7 @@ _FAKE_BLOCKS = {
         "tags": ["fake", "frame"],
     },
     "fake.fail": {
-        "id": "fake.fail",
+        "id": "fake.fail", "kind": "case", "side_effect": "none", "version": 1,
         "title": "假块·失败",
         "needs": [],
         "provides": [],
@@ -86,7 +86,7 @@ _FAKE_BLOCKS = {
         "tags": ["fake"],
     },
     "fake.skip": {
-        "id": "fake.skip",
+        "id": "fake.skip", "kind": "probe", "side_effect": "none", "version": 1,
         "title": "假块·因前置事实不满足被跳过",
         "needs": ["fake.bench"],
         "provides": [],
@@ -94,7 +94,7 @@ _FAKE_BLOCKS = {
         "tags": ["fake"],
     },
     "fake.unknown": {
-        "id": "fake.unknown",
+        "id": "fake.unknown", "kind": "probe", "side_effect": "none", "version": 1,
         "title": "假块·返回无法识别结论（应为 unknown）",
         "needs": [],
         "provides": [],
@@ -102,7 +102,7 @@ _FAKE_BLOCKS = {
         "tags": ["fake"],
     },
     "fake.slow": {
-        "id": "fake.slow",
+        "id": "fake.slow", "kind": "probe", "side_effect": "none", "version": 1,
         "title": "假块·慢（验证异步 job 有中间态）",
         "needs": [],
         "provides": [],
@@ -110,7 +110,7 @@ _FAKE_BLOCKS = {
         "tags": ["fake", "slow"],
     },
     "fake.env": {
-        "id": "fake.env",
+        "id": "fake.env", "kind": "probe", "side_effect": "none", "version": 1,
         "title": "假块·记录执行期 WORKBENCH_BASE",
         "needs": [],
         "provides": [],
@@ -285,17 +285,14 @@ _FAKE_CASES = {
     # ---- 分类（D10-2）：扁平形态 ----
     "case_flat": {
         "id": "case_flat",
-        "title": "假用例·抄表（扁平字段形态，STA / normal）",
+        "title": "假用例·抄表（分类字段，STA / normal）",
         "steps": [{"no": 1, "do": "跑假块一", "expect": "通过"}],
         "needs": [],
         "blocks": ["fake.ok"],
         "asserts": [],
         "tags": ["fake", "categorized"],
-        "usage": "normal",
-        "domain": "STA",
-        "scene": "抄表",
-        "region": "重庆",
-        "protocols": "645",
+        "category": {"usage": "normal", "domain": "STA", "scene": "抄表", "region": "重庆"},
+        "protocols": ["645"],
     },
 }
 
@@ -545,6 +542,38 @@ def test_list_cases_returns_steps_blocks_needs_tags(client):
     assert case["steps"][0]["do"] and case["steps"][0]["expect"]
 
 
+def test_list_cases_exposes_procedure_kind(client, fake_root):
+    """GET /api/cases 读模型暴露 ``ProcedureSpec.kind``（REQS-0044 变更 3 L1 / 变更 4）。
+
+    字段只加不改；页面据此渲染徽标（回归=默认色 / 场景=蓝 / 台架准备=灰）。
+    声明未写 ``kind`` 的老用例按模型缺省 ``regression`` 返回。
+    """
+    _write_json(fake_root / "cases" / "case_setup.json", {
+        "id": "case_setup",
+        "title": "假用例·台架准备（kind=setup）",
+        "steps": [{"no": 1, "do": "把台架备到可测状态", "expect": "会话在位"}],
+        "blocks": ["fake.ok"],
+        "asserts": [],
+        "tags": ["fake", "setup"],
+        "kind": "setup",
+    })
+    _write_json(fake_root / "cases" / "case_scenario.json", {
+        "id": "case_scenario",
+        "title": "假用例·一次性场景（kind=scenario）",
+        "steps": [{"no": 1, "do": "验证一次方案", "expect": "按方案落地"}],
+        "blocks": ["fake.ok"],
+        "asserts": [],
+        "tags": ["fake", "scenario"],
+        "kind": "scenario",
+    })
+    resp = client.get("/api/cases")
+    assert resp.status_code == 200, resp.text
+    kinds = {item["id"]: item["kind"] for item in resp.json()["cases"]}
+    assert kinds["case_setup"] == "setup"
+    assert kinds["case_scenario"] == "scenario"
+    assert kinds["case_pass"] == "regression"   # 未声明 kind → 模型缺省 regression
+
+
 def test_list_cases_tolerates_missing_category_lists_them_unclassified(client):
     """分类字段缺失（现在还没有）→ 未分类，但**仍能列出**（D10-2 过渡期口径）。"""
     data = client.get("/api/cases").json()
@@ -569,7 +598,8 @@ def test_list_cases_reads_dict_category_and_filters(client):
     }
     assert cco["protocols"] == ["1376.2"]
     assert cco["classified"] is True
-    assert cco["tolerated_fields"] == ["category", "protocols"]
+    # 0044：category/protocols 已入 CaseSpec 模型 → 「未来字段容忍」清单恒空
+    assert cco["tolerated_fields"] == []
 
     by_domain = client.get("/api/cases", params={"domain": "CCO"}).json()
     assert [item["id"] for item in by_domain["cases"]] == ["case_cco"]
@@ -601,7 +631,7 @@ def test_list_cases_reads_flat_category_form(client):
     }
     assert flat["protocols"] == ["645"]
     assert flat["classified"] is True
-    assert flat["tolerated_fields"] == ["usage", "domain", "scene", "region", "protocols"]
+    assert flat["tolerated_fields"] == []
 
     by_domain = client.get("/api/cases", params={"domain": "STA"}).json()
     assert [item["id"] for item in by_domain["cases"]] == ["case_flat"]
@@ -1270,6 +1300,51 @@ def test_runs_endpoint_404_for_unknown_and_traversal(client):
     assert traversal.json()["detail"]["code"] == "run_not_found"
 
 
+def test_runs_index_lists_recent_runs_and_skips_incomplete(client, tmp_path):
+    """GET /api/cases/runs?limit=N（REQS-0044 变更 4）：最近 N 轮索引，缺 result.json 跳过。
+
+    - 条目形状冻结：``{run_id, verdict, finished_at, case_names, summary}``；
+    - blocked（预检未过、未建 job）的落盘记录同样出现在索引里；
+    - 缺 ``result.json`` / 坏文件的目录跳过并忽略，不占名额、不报 500；
+    - ``limit`` 夹取：缺省 10、上限 50，超界不回 422。
+    """
+    done_a = _run(client, {"case_ids": ["case_pass"]})
+    blocked_b = client.post("/api/cases/run", json={"case_ids": ["case_missing"]}).json()
+    assert blocked_b["accepted"] is False and blocked_b["run_id"]
+    done_c = _run(client, {"case_ids": ["case_fail"]})
+
+    # 缺文件 / 坏文件的 run 目录：索引必须跳过并忽略
+    runs_dir = tmp_path / "storage" / "case_runs"
+    (runs_dir / "20990101-000000-empty").mkdir(parents=True, exist_ok=True)
+    broken_dir = runs_dir / "20990101-000001-broken"
+    broken_dir.mkdir(parents=True, exist_ok=True)
+    (broken_dir / "result.json").write_text("{not json", encoding="utf-8")
+
+    resp = client.get("/api/cases/runs")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["limit"] == 10                      # 缺省 limit=10
+    assert data["total"] == len(data["runs"]) == 3
+    ids = [item["run_id"] for item in data["runs"]]
+    assert set(ids[:3]) == {done_c["run_id"], blocked_b["run_id"], done_a["run_id"]}
+    assert "20990101-000000-empty" not in ids and "20990101-000001-broken" not in ids
+    by_id = {item["run_id"]: item for item in data["runs"]}
+    assert by_id[done_a["run_id"]]["verdict"] == "pass"
+    assert by_id[blocked_b["run_id"]]["verdict"] == "blocked"
+    assert by_id[done_c["run_id"]]["verdict"] == "fail"
+    assert by_id[done_c["run_id"]]["finished_at"]
+    assert "假用例·必失败" in by_id[done_c["run_id"]]["case_names"]
+    assert isinstance(by_id[done_c["run_id"]]["summary"], dict)
+
+    # limit=1：只给最近 1 轮（与全量列表的第一条一致——run_id 字典序 = 时间序）
+    one = client.get("/api/cases/runs", params={"limit": 1}).json()
+    assert one["limit"] == 1 and one["total"] == 1
+    assert [item["run_id"] for item in one["runs"]] == ids[:1]
+    # 超界夹取：0 → 1，999 → 50（不回 422）
+    assert client.get("/api/cases/runs", params={"limit": 0}).json()["limit"] == 1
+    assert client.get("/api/cases/runs", params={"limit": 999}).json()["limit"] == 50
+
+
 # --------------------------------------------------------------------------- #
 # 入参/目标选定的错误路径（422 / 404 / 409）
 # --------------------------------------------------------------------------- #
@@ -1455,13 +1530,12 @@ def test_bench_unreachable_real_declarations_preflight_blocks_at_origin(real_cli
         "/api/cases/run",
         json={"case_ids": ["bench_ready"], "base_url": "http://127.0.0.1:9"},
     )
-    assert resp.status_code == 200, resp.text
-    result = resp.json()
-    assert result["accepted"] is False and result["state"] == "blocked"
-    assert result["job_id"] == ""
-    assert set(result["unmet_facts"]) == {"bench.sta_online"}
-    assert result["unmet_facts"]["bench.sta_online"]["state"] == "unknown"
-    # 预检确实发出过台架探测请求（被假传输拦下），且只打注入的地址
+    # 0044 改写（D7-1）：bench_ready 的 needs 清空（台架前置改由 fix.* 块 provides
+    # 在运行内满足）→ 预检无事可探 → 受理进 job，台架不可达在执行期落 blocked
+    assert resp.status_code == 202, resp.text
+    job = _wait_done(client, resp.json()["job_id"], timeout=60)
+    assert job["verdict"] == "blocked", job["verdict"]
+    # 台架探测请求只打注入的地址
     assert urls and all(url.startswith("http://127.0.0.1:9") for url in urls)
     assert not any("8790" in url for url in urls)
 
@@ -1492,7 +1566,8 @@ def test_real_declarations_without_preflight_all_skipped(real_client):
     case = job["results"][0]
     assert case["verdict"] == "blocked"
     assert case["blocked_block"]  # 断点块可读
-    assert case["unmet_facts"]  # 未满足事实可读，且带 state/detail
+    # 0044：unmet_facts 来自步骤观测原因码（bench_unreachable → skipped → blocked）；
+    # case.needs 已清空，事实缺项清单可能为空 —— 断点与结论不变
     for value in case["unmet_facts"].values():
         assert value["state"] in ("no", "unknown")
         assert value["detail"]
@@ -1502,11 +1577,12 @@ def test_no_base_url_injected_never_targets_8790(real_client):
     """未注入 base_url + 无环境变量 → 打到本次请求的 origin，绝不写死 8790。"""
     client, urls = real_client
     resp = client.post("/api/cases/run", json={"case_ids": ["bench_ready"]})
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 202, resp.text
     result = resp.json()
-    assert result["state"] == "blocked"
     assert result["base_url_source"] == "http"
     assert result["base_url"] == "http://testserver"
+    job = _wait_done(client, result["job_id"], timeout=60)
+    assert job["verdict"] == "blocked", job["verdict"]
     assert urls, "台架探测应真的发出过请求（被假传输拦下）"
     assert all(url.startswith("http://testserver") for url in urls)
     assert not any("8790" in url for url in urls)
@@ -1516,11 +1592,12 @@ def test_env_base_url_is_used_when_body_absent(real_client, monkeypatch):
     client, urls = real_client
     monkeypatch.setenv("WORKBENCH_BASE", "http://bench.invalid:1234")
     resp = client.post("/api/cases/run", json={"case_ids": ["bench_ready"]})
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 202, resp.text
     result = resp.json()
-    assert result["state"] == "blocked"
     assert result["base_url_source"] == "env"
     assert result["base_url"] == "http://bench.invalid:1234"
+    job = _wait_done(client, result["job_id"], timeout=60)
+    assert job["verdict"] == "blocked", job["verdict"]
     assert urls and all(url.startswith("http://bench.invalid:1234") for url in urls)
     assert not any("8790" in url for url in urls)
 
@@ -1761,3 +1838,244 @@ def test_prune_failure_only_warns_and_job_still_completes(
     assert any("旧证据清理异常" in item for item in job["problems"]), job["problems"]
     # 本轮证据照旧落盘可读（清理失败不许连累证据）
     assert Path(job["result_path"]).is_file()
+
+
+# --------------------------------------------------------------------------- #
+# 报表契约（REQS-0044 变更 3 L2：字段冻结，前端 Demo 代理按同一份开发）
+# --------------------------------------------------------------------------- #
+
+
+def test_run_report_contract_rows_and_summary(client, fake_root):
+    """L2 契约：``run.report.rows[]`` / ``run.report.summary`` 字段与语义逐条锁定。
+
+    - 行字段：group/subgroup/name/kind/steps_text/verdict/reason/evidence_paths/
+      counts_as_product；
+    - kind=setup 行：group/subgroup=null（渲染「—」）、counts_as_product=false；
+    - summary：product_pass_rate 分母不含 setup 行；
+    - steps_text 零块名（D11-2）；result.json 与读回一致。
+    """
+    _write_json(fake_root / "cases" / "case_setup.json", {
+        "id": "case_setup", "title": "假流程·台架准备",
+        "kind": "setup",
+        "category": {"usage": "common", "domain": "bench", "scene": "", "region": "国网通用"},
+        "steps": [{"no": 1, "do": "台架自检", "expect": "就绪"}],
+        "plan": [{"id": "s1", "block": "fake.ok", "on_fail": "stop",
+                  "expect": [{"op": "eq", "field": "结论", "value": "pass"}]}],
+        "tags": ["fake"],
+    })
+    _write_json(fake_root / "cases" / "case_report.json", {
+        "id": "case_report", "title": "假流程·抄表",
+        "kind": "regression",
+        "category": {"usage": "common", "domain": "CCO", "scene": "抄表", "region": "国网通用"},
+        "steps": [{"no": 1, "do": "跑假块", "expect": "通过"}],
+        "plan": [{"id": "s1", "block": "fake.fail", "on_fail": "stop",
+                  "expect": [{"op": "eq", "field": "结论", "value": "pass"}]}],
+        "tags": ["fake"],
+    })
+    _write_json(fake_root / "case_suites" / "suite_report.json", {
+        "id": "suite_report", "name": "假方案·报表契约",
+        "case_ids": ["case_setup", "case_report"],
+    })
+
+    job = _run(client, {"suite_id": "suite_report"})
+    report = job["report"]
+    assert set(report) == {"rows", "summary"}
+
+    by_id = {row["name"]: row for row in report["rows"]}
+    assert len(report["rows"]) == 2
+    setup_row = next(row for row in report["rows"] if row["kind"] == "setup")
+    assert setup_row["group"] is None and setup_row["subgroup"] is None
+    assert setup_row["counts_as_product"] is False
+    assert setup_row["verdict"] == "pass" and setup_row["reason"] is None
+    assert setup_row["steps_text"] and "." in setup_row["steps_text"]
+    assert not any(token in setup_row["steps_text"] for token in ("fake.", "block"))
+    product_row = by_id["假流程·抄表"]
+    assert product_row["group"] == "抄表" and product_row["subgroup"] == "CCO"
+    assert product_row["counts_as_product"] is True
+    assert product_row["verdict"] == "fail" and product_row["reason"]
+
+    summary = report["summary"]
+    assert set(summary) == {"total", "pass", "fail", "blocked", "inconclusive",
+                            "product_pass_rate"}
+    assert summary["total"] == 2 and summary["pass"] == 1 and summary["fail"] == 1
+    assert summary["product_pass_rate"] == "0/1"  # 分母不含 setup 行
+
+    # 落盘与读回逐字一致（result.json ↔ GET /api/cases/runs/{run_id}）
+    persisted = client.get("/api/cases/runs/%s" % job["run_id"]).json()
+    assert persisted["report"] == report
+
+
+# --------------------------------------------------------------------------- #
+# 13. GET / PUT /api/cases/defaults（REQS-0044 工位 E：默认参数白名单覆盖）
+# --------------------------------------------------------------------------- #
+
+#: 出厂默认（形状同 libs/case_runner/data/case_defaults.json）
+_DEFAULTS_FACTORY = {
+    "meter_addr": "000000000000",
+    "mapping_id": {"simcon": "simcon", "simeter": "simeter", "sta": "sta-main"},
+    "_note": "出厂默认值",
+}
+#: 现场覆盖（形状同 config/case_defaults.json）
+_DEFAULTS_CONFIG = {
+    "meter_addr": "123456789012",
+    "simeter": {"addr": "123456789012", "version": "2007"},
+    "_note": "台架现场默认值",
+}
+
+
+def _defaults_client(tmp_path: Path, fake_root: Path, config):
+    """带默认参数覆盖文件注入位的客户端；``config=None`` = 覆盖文件不存在。"""
+    config_path = tmp_path / "config" / "case_defaults.json"
+    if config is not None:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(config_path, config)
+    app = FastAPI()
+    app.include_router(
+        create_cases_router(
+            storage_dir=tmp_path / "storage",
+            data_dir=fake_root,
+            register_domain=False,
+            bridge_snapshot_provider=_bridge_snapshot,
+            defaults_config_path=config_path,
+        )
+    )
+    return TestClient(app), config_path
+
+
+def test_defaults_get_whitelist_is_config_keys_only(tmp_path, fake_root):
+    """白名单 = config/case_defaults.json 里实际存在的键；出厂默认独有的键不进表单。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    resp = client.get("/api/cases/defaults")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["config_path"] == str(config_path)
+    assert data["keys"] == ["meter_addr", "simeter.addr", "simeter.version"]
+    items = {item["key"]: item for item in data["items"]}
+    assert items["meter_addr"]["label"] == "默认表地址"
+    assert items["meter_addr"]["value"] == "123456789012"
+    assert items["meter_addr"]["source"] == "config"
+    assert items["simeter.addr"]["label"] == "模拟电表地址"
+    assert items["simeter.addr"]["value"] == "123456789012"
+    assert items["simeter.version"]["label"] == "模拟电表版本"
+    assert items["simeter.version"]["value"] == "2007"
+    # 出厂默认独有键（逻辑口名）不在白名单——端点只允许覆盖已有键，不造键
+    assert "mapping_id.simcon" not in items
+    assert not any("mapping_id" in key for key in data["keys"])
+
+
+def test_defaults_get_missing_config_is_readonly_empty(tmp_path, fake_root):
+    """覆盖文件缺失 → 空白名单（页面据此隐藏入口），不是 500。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, None)
+    resp = client.get("/api/cases/defaults")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["keys"] == [] and data["items"] == []
+    # PUT 任何键都因白名单为空被拒（不造键）
+    resp = client.put("/api/cases/defaults", json={"values": {"meter_addr": "999999999999"}})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "defaults_key_unknown"
+    assert not config_path.exists()
+
+
+def test_defaults_put_updates_backs_up_and_preserves_other_keys(tmp_path, fake_root):
+    """PUT 成功路径：写前备份原值、只动白名单键、_note/嵌套兄弟键原样保留、GET 读回新值。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    before = config_path.read_text(encoding="utf-8")
+    resp = client.put(
+        "/api/cases/defaults", json={"values": {"meter_addr": "999999999999"}}
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["saved"] == ["meter_addr"]
+    # 写前备份：原文件原样拷成 .bak-defaults-<时间戳>
+    backups = list(config_path.parent.glob("*.bak-defaults-*"))
+    assert len(backups) == 1 and backups[0].read_text(encoding="utf-8") == before
+    assert data["backup_path"] == str(backups[0])
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["meter_addr"] == "999999999999"
+    assert payload["_note"] == "台架现场默认值"          # 说明键原样保留
+    assert payload["simeter"] == _DEFAULTS_CONFIG["simeter"]  # 未点名的键不动
+    # GET 立即读回新值（写读一致）
+    item = {i["key"]: i for i in client.get("/api/cases/defaults").json()["items"]}
+    assert item["meter_addr"]["value"] == "999999999999"
+    assert item["meter_addr"]["source"] == "config"
+
+
+def test_defaults_put_unknown_key_rejected_without_write(tmp_path, fake_root):
+    """未知键 → 422 defaults_key_unknown，且一个字节都不写、不留备份。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    before = config_path.read_text(encoding="utf-8")
+    resp = client.put(
+        "/api/cases/defaults",
+        json={"values": {"mapping_id.simcon": "simcon-x", "meter_addr": "999999999999"}},
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "defaults_key_unknown"
+    assert "mapping_id.simcon" in detail["message"]
+    assert config_path.read_text(encoding="utf-8") == before
+    assert not list(config_path.parent.glob("*.bak-defaults-*"))
+
+
+def test_defaults_put_invalid_values_rejected(tmp_path, fake_root):
+    """表地址格式 / null / 容器值 → 422，配置原样。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    before = config_path.read_text(encoding="utf-8")
+    cases = [
+        ({"meter_addr": "12345"}, "defaults_value_invalid"),      # 不是 12 位
+        ({"meter_addr": "1234567890ab"}, "defaults_value_invalid"),  # 非十进制
+        ({"simeter.addr": "99999999999"}, "defaults_value_invalid"),
+        ({"meter_addr": None}, "defaults_value_null"),
+        ({"simeter.version": {"v": "2007"}}, "defaults_value_type"),
+    ]
+    for values, code in cases:
+        resp = client.put("/api/cases/defaults", json={"values": values})
+        assert resp.status_code == 422, (values, resp.text)
+        assert resp.json()["detail"]["code"] == code, (values, resp.text)
+    assert config_path.read_text(encoding="utf-8") == before
+
+
+def test_defaults_put_nested_key_keeps_sibling_subkeys(tmp_path, fake_root):
+    """写 simeter.addr 只动这一个子键，simeter.version 兄弟键保留。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    resp = client.put(
+        "/api/cases/defaults", json={"values": {"simeter.addr": "111111111111"}}
+    )
+    assert resp.status_code == 200, resp.text
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["simeter"] == {"addr": "111111111111", "version": "2007"}
+    assert payload["meter_addr"] == "123456789012"
+
+
+def test_defaults_put_empty_values_is_noop(tmp_path, fake_root):
+    """空 values = 不写盘、不备份，回显当前视图。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    before = config_path.read_text(encoding="utf-8")
+    resp = client.put("/api/cases/defaults", json={"values": {}})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["saved"] == [] and data["backup_path"] == ""
+    assert [i["key"] for i in data["items"]] == ["meter_addr", "simeter.addr", "simeter.version"]
+    assert config_path.read_text(encoding="utf-8") == before
+
+
+def test_defaults_put_corrupt_config_refused(tmp_path, fake_root):
+    """覆盖文件存在但坏 JSON：GET 降级空表单，PUT 拒绝改写（500），不覆盖现场文件。"""
+    _write_json(fake_root / "case_defaults.json", _DEFAULTS_FACTORY)
+    client, config_path = _defaults_client(tmp_path, fake_root, _DEFAULTS_CONFIG)
+    config_path.write_text("{oops not json", encoding="utf-8")
+    resp = client.get("/api/cases/defaults")
+    assert resp.status_code == 200 and resp.json()["items"] == []
+    resp = client.put(
+        "/api/cases/defaults", json={"values": {"meter_addr": "999999999999"}}
+    )
+    assert resp.status_code == 500, resp.text
+    assert resp.json()["detail"]["code"] == "defaults_config_unreadable"
+    assert config_path.read_text(encoding="utf-8") == "{oops not json"

@@ -1,4 +1,8 @@
-/* 用例库页面逻辑（REQS-0042 §3.7 UI-1..7）。
+/* 用例库页面逻辑（REQS-0042 §3.7 UI-1..7 + REQS-0044 界面移植）。
+ *
+ * 界面基线：docs/ui/cases_v2_demo.html（清单式用例卡 + 台架就绪横幅 +
+ * Excel 式结果表六列 + 汇总条 + 开发者详情折叠）。本页是该基线的**生产实现**：
+ * 数据全部来自 /api/cases/*（apps/workbench/cases_api.py），零 mock 行。
  *
  * 数据源：/api/cases/*（apps/workbench/cases_api.py）。后端可能尚未挂载（404）——
  * 本页对所有端点做「字段缺失容忍 + 404 降级」：能读到什么就画什么，
@@ -6,6 +10,9 @@
  *
  * 四态结论（UI-6）：pass 绿 / fail 红 / blocked 灰（台架问题，不是产品问题）/ inconclusive 黄。
  * 配色一律走 tokens-v2 的 var(--color-*)，页面零裸色值。
+ *
+ * 结果视图（REQS-0044 变更 3 报表契约）：GET /api/cases/runs/{run_id} 与 job 终态的
+ * run.report.rows[]/summary 直接渲染；块级明细（含 observation 观测）只进「开发者详情」折叠。
  */
 (function () {
   "use strict";
@@ -120,7 +127,9 @@
       tags: arr(item.tags).map(String),
       protocols: arr(item.protocols).map(String),
       category: obj(item.category),
-      hasCategory: !!(item.category && typeof item.category === "object")
+      hasCategory: !!(item.category && typeof item.category === "object"),
+      // Procedure 类别（REQS-0044 变更 3 L1 / 变更 4）：regression / scenario / setup
+      kind: String(item.kind || "regression").toLowerCase()
     };
   }
   function normSuite(raw) {
@@ -144,13 +153,17 @@
           // enabled=false 的口（如 ecu-biz/ecu-mgmt）本就不参与台架，不能被算成「不可用」
           enabled: port.enabled !== false,
           usable: port.usable === true,
-          errors: arr(port.errors).map(String)
+          errors: arr(port.errors).map(String),
+          // 逻辑口对应的 Windows COM 号（横幅芯片展示「名 COM号」，同 Demo 口径）
+          windows_com: String(port.windows_com || port.com || ""),
+          label: String(port.label || "")
         };
       });
     } else {
       Object.keys(obj(source)).forEach(function (key) {
         var port = obj(source[key]);
-        list.push({ id: key, usable: port.usable === true, errors: arr(port.errors).map(String) });
+        list.push({ id: key, usable: port.usable === true, errors: arr(port.errors).map(String),
+          windows_com: String(port.windows_com || port.com || ""), label: String(port.label || "") });
       });
     }
     return list.filter(function (port) { return port.id; });
@@ -213,6 +226,20 @@
     return text || "未知状态";
   }
 
+  // ---------- kind 徽标（REQS-0044 变更 4）：回归=默认色 / 场景=蓝 / 台架准备=灰 ----------
+  // 工位 E：徽标说明（title 悬浮文案）删除——徽标文字本身就是全部信息。
+  var KIND_META = {
+    regression: { label: "回归", cls: "" },
+    scenario: { label: "场景", cls: " scenario" },
+    setup: { label: "台架准备", cls: " setup" }
+  };
+  function kindBadge(kind) {
+    var key = String(kind || "").toLowerCase();
+    var meta = KIND_META[key] || KIND_META.regression;
+    return '<span class="kind-badge' + meta.cls + '" data-kind="' +
+      esc(key || "regression") + '">' + meta.label + "</span>";
+  }
+
   // ---------- 页面状态 ----------
   var S = {
     apiOk: false,
@@ -229,6 +256,8 @@
     benchInfo: [],               // 信息性事实（不参与运行闸门，仅展示）
     benchPorts: [],
     benchFacts: [],
+    // 横幅「详情」折叠（工位 E）：null = 跟随自动口径（不就绪才展开），true/false = 用户点过
+    benchDetailsOpen: null,
     groupBy: "usage",
     sort: "default",
     filters: { q: "", usage: "", domain: "", scene: "", region: "", protocol: "" },
@@ -237,7 +266,18 @@
     resumeJobId: "",
     job: null,
     jobId: "",
-    jobTimer: null
+    jobTimer: null,
+    // job 面板（工位 E）：单行进度 / 终态收起一行（✔/✘ + run_id + verdict + 耗时）
+    jobLabel: "",
+    jobTerminal: false,
+    jobExpanded: false,
+    // 结果视图（REQS-0044）：当前展示的运行记录 + 最近一次结果的 run_id（刷新恢复用）
+    currentRun: null,
+    lastRunId: "",
+    // 历史运行索引（GET /api/cases/runs?limit=10，REQS-0044 变更 4）：历史运行下拉的数据
+    runsIndex: [],
+    // 默认参数（工位 E）：GET /api/cases/defaults 的 items；null = 后端未提供（隐藏入口）
+    defaults: null
   };
 
   function selectedIds() {
@@ -257,6 +297,7 @@
         selected: selectedIds(),
         last_run: S.lastRun,
         last_job_id: S.jobId || "",
+        last_run_id: S.lastRunId || "",
         group_by: S.groupBy,
         sort: S.sort
       }));
@@ -322,6 +363,13 @@
     var bench = S.bench || {};
     S.benchPorts = normPorts(bench);
     S.benchFacts = normFacts(bench);
+    // 非闸门事实标注（REQS-0044 变更 4）：不在 required_facts 并集里的 = 信息性事实，
+    // 芯片渲染走中性灰（见 renderBench）。后端没给 required_facts 时不瞎猜，保持旧口径。
+    // 注意：闸门判定本体（unmet_required / reasons / ready）在下面原样保留，一字未动。
+    var requiredFactIds = arr(bench.required_facts);
+    S.benchFacts.forEach(function (fact) {
+      fact.info = requiredFactIds.length > 0 && requiredFactIds.indexOf(fact.id) < 0;
+    });
     S.benchInfo = [];
     // 运行闸门只看**必需事实**（后端 unmet_required = 用例库 needs 并集里不成立的）；
     // 信息性事实（如学习态的 nwk.* / 未注入能力的 sta.meter_addr_known）恒 unknown，
@@ -372,14 +420,14 @@
   }
 
   function loadAll() {
-    return Promise.all([loadCases(), loadSuites(), loadBench()]).then(function () {
+    return Promise.all([loadCases(), loadSuites(), loadBench(), loadRunsIndex(), loadDefaults()]).then(function () {
       restoreState();
       renderAll();
       // 刷新/重开后把上一轮 job 的进度接回来（终态则恢复结论着色，UI-4）
       if (S.resumeJobId) {
         var jobId = S.resumeJobId;
         S.resumeJobId = "";
-        attachJob(jobId);
+        attachJob(jobId, "上一轮任务");
       }
     });
   }
@@ -388,6 +436,12 @@
     var saved = readStore();
     S.lastRun = obj(saved.last_run);
     S.resumeJobId = clean(saved.last_job_id);
+    S.lastRunId = clean(saved.last_run_id);
+    if (S.lastRunId) {
+      // 历史结果 run_id 回填（不自动切视图：用户点「查看结果」再进结果视图）
+      var runInput = $("run-id-input");
+      if (runInput && !runInput.value) runInput.value = S.lastRunId;
+    }
     if (saved.group_by && ORDER[saved.group_by]) S.groupBy = saved.group_by;
     if (saved.sort) S.sort = saved.sort;
 
@@ -447,11 +501,29 @@
     text.textContent = "台架状态说不清";
   }
 
+  // 横幅「详情」折叠（工位 E）：就绪态只留一行，口状态/事实芯片收进详情；
+  // 不就绪（blocked，即 unmet_required 非空或口不可用）自动展开列缺什么。
+  // 用户点过「详情」后以用户的选择为准（benchDetailsOpen 不再是 null）。
+  // setAttribute 走守卫（冒烟 DOM 桩没有该方法，真实浏览器有）。
+  function setBenchDetails(open) {
+    var box = $("bench-details");
+    if (box) box.hidden = !open;
+    var toggle = $("bench-detail-toggle");
+    if (toggle) {
+      toggle.textContent = open ? "▾ 详情" : "▸ 详情";
+      if (toggle.setAttribute) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+  }
+
+  function benchDetailsShouldOpen() {
+    if (S.benchDetailsOpen !== null) return S.benchDetailsOpen;
+    return S.benchMode === "blocked";   // 只有不就绪才自动展开（就绪/检测中/不可用都收一行）
+  }
+
   function renderBench() {
     renderBenchPill();
     var banner = $("bench-banner");
     var stateEl = $("bench-state");
-    var hintEl = $("bench-hint");
     if (banner) {
       banner.className = "bench " + { ready: "is-ready", blocked: "is-blocked", unavailable: "is-unknown", unknown: "is-unknown", checking: "" }[S.benchMode];
     }
@@ -464,19 +536,20 @@
         checking: "检测中…"
       }[S.benchMode] || "";
     }
-    if (hintEl) {
-      hintEl.textContent = S.benchMode === "ready"
-        ? (S.benchPorts.filter(function (p) { return p.enabled !== false; }).length + " 口全通 · " + S.benchFacts.filter(function (f) { return f.state === "yes"; }).length + " 条关键事实成立")
-        : "";
-    }
 
     var portsBox = document.querySelector('[data-hook="bench-ports"]');
     if (portsBox) {
       portsBox.innerHTML = '<span class="glabel">串口</span>' + (S.benchPorts.length
         ? S.benchPorts.map(function (port) {
+          var name = esc(port.id) + (port.windows_com ? " " + esc(port.windows_com) : "");
+          if (port.enabled === false) {
+            // 已停用口（如 ecu-biz/ecu-mgmt）不参与就绪判定：中性灰芯片，不算「不可用」
+            return '<span class="port" title="已停用，不参与台架就绪判定"><span class="dot"></span>' +
+              name + "（停用）</span>";
+          }
           return '<span class="port ' + (port.usable ? "on" : "off") + '" title="' +
             esc(port.errors.length ? port.errors.join("；") : (port.usable ? "可用" : "不可用")) + '">' +
-            '<span class="dot"></span>' + esc(port.id) + "</span>";
+            '<span class="dot"></span>' + name + "</span>";
         }).join("")
         : '<span class="hint">—</span>');
     }
@@ -485,10 +558,19 @@
       var stateName = { yes: "成立", no: "未成立", unknown: "未知" };
       factsBox.innerHTML = '<span class="glabel">事实</span>' + (S.benchFacts.length
         ? S.benchFacts.map(function (fact) {
-          var cls = fact.state === "yes" ? "yes" : (fact.state === "no" ? "no" : "unknown");
+          // 非闸门事实（信息性，如运行期回写型）三态芯片一律中性灰（REQS-0044 变更 4）：
+          // unknown 不是黄色「未知」，避免误读为故障；闸门判定（ready/unmet_required）不受影响
+          var cls;
+          if (fact.info) {
+            cls = "info";
+          } else {
+            cls = fact.state === "yes" ? "yes" : (fact.state === "no" ? "no" : "unknown");
+          }
+          var tip = (fact.info ? "信息性事实（不参与运行闸门） · " : "") +
+            factLabel(fact.id) + " · " + (stateName[fact.state] || "未知");
           // 只显示人话（事实 id 放 data-fact 供排查，不显示给用户）
           return '<span class="fact ' + cls + '" data-fact="' + esc(fact.id) + '" title="' +
-            esc(factLabel(fact.id) + " · " + (stateName[fact.state] || "未知")) + '">' +
+            esc(tip) + '">' +
             '<span class="dot"></span>' + esc(factLabel(fact.id)) + " · " +
             esc(stateName[fact.state] || "未知") + "</span>";
         }).join("")
@@ -507,6 +589,8 @@
     }
     var rawHead = $("bench-dev-head");
     if (rawHead) rawHead.hidden = !(S.benchRaw || []).length;
+    // 折叠口径（工位 E）：自动 = 不就绪才展开；用户点过「详情」则以用户为准
+    setBenchDetails(benchDetailsShouldOpen());
   }
 
   // ---------- 渲染：筛选与分组 ----------
@@ -622,41 +706,73 @@
     });
   }
 
+  // ---------- 渲染：左栏多维快捷筛选（REQS-0044 Demo 口径：常用度/设备域/场景/省份/协议） ----------
+  var RAIL_DIMS = [
+    { key: "usage", label: "常用度" },
+    { key: "domain", label: "设备域" },
+    { key: "scene", label: "业务场景" },
+    { key: "region", label: "省份 / 区域" },
+    { key: "protocol", label: "协议" }
+  ];
+
+  function railValues(dim) {
+    var values = [];
+    S.cases.forEach(function (item) {
+      var raw = dim === "protocol" ? arr(item.protocols) : [catOf(item)[dim]];
+      raw.forEach(function (value) {
+        var v = clean(value);
+        if (v && values.indexOf(v) < 0) values.push(v);
+      });
+    });
+    var order = dim === "protocol" ? null : ORDER[dim];
+    values.sort(function (a, b) {
+      return order
+        ? (rankOf(order, a) - rankOf(order, b)) || a.localeCompare(b, "zh")
+        : a.localeCompare(b, "zh");
+    });
+    return values;
+  }
+
   function renderRail() {
     var body = $("rail-body");
     if (!body) return;
-    var counts = {};
-    S.cases.filter(function (item) {
-      var saved = S.filters[S.groupBy];
-      S.filters[S.groupBy] = "";
-      var ok = matches(item);
-      S.filters[S.groupBy] = saved;
-      return ok;
-    }).forEach(function (item) {
-      var key = catOf(item)[S.groupBy] || "";
-      counts[key] = (counts[key] || 0) + 1;
-    });
-
-    var keys = Object.keys(counts).sort(function (a, b) {
-      if (!a !== !b) return a ? -1 : 1;
-      return (rankOf(ORDER[S.groupBy], a) - rankOf(ORDER[S.groupBy], b)) || a.localeCompare(b, "zh");
-    });
-    var total = keys.reduce(function (sum, key) { return sum + counts[key]; }, 0);
-    var active = S.filters[S.groupBy];
-
-    var html = '<div class="rail-item' + (active === "" ? " on" : "") + '" data-key="">' +
-      '<span class="swatch"></span>全部<span class="rcount">' + total + "</span></div>";
-    html += keys.map(function (key) {
-      return '<div class="rail-item' + ((active === key || (active === UNCAT && !key)) ? " on" : "") +
-        '" data-key="' + esc(key || UNCAT) + '">' +
-        '<span class="swatch"></span>' + esc(dimLabel(S.groupBy, key)) +
-        '<span class="rcount">' + counts[key] + "</span></div>";
+    var total = S.cases.length;
+    if ($("rail-total")) {
+      $("rail-total").textContent = total ? ("共 " + total + " 例") : "";
+    }
+    if (!total) {
+      body.innerHTML = '<div class="hint">用例库为空</div>';
+      return;
+    }
+    body.innerHTML = RAIL_DIMS.map(function (dim) {
+      var values = railValues(dim.key);
+      if (dim.key !== "protocol") {
+        var hasUncat = S.cases.some(function (item) { return !clean(catOf(item)[dim.key]); });
+        if (hasUncat) values.push(UNCAT);
+      }
+      var items = values.map(function (value) {
+        var isUncat = value === UNCAT;
+        var filterVal = isUncat ? UNCAT : value;
+        var label = isUncat ? UNCAT_LABEL : dimLabel(dim.key, value);
+        var count = S.cases.filter(function (item) {
+          if (dim.key === "protocol") return item.protocols.indexOf(value) > -1;
+          var v = clean(catOf(item)[dim.key]);
+          return isUncat ? !v : v === value;
+        }).length;
+        var on = S.filters[dim.key] === filterVal ? " on" : "";
+        return '<div class="rail-item' + on + '" data-dim="' + dim.key + '" data-val="' + esc(filterVal) +
+          '" role="button" tabindex="0"><span class="swatch"></span>' + esc(label) +
+          '<span class="rcount">' + count + "</span></div>";
+      }).join("");
+      return '<div class="rail-group"><b>' + esc(dim.label) + "</b>" + items + "</div>";
     }).join("");
-    body.innerHTML = html;
     Array.prototype.forEach.call(body.querySelectorAll(".rail-item"), function (row) {
       row.onclick = function () {
-        S.filters[S.groupBy] = row.dataset.key;
+        var dim = row.dataset.dim;
+        var val = row.dataset.val;
+        S.filters[dim] = (S.filters[dim] === val) ? "" : val;
         persist();
+        renderFilters();
         renderRail();
         renderList();
       };
@@ -761,6 +877,7 @@
       (S.sel[item.id] ? " checked" : "") + ' aria-label="勾选 ' + esc(item.id) + '">';
     html += "<b class=\"case-title\">" + esc(item.title) + "</b>";
     html += '<span class="case-id mono">' + esc(item.id) + "</span>";
+    html += kindBadge(item.kind);
     var execSteps = num(item.block_count) || arr(item.blocks).length || item.step_count;
     html += '<span class="case-steps">' + execSteps + " 步</span>";
     if (last) html += badge(last);
@@ -778,6 +895,8 @@
   function renderList() {
     var wrap = $("list-wrap");
     if (!wrap) return;
+    var countHint = $("list-count");
+    if (countHint) countHint.textContent = "";
 
     if (!S.apiOk) {
       wrap.innerHTML = '<div class="empty"><b>后端未就绪</b>' + esc(S.apiError) +
@@ -789,6 +908,7 @@
       return;
     }
     var items = visibleCases();
+    if (countHint) countHint.textContent = "共 " + items.length + " 条（库 " + S.cases.length + " 条）";
     if (!items.length) {
       wrap.innerHTML = '<div class="empty"><b>无匹配用例</b>当前筛选条件下没有用例；清空筛选可恢复全部 ' +
         S.cases.length + " 例。</div>";
@@ -839,6 +959,8 @@
     if (el) el.textContent = count ? ("已勾选 " + count + " 例") : "未勾选";
     var clear = $("btn-clear-sel");
     if (clear) clear.disabled = !count;
+    var save = $("btn-save-suite");
+    if (save) save.disabled = !count;   // 同 Demo：未勾选时「存方案」置灰
   }
 
   // ---------- 渲染：方案（UI-3） ----------
@@ -881,11 +1003,10 @@
     });
   }
 
+  // 运行参数（工位 E）：单用例地址入参入口已收敛进「默认参数」（config/case_defaults.json），
+  // 页面不再平铺一个逐轮覆盖输入框；需要临时覆盖时仍可直接改默认参数。
   function collectParams() {
-    var params = {};
-    var input = $("p-meter-addr");
-    if (input && input.value.trim()) params.meter_addr = input.value.trim();
-    return params;
+    return {};
   }
 
   function runJob(body, label) {
@@ -895,10 +1016,21 @@
     if (body.suite_id) payload.suite_id = body.suite_id;
     if (body.case_ids) payload.case_ids = body.case_ids;
     api("POST", "/api/cases/run", payload).then(function (data) {
-      var jobId = (data && (data.job_id || (data.job && data.job.job_id))) || "";
+      var res = obj(data);
+      if (res.accepted === false) {
+        // 预检未通过（不建 job，<1s 返回）：结果已按 run_id 落盘 → 直接进结果视图看逐行原因
+        toast("预检未通过，本轮未运行（详见结果视图）");
+        if (clean(res.run_id)) {
+          loadRun(res.run_id);
+        } else {
+          showJobError(new Error("预检未通过（unmet_facts 见响应），且未返回 run_id"));
+        }
+        return;
+      }
+      var jobId = res.job_id || obj(res.job).job_id || "";
       if (!jobId) { toast("提交成功但未返回 job_id"); return; }
       toast("已提交（" + (label || "job") + "）：" + jobId);
-      attachJob(jobId);
+      attachJob(jobId, label);
     }).catch(function (error) {
       toast("提交失败：" + error.message);
       showJobError(error);
@@ -908,26 +1040,116 @@
   function showJobError(error) {
     var panel = $("job-panel");
     if (panel) panel.classList.add("show");
-    if ($("job-line")) $("job-line").textContent = "任务提交失败";
+    S.jobTerminal = false;
+    S.jobLabel = "任务提交失败";
+    if ($("job-line")) $("job-line").textContent = S.jobLabel;
+    var progressLine = $("job-progress-line");
+    if (progressLine) { progressLine.textContent = ""; progressLine.hidden = true; }
+    var doneLine = $("job-done-line");
+    if (doneLine) { doneLine.hidden = true; doneLine.innerHTML = ""; }
     if ($("job-stage")) $("job-stage").textContent = "HTTP " + (error.status || "?");
     if ($("job-results")) {
       $("job-results").innerHTML = '<div class="degraded" data-hook="job-error">' + esc(error.message) + "</div>";
     }
     if ($("job-log")) $("job-log").textContent = "";
+    setJobExpanded(true);   // 错误默认展开（需要用户看到原因），行不可点击收起
+  }
+
+  // ---------- job 面板单行/折叠（工位 E）----------
+  // 运行中：单行 = 方案名 + 进度 n/m + 当前用例名（job-collapsed 行，collapsible 收起）。
+  // 终态：自动收起为一行 = ✔/✘ + run_id + verdict + 耗时；点击该行才展开完整结果。
+  function setJobExpanded(open) {
+    S.jobExpanded = !!open;
+    var wrap = $("job-collapsible");
+    if (wrap) wrap.hidden = !S.jobExpanded;
+    var line = $("job-collapsed");
+    if (line && line.setAttribute) line.setAttribute("aria-expanded", S.jobExpanded ? "true" : "false");
+    var expander = $("job-expander");
+    if (expander) expander.textContent = S.jobExpanded ? "▾" : "▸";
+  }
+
+  function setJobClickable(clickable) {
+    S.jobTerminal = !!clickable;
+    var panel = $("job-panel");
+    if (panel) {
+      // 不用 classList.toggle（冒烟 DOM 桩只实现了 add/remove/contains）
+      if (clickable) panel.classList.add("clickable");
+      else panel.classList.remove("clickable");
+    }
+  }
+
+  // 终态单行：✔（全通过）/ ✘（有未通过/说不清/台架不具备/任务失败）+ run_id + verdict + 耗时
+  function jobDoneGlyph(job) {
+    var counts = obj(job.case_counts);
+    var total = num(counts.pass) + num(counts.fail) + num(counts.blocked) + num(counts.inconclusive);
+    if (!total) {
+      arr(job.results || job.cases).forEach(function (raw) {
+        var verdict = normVerdict(obj(raw).verdict);
+        if (!verdict) return;
+        if (verdict === "pass") counts.pass = num(counts.pass) + 1;
+        else counts[verdict] = num(counts[verdict]) + 1;
+        total += 1;
+      });
+    }
+    var failed = String(job.state || "").toLowerCase() === "failed"
+      || num(counts.fail) + num(counts.blocked) + num(counts.inconclusive) > 0;
+    if (!total && !failed) return "✔";
+    return failed ? "✘" : "✔";
+  }
+
+  function jobDoneLineHtml(job) {
+    var glyph = jobDoneGlyph(job);
+    var glyphCls = glyph === "✔" ? "is-pass" : "is-fail";
+    var verdictPhrase = clean(job.verdict) ? (VERDICT_HEAD[normVerdict(job.verdict)] || verdictText(job.verdict))
+      : summaryText(job);
+    var seconds = num(job.duration_seconds) || num(job.duration_s);
+    var parts = [];
+    if (clean(job.run_id)) parts.push('<span class="job-runid">' + esc(job.run_id) + "</span>");
+    if (verdictPhrase) parts.push(esc(verdictPhrase));
+    if (seconds) parts.push(esc(seconds) + "s");
+    return '<span class="job-glyph ' + glyphCls + '">' + glyph + "</span>" + parts.join(" · ");
+  }
+
+  // 终态收起：单行换成 ✔/✘ + run_id + verdict + 耗时，展开区收起；「查看完整报表」
+  // 按钮（有 run_id 时）保留结果视图入口——不再自动整页跳转（工位 E 口径）。
+  function collapseJobDone(job) {
+    setJobClickable(true);
+    var progressLine = $("job-progress-line");
+    if (progressLine) { progressLine.textContent = ""; progressLine.hidden = true; }
+    var doneLine = $("job-done-line");
+    if (doneLine) {
+      doneLine.innerHTML = jobDoneLineHtml(job);
+      doneLine.hidden = false;
+    }
+    var openReport = $("btn-open-report");
+    if (openReport) {
+      openReport.hidden = !clean(job.run_id);
+      openReport.onclick = function () { loadRun(clean(job.run_id)); };
+    }
+    setJobExpanded(false);   // 完成后自动收起为一行；点击该行才展开完整结果
   }
 
   // ---------- job 轮询（UI-4） ----------
-  function attachJob(jobId) {
+  function attachJob(jobId, label) {
     S.jobId = jobId;
     S.job = null;
+    S.jobLabel = clean(label) || "任务";
     var panel = $("job-panel");
     if (panel) panel.classList.add("show");
-    if ($("job-line")) $("job-line").textContent = "任务 " + jobId;
+    if ($("job-line")) $("job-line").textContent = S.jobLabel;
+    var progressLine = $("job-progress-line");
+    if (progressLine) { progressLine.textContent = ""; progressLine.hidden = false; }
+    var doneLine = $("job-done-line");
+    if (doneLine) { doneLine.hidden = true; doneLine.innerHTML = ""; }
     if ($("job-stage")) $("job-stage").textContent = "提交完成，等待进度…";
     if ($("job-current")) $("job-current").textContent = "";
     if ($("job-summary")) $("job-summary").textContent = "";
     if ($("job-results")) $("job-results").innerHTML = "";
     if ($("job-log")) $("job-log").textContent = "";
+    var openReport = $("btn-open-report");
+    if (openReport) openReport.hidden = true;
+    setJobClickable(false);
+    setJobExpanded(false);   // 运行中只显示单行进度（工位 E）
     setBar(0, "");
     if (S.jobTimer) { clearTimeout(S.jobTimer); S.jobTimer = null; }
     pollJob();
@@ -957,6 +1179,16 @@
         });
         persist();
         renderList();
+        // 报表契约（REQS-0044 变更 3）：job 终态带 run.report → 记下 run_id 供「查看完整报表」
+        // 与历史下拉；整页不再自动跳转结果视图，面板自动收起为一行（工位 E 口径）
+        var reportRows = arr(obj(job.report).rows);
+        if (reportRows.length) {
+          S.lastRunId = clean(job.run_id) || S.lastRunId;
+          persist();
+          var runInput = $("run-id-input");
+          if (runInput && S.lastRunId) runInput.value = S.lastRunId;
+        }
+        collapseJobDone(job);
         toast("任务结束：" + stateLabel(state) + " · " + summaryText(job));
         return;
       }
@@ -1024,9 +1256,15 @@
     var percent = typeof progress.percent === "number"
       ? progress.percent
       : (total ? Math.round(done * 100 / total) : 0);
-    setBar(percent, "进度 " + done + "/" + total + " 用例");
-    if ($("job-stage")) $("job-stage").textContent = stateLabel(job.state);
+    setBar(percent, "");
+    // 单行进度（工位 E）：方案名 + 进度 n/m + 当前用例名，一行说完
     var current = progress.current_case_title || progress.current_case_id || "";
+    var progressLine = $("job-progress-line");
+    if (progressLine) {
+      progressLine.textContent = (total ? ("进度 " + done + "/" + total + (percent ? " · " + percent + "%" : "")) : "")
+        + (current ? "　当前：" + current : "");
+    }
+    if ($("job-stage")) $("job-stage").textContent = stateLabel(job.state);
     if ($("job-current")) {
       $("job-current").textContent = (total ? ("进度 " + done + "/" + total + " · " + percent + "%") : "")
         + (current ? "　当前：" + current : "");
@@ -1561,6 +1799,398 @@
 
   /* ==== 报告卡默认区 END ==== */
 
+  /* ==== 结果视图（REQS-0044 变更 3 报表契约：run.report.rows[]/summary）====
+   * 数据源（全部真接口，零 mock）：GET /api/cases/runs/{run_id}（历史结果读模型）与
+   * job 轮询终态的 RunRecordView.report。列固定：测试大类 | 测试子类 | 用例名称 |
+   * 测试步骤 | 结果 | 失败原因/说明；null → 「—」；四态 ✔绿 / ✘红 / ⊘灰 / ？黄；
+   * 证据路径在原因列可展开；块级明细（含 observation 观测）只进「开发者详情」折叠
+   * （用户层零块名，REQS-0042 D11-2）。 ==== */
+  var VD_GLYPH = { pass: "✔", fail: "✘", blocked: "⊘", inconclusive: "？", "": "？" };
+  var VD_SHORT = { pass: "通过", fail: "失败", blocked: "阻断", inconclusive: "说不清", "": "未知" };
+
+  function vdChip(value) {
+    var key = normVerdict(value) || "";
+    var meta = VERDICT[key] || VERDICT[""];
+    var name = VD_SHORT[key] || "未知";
+    return '<span class="verdict ' + meta.cls + '" data-verdict="' + esc(key) +
+      '" title="' + esc(name) + '">' + (VD_GLYPH[key] || "？") + " " + esc(name) + "</span>";
+  }
+
+  function showResultView() {
+    var result = $("view-result");
+    var list = $("view-list");
+    if (result) result.hidden = false;
+    if (list) list.hidden = true;
+    if (window.scrollTo) window.scrollTo(0, 0);
+  }
+
+  function showListView() {
+    var result = $("view-result");
+    var list = $("view-list");
+    if (result) result.hidden = true;
+    if (list) list.hidden = false;
+  }
+
+  // 证据路径折叠（原因列内）：展开后点击路径即复制
+  function resultEvidenceHtml(paths) {
+    var items = arr(paths).map(String).filter(function (p) { return !!clean(p); });
+    if (!items.length) return "";
+    return '<div><button class="mini ev-toggle" type="button" title="证据路径（点击展开/收起）：' +
+      esc(items.join("  ")) + '">证据 ▸</button></div>' +
+      '<div class="ev-paths" hidden>' + items.map(function (p) {
+        return '<code class="ev-path mono" data-path="' + esc(p) + '" title="点击复制路径">' + esc(p) + "</code>";
+      }).join("") + "</div>";
+  }
+
+  // 汇总条：产品通过率（分母不含 setup 行，直接用 summary.product_pass_rate）+ 四态 + 台架准备 n 项
+  function renderRunSumbar(rows, summary) {
+    var sum = obj(summary);
+    var setupN = rows.filter(function (r) { return obj(r).kind === "setup"; }).length;
+    function chip(cls, glyph, label, value) {
+      return '<span class="sum-chip ' + cls + '">' + glyph + " " + label + " " + num(value) + "</span>";
+    }
+    var bar = $("sumbar");
+    if (!bar) return;
+    bar.innerHTML =
+      '<div class="sum-rate"><b>' + esc(clean(sum.product_pass_rate) || "—") + "</b><span>产品通过率</span></div>" +
+      chip("pass", "✔", "通过", sum.pass) +
+      chip("fail", "✘", "失败", sum.fail) +
+      chip("blocked", "⊘", "阻断", sum.blocked) +
+      chip("inconclusive", "？", "说不清", sum.inconclusive) +
+      '<span class="sum-setup">台架准备 ' + setupN + " 项（不计入分母）</span>";
+  }
+
+  // Excel 式结果表：六列固定，null → 「—」，行按四态着色
+  function renderRunTable(rows) {
+    var tbody = $("res-tbody");
+    if (!tbody) return;
+    var dash = '<span class="muted-dash">—</span>';
+    var cell = function (value) {
+      return (value === null || value === undefined || String(value) === "") ? dash : esc(String(value));
+    };
+    tbody.innerHTML = rows.map(function (raw) {
+      var r = obj(raw);
+      var kind = String(r.kind || "");
+      var reasonHtml = clean(r.reason) ? '<span class="reason">' + esc(r.reason) + "</span>" : dash;
+      reasonHtml += resultEvidenceHtml(r.evidence_paths);
+      return '<tr class="r-' + esc(normVerdict(r.verdict) || "inconclusive") + (kind === "setup" ? " r-setup" : "") + '">' +
+        "<td>" + cell(r.group) + "</td>" +
+        "<td>" + cell(r.subgroup) + "</td>" +
+        '<td class="c-name">' + cell(r.name) + "</td>" +
+        '<td class="c-steps">' + cell(r.steps_text) + "</td>" +
+        "<td>" + vdChip(r.verdict) + "</td>" +
+        '<td class="c-reason">' + reasonHtml + "</td>" +
+        "</tr>";
+    }).join("");
+    Array.prototype.forEach.call(tbody.querySelectorAll(".ev-toggle"), function (button) {
+      button.onclick = function () {
+        var box = button.parentNode.nextElementSibling;
+        if (!box) return;
+        var open = !!box.hidden;
+        box.hidden = !open;
+        button.textContent = open ? "证据 ▾" : "证据 ▸";
+      };
+    });
+    Array.prototype.forEach.call(tbody.querySelectorAll(".ev-path"), function (code) {
+      code.onclick = function () { copyText(code.getAttribute("data-path") || code.textContent); };
+    });
+  }
+
+  // 开发者详情：块级观测明细（块 id / 块态 / 结论 / observation）只出现在这里
+  function renderRunDev(run) {
+    var body = $("dev-body");
+    if (!body) return;
+    var results = arr(run.results);
+    if (!results.length) {
+      body.innerHTML = '<p class="dev-note">该运行没有块级明细数据（run.results 为空）。</p>';
+      return;
+    }
+    body.innerHTML =
+      '<p class="dev-note">按 REQS-0042 D11-2：内部块 id 禁止出现在用户层文本，仅本折叠区与 --json 可见。' +
+      "块只观测不判定（REQS-0044 §4.2）：判据归步骤期望与用例聚合。</p>" +
+      results.map(function (raw) {
+        var res = obj(raw);
+        var blocks = arr(res.blocks).map(function (rawBlock) {
+          var b = obj(rawBlock);
+          var obs = obj(b.observation);
+          var values = obj(obs.values);
+          var valueText = Object.keys(values).map(function (key) {
+            return key + "=" + String(values[key]);
+          }).join("；");
+          var obsText = clean(obs.detail) || clean(b.detail) || clean(b.message) || "";
+          var obsHtml = esc(obsText) +
+            (valueText ? '<div class="bk-obs">' + esc(valueText) +
+              (obs.complete === false ? "（观测不完整）" : "") + "</div>" : "");
+          return "<tr><td class='bkid'>" + esc(String(b.block_id || "")) + "</td><td>" +
+            esc(String(b.state || "")) + "</td><td>" + esc(String(b.outcome || "")) + "</td><td>" +
+            obsHtml + "</td></tr>";
+        }).join("");
+        var unmet = Object.keys(obj(res.unmet_facts)).map(function (key) {
+          var fact = obj(obj(res.unmet_facts)[key]);
+          return '<div class="bp-item bp-fact"><span class="k">未满足事实</span><code>' + esc(key) +
+            "</code><span>" + esc(String(fact.state || "")) +
+            (clean(fact.detail) ? " — " + esc(fact.detail) : "") + "</span></div>";
+        }).join("");
+        var notes = [];
+        var summary = obj(res.summary);
+        if (clean(summary.reason)) notes.push(String(summary.reason));
+        arr(summary.reasons).forEach(function (item) { if (clean(item)) notes.push(String(item)); });
+        if (clean(res.skipped_reason)) notes.push(String(res.skipped_reason));
+        if (clean(res.error)) notes.push(String(res.error));
+        return '<div class="dev-row"><b>' + esc(clean(res.title) || clean(res.case_id) || "未命名用例") + "</b> " +
+          vdChip(res.verdict) +
+          (notes.length ? '<div class="dev-note">' + esc(notes.join("；")) + "</div>" : "") +
+          unmet +
+          (blocks ? '<table class="bk"><thead><tr><th>块 id</th><th>块态</th><th>结论</th>' +
+            "<th>观测（observation）</th></tr></thead><tbody>" + blocks + "</tbody></table>" : "") +
+          "</div>";
+      }).join("");
+  }
+
+  // 运行记录 → 结果视图（历史读回与 job 终态共用同一条路径）
+  function renderRunReport(record) {
+    var run = obj(record);
+    S.currentRun = run;
+    var report = obj(run.report);
+    var rows = arr(report.rows);
+    var title = $("res-title");
+    if (title) title.textContent = "运行结果 " + String(run.run_id || "");
+    var dir = $("res-dir");
+    if (dir) {
+      dir.textContent = clean(run.result_path) || clean(run.run_dir) ||
+        ("case_runs/" + String(run.run_id || "") + "/");
+      dir.title = "证据落盘位置";
+    }
+    var meta = $("res-meta");
+    if (meta) {
+      var seconds = num(run.duration_seconds) || num(run.duration_s);
+      var setupN = rows.filter(function (r) { return obj(r).kind === "setup"; }).length;
+      meta.textContent = (seconds ? "用时 " + seconds + "s · " : "") +
+        (rows.length ? rows.length + " 行，其中台架准备 " + setupN + " 行不计入通过率" : "");
+    }
+    var empty = $("res-empty");
+    var table = $("res-table");
+    if (!rows.length) {
+      if (table) table.hidden = true;
+      if (empty) {
+        empty.hidden = false;
+        empty.textContent = "该运行没有报表数据；块级明细见下方开发者详情。";
+      }
+      renderRunSumbar([], report.summary);
+    } else {
+      if (table) table.hidden = false;
+      if (empty) empty.hidden = true;
+      renderRunSumbar(rows, report.summary);
+      renderRunTable(rows);
+    }
+    renderRunDev(run);
+    var details = $("dev-details-run");
+    if (details) details.open = false;
+    showResultView();
+  }
+
+  // 历史结果：GET /api/cases/runs/{run_id}（真接口；404/缺契约时显式降级，不白屏）
+  function loadRun(runId) {
+    var id = clean(runId);
+    if (!id) { toast("请先输入 run_id"); return Promise.resolve(false); }
+    return api("GET", "/api/cases/runs/" + encodeURIComponent(id)).then(function (record) {
+      S.lastRunId = clean(obj(record).run_id) || id;
+      persist();
+      var input = $("run-id-input");
+      if (input) input.value = S.lastRunId;
+      renderRunReport(record);
+      renderRunsSelect();   // 历史运行下拉同步回显当前 run_id
+      toast("已载入历史结果 " + S.lastRunId);
+      return true;
+    }).catch(function (error) {
+      toast("读取运行结果失败：" + (error && error.message ? error.message : String(error)));
+      return false;
+    });
+  }
+  // 供控制台 / Playwright 驱动（同 Demo 的 __demoRenderResult 口径，但只吃真实 run_id）
+  window.__casesLoadRun = function (runId) { return loadRun(runId); };
+  window.__casesShowList = function () { showListView(); };
+
+  // ---------- 历史运行索引（GET /api/cases/runs?limit=10，REQS-0044 变更 4） ----------
+  // 清单页一个小下拉：选中某轮即复用上面的 loadRun 载入渲染（同一条 run_id 载入路径）；
+  // 后端未挂该端点（404）时下拉只留占位项，不影响页面其余功能。
+  var RUNS_LIST_LIMIT = 10;
+
+  function loadRunsIndex() {
+    return api("GET", "/api/cases/runs?limit=" + RUNS_LIST_LIMIT).then(function (data) {
+      S.runsIndex = arr(obj(data).runs);
+    }).catch(function () {
+      S.runsIndex = [];   // 端点缺失/失败：下拉置空但不白屏
+    }).then(function () {
+      renderRunsSelect();
+    });
+  }
+
+  function runIndexLabel(run) {
+    var verdict = normVerdict(run.verdict);
+    var parts = [
+      clean(run.run_id) || "?",
+      VD_SHORT[verdict] || "未知",
+      clean(run.finished_at).replace("T", " ")
+    ];
+    var names = arr(run.case_names);
+    if (names.length) parts.push(names.length + " 例");
+    var headline = clean(obj(run.summary).headline);
+    if (headline) parts.push(clip(headline, 30));
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  function renderRunsSelect() {
+    var select = $("runs-select");
+    if (!select) return;
+    var html = '<option value="">历史运行（最近 ' + S.runsIndex.length + ' 轮）…</option>';
+    S.runsIndex.forEach(function (run) {
+      html += '<option value="' + esc(clean(run.run_id)) + '">' + esc(runIndexLabel(run)) + "</option>";
+    });
+    select.innerHTML = html;
+    // 当前结果视图里的 run_id 若在索引里则回显选中；不在就保持占位项
+    select.value = S.runsIndex.some(function (run) { return clean(run.run_id) === S.lastRunId; })
+      ? S.lastRunId : "";
+  }
+
+  // ---------- 默认参数（REQS-0044 工位 E）----------
+  // GET /api/cases/defaults 下发白名单键 + 业务文案（"默认表地址" 等），表单只渲染下发的
+  // items——页面**不造键**（用户提到但配置里没有对应键的项一律不出现）；保存走 PUT，
+  // 后端做白名单校验 + 写前备份。404（后端未挂）→ 隐藏入口，不影响页面其余功能。
+  function loadDefaults() {
+    return api("GET", "/api/cases/defaults").then(function (data) {
+      S.defaults = arr(obj(data).items);
+    }).catch(function () {
+      S.defaults = null;   // 端点缺失/失败：隐藏入口（不白屏）
+    }).then(function () {
+      renderDefaults();
+    });
+  }
+
+  function renderDefaults() {
+    var line = $("defaults-line");
+    if (!line) return;
+    var textEl = $("defaults-text");
+    if (!S.defaults || !S.defaults.length) {
+      line.hidden = true;   // 后端未提供或配置为空：不显示入口
+      if (textEl) textEl.textContent = "";
+      return;
+    }
+    line.hidden = false;
+    if (textEl) {
+      // 一行显示当前默认：第一项（表地址类）+ 其余项数；全部细节在「修改」小表单里
+      var first = obj(S.defaults[0]);
+      var value = String(first.value == null ? "" : first.value);
+      var text = "默认参数：" + clean(first.label) + " " + value;
+      if (S.defaults.length > 1) text += " 等 " + S.defaults.length + " 项";
+      textEl.textContent = text;
+    }
+  }
+
+  function openDefaultsModal() {
+    if (!S.defaults || !S.defaults.length) {
+      toast("默认参数不可用（后端未提供 GET /api/cases/defaults 或配置为空）");
+      return;
+    }
+    var form = $("defaults-form");
+    if (form) {
+      form.innerHTML = S.defaults.map(function (item) {
+        return '<div class="row"><label>' + esc(clean(item.label)) + '</label>' +
+          '<input type="text" data-key="' + esc(item.key) + '" value="' +
+          esc(String(item.value == null ? "" : item.value)) + '" title="' + esc(item.key) + '"></div>';
+      }).join("");
+    }
+    var modal = $("defaults-modal");
+    if (modal) modal.classList.add("show");
+  }
+
+  function closeDefaultsModal() {
+    var modal = $("defaults-modal");
+    if (modal) modal.classList.remove("show");
+  }
+
+  function saveDefaults() {
+    var form = $("defaults-form");
+    if (!form) return;
+    var values = {};
+    Array.prototype.forEach.call(form.querySelectorAll("input[data-key]"), function (input) {
+      var key = input.getAttribute("data-key") || "";
+      if (key) values[key] = String(input.value || "").trim();
+    });
+    api("PUT", "/api/cases/defaults", { values: values }).then(function (data) {
+      S.defaults = arr(obj(data).items);
+      renderDefaults();   // 保存成功后刷新页面默认值显示（工位 E 要求）
+      closeDefaultsModal();
+      toast("默认参数已保存" + (clean(obj(data).backup_path) ? "（原值已备份）" : ""));
+    }).catch(function (error) {
+      toast("保存失败：" + (error && error.message ? error.message : String(error)));
+    });
+  }
+
+  // 自检（供控制台 / Playwright 调用）：行数一致、用户层零块名、四态类齐备、离线零外链
+  window.__casesSelfcheck = function () {
+    var checks = [];
+    function add(name, ok, detail) { checks.push({ name: name, ok: !!ok, detail: String(detail) }); }
+
+    // 1. 结果行数与 API rows 数一致
+    var rows = arr(obj(obj(S.currentRun).report).rows);
+    var tbody = document.getElementById("res-tbody");
+    var rendered = tbody ? tbody.querySelectorAll("tr").length : 0;
+    add("result-rows-match-api", rows.length > 0 && rendered === rows.length,
+      "API rows=" + rows.length + "，DOM tr=" + rendered);
+
+    // 2. 用户层零块名：非折叠区（剔除 script/style 与所有开发者详情折叠）逐文本节点扫描。
+    //    折叠区（两个大折叠 + 每张报告卡里默认 hidden 的 dev-details）按 REQS-0042 D11-2
+    //    本就允许出现块 id，整棵子树跳过（工位 E：补上报告卡内的折叠容器）。
+    var hits = [];
+    var LEAK_SKIP = { "dev-details-run": true, "bench-dev-details": true };
+    function isSkipEl(el) {
+      if (!el || el.nodeType !== 1) return false;
+      var tag = el.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") return true;
+      if (LEAK_SKIP[el.id]) return true;
+      var hook = el.getAttribute && el.getAttribute("data-hook");
+      return hook === "bench-dev-details" || hook === "dev-details";
+    }
+    function walkText(el) {
+      if (isSkipEl(el)) return;   // 折叠区（块 id / 事实 id 允许出现）整棵子树跳过
+      for (var child = el.firstChild; child; child = child.nextSibling) {
+        if (child.nodeType === 3) {
+          var found = (child.nodeValue || "").match(/[a-z_]+\.[a-z_0-9]+/gi) || [];
+          found.forEach(function (token) {
+            if (/\.(json|log|txt)$/i.test(token)) return;   // 证据文件名（result.json / cli.log）不是块 id
+            if (hits.indexOf(token) < 0) hits.push(token);
+          });
+        } else if (child.nodeType === 1) {
+          walkText(child);
+        }
+      }
+    }
+    walkText(document.body);
+    add("no-block-leak（用户层零块名，REQS-0042 D11-2）", hits.length === 0,
+      hits.length ? "泄漏：" + hits.join(", ") : "非折叠区无 xxx.yyy 块 id（证据文件名在白名单）");
+
+    // 3. 四态着色：数据里出现过的每个 verdict 都有对应徽标类
+    var verdicts = {};
+    rows.forEach(function (raw) {
+      var key = normVerdict(obj(raw).verdict);
+      if (key) verdicts[key] = true;
+    });
+    var missing = Object.keys(verdicts).filter(function (key) {
+      return !tbody || !tbody.querySelector('span.verdict[data-verdict="' + key + '"]');
+    });
+    add("four-state-classes（✔✘⊘？ 四态徽标齐备）", missing.length === 0,
+      missing.length ? "缺类：" + missing.join(",") : "数据出现的四态徽标均已着色渲染");
+
+    // 4. 离线：零外链依赖
+    var ext = document.documentElement.outerHTML.match(/(?:src|href)\s*=\s*["'](?:https?:)?\/\//g) || [];
+    add("offline（零外部依赖）", ext.length === 0,
+      ext.length ? "外部引用：" + ext.join(", ") : "无 http(s) 外链");
+
+    return { ok: checks.every(function (c) { return c.ok; }), checks: checks };
+  };
+
+
   // 证据路径：点击路径或「复制」按钮即复制（剪贴板不可用时提示手动选中）
   function copyText(value) {
     var text = String(value == null ? "" : value);
@@ -1746,7 +2376,73 @@
         this.setAttribute("aria-expanded", open ? "true" : "false");
       };
     }
+    // 横幅「详情」折叠（工位 E）：手动展开/收起口状态与事实芯片；点过之后以用户为准
+    if ($("bench-detail-toggle")) {
+      $("bench-detail-toggle").onclick = function () {
+        var box = $("bench-details");
+        var open = !!(box && box.hidden);   // 当前收起 → 这次点开
+        S.benchDetailsOpen = open;
+        setBenchDetails(open);
+      };
+    }
+    // job 单行（工位 E）：终态收起后点击该行才展开完整结果；运行中不响应
+    if ($("job-collapsed")) {
+      $("job-collapsed").onclick = function () {
+        if (!S.jobTerminal) return;
+        setJobExpanded(!S.jobExpanded);
+      };
+      $("job-collapsed").onkeydown = function (event) {
+        if (!S.jobTerminal) return;
+        if (event && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          setJobExpanded(!S.jobExpanded);
+        }
+      };
+    }
+    // 默认参数入口（工位 E）：修改 / 取消 / 保存
+    if ($("btn-defaults-edit")) $("btn-defaults-edit").onclick = openDefaultsModal;
+    if ($("defaults-cancel")) $("defaults-cancel").onclick = closeDefaultsModal;
+    if ($("defaults-save")) $("defaults-save").onclick = saveDefaults;
+    if ($("defaults-modal")) {
+      $("defaults-modal").onclick = function (event) {
+        if (event.target === $("defaults-modal")) closeDefaultsModal();
+      };
+    }
     if ($("btn-refresh")) $("btn-refresh").onclick = function () { loadAll().then(function () { toast("已刷新"); }); };
+    if ($("btn-clear-filter")) {
+      $("btn-clear-filter").onclick = function () {
+        S.filters = { q: "", usage: "", domain: "", scene: "", region: "", protocol: "" };
+        if ($("q")) $("q").value = "";
+        renderFilters();
+        renderRail();
+        renderList();
+        toast("已清除全部筛选");
+      };
+    }
+    // ---------- 结果视图（REQS-0044）：返回 / 载入历史 run / 再跑一次 ----------
+    if ($("btn-back-list")) $("btn-back-list").onclick = function () { showListView(); };
+    if ($("runs-select")) {
+      $("runs-select").onchange = function () {
+        if (this.value) loadRun(this.value);   // 选中即载入（复用 run_id 载入路径）
+      };
+    }
+    if ($("btn-load-run")) {
+      $("btn-load-run").onclick = function () {
+        loadRun($("run-id-input") ? $("run-id-input").value : "");
+      };
+    }
+    if ($("run-id-input")) {
+      $("run-id-input").onkeydown = function (event) {
+        if (event && event.key === "Enter") loadRun(this.value);
+      };
+    }
+    if ($("btn-rerun")) {
+      $("btn-rerun").onclick = function () {
+        var ids = arr(obj(S.currentRun).case_ids);
+        if (!ids.length) { toast("该运行没有可重跑的用例清单"); return; }
+        runJob({ case_ids: ids }, "再跑一次");
+      };
+    }
     if ($("btn-clear-sel")) {
       $("btn-clear-sel").onclick = function () {
         S.sel = {};
