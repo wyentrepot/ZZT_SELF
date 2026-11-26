@@ -60,8 +60,11 @@ def _stub_simcon_factory():
     return app
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def client():
+    # module 级共享一个 app：create_workbench_app 每次 ~135MB 且被 fastapi/pydantic
+    # 的 lru_cache（maxsize=4096）钉住不释放，函数级每测试新建会让 40 个用例涨到 ~4.5GB。
+    # 用例只读路由/挂载、monkeypatch 均自动回滚，共享实例不影响断言。
     app = create_workbench_app(
         listener_factory=_stub_listener_factory,
         module_log_factory=_stub_module_log_factory,
@@ -581,15 +584,22 @@ def test_cases_warmup_failure_swallowed(tmp_path, monkeypatch, caplog):
     class BadApp:
         def __init__(self):
             self.state = type("State", (), {"cases_service": object()})()
+            self.entered = threading.Event()
+            self.release = threading.Event()
 
         async def __call__(self, scope, receive, send):
+            self.entered.set()  # 线程拦在自请求里再断言存在，消除「起后即死」的窗口竞态
+            self.release.wait(timeout=5)
             await send({"type": "http.response.start", "status": 500, "headers": []})
             await send({"type": "http.response.body", "body": b""})
 
+    bad = BadApp()
     with caplog.at_level(logging.WARNING, logger="workbench.app"):
-        _spawn_cases_warmup(BadApp())
+        _spawn_cases_warmup(bad)
         warm = [t for t in threading.enumerate() if t.name == "cases-warmup"]
         assert warm, "预热线程应被拉起"
+        assert bad.entered.wait(timeout=5), "预热线程应已进入 ASGI 自请求"
+        bad.release.set()
         warm[0].join(timeout=5)
     assert not warm[0].is_alive()
     assert any("预热失败" in rec.getMessage() for rec in caplog.records)
